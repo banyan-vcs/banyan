@@ -25,7 +25,11 @@ type MetaStore interface {
 	// --- timeline heads（唯一串行点，CAS）---
 	Timeline(ctx context.Context, tl model.Timeline) (model.TimelineState, error)
 	// CASHead 乐观锁推进 head；expected 不符返回 ErrNonFastForward。
+	// 全零 next 表示删除 timeline。
 	CASHead(ctx context.Context, tl model.Timeline, expected, next model.OID) error
+	// EnsureTimeline 幂等初始化：不存在时以 (head, base) 建立（子树
+	// timeline 首次 push 前，其 head 是投影 head，base 记分叉点）。
+	EnsureTimeline(ctx context.Context, tl model.Timeline, head, base model.OID) error
 	ListTimelines(ctx context.Context, repo string, anchor model.AnchorPath) ([]model.Timeline, error)
 }
 
@@ -162,4 +166,17 @@ func (m *MemoryMetaStore) ListTimelines(_ context.Context, repo string, anchor m
 		}
 	}
 	return out, nil
+}
+
+func (m *MemoryMetaStore) EnsureTimeline(_ context.Context, tl model.Timeline, head, base model.OID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.timelines[tl.Repo] == nil {
+		m.timelines[tl.Repo] = map[model.Timeline]model.TimelineState{}
+	}
+	if _, exists := m.timelines[tl.Repo][tl]; exists {
+		return nil // 已存在（含已本地提交的情形）：不覆盖
+	}
+	m.timelines[tl.Repo][tl] = model.TimelineState{Head: head, Base: base}
+	return nil
 }

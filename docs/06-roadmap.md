@@ -17,7 +17,7 @@
 - [x] upload-pack：投影 → 闭包 → NAK + 在线合成 pack（流式裸 pack 应答）
 - [x] subtree split 投影（**DAG 版**：全父遍历、合并提交保留双 parent 边；经真实仓库验证）
 - [x] push 自动建仓（demo 便利；M2 收紧为 ACL）
-- [ ] 目录锚点 push 的向上组装（AssembleRoot 接线：push 到 /tree/… 后合成根 synthetic commit）
+- [x] 目录锚点 push 的向上组装（AssembleRoot 已接线：子树 push → synthetic commit 入根时间线，三层可见性实测 522/1019/4044）
 - [ ] `banyan clone` / `banyan fetch-objects`（CLI 侧）
 - [ ] have 增量协商（当前忽略 have、回全量闭包，正确但非最优）
 

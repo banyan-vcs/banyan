@@ -55,26 +55,50 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 		return refs, nil
 	}
 
-	// 子树仓库：投影根时间线的默认分支。
-	rootTL := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: defaultBranch}
-	state, err := s.Meta.Timeline(ctx, rootTL)
-	if errors.Is(err, storage.ErrTimelineUnknown) {
-		return nil, nil // 根时间线尚无提交：空仓库语义
-	}
-	if err != nil {
-		return nil, err
-	}
-	head, err := s.projection(ctx, vr, state.Head)
+	// 子树仓库：组合投影 head（docs/01 §5.2 split(根) ⊕ 本地提交）。
+	head, _, err := s.subtreeHead(ctx, vr)
 	if err != nil {
 		return nil, err
 	}
 	if head.IsZero() {
-		return nil, nil // 该路径在历史中从未存在
+		return nil, nil // 根无提交或该路径在历史中从未存在
 	}
 	return []Ref{
 		{Name: "HEAD", OID: head},
 		{Name: "refs/heads/" + defaultBranch, OID: head},
 	}, nil
+}
+
+// subtreeHead 返回子树仓库的组合 head 与当前根 head。
+// 组合规则：本地 timeline（push 到 /tree/… 锚定而来）有提交时优先，
+// 否则为投影 head；本地提交的 parent 链自然挂接投影链（分叉语义
+// 由投影纯函数性保证，docs/01 §7）。
+func (s *Server) subtreeHead(ctx context.Context, vr VirtualRepo) (head, rootHead model.OID, err error) {
+	info, err := s.Meta.GetRepo(ctx, vr.Repo)
+	if err != nil {
+		return "", "", err
+	}
+	defaultBranch := info.DefaultBranch
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+	rootTL := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: defaultBranch}
+	state, err := s.Meta.Timeline(ctx, rootTL)
+	if errors.Is(err, storage.ErrTimelineUnknown) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	rootHead = state.Head
+	head, err = s.projection(ctx, vr, rootHead)
+	if err != nil {
+		return "", "", err
+	}
+	if local, lerr := s.Meta.Timeline(ctx, model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: defaultBranch}); lerr == nil && !local.Head.IsZero() {
+		head = local.Head
+	}
+	return head, rootHead, nil
 }
 
 // projection 计算并缓存子树投影（docs/01 §5.2）：SplitHistory 得到投影

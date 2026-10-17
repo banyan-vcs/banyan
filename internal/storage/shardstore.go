@@ -208,6 +208,34 @@ func (s *ObjectService) Lookup(repo string) model.ObjectLookup {
 	return &repoLookup{svc: s, repo: repo}
 }
 
+// TreeStoreFor 返回带写入能力的仓库视图（组装用，docs/01 §4）：
+// 读取走缓存/包，PutTree 把组装改写出的新树持久化进合成对象层。
+func (s *ObjectService) TreeStoreFor(repo string) model.TreeStore {
+	return &synthTreeStore{lookup: s.Lookup(repo), svc: s, repo: repo}
+}
+
+type synthTreeStore struct {
+	lookup model.ObjectLookup
+	svc    *ObjectService
+	repo   string
+}
+
+func (a *synthTreeStore) Blob(oid model.OID) ([]byte, error)  { return a.lookup.Blob(oid) }
+func (a *synthTreeStore) Tree(oid model.OID) (*model.Tree, error) { return a.lookup.Tree(oid) }
+func (a *synthTreeStore) Commit(oid model.OID) (*model.AnchoredCommit, error) {
+	return a.lookup.Commit(oid)
+}
+
+func (a *synthTreeStore) PutTree(t *model.Tree) model.OID {
+	encoded, err := t.Encode()
+	if err != nil {
+		return ""
+	}
+	oid := t.OID(a.svc.Algo)
+	a.svc.PutSynthetic(a.repo, oid, model.TreeType, encoded)
+	return oid
+}
+
 func (r *repoLookup) Blob(oid model.OID) ([]byte, error) {
 	t, data, err := r.svc.Raw(context.Background(), r.repo, oid)
 	if err != nil {
