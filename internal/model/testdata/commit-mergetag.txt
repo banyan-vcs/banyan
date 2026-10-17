@@ -1,0 +1,26 @@
+tree fda7cf133f4c199c9d0256c903b4722e97d69282
+parent 0c0b0d7d25194e47c785a4bfd778c62c5472cfe7
+parent 7a784977c1a9b1ac2189f2c51570d765d051a4a3
+author Paulo Gomes <paulo@entire.io> 1792191518 +0100
+committer GitHub <noreply@github.com> 1792191518 +0100
+gpgsig -----BEGIN PGP SIGNATURE-----
+ 
+ wsFcBAABCAAQBQJq0qweCRC1aQ7uu5UhlAAAx/cQABrYg8r312RMmWkM0jLYS2FZ
+ NuD108eCB9PmtUfjkkvVlPMUrYFdthB+u2u9hC3Me0LQcl20R1QHyAxG0CEhyCKe
+ smxgKogr17NwaJ4gug/TuifOS2Cnb4ZnJTHfkaFqryui+AFvyj6OmecjTiXTwsf0
+ PbEzzk3t4hZ4+P2x8Qn+zOl8a1FbofeFSX7Uybc61AhZCAW2+vwe7dN2FnvvmSNY
+ KAVUJieTeyGhSt4z59uB+RrqCYbsKU/Mp3qo327nt2PK7KRRqYM9Z1OWiQF6uqy3
+ W+MTJ7LOBK0OmZMQqQKxDXGLEWF1SmrzJVOetupYItDU+uSaBkDn2weYd78oUflL
+ jFCLZQ0cIP8pCtzk4fXqN38vLRXiUrw4Y6/ugV7Nv5Wf/X94400ecQ5NeUrB/A88
+ 0IyH76qh0FMOETTN4pxnEsZHBl3nSwtXDyXM9PAGGqdnofDiRKJRKA+nysMUniA/
+ Pcl+K2Efdj+Gv+7fR8GmPv7vYZBNL/eHpCb0tWICMftoTzmAgG6jxVldTlS6prgX
+ 31Lnqfv5dxTNP8BD75xXawCwnjn4Hn9djAYEH0CukNhSTnLOiyWj5G3VcOsdTXPP
+ 8uwoEyxugiBhGkR6kEqKtx85FYkhXkMrD3hPhYzQJOxsUy5k/VAYC9EmC4VHYDxB
+ zoAGVUihch/f63/bxRds
+ =LT7n
+ -----END PGP SIGNATURE-----
+ 
+
+Merge pull request #2445 from Muhammad-Bin-Ali/examples/clone-commit-push
+
+_examples: Add end-to-end clone, branch, commit and push example

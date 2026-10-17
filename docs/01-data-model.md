@@ -229,3 +229,35 @@ hash 与视图完全一致，过滤只是查询语义（Scion："问题查询是
 | 子树仓 `git log -- .` | 有效过滤 | 不过滤（祖先树是全仓，路径空间不匹配）——已记录 |
 
 SplitHistory/AssembleRoot 保留为派生分析用途，不再服务读写路径。
+
+## 11. 轻量提交与 Message 对象（设计 v3，2026-10-17）
+
+commit 的源信息一分为二：**信封**（tree 行之外的一切：parents、签名、
+gpgsig/mergetag 等多行头、消息正文）存为独立内容寻址的 **bmsg 对象**
+（git 哈希方案、类型标签 `bmsg`，与 git 对象空间天然隔离、永不进 wire）；
+提交退化为轻量记录 **(tree 边, bmsg 引用)**——两个定长指针。
+
+### 运行时渲染（git 兼容场景）
+
+git commit 对象成为渲染产物：`render(tree, envelope) = "tree <oid>\n" + envelope`，
+分三个层次：
+
+| 层次 | 机制 | hash 保证 |
+|---|---|---|
+| push 收编的 commit | 信封原样保存，渲染＝还原 | **字节级恒等**（实测 go-git 4043/4043 还原成功，含 gpgsig 多行头，render-fails 0） |
+| banyan 原生 commit | 确定性渲染（签名/时间源自不可变输入） | §10 既有模式（视图 tip / 收编 merge 本就是运行时生成），本设计将其推广为普适机制 |
+| M3 选项：pack 剥离 | 只存 tree/blob + 轻量记录，fetch 时渲染 | 省去 commit 字节存储，但丧失 ExactPackHit 整包直传——评估后再定 |
+
+### 收益与实测
+
+- 提交记录变定长边——CommitGraph 的原生形态，O(1) 结构查询不解码变长对象；
+- bmsg 内容寻址去重：机器人/模板化 merge 消息在 monorepo 中大量重复
+  （实测 go-git 4043 提交去重率 0%——每条时间戳唯一所致；去重在
+  bot 批量提交/视图 tip 等场景兑现）；
+- metadata-only 修改（amend/rebase 元数据编辑）只新增 bmsg，不动结构边；
+- 与统一 DAG（§10）正交叠加：hash 一致性由"信封原样 + 确定性渲染"继承。
+
+### 不变式（测试锁定，internal/model/message_test.go）
+
+`Decompose ∘ Render = 恒等`（字节级，真实夹具含 gpgsig/双亲 merge/无父根
+提交）；非 tree 首行拒绝；同信封不同 tree ⇒ 同一 bmsg、不同 git commit。

@@ -1,0 +1,26 @@
+tree fa490710536c53838972b7fc825e24501a66660b
+parent 1d6f625abcdc3c226703a42ddfa97ca529b5a1cc
+author go-git-renovate[bot] <245267575+go-git-renovate[bot]@users.noreply.github.com> 1792185871 +0000
+committer GitHub <noreply@github.com> 1792185871 +0000
+gpgsig -----BEGIN PGP SIGNATURE-----
+ 
+ wsFcBAABCAAQBQJq0pYPCRC1aQ7uu5UhlAAACmcQAJUVOZll3Y+dX2IlTInsxYV3
+ o/MFJ2I+l2i1MpQyVIPlMD9FGYvVgSDSTmDTpW+ErzRsQQBBGbkLcMMyPkAUW+Tk
+ PKkAWe5TbL93Amegr9A6aD3SUiYq/8LQSMPUK5N7KN0U5Ovfx3X9d3OPcHopLBTV
+ Z52mbnMzBXfqHua+dDoXFujVT45tBKUdmGfiVOf4f+fwR0yvoworD8nzL3pf3uyr
+ qtN3VgvqInZtSg67vmX6Rnz+K23SaOqaygm5ijmrAbSJOHMjHz/SH1LRRDVUEK4y
+ Oe/GmqrUT9eU9nRrTPf/EVBC9m72d5f7o0N0ncyn79egPuyw6p+q2Y1rk87zgadX
+ nrxhzuaiM/V1xol7N04xKdvbstzDXOSmEQARQQp9LbX4fI4YM1cKWckQLdAeKDAj
+ NJuzns2nRSh/oADkSjwGNVtg7kPA7OwiSigiOCJyacf2O0FJQ3ZvguOQnwxkjl4J
+ FpInEk8a0zKvvgwZwhocY2GtHr42MGy3RyrqUkwR5tC+wXZJidPFjkxGI1IljX4D
+ XzyrhxnRlYQqn/q1yVpKMPtYODZqxzG4Z077mhrg5tfQSG/YztA2a08hxdDeqMTP
+ AS5I8uvU04p/LnXrOj2q9w9yjy5YeskLYQ9nv7JsjecS+ibEfwe3sFyC6ILSot1p
+ JuHY3DIduQyCLQkDPyDP
+ =LMth
+ -----END PGP SIGNATURE-----
+ 
+
+build: Update module golang.org/x/net to v0.61.0
+
+Signed-off-by: go-git-renovate[bot] <245267575+go-git-renovate[bot]@users.noreply.github.com>
+Signed-off-by: go-git-renovate[bot] <245267575+go-git-renovate[bot]@users.noreply.github.com>

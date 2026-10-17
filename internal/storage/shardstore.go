@@ -120,6 +120,10 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 		return "", err
 	}
 	s.buildIndex(repo, dp)
+	if n, unique, fails := s.CommitIndexStats(repo); n > 0 {
+		log.Printf("index %s: lightweight commits %d → %d unique bmsg (%.1f%% dedup), render-fails %d",
+			repo, n, unique, 100*float64(n-unique)/float64(n), fails)
+	}
 
 	s.mu.Lock()
 	if s.cache[repo] == nil {

@@ -1,0 +1,26 @@
+tree fa490710536c53838972b7fc825e24501a66660b
+parent 1d6f625abcdc3c226703a42ddfa97ca529b5a1cc
+parent 253eeb3f53db5acb08135fec4b44c9eca1981788
+author Paulo Gomes <paulo@entire.io> 1792186681 +0100
+committer GitHub <noreply@github.com> 1792186681 +0100
+gpgsig -----BEGIN PGP SIGNATURE-----
+ 
+ wsFcBAABCAAQBQJq0pk5CRC1aQ7uu5UhlAAAN7IQAEwFLI6lAdCsCszm85xEZ5SJ
+ 2NLN8naVBgH+lsK65TDwpG6pTExFFL3jpCR17KClMGh5TEX/LESkPHMHTpV1hknw
+ b92mKl2ldsTmFuUfA1iDCZ6EIrTYgniiGIubcZLtX41J5LnoNjfocftxu0XPVPse
+ 9m5kuYxFx0ube+AqPi2QhlG34NxRhEtnEkTa/QIoXjJrPe2K+0pm9E8rIjBR3g0t
+ +JvAzNgPELBixDqrMpvZevn8cyKtEQ/pZFxa9EH1FDCyskLC0i/tfqq+m7ucxb83
+ ubN/Ow59HjcbLD1zaaxH79hHaXBWz1iVLbtCktDHlBNue+Rv+Vvp56YqeoYjQxqM
+ hCB5yr92V5zjiF+4IBEA02r7HYfOOzuLtpXDa8NkZC4UAEkSYy0thZn/FSEI2Rur
+ 2YwfWDeK2j8HFIKOqDqYgwkSuUQf/N1pvsy69sTB+KLPoBdA0pDQVqqqgvz6LQnN
+ ImszpRCR5ehIu+Tqx2LHxZVADRMnq4qwOheNu9Vhe30ERmFfgFpAqw/FAPDZe4OY
+ ZpRY9r8eyNTJvA96EHetIbvy5BmSIdZxx98JpBSkZ10chxzvaNXX5qASuTWZLLdz
+ VDSpYl6h9cK+rqwn0jKBHTPL+XJrxIVW1E5UF8sj5gC1tdm0oxTvRbua3YWecTgU
+ CKHZwpThTSVm2K+JgPuz
+ =kSgG
+ -----END PGP SIGNATURE-----
+ 
+
+Merge pull request #2526 from go-git/renovate/main-golang
+
+build: Update module golang.org/x/net to v0.61.0 (main)
