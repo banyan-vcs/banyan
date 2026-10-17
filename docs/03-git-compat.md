@@ -117,7 +117,8 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 
 | 限制 | 影响 | 缓解 |
 |---|---|---|
-| 无 protocol v2 | git 客户端自动回退 v1，无感 | 需要时 M3 补（ls-refs/fetch 命令帧格式） |
+| 无 protocol v2 | git 客户端自动回退 v1，无感 | 需要时 M3 补 |
+| ~~v1 have 协商~~ | 已实现（终态 ACK 语义：有公共提交时 ACK 即终态、同响应内送包） | 组合测试实测过期客户端 pull 正常 |
 | push `no-thin` | 客户端 push 略增流量 | 服务端存储简单性优先 |
 | go-git 服务端 filter 缺失 | 自研（本层 §4） | 已覆盖 |
 | 浅克隆（deepen） | M1 不支持 `shallow` 能力 | M3：投影历史天然可截断，实现浅化很直接 |

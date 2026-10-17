@@ -34,16 +34,36 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	}
 
 	br := bufio.NewReaderSize(r.Body, 64*1024)
+	out := newBufWriter(w)
+
 	var wants []model.OID
+	var haves []model.OID
 	done := false
+	// 无状态 HTTP 协商（对照 remote-curl.c / upload-pack.c get_common_commits）：
+	// 每个 POST = 客户端一次完整写完再读（want [+haves] [+flush] [done]）。
+	// 服务器在 POST 结束时只写**一行**响应——中途写会导致 done 轮出现
+	// 双 ACK，客户端 do{ACK}while(ACK) 会把 PACK 字节当 ACK 行解析
+	// （bad pack header）。done 轮 = 终态 ACK/NAK + pack；协商轮 =
+	// ACK/NAK + flush-pkt。
 	for !done {
-		line, flush, err := ReadPacketText(br)
+		line, _, err := ReadPacketText(br)
 		if err != nil {
-			http.Error(w, "read request: "+err.Error(), http.StatusBadRequest)
+			if len(wants) == 0 && len(haves) == 0 {
+				http.Error(w, "read request: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			// 协商轮（请求体结束、无 done）——对照 upload-pack.c
+			// get_common_commits 的基础模式：有公共提交时 ACK 即终态，
+			// 必须在同一响应内直接送 pack（客户端收到裸 ACK 后立即读包）；
+			// 无公共提交 NAK + flush-pkt 结束本轮，客户端下一 POST 继续。
+			if common := s.firstKnown(r.Context(), vr.Repo, haves); !common.IsZero() {
+				_ = WritePacket(out, []byte("ACK "+string(common)+"\n"))
+				break // 终态 ACK，直接进入 pack 阶段
+			}
+			_ = WritePacket(out, []byte("NAK\n"))
+			_ = WriteFlush(out)
+			_ = out.Flush()
 			return
-		}
-		if flush {
-			continue
 		}
 		switch {
 		case strings.HasPrefix(line, "want "):
@@ -54,7 +74,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 			}
 			wants = append(wants, model.OID(strings.SplitN(fields[0], "\x00", 2)[0]))
 		case strings.HasPrefix(line, "have "):
-			// MVP：忽略 have，应答全量闭包（正确但非最优；增量协商 M2）。
+			haves = append(haves, model.OID(strings.TrimPrefix(line, "have ")))
 		case strings.HasPrefix(line, "filter "):
 			// 未广告 filter 能力，正常客户端不会发送；忽略以防万一。
 		case line == "done":
@@ -62,8 +82,17 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		}
 	}
 
-	out := newBufWriter(w)
-	_ = WritePacket(out, []byte("NAK\n"))
+	if !done && len(wants) > 0 && len(haves) > 0 {
+		// 终态 ACK 已在协商轮写出（break 路径），此处只补 done 轮的终态行。
+	}
+
+	if done {
+		if common := s.firstKnown(r.Context(), vr.Repo, haves); !common.IsZero() {
+			_ = WritePacket(out, []byte("ACK "+string(common)+"\n"))
+		} else {
+			_ = WritePacket(out, []byte("NAK\n"))
+		}
+	}
 
 	if len(wants) == 0 {
 		_ = out.Flush()
@@ -173,4 +202,16 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID)
 		}
 	}
 	return blobs, trees, commits, nil
+}
+
+// firstKnown 返回 haves 中第一个服务端已存在的对象（v1 协商的公共
+// 提交判定；基础 ACK 单个即可——不广告 multi_ack）。批量 have 全未知
+// 时返回零值。
+func (s *Server) firstKnown(ctx context.Context, repo string, haves []model.OID) model.OID {
+	for _, oid := range haves {
+		if _, _, err := s.Objects.Raw(ctx, repo, oid); err == nil {
+			return oid
+		}
+	}
+	return ""
 }
