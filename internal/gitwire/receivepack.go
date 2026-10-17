@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 	"bufio"
 	"io"
 	"log"
@@ -117,7 +116,11 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			continue
 		}
 		if u.New.IsZero() {
-			// ref 删除。
+			// ref 删除：仅根仓库支持（子树视图是派生的，无独立 timeline）。
+			if !vr.Sub.IsRoot() {
+				_ = WritePacket(out, []byte("ng "+u.Name+" deletion in subtree view not supported\n"))
+				continue
+			}
 			tl := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: name}
 			if err := s.Meta.CASHead(r.Context(), tl, u.Old, u.New); err != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+err.Error()+"\n"))
@@ -140,44 +143,50 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			_ = WritePacket(out, []byte("ng "+u.Name+" head object missing\n"))
 			continue
 		}
-		tl := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: name}
-		expected := u.Old
-		// 首次子树 push：timeline 尚不存在，但客户端报的 old 是我们广告过的
-		// 组合投影 head——验证一致后建立 timeline（head=组合头，base=分叉点），
-		// 并以组合头为 expected 继续常规 CAS（docs/01 §5.2）。
-		if _, terr := s.Meta.Timeline(r.Context(), tl); terr != nil {
-			if !expected.IsZero() {
-				if combined, rootHead, cerr := s.subtreeHead(r.Context(), vr); cerr == nil && combined == expected {
-					_ = s.Meta.EnsureTimeline(r.Context(), tl, combined, rootHead)
-					expected = combined
-				}
+
+		if !vr.Sub.IsRoot() {
+			// ④ 子树视图 push：收编进统一 DAG（docs/01 §10）——生成规范
+			// subtree-merge commit（parents=[根head, C 原样]），C 的 hash
+			// 在子树与父视图中保持一致；根 head 前进，视图 tip 随之推进。
+			if aerr := s.adoptSubtreePush(r.Context(), vr, u.Old, u.New); aerr != nil {
+				_ = WritePacket(out, []byte("ng "+u.Name+" "+aerr.Error()+"\n"))
+				continue
 			}
+			_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
+			continue
 		}
-		if err := s.Meta.CASHead(r.Context(), tl, expected, u.New); err != nil {
+
+		// 根仓库：常规 timeline CAS。
+		tl := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: name}
+		if err := s.Meta.CASHead(r.Context(), tl, u.Old, u.New); err != nil {
 			_ = WritePacket(out, []byte("ng "+u.Name+" "+err.Error()+"\n"))
 			continue
 		}
 		_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
-		log.Printf("receive-pack %s: %s@%s → %s", vr.Repo, tl.Anchor, name, u.New)
-
-		// ④ 目录锚点 push 触发向上组装（docs/01 §4.2，M1 同步模式）：
-		// 子树新树挂回根 → synthetic commit 入根时间线 → 根 head 前进。
-		// 上层视图（父目录投影、根仓库）由此看到该提交。
-		if !vr.Sub.IsRoot() {
-			if aerr := s.assembleSubtreePush(r.Context(), vr, u.New); aerr != nil {
-				log.Printf("receive-pack %s: assemble %s: %v", vr.Repo, vr.Sub, aerr)
-			}
-		}
+		log.Printf("receive-pack %s: /%s → %s", vr.Repo, name, u.New)
 	}
 
 	_ = WriteFlush(out)
 	_ = out.Flush()
 }
 
-// assembleSubtreePush 把子树 push 向上组装进根时间线（含 CAS 冲突重试
-// 与 no-op 跳过）。合成对象（新根树路径上的中间树 + synthetic commit）
-// 物化进合成对象层——"对象存储与提交分离"的复合面（docs/01 §4）。
-func (s *Server) assembleSubtreePush(ctx context.Context, vr VirtualRepo, childCommit model.OID) error {
+// adoptSubtreePush 收编子树 push（统一 DAG，docs/01 §10）：
+//
+//	① 校验 old == 当前视图 tip（视图被根推进过则拒绝，客户端先 fetch）
+//	② AdoptSubtreePush 生成 subtree-merge commit（C 原样保留为第二父）
+//	③ 根 head CAS 前进（冲突重试——ReplaceSubtree 幂等，C 不变）
+func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, old, newHead model.OID) error {
+	curTip, rootHead, err := s.subtreeHead(ctx, vr)
+	if err != nil {
+		return err
+	}
+	if curTip.IsZero() {
+		return fmt.Errorf("subtree view %s unavailable (root has no commits)", vr.Sub)
+	}
+	if !old.IsZero() && old != curTip {
+		return storage.ErrNonFastForward
+	}
+
 	info, err := s.Meta.GetRepo(ctx, vr.Repo)
 	if err != nil {
 		return err
@@ -191,35 +200,29 @@ func (s *Server) assembleSubtreePush(ctx context.Context, vr VirtualRepo, childC
 	store := s.Objects.TreeStoreFor(vr.Repo)
 
 	for attempt := 0; attempt < 3; attempt++ {
-		state, terr := s.Meta.Timeline(ctx, rootTL)
-		if terr != nil && !errors.Is(terr, storage.ErrTimelineUnknown) {
-			return terr
-		}
-		expected := state.Head // 未知根时间线 → 零值（生成无父初始根 commit）
-
-		syn, aerr := model.AssembleRoot(store, heads, s.Algo, vr.Repo, rootName, vr.Sub, childCommit, serverIdentity())
+		merge, aerr := model.AdoptSubtreePush(store, s.Algo, vr.Repo, rootName, vr.Sub, newHead, heads)
 		if aerr != nil {
 			return aerr
 		}
-		// no-op 跳过：子树状态与根现状一致时不产生空提交。
-		if !expected.IsZero() {
-			if rootCommit, cerr := store.Commit(expected); cerr == nil && rootCommit.TreeOID == syn.TreeOID {
-				return nil
-			}
-		}
-		oid := syn.OID(s.Algo)
-		s.Objects.PutSynthetic(vr.Repo, oid, model.CommitType, syn.Encode())
-		if err := s.Meta.CASHead(ctx, rootTL, expected, oid); err == nil {
-			log.Printf("assemble %s: %s@%s → root %s (synthetic %s)", vr.Repo, vr.Sub, childCommit, rootName, oid)
+		oid := merge.OID(s.Algo)
+		s.Objects.PutSynthetic(vr.Repo, oid, model.CommitType, merge.Encode())
+		if err := s.Meta.CASHead(ctx, rootTL, rootHead, oid); err == nil {
+			log.Printf("adopt %s: subtree %s push %s → root merge %s (parents [%s %s])",
+				vr.Repo, vr.Sub, newHead, oid, rootHead, newHead)
 			return nil
 		}
-		// 根被并发推进：重读根 head 重算（ReplaceSubtree 幂等）。
+		// 根被并发推进：重读根 head 重算（merge 的 C 侧不变）。
+		state, terr := s.Meta.Timeline(ctx, rootTL)
+		if terr != nil {
+			return terr
+		}
+		rootHead = state.Head
 	}
 	return fmt.Errorf("root head CAS contention after 3 attempts")
 }
 
 // metaHeads 把 MetaStore 适配为模型层的 HeadResolver（未知 timeline
-// 视作零 head——AssembleRoot 据此生成无父的初始根 commit）。
+// 视作零 head——收编时据此把 C 作为唯一父）。
 type metaHeads struct {
 	meta storage.MetaStore
 	ctx  context.Context
@@ -231,10 +234,4 @@ func (m *metaHeads) TimelineHead(tl model.Timeline) (model.TimelineState, error)
 		return model.TimelineState{}, nil
 	}
 	return st, err
-}
-
-
-// serverIdentity 是组装 synthetic commit 的签名身份。
-func serverIdentity() model.Identity {
-	return model.Identity{Name: "banyand", Email: "banyan@banyand.local", When: time.Now().UTC()}
 }

@@ -197,3 +197,35 @@ git 客户端永远只看到 `refs/heads/*`；目录时间线的内部命名不�
 2. **提交并发域按目录分片**：不同目录的提交互不阻塞，天然适配 Scion 的"无锁合并"方向。
 3. **O(变更大小) 的提交成本**：子目录 push 只处理子树 + 路径上的 tree 改写，不遍历整仓库（对标 Scion changeset 的写前日志特性）。
 4. **git 兼容零成本路径**：根投影逐字节兼容；子树投影是纯函数派生数据，可缓存可增量。
+
+## 10. 统一 DAG 提交历史（设计 v2，2026-10-17）
+
+§5 的 split 投影在实测中暴露与三条硬要求的根本冲突：**git 的 commit hash
+绑定 (root tree, parents, 签名, message)**，因此"同一变更跨子树/父视图
+同 hash" ⇔ "两视图共享同一批 commit 对象" ⇔ **统一 DAG**。任何重写历史
+（split 投影、`git subtree split` 同理）必然换 hash——这是不可能三角。
+
+### 三条要求 → 三个原语（internal/model/unified.go）
+
+| 要求 | 原语 | 机制 |
+|---|---|---|
+| ① hash 兼容 git 设计 | 全部对象纯 git 规范编码 | 新路径不写任何 `banyan-*` 私有头（旧投影头弃用） |
+| ② 子树与父树 hash 一致 | **SubtreeTip**（视图 tip） | tree=根提交在 X 处的子树、parent=根提交本身；确定性（签名固定、时间取根提交 committer 时间）⇒ 同 (rootOID, X) 恒同 hash。祖先即统一 DAG，**父树历史以原始 hash 进入子树** |
+| ③ 子树提交并入父历史 | **AdoptSubtreePush**（收编式组装） | 规范 subtree-merge commit：tree=ReplaceSubtree(根树, X, C.tree)、parents=[根head, **C 原样**]——C 的 hash 在两个视图中完全一致 |
+
+"仅父树修改到子树的提交才展示在子树中"由**服务端 log RPC** 承担
+（`/api/v1/log?path=X`，rpc/log.go）：X 视角归一（树不含路径首段 ⇒ 该树
+即 X 视角根树，处理子树侧提交的混合作用域）后按"相对任一父变化"过滤——
+hash 与视图完全一致，过滤只是查询语义（Scion："问题查询是 RPC"）。
+
+### 权衡记录
+
+| 维度 | v1 split 投影（弃用于读路径） | v2 统一 DAG |
+|---|---|---|
+| 跨视图 hash | ✗ 重写换 hash | ✓ 同一批对象 |
+| 子树 push 在父视图 | synthetic 包装（换 hash） | C 本尊为 merge 第二父 |
+| 子树内展示过滤 | 天然（历史即过滤后） | 服务端 log RPC / 文件级 pathspec |
+| 子树 clone 带宽 | 小（仅 X 对象闭包） | 全历史（M3 服务端 subtree filter + promisor 解决） |
+| 子树仓 `git log -- .` | 有效过滤 | 不过滤（祖先树是全仓，路径空间不匹配）——已记录 |
+
+SplitHistory/AssembleRoot 保留为派生分析用途，不再服务读写路径。

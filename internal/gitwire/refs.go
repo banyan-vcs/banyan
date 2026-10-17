@@ -55,9 +55,12 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 		return refs, nil
 	}
 
-	// 子树仓库：组合投影 head（docs/01 §5.2 split(根) ⊕ 本地提交）。
+	// 子树仓库：视图 tip（统一 DAG，docs/01 §10）。
 	head, _, err := s.subtreeHead(ctx, vr)
 	if err != nil {
+		if errors.Is(err, model.ErrObjectNotFound) {
+			return nil, nil // 该路径在根提交树中不存在：空仓库语义
+		}
 		return nil, err
 	}
 	if head.IsZero() {
@@ -69,10 +72,11 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 	}, nil
 }
 
-// subtreeHead 返回子树仓库的组合 head 与当前根 head。
-// 组合规则：本地 timeline（push 到 /tree/… 锚定而来）有提交时优先，
-// 否则为投影 head；本地提交的 parent 链自然挂接投影链（分叉语义
-// 由投影纯函数性保证，docs/01 §7）。
+// subtreeHead 返回子树视图 tip 与当前根 head（统一 DAG 设计）：
+// tip = SubtreeTip(根 head, path)——tree=子树内容、parent=根提交，
+// 祖先即统一 DAG，父树历史以原始 hash 进入子树视图（展示过滤交给
+// git 原生 `git log -- .`）。子树 push 经 AdoptSubtreePush 收编后根
+// head 前进，tip 随之推进——无独立子树 timeline。
 func (s *Server) subtreeHead(ctx context.Context, vr VirtualRepo) (head, rootHead model.OID, err error) {
 	info, err := s.Meta.GetRepo(ctx, vr.Repo)
 	if err != nil {
@@ -91,20 +95,16 @@ func (s *Server) subtreeHead(ctx context.Context, vr VirtualRepo) (head, rootHea
 		return "", "", err
 	}
 	rootHead = state.Head
-	head, err = s.projection(ctx, vr, rootHead)
+	head, err = s.subtreeTip(vr, rootHead)
 	if err != nil {
 		return "", "", err
-	}
-	if local, lerr := s.Meta.Timeline(ctx, model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: defaultBranch}); lerr == nil && !local.Head.IsZero() {
-		head = local.Head
 	}
 	return head, rootHead, nil
 }
 
-// projection 计算并缓存子树投影（docs/01 §5.2）：SplitHistory 得到投影
-// commit 链，物化进合成对象存储，返回投影 head OID。投影是纯函数 ⇒
-// 以 (repo, sub, rootHead) 为缓存键，push 前进后自然失效。
-func (s *Server) projection(_ context.Context, vr VirtualRepo, rootHead model.OID) (model.OID, error) {
+// subtreeTip 计算并缓存视图 tip：SubtreeTip 是 (rootOID, path) 的纯
+// 函数（确定性 hash），物化进合成对象层后可被 fetch 的闭包遍历命中。
+func (s *Server) subtreeTip(vr VirtualRepo, rootHead model.OID) (model.OID, error) {
 	key := projectionKey{repo: vr.Repo, sub: vr.Sub, root: rootHead}
 	s.projMu.Lock()
 	if oid, ok := s.projCache[key]; ok {
@@ -113,24 +113,16 @@ func (s *Server) projection(_ context.Context, vr VirtualRepo, rootHead model.OI
 	}
 	s.projMu.Unlock()
 
-	res, err := model.SplitHistory(s.Objects.Lookup(vr.Repo), s.Algo, rootHead, vr.Sub)
+	tip, err := model.SubtreeTip(s.Objects.Lookup(vr.Repo), s.Algo, rootHead, vr.Sub)
 	if err != nil {
 		return "", err
 	}
-	if len(res.Commits) == 0 {
-		s.projMu.Lock()
-		s.projCache[key] = ""
-		s.projMu.Unlock()
-		return "", nil
-	}
-	for _, pc := range res.Commits {
-		s.Objects.PutSynthetic(vr.Repo, pc.OID(s.Algo), model.CommitType, pc.Encode())
-	}
-	head := res.Head
+	oid := tip.OID(s.Algo)
+	s.Objects.PutSynthetic(vr.Repo, oid, model.CommitType, tip.Encode())
 	s.projMu.Lock()
-	s.projCache[key] = head
+	s.projCache[key] = oid
 	s.projMu.Unlock()
-	return head, nil
+	return oid, nil
 }
 
 type projectionKey struct {

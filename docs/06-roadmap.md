@@ -38,7 +38,8 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 - [ ] MetaStore 持久化实现（SQLite/MySQL，WAL 语义）
 - [ ] ShardStore 远端实现（HTTP 节点间协议）+ rendezvous 放置 + R 副本
 - [ ] commit-graph + merge-base（generation number）
-- [ ] 路径历史 / log / diff RPC
+- [x] log RPC（/api/v1/log，路径过滤 + hash 一致视图）
+- [ ] 路径历史 / diff RPC
 - [x] 全局对象索引批量定位 + pack cache（内存层 M1 已落地；CommitGraph/TreeMemo 派生索引见 docs/02 §1.3）
 
 ## M3 · 派生数据与下载优化

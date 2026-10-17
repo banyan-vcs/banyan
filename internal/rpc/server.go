@@ -24,7 +24,8 @@ func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo mode
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/objects", s.handleObjects)
 	mux.HandleFunc("/api/v1/timelines", s.handleTimelines)
-	// TODO(M2): /api/v1/log  /api/v1/diff  /api/v1/file-history
+	mux.HandleFunc("/api/v1/log", s.handleLog)
+	// TODO(M2): /api/v1/diff  /api/v1/file-history
 	// TODO(M3): /api/v1/blame
 }
 
