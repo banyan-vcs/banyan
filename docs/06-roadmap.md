@@ -35,7 +35,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 
 ## M2 · 分布式与元数据落地
 
-- [ ] MetaStore 持久化实现（SQLite/MySQL，WAL 语义）
+- [x] MetaStore 持久化（SQLite：接口四角色分权 docs/02 §2.1、双后端一致性测试、重启持久化 T17；MySQL/PG 为生产接替路径）
 - [ ] ShardStore 远端实现（HTTP 节点间协议）+ rendezvous 放置 + R 副本
 - [ ] commit-graph + merge-base（generation number）
 - [x] log RPC（/api/v1/log，路径过滤 + hash 一致视图）

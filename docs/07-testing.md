@@ -35,6 +35,7 @@
 | T14 | `TestPartialCloneFilterFallback` | 未广告 filter → 警告 + 全量回退（对象集=全量 clone）+ promisor 配置下后续 fetch 不破坏 |
 | T15 | `TestShallowClone` | **浅化协议**：depth 1/2/超深（空边界=裸 flush）+ 子树投影空间浅化/unshallow（docs/03 §3a 参考流对照） |
 | T16 | `TestShallowFetchDeepen` | 浅仓增量：普通 fetch（上报边界裁剪、浅文件不变）/ 加深（边界下移+unshallow 回显）/ unshallow 清除 |
+| T17 | `TestSQLiteMetaRestartPersistence` | **M2 持久化**：整进程重启后仓库/pack/对象索引/时间线头全存活；冷启动 nil-index 崩溃回归；重启后可继续 push |
 
 ## 运行
 

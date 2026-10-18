@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -15,14 +16,14 @@ import (
 // locate (global index) → local cache → cross-node fetch → decode objects.
 // It also implements model.ObjectLookup for direct model-layer assembly/projection use.
 type ObjectService struct {
-	Meta   MetaStore
-	Local  *LocalShardStore
-	Nodes  []Node
-	Algo   model.HashAlgo
+	Meta  MetaStore
+	Local *LocalShardStore
+	Nodes []Node
+	Algo  model.HashAlgo
 
-	mu    sync.Mutex
-	cache map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result (LRU is M2's business)
-	packOrder map[string]map[model.OID][]model.OID // repo → packOID → object list (whole-pack direct serve detection)
+	mu        sync.Mutex
+	cache     map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result (LRU is M2's business)
+	packOrder map[string]map[model.OID][]model.OID  // repo → packOID → object list (whole-pack direct serve detection)
 
 	synthMu sync.Mutex
 	synth   map[string]map[model.OID]synthObject // repo → oid → server-synthesized object (projection commits etc., docs/01 §5.2)
@@ -50,14 +51,40 @@ func NewObjectService(meta MetaStore, local *LocalShardStore, nodes []Node, algo
 	}
 }
 
-// PutSynthetic materializes a server-synthesized object (idempotent: content-addressed).
+// PutSynthetic materializes a server-synthesized object (idempotent:
+// content-addressed). Write-through: the first write also persists the object
+// as a single-object pack, so timeline heads referencing synthetics (adoption
+// merges, thin commits, projections) survive a restart. Re-materialization
+// dedups via the in-memory table; pack CAS keeps re-ingest idempotent. The
+// per-object fragments are repack's consolidation job (docs/02 §5, M3).
 func (s *ObjectService) PutSynthetic(repo string, oid model.OID, t model.ObjectType, data []byte) {
 	s.synthMu.Lock()
-	defer s.synthMu.Unlock()
 	if s.synth[repo] == nil {
 		s.synth[repo] = map[model.OID]synthObject{}
 	}
+	_, exists := s.synth[repo][oid]
 	s.synth[repo][oid] = synthObject{Type: t, Data: data}
+	s.synthMu.Unlock()
+	if exists {
+		return
+	}
+	var blobs, trees, commits map[model.OID][]byte
+	switch t {
+	case model.BlobType:
+		blobs = map[model.OID][]byte{oid: data}
+	case model.TreeType:
+		trees = map[model.OID][]byte{oid: data}
+	default:
+		commits = map[model.OID][]byte{oid: data}
+	}
+	var buf bytes.Buffer
+	if err := EncodePack(&buf, blobs, trees, commits); err != nil {
+		log.Printf("synth %s/%s: encode: %v (memory-only)", repo, oid, err)
+		return
+	}
+	if _, err := s.IngestPack(context.Background(), repo, buf.Bytes()); err != nil {
+		log.Printf("synth %s/%s: persist: %v (memory-only)", repo, oid, err)
+	}
 }
 
 // Raw is the unified read: synthetic objects first, then pack location via
@@ -224,7 +251,7 @@ type synthTreeStore struct {
 	repo   string
 }
 
-func (a *synthTreeStore) Blob(oid model.OID) ([]byte, error)  { return a.lookup.Blob(oid) }
+func (a *synthTreeStore) Blob(oid model.OID) ([]byte, error)      { return a.lookup.Blob(oid) }
 func (a *synthTreeStore) Tree(oid model.OID) (*model.Tree, error) { return a.lookup.Tree(oid) }
 func (a *synthTreeStore) Commit(oid model.OID) (*model.AnchoredCommit, error) {
 	return a.lookup.Commit(oid)

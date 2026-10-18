@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 )
@@ -28,8 +29,8 @@ type repoIndex struct {
 	trees   map[model.OID][]model.TreeEntry
 	// Lightweight commit index (docs/01 §11, design v3): git oid → (tree edge, bmsg ref).
 	// Envelopes dedupe by content addressing; built at push with per-commit byte-level render verification (renderFails should stay 0).
-	records    map[model.OID]*model.CommitRecord
-	msgs       map[model.OID][]byte
+	records     map[model.OID]*model.CommitRecord
+	msgs        map[model.OID][]byte
 	renderFails int
 }
 
@@ -93,16 +94,20 @@ func (s *ObjectService) CommitIndexStats(repo string) (commits, uniqueMsgs, rend
 }
 
 // CommitInfo fetches commit structure: an index hit returns directly; a miss
-// (synthetic projection commits etc.) is parsed once and back-filled into the index.
+// (synthetic projection commits, or a cold process before the first push —
+// e.g. after a restart with persistent metadata) is parsed once and
+// back-filled into the index.
 func (s *ObjectService) CommitInfo(repo string, oid model.OID) (*CommitInfo, error) {
 	s.idxMu.Lock()
-	if ci, ok := s.idx[repo].commits[oid]; ok {
-		s.idxMu.Unlock()
-		return ci, nil
+	if ri := s.idx[repo]; ri != nil { // nil on a cold start: must not deref
+		if ci, ok := ri.commits[oid]; ok {
+			s.idxMu.Unlock()
+			return ci, nil
+		}
 	}
 	s.idxMu.Unlock()
 
-	t, raw, err := s.Raw(nil, repo, oid)
+	t, raw, err := s.Raw(context.Background(), repo, oid)
 	if err != nil {
 		return nil, err
 	}
@@ -127,13 +132,15 @@ func (s *ObjectService) CommitInfo(repo string, oid model.OID) (*CommitInfo, err
 // once and back-filled. The returned slice is index-owned; callers must not modify it.
 func (s *ObjectService) TreeEntries(repo string, oid model.OID) ([]model.TreeEntry, error) {
 	s.idxMu.Lock()
-	if e, ok := s.idx[repo].trees[oid]; ok {
-		s.idxMu.Unlock()
-		return e, nil
+	if ri := s.idx[repo]; ri != nil { // nil on a cold start: must not deref
+		if e, ok := ri.trees[oid]; ok {
+			s.idxMu.Unlock()
+			return e, nil
+		}
 	}
 	s.idxMu.Unlock()
 
-	t, raw, err := s.Raw(nil, repo, oid)
+	t, raw, err := s.Raw(context.Background(), repo, oid)
 	if err != nil {
 		return nil, err
 	}

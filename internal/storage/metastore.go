@@ -3,26 +3,48 @@ package storage
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// MetaStore is the central metadata service interface (docs/02 §2): global
-// object index, pack registry, timeline heads (CAS), WAL serialization point.
-// M1 in-memory / M2 persistent implementations are swappable; callers can't tell.
+// MetaStore is the central metadata service interface (docs/02 §2.1): a
+// composite of four role interfaces, each with its own data shape and access
+// pattern, so a backend can swap per block later without gitwire noticing.
+// M1 in-memory / M2 SQLite implementations are swappable; callers can't tell.
 type MetaStore interface {
-	// --- repo registry ---
+	RepoRegistry
+	PackRegistry
+	ObjectIndex
+	TimelineStore
+}
+
+// RepoRegistry is the repo table.
+type RepoRegistry interface {
 	CreateRepo(ctx context.Context, repo string, algo model.HashAlgo) error
 	GetRepo(ctx context.Context, repo string) (RepoInfo, error)
+}
 
-	// --- global object index (distributed lookup entry, docs/02 §1.3) ---
+// PackRegistry is the central pack table: pack → replica nodes. Packs are
+// immutable, so registration is INSERT-ONLY and idempotent (first writer
+// wins). GetPack/ListPacks serve cross-node pack fetch and repack.
+type PackRegistry interface {
 	// PutPack registers a new shard: object → (packOID, nodes), and registers the pack.
 	PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error
-	// LocateObjects batch-locates: oid → its pack and node.
-	LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]ObjectLocation, error)
+	GetPack(ctx context.Context, repo string, packOID model.OID) (PackInfo, error)
+	ListPacks(ctx context.Context, repo string) ([]PackInfo, error)
+}
 
-	// --- timeline heads (the sole serialization point, CAS) ---
+// ObjectIndex is the global object index (distributed lookup entry,
+// docs/02 §1.3): batch point lookup oid → (pack, node).
+type ObjectIndex interface {
+	LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]ObjectLocation, error)
+}
+
+// TimelineStore is the branch ref-map: (repo, anchor, name) → {head, base}.
+// CASHead is the sole serialization point for ref updates.
+type TimelineStore interface {
 	Timeline(ctx context.Context, tl model.Timeline) (model.TimelineState, error)
 	// CASHead advances the head via optimistic lock; an expected mismatch
 	// returns ErrNonFastForward. An all-zero next deletes the timeline.
@@ -39,20 +61,27 @@ type ObjectLocation struct {
 	NodeID  string
 }
 
+// PackInfo is one central-pack record.
+type PackInfo struct {
+	PackOID model.OID
+	Nodes   []string // replica nodes, sorted
+}
+
 // RepoInfo is repo registration info.
 type RepoInfo struct {
-	ID      string
-	Algo    model.HashAlgo
+	ID            string
+	Algo          model.HashAlgo
 	DefaultBranch string
 }
 
 // ErrNonFastForward mirrors git push non-fast-forward (docs/01 §4.3).
 var ErrNonFastForward = fmt.Errorf("non-fast-forward: timeline head moved")
 
-// ErrRepoNotFound / ErrTimelineUnknown.
+// ErrRepoNotFound / ErrTimelineUnknown / ErrPackNotFound.
 var (
-	ErrRepoNotFound     = fmt.Errorf("repo not found")
-	ErrTimelineUnknown  = fmt.Errorf("timeline unknown")
+	ErrRepoNotFound    = fmt.Errorf("repo not found")
+	ErrTimelineUnknown = fmt.Errorf("timeline unknown")
+	ErrPackNotFound    = fmt.Errorf("pack not found")
 )
 
 // MemoryMetaStore is the single-node in-memory implementation (M1). WAL semantics
@@ -60,8 +89,8 @@ var (
 type MemoryMetaStore struct {
 	mu        sync.Mutex
 	repos     map[string]RepoInfo
-	packs     map[string]map[model.OID][]string             // repo → packOID → nodes
-	index     map[string]map[model.OID]ObjectLocation       // repo → oid → location
+	packs     map[string]map[model.OID][]string       // repo → packOID → nodes
+	index     map[string]map[model.OID]ObjectLocation // repo → oid → location
 	timelines map[string]map[model.Timeline]model.TimelineState
 }
 
@@ -123,6 +152,27 @@ func (m *MemoryMetaStore) LocateObjects(_ context.Context, repo string, oids []m
 			out[oid] = loc
 		}
 	}
+	return out, nil
+}
+
+func (m *MemoryMetaStore) GetPack(_ context.Context, repo string, packOID model.OID) (PackInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	nodes, ok := m.packs[repo][packOID]
+	if !ok {
+		return PackInfo{}, fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
+	}
+	return PackInfo{PackOID: packOID, Nodes: append([]string(nil), nodes...)}, nil
+}
+
+func (m *MemoryMetaStore) ListPacks(_ context.Context, repo string) ([]PackInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []PackInfo
+	for packOID, nodes := range m.packs[repo] {
+		out = append(out, PackInfo{PackOID: packOID, Nodes: append([]string(nil), nodes...)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PackOID < out[j].PackOID })
 	return out, nil
 }
 

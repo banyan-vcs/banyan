@@ -679,6 +679,83 @@ func TestRaceWindowStalePushProtection(t *testing.T) {
 	}
 }
 
+// --- T17 SQLite metadata persistence: full server restart keeps all state ---
+// The M2 headline: with -meta sqlite, repos, packs, object index, and timeline
+// heads (branch ref-map incl. subtree timelines) live in one SQLite file, and
+// the shard root on disk — a brand-new process serves clones immediately.
+func TestSQLiteMetaRestartPersistence(t *testing.T) {
+	needGit(t)
+	dir := t.TempDir()
+	shardRoot := filepath.Join(dir, "shards")
+	dbPath := filepath.Join(dir, "meta.db")
+
+	newSrv := func(t *testing.T) *server {
+		meta, err := storage.NewSQLiteMetaStore(dbPath)
+		if err != nil {
+			t.Fatalf("open sqlite meta: %v", err)
+		}
+		t.Cleanup(func() { _ = meta.Close() })
+		local := storage.NewLocalShardStore(shardRoot)
+		nodes := []storage.Node{{ID: "t1", Local: true}}
+		objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
+		mux := http.NewServeMux()
+		gitwire.NewServer(meta, objects, model.SHA1).Register(mux)
+		rpc.NewServer(meta, objects, model.SHA1).Register(mux)
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return &server{Server: srv}
+	}
+
+	// Instance 1: seed + advance root + a subtree adoption push.
+	s1 := newSrv(t)
+	src := seedRepo(t, s1, "t17")
+	write(t, filepath.Join(src, "README.md"), "readme-v2\n")
+	git(t, src, "commit", "-qam", "t17: c2")
+	git(t, src, "push", "-q", s1.repoURL("t17"), "main")
+
+	sub := cloneRepo(t, s1, s1.treeURL("t17", "lib/nested"))
+	write(t, filepath.Join(sub, "SHARED.txt"), "base\nfrom-sub\n")
+	git(t, sub, "commit", "-qam", "t17: sub change")
+	git(t, sub, "push", "-q", "origin", "main")
+	c2Head := headOf(t, src)
+	subHead := headOf(t, sub)
+
+	// Full restart: nothing survives but the SQLite file and the shard root.
+	s1.Close()
+
+	s2 := newSrv(t)
+	root := cloneRepo(t, s2, s2.repoURL("t17"))
+	if got := readFile(t, filepath.Join(root, "README.md")); got != "readme-v2\n" {
+		t.Fatalf("post-restart root README = %q", got)
+	}
+	if !hasCommit(t, root, c2Head) {
+		t.Fatal("post-restart root missing c2")
+	}
+	if got := readFile(t, filepath.Join(root, "lib", "nested", "SHARED.txt")); got != "base\nfrom-sub\n" {
+		t.Fatalf("post-restart root missing subtree adoption: %q", got)
+	}
+	// Subtree view + its timeline survive too.
+	sub2 := cloneRepo(t, s2, s2.treeURL("t17", "lib/nested"))
+	if got := readFile(t, filepath.Join(sub2, "SHARED.txt")); got != "base\nfrom-sub\n" {
+		t.Fatalf("post-restart subtree view = %q", got)
+	}
+	if !hasCommit(t, sub2, subHead) {
+		t.Fatal("post-restart subtree history missing the pushed commit")
+	}
+	// And the server keeps accepting new pushes after restart (src must
+	// rebase first: the adoption merge advanced root main past src's c2).
+	git(t, src, "pull", "--rebase", s2.repoURL("t17"), "main")
+	write(t, filepath.Join(src, "README.md"), "readme-v3\n")
+	git(t, src, "commit", "-qam", "t17: post-restart")
+	git(t, src, "push", "-q", s2.repoURL("t17"), "main")
+	root3 := cloneRepo(t, s2, s2.repoURL("t17"))
+	if got := readFile(t, filepath.Join(root3, "README.md")); got != "readme-v3\n" {
+		t.Fatalf("post-restart push lost: %q", got)
+	}
+	fsckClean(t, root3)
+	fsckClean(t, sub2)
+}
+
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		return s[:i]

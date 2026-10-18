@@ -76,6 +76,48 @@ MetaStore
 - **head CAS**：`UPDATE timelines SET head=:new WHERE repo=:r AND anchor=:a AND name=:n AND head=:expected`——乐观锁，失败即非 fast-forward。
 - **接口即抽象**：Go 接口 `storage.MetaStore`，M1 内存实现 / M2 落地实现可替换，上层（model/gitwire）不感知。
 
+### 2.1 接口分权（M2 落地，2026-10-18）
+
+`MetaStore` 拆为四个角色接口的组合——每块数据形态与访问模式不同，未来可按块更换后端而 gitwire 不感知：
+
+```go
+type RepoRegistry   interface { CreateRepo, GetRepo }                  // repo registry
+type PackRegistry   interface { PutPack, GetPack, ListPacks }          // central packs: pack → replica nodes
+type ObjectIndex    interface { LocateObjects }                        // object lookup: oid → (pack, node[, offset])
+type TimelineStore  interface { Timeline, CASHead, EnsureTimeline, ListTimelines }  // branch ref-map
+type MetaStore      interface { 上述全部 }                              // composite (consumers keep the whole)
+```
+
+- **分支 ref-map**：`(repo, anchor, name)` 即 ref 的唯一键——根 anchor 下 name=分支；子树 anchor 下 = 目录时间线。`ListTimelines(repo, anchor)` 服务广告（每次 clone/fetch 都要），是唯一范围扫描。
+- **中央 pack**：`PutPack` 幂等注册（pack 不可变 ⇒ INSERT-ONLY）；`GetPack/ListPacks` 服务跨节点取包与 repack 枚举。
+- **对象检索**：`LocateObjects` 批量点查（wants → pack 集）。**offset 列冗余**（省一次 idx 往返）为 schema 预留、M3 填充。
+
+### 2.2 关系型 vs KV：M2 落地选型
+
+按数据人口与访问模式逐表分析（选型的第一性依据）：
+
+| 表 | 行数（大仓目标） | 可变性 | 主要访问 |
+|---|---|---|---|
+| repos | 10^0–2 | 极少 | 点查 |
+| timelines（ref-map） | 10^1–4 / repo | **CAS 头更新（热）** | 点查 + **前缀枚举（广告）** |
+| packs | 10^2–5 / repo | insert-only | 点查 + 枚举 |
+| objects（对象索引） | 10^6–9+ | **insert-only，永不变**（pack CAS ⇒ 映射不可变） | 批量点查 |
+
+- **CAS（RMW 线性化）**：ref-map 头推进是读-比-写，天然要事务。关系库一行 `BEGIN IMMEDIATE … UPDATE … WHERE head=:expected` 即得；KV 需单键事务或客户端 CAS 循环拼装，各库方言不一。
+- **枚举/范围扫描**：广告路径 `ListTimelines(repo, anchor)` 是前缀扫描——关系库 `WHERE repo=? AND anchor=?` 直达；KV 要靠键编码（repo+anchor 作前缀）自建，且失去运维期 ad-hoc 查询能力（排障成本）。
+- **规模压力只有一张表**：objects 的"insert-only + 纯点查"正是 LSM/KV 的教科书负载；B-tree 关系库在 10^9 行量级写放大 ~3–5×。但 M2 单机区间（≤10^8）SQLite 批量插入 + `WITHOUT ROWID` 聚簇主键完全胜任，且该表已隔离为 `ObjectIndex` 独立接口——亿级以上时**单独**毕业到 KV/LSM（Pebble/RocksDB 类），控制面（ref-map/pack/事务）留在关系库。
+- **运维形态**：SQLite = 单文件 + WAL + 复制即备份，与"单写者元数据"（§2 线性化设计）一一对应；MySQL/PG 是多进程同型（§6 生产路径不变）。
+
+**结论：M2 选关系型（SQLite 起步，MySQL/PG 平滑接替）；KV 不作整体首选**——其优势区（亿级 insert-only 点查）目前仅 objects 一张表，且已通过接口隔离预留迁移路径；把 ref-map 的 CAS 与枚举塞进 KV 是用短板换长板。
+
+### 2.3 SQLite 实现要点
+
+- 驱动 `modernc.org/sqlite`（纯 Go、无 cgo——OS 无关，见 AGENTS.md）。
+- PRAGMA：`journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=5000`。
+- `objects` 表 `WITHOUT ROWID`（主键聚簇，点查即索引扫描）；插入按 500 行/事务分块。
+- CAS：`BEGIN IMMEDIATE` 内 SELECT-比-UPDATE/DELETE，失败回滚映射 `ErrNonFastForward`（与 git push 语义一致，docs/01 §4.3）。
+- 幂等：packs/objects 一律 `INSERT OR IGNORE`（首写者胜；pack 不可变 ⇒ 无冲突语义）。
+
 ## 3. 读路径（服务一次 fetch）
 
 ```
@@ -145,5 +187,6 @@ push pack 通常小而碎（一次 push 一个 pack），长期累积会拖垮�
 | rendezvous / 副本放置 | `internal/storage/shard.go`（完整实现） |
 | ShardStore 接口 + 本地盘实现 | `internal/storage/shardstore.go` |
 | pack/idx 读写封装 | `internal/storage/packfile.go` |
-| MetaStore 接口 + 内存实现 | `internal/storage/metastore.go` |
+| MetaStore 接口（四角色组合）+ 内存实现 | `internal/storage/metastore.go` |
+| MetaStore SQLite 实现（WAL + IMMEDIATE CAS） | `internal/storage/metastore_sqlite.go` |
 | repack 骨架 | `internal/storage/repack.go` |
