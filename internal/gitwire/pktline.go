@@ -1,7 +1,7 @@
-// Package gitwire 实现 git 兼容层（docs/03-git-compat.md）：
-// Smart HTTP v1 端点、upload-pack/receive-pack 会话、虚拟子树仓库路由、
-// 服务端 filter。协议行为基准：git 源码 upload-pack.c / receive-pack.c /
-// http-backend.c 与 Documentation/technical/ 下协议文档。
+// Package gitwire implements the git compatibility layer (docs/03-git-compat.md):
+// Smart HTTP v1 endpoints, upload-pack/receive-pack sessions, virtual (subtree) repo routing,
+// server-side filter. Protocol behavior baseline: git sources upload-pack.c / receive-pack.c /
+// http-backend.c and the protocol docs under Documentation/technical/.
 package gitwire
 
 import (
@@ -10,12 +10,12 @@ import (
 	"io"
 )
 
-// pkt-line 编解码（gitprotocol-common 语义）：
+// pkt-line encoding/decoding (gitprotocol-common semantics):
 //
-//	<pkt-len> <payload>     pkt-len 含 4 字节长度本身，十六进制
+//	<pkt-len> <payload>     pkt-len includes the 4 length bytes themselves, hexadecimal
 //	0000                    flush-pkt
-//	0001                    delim-pkt（v2 用，v1 备而不用）
-//	0002                    response-end（v2）
+//	0001                    delim-pkt (v2; reserved but unused in v1)
+//	0002                    response-end (v2)
 
 const (
 	pktFlush = 0
@@ -23,7 +23,7 @@ const (
 	maxPktLen = 65520
 )
 
-// WritePacket 写一条数据 pkt。
+// WritePacket writes one data pkt.
 func WritePacket(w io.Writer, payload []byte) error {
 	if len(payload) > maxPktLen-4 {
 		return fmt.Errorf("pkt-line: payload too large (%d)", len(payload))
@@ -35,13 +35,13 @@ func WritePacket(w io.Writer, payload []byte) error {
 	return err
 }
 
-// WriteFlush 写 flush-pkt。
+// WriteFlush writes a flush-pkt.
 func WriteFlush(w io.Writer) error {
 	_, err := io.WriteString(w, "0000")
 	return err
 }
 
-// ReadPacket 读一条 pkt。返回 (payload, isFlush, err)。
+// ReadPacket reads one pkt. Returns (payload, isFlush, err).
 func ReadPacket(r *bufio.Reader) ([]byte, bool, error) {
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
@@ -64,7 +64,7 @@ func ReadPacket(r *bufio.Reader) ([]byte, bool, error) {
 	return payload, false, nil
 }
 
-// ReadPacketText 读一条文本 pkt（去尾换行）。
+// ReadPacketText reads one text pkt (strips the trailing newline).
 func ReadPacketText(r *bufio.Reader) (string, bool, error) {
 	b, flush, err := ReadPacket(r)
 	if err != nil || flush {

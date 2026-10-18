@@ -14,24 +14,24 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// serveReceivePack 服务 push（docs/03 §5，写路径 docs/02 §4）。
+// serveReceivePack serves push (docs/03 §5, write path docs/02 §4).
 //
-// v1 会话（对照 receive-pack.c）：
-//	客户端 POST body：
-//	  <old> <new> <refname> [caps]     ← ref 命令行，能力在首条尾部
+// v1 session (mirrors receive-pack.c):
+//	client POST body:
+//	  <old> <new> <refname> [caps]     ← ref command lines, capabilities trail the first one
 //	  ...
 //	  flush
-//	  packfile bytes（纯删除 push 无 pack 段）
-//	服务端：
-//	  ① pack 校验入库（分片 CAS，不解散）
-//	  ② 校验 new head 在 pack 中且为 commit
-//	  ③ head CAS（全零 old=新建，全零 new=删除；失败报 non-fast-forward）
-//	  ④ report-status 回执
+//	  packfile bytes (delete-only pushes carry no pack section)
+//	server:
+//	  ① pack validation and ingest (chunked CAS, not disassembled)
+//	  ② verify the new head is in the pack and is a commit
+//	  ③ head CAS (all-zero old = create, all-zero new = delete; failure reports non-fast-forward)
+//	  ④ report-status receipt
 func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr VirtualRepo) {
 	w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	// demo 友好：push 到不存在的仓库时自动建仓（M2 收紧为 ACL 策略）。
+	// Demo-friendly: auto-create the repo when pushing to a missing repo (M2 will tighten to ACL policy).
 	if _, err := s.Meta.GetRepo(r.Context(), vr.Repo); err != nil {
 		if err := s.Meta.CreateRepo(r.Context(), vr.Repo, s.Algo); err != nil {
 			http.Error(w, "create repo: "+err.Error(), http.StatusInternalServerError)
@@ -57,7 +57,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			sawFlush = true
 			break
 		}
-		// 能力块挂在首条命令行 "\x00<caps>" 之后，先截断再解析。
+		// The capability block trails the first command line as "\x00<caps>"; truncate before parsing.
 		cmd, _, _ := strings.Cut(line, "\x00")
 		fields := strings.Fields(cmd)
 		if len(fields) != 3 {
@@ -71,7 +71,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		})
 	}
 
-	// pack 段：flush 之后到 body 结束（纯删除 push 为空）。
+	// Pack section: after the flush until body end (empty for delete-only pushes).
 	packBytes, err := io.ReadAll(br)
 	if err != nil {
 		http.Error(w, "read pack: "+err.Error(), http.StatusBadRequest)
@@ -88,7 +88,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		_ = out.Flush()
 	}
 
-	// ① pack 解码 + 分片入库（无 pack 且存在非删除更新时报错）。
+	// ① pack decode + chunked ingest (error if no pack yet non-delete updates exist).
 	var dp *storage.DecodedPack
 	if len(packBytes) > 0 {
 		dp, err = storage.DecodePack(packBytes)
@@ -102,8 +102,8 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		}
 	}
 
-	// ②③ 逐 ref 校验 + head CAS。report-status 规定顺序：
-	// 第一条 pkt 是 "unpack ok"，其后才是各 ref 状态（对照 receive-pack.c）。
+	// ②③ per-ref validation + head CAS. report-status mandates the order:
+	// the first pkt is "unpack ok", followed by per-ref statuses (mirrors receive-pack.c).
 	_ = WritePacket(out, []byte("unpack ok\n"))
 	for _, u := range updates {
 		if !strings.HasPrefix(u.Name, "refs/heads/") {
@@ -116,7 +116,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			continue
 		}
 		if u.New.IsZero() {
-			// ref 删除：仅根仓库支持（子树视图是派生的，无独立 timeline）。
+			// ref deletion: root repo only (subtree views are derived, no separate timeline).
 			if !vr.Sub.IsRoot() {
 				_ = WritePacket(out, []byte("ng "+u.Name+" deletion in subtree view not supported\n"))
 				continue
@@ -129,8 +129,8 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
 			continue
 		}
-		// new head 必须在本次 pack 中且为 commit（对象已在 pack 里的
-		// 重复 push 场景：也接受已入库的对象——查全局索引兜底）。
+		// The new head must be in this pack and be a commit (for the re-push case where
+		// the object is already in a pack: also accept already-ingested objects — global-index fallback).
 		if dp != nil {
 			if _, ok := dp.Commits[u.New]; !ok {
 				if _, _, rerr := s.Objects.Raw(r.Context(), vr.Repo, u.New); rerr != nil {
@@ -144,9 +144,9 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		}
 
 		if !vr.Sub.IsRoot() {
-			// ④ 子树视图 push：收编进统一 DAG（docs/01 §10）——生成规范
-			// subtree-merge commit（parents=[根head, C 原样]），C 的 hash
-			// 在子树与父视图中保持一致；根 head 前进，视图 tip 随之推进。
+			// ④ subtree-view push: adopt into the unified DAG (docs/01 §10) — create the canonical
+			// subtree-merge commit (parents=[root head, C as-is]); C's hash
+			// stays consistent across subtree and parent views; the root head advances and the view tip follows.
 			if aerr := s.adoptSubtreePush(r.Context(), vr, name, u.Old, u.New); aerr != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+aerr.Error()+"\n"))
 				continue
@@ -155,7 +155,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			continue
 		}
 
-		// 根仓库：常规 timeline CAS。
+		// Root repo: regular timeline CAS.
 		tl := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: name}
 		if err := s.Meta.CASHead(r.Context(), tl, u.Old, u.New); err != nil {
 			_ = WritePacket(out, []byte("ng "+u.Name+" "+err.Error()+"\n"))
@@ -169,16 +169,16 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	_ = out.Flush()
 }
 
-// adoptSubtreePush 子树 push 的 v4 写路径（docs/01 §12 时间线优先）：
+// adoptSubtreePush is the v4 write path for subtree pushes (docs/01 §12 timeline-first):
 //
-//	① 内容级校验（竞态防护，不变）：old 的 X 视图树 == 当前合头的
-//	  X 视图树才放行——连续 push 放行 / 陈旧跨视图拒绝（防静默回滚）/
-//	  pull 后放行；
-//	② 子树时间线 CAS 前进：first push 经 EnsureTimeline 锚定
-//	  （head=合头、base=根分叉点），后续以当前本地头为 expected；
-//	③ AdoptSubtreePush 收编进根（C 原样保留为第二父，根 head CAS
-//	  前进，冲突重试）。收编后投影经身份映射还原为 C 本尊——
-//	  push 者的变更回流后仍是自己的 SHA，pull 恒 fast-forward。
+//	① content-level check (race-window guard, unchanged): admit only when old's X-view tree == the current merged
+//	  head's X-view tree — consecutive pushes admitted / stale cross-view rejected (prevents silent rollback) /
+//	  post-pull admitted;
+//	② subtree timeline CAS advance: the first push anchors via EnsureTimeline
+//	  (head=merged head, base=root divergence point); later pushes use the current local head as expected;
+//	③ AdoptSubtreePush adopts into the root (C kept as-is as second parent, root head CAS
+//	  advances, retry on contention). Post-adoption the projection maps back to C itself —
+//	  the pusher's changes keep their own SHA after flowing back, and pull is always fast-forward.
 func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch string, old, newHead model.OID) error {
 	curTip, rootHead, err := s.subtreeHead(ctx, vr)
 	if err != nil {
@@ -191,8 +191,8 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 		return storage.ErrNonFastForward
 	}
 
-	// ② 子树时间线 CAS。首次 push：EnsureTimeline 以合头锚定
-	//（head=curTip、base=根分叉点），expected 即为该锚定头。
+	// ② subtree timeline CAS. First push: EnsureTimeline anchors at the merged head
+	// (head=curTip, base=root divergence point); expected is that anchored head.
 	localTL := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: branch}
 	localTip := curTip
 	if st, terr := s.Meta.Timeline(ctx, localTL); terr == nil {
@@ -204,7 +204,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 		return err
 	}
 
-	// ③ 收编进根。
+	// ③ adopt into the root.
 	info, err := s.Meta.GetRepo(ctx, vr.Repo)
 	if err != nil {
 		return err
@@ -229,7 +229,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 				vr.Repo, vr.Sub, newHead, oid, rootHead, newHead)
 			return nil
 		}
-		// 根被并发推进：重读根 head 重算（merge 的 C 侧不变）。
+		// Root advanced concurrently: reread the root head and recompute (the merge's C side is unchanged).
 		state, terr := s.Meta.Timeline(ctx, rootTL)
 		if terr != nil {
 			return terr
@@ -239,8 +239,8 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	return fmt.Errorf("root head CAS contention after 3 attempts")
 }
 
-// metaHeads 把 MetaStore 适配为模型层的 HeadResolver（未知 timeline
-// 视作零 head——收编时据此把 C 作为唯一父）。
+// metaHeads adapts MetaStore to the model layer's HeadResolver (unknown timeline
+// treated as zero head — adoption uses this to make C the sole parent).
 type metaHeads struct {
 	meta storage.MetaStore
 	ctx  context.Context
@@ -254,9 +254,9 @@ func (m *metaHeads) TimelineHead(tl model.Timeline) (model.TimelineState, error)
 	return st, err
 }
 
-// sameXView 内容级 fast-forward 判定：两个提交在路径 X 视角下的树
-// 是否相同（X 视角归一：全仓树取 X 子树；树不含 X 首段 ⇒ 该树本身
-// 即 X 视角根树——子树侧提交/视图 tip 的混合作用域）。
+// sameXView is the content-level fast-forward check: whether two commits have the same
+// tree under the path-X view (X-view normalization: a full-repo tree maps to its X subtree; a tree lacking X's first segment ⇒ the tree itself
+// is the X-view root tree — the mixed scope of subtree-side commits / view tips).
 func (s *Server) sameXView(vr VirtualRepo, a, b model.OID) bool {
 	ia, err := s.Objects.CommitInfo(vr.Repo, a)
 	if err != nil {
@@ -271,7 +271,7 @@ func (s *Server) sameXView(vr VirtualRepo, a, b model.OID) bool {
 	return !ta.IsZero() && ta == tb
 }
 
-// xviewTree 把树归一到 X 视角（docs/01 §10 混合作用域）。
+// xviewTree normalizes a tree to the X view (docs/01 §10 mixed scope).
 func (s *Server) xviewTree(vr VirtualRepo, tree model.OID) model.OID {
 	lookup := s.Objects.Lookup(vr.Repo)
 	segs := vr.Sub.Segments()
@@ -287,5 +287,5 @@ func (s *Server) xviewTree(vr VirtualRepo, tree model.OID) model.OID {
 			return model.SubtreeAt(lookup, tree, vr.Sub)
 		}
 	}
-	return tree // 树不含 X 首段 ⇒ 本身即 X 视角根树
+	return tree // tree lacks X's first segment ⇒ it is itself the X-view root tree
 }

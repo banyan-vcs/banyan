@@ -10,16 +10,16 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// Ref 是对外暴露的一条 ref 视图（docs/03 §6）。
+// Ref is one externally exposed ref view (docs/03 §6).
 type Ref struct {
-	Name string // git 可见名，如 refs/heads/main
+	Name string // git-visible name, e.g. refs/heads/main
 	OID  model.OID
 }
 
-// ResolveRefs 为（虚拟）仓库生成 ref 列表（docs/03 §6 ref 映射表）：
+// ResolveRefs generates the ref list for a (virtual) repo (docs/03 §6 ref mapping table):
 //
-//	根仓库：各根时间线 head 原样暴露（投影零翻译），HEAD 指向默认分支。
-//	子树仓库：根时间线经 SplitHistory 投影后的 head（docs/01 §5.2）。
+//	Root repo: each root timeline's head exposed as-is (zero-translation projection), HEAD points at the default branch.
+//	Subtree repo: the head of the root timeline projected via SplitHistory (docs/01 §5.2).
 func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error) {
 	info, err := s.Meta.GetRepo(ctx, vr.Repo)
 	if err != nil {
@@ -55,16 +55,16 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 		return refs, nil
 	}
 
-	// 子树仓库：子树时间线（docs/01 §12，设计 v4 时间线优先）。
+	// Subtree repo: subtree timeline (docs/01 §12, design v4 timeline-first).
 	head, _, err := s.subtreeHead(ctx, vr)
 	if err != nil {
 		if errors.Is(err, model.ErrObjectNotFound) {
-			return nil, nil // 该路径在根提交树中不存在：空仓库语义
+			return nil, nil // path absent from the root commit's tree: empty-repo semantics
 		}
 		return nil, err
 	}
 	if head.IsZero() {
-		return nil, nil // 根无提交或该路径在历史中从未存在
+		return nil, nil // root has no commits or the path never existed in history
 	}
 	return []Ref{
 		{Name: "HEAD", OID: head},
@@ -72,18 +72,18 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 	}, nil
 }
 
-// subtreeHead 返回子树时间线 head 与当前根 head（docs/01 §12）。
+// subtreeHead returns the subtree timeline head and the current root head (docs/01 §12).
 //
-// 合头规则（后裔规则）：
-//   - 无本地时间线 → 投影链头（split(rootHead, X)）；
-//   - 投影链头是本地头的后裔（根侧/他侧合入了 X 变更，常态）→ 投影链头
-//     ——客户端 pull = fast-forward，根侧变更 auto-follow 流下；
-//   - 本地头是投影链头的后裔 → 本地头；
-//   - 真分叉 → 本地头优先（保守：根侧等待显式 sync；服务端不做内容合并，
-//     冲突必须由 git 三方合并显式解决）。
+// Head-merge rules (descendant rule):
+//   - no local timeline → projected-chain head (split(rootHead, X));
+//   - projected-chain head is a descendant of the local head (root side / another side merged X changes, the common case) → projected-chain head
+//     — client pull = fast-forward, root-side changes auto-follow downstream;
+//   - local head is a descendant of the projected-chain head → local head;
+//   - true divergence → local head wins (conservative: the root side waits for an explicit sync; the server does no content merging,
+//     conflicts must be resolved explicitly by git three-way merge).
 //
-// 投影链上，本路径的收编 merge 经身份映射还原为被收编提交本尊
-//（SplitHistory），故自己 push 的变更回流后仍是自己的 SHA。
+// On the projected chain, adoption merges of this path map back to the adopted commit itself
+// via SplitHistory, so one's own pushed changes keep their own SHA after flowing back.
 func (s *Server) subtreeHead(ctx context.Context, vr VirtualRepo) (head, rootHead model.OID, err error) {
 	info, err := s.Meta.GetRepo(ctx, vr.Repo)
 	if err != nil {
@@ -116,8 +116,8 @@ func (s *Server) subtreeHead(ctx context.Context, vr VirtualRepo) (head, rootHea
 	return head, rootHead, nil
 }
 
-// subtreeTip 计算并缓存时间线 head：投影链 + 本地时间线按后裔规则合头。
-// 纯函数于 (rootHead, localTip)——确定性、可缓存、重启可重算。
+// subtreeTip computes and caches the timeline head: projected chain + local timeline merged by the descendant rule.
+// A pure function of (rootHead, localTip) — deterministic, cacheable, recomputable after restart.
 func (s *Server) subtreeTip(vr VirtualRepo, branch string, rootHead, localTip model.OID) (model.OID, error) {
 	key := viewKey{repo: vr.Repo, sub: vr.Sub, branch: branch, root: rootHead, local: localTip}
 	s.projMu.Lock()
@@ -127,8 +127,8 @@ func (s *Server) subtreeTip(vr VirtualRepo, branch string, rootHead, localTip mo
 	}
 	s.projMu.Unlock()
 
-	// 投影链：split(rootHead, X)，物化投影提交进合成对象层。
-	// 收编 merge 身份映射为被收编提交本尊（docs/01 §12）。
+	// Projected chain: split(rootHead, X), materializing projection commits into the synthetic object layer.
+	// Adoption merges map to the adopted commit itself (docs/01 §12).
 	var projTip model.OID
 	if !rootHead.IsZero() {
 		res, err := model.SplitHistory(s.Objects.Lookup(vr.Repo), s.Algo, rootHead, vr.Sub)
@@ -141,18 +141,18 @@ func (s *Server) subtreeTip(vr VirtualRepo, branch string, rootHead, localTip mo
 		projTip = res.Head
 	}
 
-	// 后裔规则合头。
+	// Head merge by the descendant rule.
 	var head model.OID
 	switch {
 	case localTip.IsZero():
 		head = projTip
 	case projTip.IsZero():
 		head = localTip
-	case s.descends(vr.Repo, projTip, localTip): // 投影头 ⊇ 本地头
+	case s.descends(vr.Repo, projTip, localTip): // projected head ⊇ local head
 		head = projTip
-	case s.descends(vr.Repo, localTip, projTip): // 本地头 ⊇ 投影头
+	case s.descends(vr.Repo, localTip, projTip): // local head ⊇ projected head
 		head = localTip
-	default: // 真分叉：本地优先（显式 sync 语义）
+	default: // true divergence: local wins (explicit sync semantics)
 		head = localTip
 	}
 
@@ -162,8 +162,8 @@ func (s *Server) subtreeTip(vr VirtualRepo, branch string, rootHead, localTip mo
 	return head, nil
 }
 
-// descends 判定 target 是否为 from 的祖先（沿全部父边 BFS，走 CommitGraph
-// 索引；后裔规则的合头判定）。
+// descends reports whether target is an ancestor of from (BFS along all parent edges, via the
+// CommitGraph index; the descendant rule's head-merge check).
 func (s *Server) descends(repo string, from, target model.OID) bool {
 	if from.IsZero() || target.IsZero() || from == target {
 		return from == target
@@ -199,7 +199,7 @@ type viewKey struct {
 	local  model.OID
 }
 
-// bufWriter 聚合写（pkt 流不逐条 flush）。
+// bufWriter batches writes (the pkt stream is not flushed per record).
 type bufWriter struct {
 	bw *bufio.Writer
 }

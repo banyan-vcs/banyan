@@ -10,7 +10,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// buildTestPack 用模型层构造一个小型根仓库并编码为 pack。
+// buildTestPack builds a small root repo via the model layer and encodes it as a pack.
 func buildTestPack(t *testing.T) (blobOID, treeOID, commitOID model.OID, pack []byte) {
 	t.Helper()
 	algo := model.SHA1
@@ -61,7 +61,7 @@ func TestIngestPackBuildsIndexesAndWritesIdx(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// offset 配对齐全 + idx 文件落盘且逐条一致。
+	// offsets pair up fully + the idx file is on disk and matches entry by entry.
 	dp, err := DecodePack(pack)
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestIngestPackBuildsIndexesAndWritesIdx(t *testing.T) {
 		}
 	}
 
-	// commit-graph 索引。
+	// commit-graph index.
 	ci, err := objs.CommitInfo("r", commitOID)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestIngestPackBuildsIndexesAndWritesIdx(t *testing.T) {
 		t.Fatalf("CommitInfo wrong: %+v", ci)
 	}
 
-	// tree-entry 索引。
+	// tree-entry index.
 	entries, err := objs.TreeEntries("r", treeOID)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestIngestPackBuildsIndexesAndWritesIdx(t *testing.T) {
 		t.Fatalf("TreeEntries wrong: %+v", entries)
 	}
 
-	// pack 文件回读（miss 路径）与原始字节一致。
+	// pack file read-back (miss path) matches the original bytes.
 	raw, err := local.GetPackBytes("r", packOID)
 	if err != nil || !bytes.Equal(raw, pack) {
 		t.Fatalf("raw pack roundtrip failed: %v", err)

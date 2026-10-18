@@ -8,13 +8,13 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// handleLog 服务端 log 查询（统一 DAG 的路径过滤视图，docs/01 §10）：
+// handleLog is the server-side log query (path-filtered view over the unified DAG, docs/01 §10):
 //
 //	GET /api/v1/log?repo=<r>&path=/a/b&limit=20[&from=<oid>]
 //
-//	path 省略 → 全历史；path 给定 → 仅展示"修改到该子树的提交"
-//	（子树 OID 相对任一父发生变化，或为根提交）——hash 与父视图
-//	完全一致（同一批对象），过滤只是查询语义（Scion：问题查询是 RPC）。
+//	path omitted → full history; path given → show only commits that touched
+//	the subtree (subtree OID changed vs any parent, or a root commit) — hashes
+//	match the parent view exactly (same objects); filtering is query semantics only (Scion: problem queries are RPCs).
 func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 	repo := r.URL.Query().Get("repo")
 	if repo == "" {
@@ -60,9 +60,9 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 
 	lookup := s.Objects.Lookup(repo)
 	subMemo := map[model.OID]model.OID{}
-	// xview 把任一提交的树归一到 X 视角：全仓树取 path 处子树；
-	// 树中不含 path 首段 → 该树本身就是 X 视角的根树（子树侧提交/
-	// 视图 tip），整树即内容（docs/01 §10 混合作用域）。
+	// xview normalizes any commit's tree to the X view: a whole-repo tree maps to
+	// its subtree at path; a tree lacking path's first segment is itself the X-view
+	// root tree (subtree-side commit / view tip) — the whole tree is the content (docs/01 §10 mixed scopes).
 	xview := func(tree model.OID) model.OID {
 		if v, ok := subMemo[tree]; ok {
 			return v
@@ -86,7 +86,7 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 		return xview(ci.Tree)
 	}
 
-	// 后序 DFS：全父遍历，拓扑序（旧→新）；过滤后取最新 limit 条。
+	// Post-order DFS: full parent traversal, topological order (old→new); after filtering take the newest limit entries.
 	visited := map[model.OID]bool{}
 	var order []model.OID
 	var visit func(oid model.OID) error
@@ -122,7 +122,7 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 		if filtered {
 			sub := subOf(oid)
 			if sub.IsZero() {
-				continue // 路径在此提交不存在
+				continue // path absent in this commit
 			}
 			touched := len(ci.Parents) == 0
 			for _, p := range ci.Parents {
@@ -146,7 +146,7 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, logResponse{Repo: repo, Path: path, From: string(from), Count: len(entries), Entries: entries})
 }
 
-// logEntry 是一条 log 记录（hash 与 git 视图完全一致）。
+// logEntry is one log record (hashes exactly match the git view).
 type logEntry struct {
 	OID     string `json:"oid"`
 	Subject string `json:"subject"`
@@ -191,7 +191,7 @@ func firstSegment(path string) string {
 	return segs[0]
 }
 
-// hasTopEntry 报告树的顶层是否含名为 name 的条目（缺树/出错按缺省处理）。
+// hasTopEntry reports whether the tree's top level has an entry named name (missing tree/errors treated as absent).
 func hasTopEntry(lookup model.ObjectLookup, tree model.OID, name string) bool {
 	if name == "" {
 		return false

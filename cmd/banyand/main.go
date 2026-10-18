@@ -1,6 +1,6 @@
-// banyand 是 banyan 的服务端守护进程（骨架阶段）：
-// 挂载 git smart HTTP v1 端点（gitwire）与 banyan RPC（rpc），
-// 单机模式：内存元数据 + 本地盘分片（docs/00 部署形态）。
+// banyand is banyan's server daemon (skeleton stage):
+// mounts the git smart HTTP v1 endpoints (gitwire) and the banyan RPC (rpc);
+// single-node mode: in-memory metadata + local-disk shards (docs/00 deployment shape).
 package main
 
 import (

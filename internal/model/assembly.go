@@ -4,22 +4,23 @@ import (
 	"fmt"
 )
 
-// 组装算法（Assembly，上行写路径）——docs/01 §4。
+// Assembly algorithm (upstream write path) — docs/01 §4.
 //
-// 信息流：子目录本地 commits ──ReplaceSubtree──▶ 父目录新 tree
-//        ──合成──▶ 根 synthetic commit 入根时间线。
-// 输入全部是不可变对象 ⇒ 无环、确定性、可缓存。
+// Information flow: subdirectory local commits ──ReplaceSubtree──▶ parent's
+//        new tree ──synthesis──▶ root synthetic commit into the root timeline.
+// All inputs are immutable objects ⇒ acyclic, deterministic, cacheable.
 
-// TreeStore 在 ObjectLookup 之上增加树写入：组装与投影过程中改写出的
-// 新树必须持久化（服务端语义），MemoryLookup / storage 层各自实现。
+// TreeStore adds tree writes on top of ObjectLookup: new trees rewritten
+// during assembly and projection must be persisted (server-side semantics);
+// MemoryLookup / the storage layer each implement it.
 type TreeStore interface {
 	ObjectLookup
 	PutTree(t *Tree) OID
 }
 
-// ReplaceSubtree 返回把 baseRoot 中 path 处子树替换为 subtree 后的新根树 OID。
-// 路径上每一层的 tree 都被改写并经 store.PutTree 持久化（git tree 语义：
-// 不可变、内容寻址）。path 为根时直接返回 subtree。
+// ReplaceSubtree returns the new root tree OID with the subtree at path in
+// baseRoot replaced by subtree; a root path returns subtree directly. Trees
+// along the path are rewritten and persisted via store.PutTree (immutable, content-addressed).
 func ReplaceSubtree(store TreeStore, algo HashAlgo, baseRoot OID, path AnchorPath, subtree OID) (OID, error) {
 	segs := path.Segments()
 	if len(segs) == 0 {
@@ -60,7 +61,7 @@ func replaceAt(store TreeStore, algo HashAlgo, treeOID OID, segs []string, subtr
 		if len(segs) == 1 {
 			entries = append(entries, TreeEntry{Name: name, Mode: "40000", Target: subtree, IsDir: true})
 		} else {
-			// 中间层不存在：逐层建出缺失目录。
+			// Intermediate layer absent: build the missing directories level by level.
 			child, err := replaceAt(store, algo, emptyTreeOID(algo), segs[1:], subtree)
 			if err != nil {
 				return "", err
@@ -75,18 +76,19 @@ func emptyTreeOID(algo HashAlgo) OID {
 	return ObjectOID(TreeType, nil, algo)
 }
 
-// HeadResolver 提供时间线当前 head（由 MetaStore 实现）。
+// HeadResolver provides a timeline's current head (implemented by MetaStore).
 type HeadResolver interface {
 	TimelineHead(tl Timeline) (TimelineState, error)
 }
 
-// CurrentTree 计算目录 D 的当前树（docs/01 §4.1）：
+// CurrentTree computes directory D's current tree (docs/01 §4.1):
 //
 //	CurrentTree(D) = base(D) ⊕ replace-children(D)
 //
-// base(D) 取 D 本地时间线 head 的树；再对每个子目录把其 CurrentTree
-// 替换进来。骨架实现采用惰性单层替换：只替换"有本地时间线"的子目录。
-// 完整的递归组装在 M1 的 derived 引擎中补全（含多子目录合并序）。
+// base(D) is the tree of D's local timeline head; then each subdirectory's
+// CurrentTree is swapped in. The skeleton uses lazy single-level replacement:
+// only subdirectories with a local timeline are replaced. Full recursive
+// assembly lands in the M1 derived engine (incl. multi-subdir merge order).
 func CurrentTree(lookup ObjectLookup, heads HeadResolver, algo HashAlgo, tl Timeline) (OID, error) {
 	state, err := heads.TimelineHead(tl)
 	if err != nil {
@@ -97,17 +99,18 @@ func CurrentTree(lookup ObjectLookup, heads HeadResolver, algo HashAlgo, tl Time
 		return "", err
 	}
 	root := commit.TreeOID
-	// 枚举同 repo 下锚定在本目录子层的活跃时间线，逐个替换。
-	// TODO(M1): 由 MetaStore.ListTimelines 提供；这里保留单层语义骨架。
+	// Enumerate active timelines in the same repo anchored at this directory's
+	// child layer and replace each.
+	// TODO(M1): provided by MetaStore.ListTimelines; single-level skeleton semantics kept here.
 	return root, nil
 }
 
-// AssembleRoot 在子目录提交后执行向上组装（docs/01 §4.2）：
+// AssembleRoot performs upward assembly after a subdirectory commit (docs/01 §4.2):
 //
 //	1. root_new = ReplaceSubtree(CurrentTree("/"), path, C.TreeOID)
-//	2. synthetic commit 入根时间线（M1 同步模式）
+//	2. synthetic commit into the root timeline (M1 synchronous mode)
 //
-// 返回待写入的合成 commit；调用方负责把新对象入 CAS 与根 head CAS。
+// Returns the synthetic commit to write; the caller CASes new objects and the root head.
 func AssembleRoot(store TreeStore, heads HeadResolver, algo HashAlgo, repo, rootName string, path AnchorPath, childCommit OID, by Identity) (*AnchoredCommit, error) {
 	child, err := store.Commit(childCommit)
 	if err != nil {

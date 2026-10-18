@@ -7,14 +7,14 @@ import (
 	"time"
 )
 
-// Identity 是 git 兼容的签名（author/committer）。
+// Identity is a git-compatible signature (author/committer).
 type Identity struct {
 	Name  string
 	Email string
 	When  time.Time
 }
 
-// Format 渲染为 git 签名："Name <email> <unix> <±hhmm>"。
+// Format renders a git signature: "Name <email> <unix> <±hhmm>".
 func (id Identity) Format() string {
 	_, offset := id.When.Zone()
 	sign := "+"
@@ -25,16 +25,16 @@ func (id Identity) Format() string {
 		id.Name, id.Email, id.When.Unix(), sign, offset/3600, (offset%3600)/60)
 }
 
-// RootAnchor 是根锚点；根时间线语义等同 git branch（docs/01 §2）。
+// RootAnchor is the root anchor; the root timeline is semantically a git branch (docs/01 §2).
 const RootAnchor AnchorPath = "/"
 
-// AnchoredCommit 是 banyan 的提交记录（docs/01 §2）：
-// tree_oid 是 anchor_path 处的 tree——任意 tree，不限仓库根。
+// AnchoredCommit is banyan's commit record (docs/01 §2):
+// tree_oid is the tree at anchor_path — any tree, not just the repo root.
 //
-// 编码规则（保证 git 兼容）：
-//   - anchor == "/" 时不写 anchor 头，序列化体与 git commit 逐字节一致；
-//   - anchor != "/" 时在 tree 行后追加 "banyan-anchor <path>" 头，
-//     因此 OID 空间与 git 对象天然区分、永不冲突。
+// Encoding rules (git compatibility guaranteed):
+//   - anchor == "/" writes no anchor header; the serialized body is byte-identical to a git commit;
+//   - anchor != "/" appends a "banyan-anchor <path>" header after the tree line,
+//     so the OID space is naturally disjoint from git objects and never collides.
 type AnchoredCommit struct {
 	Anchor     AnchorPath
 	TreeOID    OID
@@ -42,11 +42,11 @@ type AnchoredCommit struct {
 	Author     Identity
 	Committer  Identity
 	Message    string
-	Synthetic  bool // 组装算法生成（携带 banyan-synthetic trailer）
-	ProjectedFrom OID // 非零表示这是从根时间线 split 出的投影 commit
+	Synthetic  bool // produced by the assembly algorithm (carries a banyan-synthetic trailer)
+	ProjectedFrom OID // non-zero marks this as a projection commit split from the root timeline
 }
 
-// Encode 渲染 git 兼容的 commit 对象体。
+// Encode renders the git-compatible commit object body.
 func (c *AnchoredCommit) Encode() []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "tree %s\n", c.TreeOID)
@@ -73,7 +73,7 @@ func (c *AnchoredCommit) OID(algo HashAlgo) OID {
 	return ObjectOID(CommitType, c.Encode(), algo)
 }
 
-// DecodeCommit 解析 commit 对象体（git 格式 + banyan 扩展头）。
+// DecodeCommit parses a commit object body (git format + banyan extension headers).
 func DecodeCommit(content []byte) (*AnchoredCommit, error) {
 	c := &AnchoredCommit{}
 	header, message, ok := strings.Cut(string(content), "\n\n")
@@ -114,7 +114,7 @@ func DecodeCommit(content []byte) (*AnchoredCommit, error) {
 		case "banyan-synthetic":
 			c.Synthetic = val == "true"
 		default:
-			// 未知头（含 gpgsig 等）忽略——骨架阶段不校验签名体。
+			// Unknown headers (incl. gpgsig) are ignored — the skeleton stage does not verify signature bodies.
 		}
 	}
 	if c.Anchor == "" {

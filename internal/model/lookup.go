@@ -4,18 +4,18 @@ import (
 	"fmt"
 )
 
-// ObjectLookup 是模型层访问对象的抽象：由 storage 层实现
-// （全局对象索引 → 分片节点 → pack/idx 解码，docs/02 §3）。
+// ObjectLookup abstracts object access for the model layer, implemented by the
+// storage layer (global object index → shard node → pack/idx decode, docs/02 §3).
 type ObjectLookup interface {
 	Blob(oid OID) ([]byte, error)
 	Tree(oid OID) (*Tree, error)
 	Commit(oid OID) (*AnchoredCommit, error)
 }
 
-// ErrObjectNotFound 表示对象在全局索引与分片中均不存在。
+// ErrObjectNotFound means the object exists in neither the global index nor any shard.
 var ErrObjectNotFound = fmt.Errorf("object not found")
 
-// MemoryLookup 是进程内对象表，测试与引导用。
+// MemoryLookup is an in-process object table, for tests and bootstrapping.
 type MemoryLookup struct {
 	Blobs   map[OID][]byte
 	Trees   map[OID]*Tree
@@ -53,7 +53,7 @@ func (m *MemoryLookup) Commit(oid OID) (*AnchoredCommit, error) {
 	return nil, fmt.Errorf("%w: commit %s", ErrObjectNotFound, oid)
 }
 
-// PutBlob/ PutTree / PutCommit 存入并返回 OID。
+// PutBlob / PutTree / PutCommit store the object and return its OID.
 func (m *MemoryLookup) PutBlob(content []byte) OID {
 	oid := ObjectOID(BlobType, content, m.Algo)
 	m.Blobs[oid] = content

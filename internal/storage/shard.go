@@ -1,6 +1,7 @@
-// Package storage 实现分布式 pack 存储（docs/02-storage.md）：
-// pack 即不可变分片单元，rendezvous hashing 放置，双 idx 体系
-// （pack 局部 idx + 中心全局对象索引），后台 repack。
+// Package storage implements distributed pack storage (docs/02-storage.md):
+// the pack is the immutable shard unit, placed by rendezvous hashing, with a
+// dual-idx system (pack-local idx + central global object index) and
+// background repack.
 package storage
 
 import (
@@ -10,19 +11,20 @@ import (
 	"sort"
 )
 
-// Node 是一个分片存储节点（M1：本进程；M2：远端 HTTP 节点）。
+// Node is one shard storage node (M1: this process; M2: remote HTTP node).
 type Node struct {
 	ID      string
-	Local   bool // 本进程可直接读盘
+	Local   bool // directly readable on disk from this process
 	BaseURL string
 }
 
-// PickNodes 用 rendezvous（highest random weight）hashing 为 pack 选出
-// 副本节点序列（docs/02 §1.2）。取 score 前 replicas 名：
+// PickNodes uses rendezvous (highest random weight) hashing to pick the
+// replica node sequence for a pack (docs/02 §1.2). Takes the top replicas by score:
 //
 //	score(node) = H64(packOID || 0x00 || nodeID)
 //
-// 节点增减时仅 1/N 的 key 重映射，且无需一致性哈希的虚拟节点层。
+// Adding/removing a node remaps only 1/N of keys, and no virtual-node layer
+// (as in consistent hashing) is needed.
 func PickNodes(nodes []Node, packOID string, replicas int) ([]Node, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("shard: no storage nodes")
@@ -46,7 +48,7 @@ func PickNodes(nodes []Node, packOID string, replicas int) ([]Node, error) {
 		if all[i].rank != all[j].rank {
 			return all[i].rank > all[j].rank
 		}
-		return all[i].n.ID < all[j].n.ID // 稳定序，避免平局漂移
+		return all[i].n.ID < all[j].n.ID // stable order, avoiding tie drift
 	})
 	out := make([]Node, 0, replicas)
 	for _, s := range all[:replicas] {

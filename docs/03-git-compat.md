@@ -176,3 +176,22 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 | 浅仓 push | 拒绝（对照参考服务端 `receive.shallowUpdate=false` 默认 403） | ❌ 干净拒绝 |
 
 **推论**：v1-only 服务端对现代 git 客户端是零配置兼容的——v2、partial clone、shallow 三大特性全部可用或走规范降级；剩余边界只剩服务端 filter（回退全量，带宽问题）与浅仓 push（参考服务端同样默认拒绝）。
+
+## 10. 实现策略审计（2026-10-18，对照"git 兼容为设计目标"）
+
+**go-git 触点**：仅 `internal/storage/packfile.go`——pack 解码（Scanner+Parser）与编码（`packfile.Encoder`，无 delta）。协议层（gitwire 全部）自研、以 git 源码为基准；go-git 能力缺口（协议 v2、服务端 filter、delta）按 AGENTS.md 原则直接对照 git 源码实现，不受其边界约束。
+
+**已对齐 git 行为**（参考流/集成测试实证）：v0 广告与 symref、终态 ACK 协商（upload-pack.c 基础模式）、report-status 行序与 ng 格式、delete-refs 广告、浅化全语义（§3a，对照 http-backend 字节级）、pkt-line 编解码（gitprotocol-common）、idx v2。
+
+**已接受偏离与修复优先级**（正确性均无碍，客户端实测容忍）：
+
+| # | 偏离 | 影响 | 建议优先级 |
+|---|---|---|---|
+| 1 | **无 have 减除**：增量 fetch 的 pack = wants 全量闭包（git：减 common 可达集） | 带宽随历史线性放大；浅仓普通 fetch 已按客户端边界裁剪（§3a），普通 fetch 未裁 | **M2 首位**（对照 `upload-pack.c` reachable 减除） |
+| 2 | 响应无 side-band（裸 pack） | 客户端无进度显示；大 clone 体验差 | M2/M3（广告 side-band-64k + 通道 2 进度） |
+| 3 | **tags 不支持**：`refs/tags/*` 收 `ng unsupported ref namespace` | `git push --tags` / tag clone 失败（干净拒绝，非静默） | M2/M3（tag ref 直通存储 + 广告 `^{} ` peeled） |
+| 4 | EncodePack 无 delta；push `no-thin` | 双向带宽 | M3 repack 职责（`pack-objects.c` delta 算法） |
+| 5 | 无 multi_ack/multi_ack_detailed/no-done | 大仓库协商轮数多（单 ACK 终态即可收敛） | 低（规模化后再议） |
+| 6 | 浅仓 push 400（参考端 403 + 消息） | 错误提示不够友好 | 低（对齐状态码与 ng 原因行） |
+| 7 | deepen-since / deepen-not 未实现 | `--shallow-since`/`--shallow-exclude` 不可用（未广告，客户端明确失败） | 低（§3a 框架内扩展） |
+| 8 | sha256 广告分支就绪但未端到端验证 | sha256 仓库未承诺 | 需求出现时验证 |

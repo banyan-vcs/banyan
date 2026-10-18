@@ -21,7 +21,7 @@ func file(t *testing.T, lookup *MemoryLookup, name, content string) TreeEntry {
 }
 
 func TestRootAnchorCommitIsByteIdenticalToGit(t *testing.T) {
-	// anchor="/" 的 commit 不得携带任何 banyan 头——git 零翻译兼容的根基。
+	// A commit with anchor="/" must carry no banyan headers — the foundation of zero-translation git compatibility.
 	c := &AnchoredCommit{
 		Anchor:    RootAnchor,
 		TreeOID:   "0123456789012345678901234567890123456789",
@@ -80,21 +80,21 @@ func TestAnchorPath(t *testing.T) {
 
 func TestReplaceSubtreeAssemblesRoot(t *testing.T) {
 	lookup := NewMemoryLookup(SHA1)
-	// 根树：lib 旧内容 + docs。
+	// Root tree: old lib content + docs.
 	oldLib := mkTree(t, lookup, file(t, lookup, "a.go", "old"))
 	docs := mkTree(t, lookup, file(t, lookup, "readme.md", "hi"))
 	root := mkTree(t, lookup,
 		TreeEntry{Name: "lib", Mode: "40000", Target: oldLib, IsDir: true},
 		TreeEntry{Name: "docs", Mode: "40000", Target: docs, IsDir: true},
 	)
-	// 子目录新树：src/lib 维度的一次提交。
+	// The subdirectory's new tree: one commit on the src/lib axis.
 	newLib := mkTree(t, lookup, file(t, lookup, "a.go", "new"), file(t, lookup, "b.go", "added"))
 
 	got, err := ReplaceSubtree(lookup, SHA1, root, "/lib", newLib)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// docs 必须原样保留。
+	// docs must be preserved untouched.
 	sub := SubtreeAt(lookup, got, "/docs")
 	if err != nil || sub != docs {
 		t.Fatalf("docs disturbed: %v %v", sub, err)
@@ -103,7 +103,7 @@ func TestReplaceSubtreeAssemblesRoot(t *testing.T) {
 	if err != nil || sub != newLib {
 		t.Fatalf("lib not replaced: %v %v", sub, err)
 	}
-	// 幂等性：再替换一次同一子树，根 OID 不变。
+	// Idempotence: replacing the same subtree again leaves the root OID unchanged.
 	again, err := ReplaceSubtree(lookup, SHA1, got, "/lib", newLib)
 	if err != nil || again != got {
 		t.Fatalf("not idempotent: %v vs %v (%v)", again, got, err)
@@ -121,8 +121,8 @@ func TestSplitHistoryProjectsSubtree(t *testing.T) {
 
 	c1 := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: rootV1, Author: ident("a"), Committer: ident("a"), Message: "one\n"})
 	c2 := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: rootV2, Parents: []OID{c1}, Author: ident("a"), Committer: ident("a"), Message: "two\n"})
-	// 第三个提交同样变更 lib——链长 3 才能锁住 parent 回填顺序
-	// （升序回填曾让中间元素的 OID 在被引用后发生变化）。
+	// A third commit also changes lib — only a length-3 chain locks down the
+	// parent backfill order (ascending backfill once mutated a middle element's OID after it was referenced).
 	c3 := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: rootV3, Parents: []OID{c2}, Author: ident("a"), Committer: ident("a"), Message: "three\n"})
 
 	res, err := SplitHistory(lookup, SHA1, c3, "/lib")
@@ -139,15 +139,15 @@ func TestSplitHistoryProjectsSubtree(t *testing.T) {
 	if res.Head != chain[0].OID(SHA1) {
 		t.Fatalf("head %s != newest %s", res.Head, chain[0].OID(SHA1))
 	}
-	// 纯函数性：重算结果逐字节一致（SHA 稳定 ⇒ 客户端可缓存/协商）。
+	// Purity: recomputation is byte-identical (stable SHA ⇒ clients can cache/negotiate).
 	again, _ := SplitHistory(lookup, SHA1, c3, "/lib")
 	if chain[0].OID(SHA1) != again.Commits[0].OID(SHA1) ||
 		chain[1].OID(SHA1) != again.Commits[1].OID(SHA1) ||
 		res.Head != again.Head {
 		t.Fatal("split history not deterministic")
 	}
-	// parent 链接不变式：每个 parent 必须精确等于链内某元素的最终 OID
-	// （回归防护：增量建链曾产生过期哈希的幽灵指针）。
+	// Parent-link invariant: every parent must equal exactly some chain element's
+	// final OID (regression guard: incremental building once produced stale-hash ghost pointers).
 	oids := map[OID]bool{}
 	for _, pc := range chain {
 		oids[pc.OID(SHA1)] = true
@@ -162,7 +162,7 @@ func TestSplitHistoryProjectsSubtree(t *testing.T) {
 	if parents := chain[len(chain)-1].Parents; len(parents) != 0 {
 		t.Fatalf("oldest projected commit must have no parents, got %v", parents)
 	}
-	// 投影 commit 带溯源 trailer。
+	// Projected commits carry a provenance trailer.
 	if chain[2].ProjectedFrom != c1 {
 		t.Fatalf("projected-from wrong: %v", chain[2].ProjectedFrom)
 	}
@@ -176,17 +176,17 @@ func TestSplitHistoryPreservesMergeTopology(t *testing.T) {
 	rootV1 := mkTree(t, lookup, TreeEntry{Name: "lib", Mode: "40000", Target: libV1, IsDir: true})
 	c1 := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: rootV1, Author: ident("a"), Committer: ident("a"), Message: "base\n"})
 
-	// 分支：改 lib。
+	// Branch: change lib.
 	rootV2 := mkTree(t, lookup, TreeEntry{Name: "lib", Mode: "40000", Target: libV2, IsDir: true})
 	cBranch := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: rootV2, Parents: []OID{c1}, Author: ident("b"), Committer: ident("b"), Message: "branch: lib v2\n"})
 
-	// 主干：不动 lib（README 变更）。
+	// Main: lib untouched (README change).
 	rootMain := mkTree(t, lookup,
 		file(t, lookup, "README", "x"),
 		TreeEntry{Name: "lib", Mode: "40000", Target: libV1, IsDir: true})
 	cMain := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: rootMain, Parents: []OID{c1}, Author: ident("m"), Committer: ident("m"), Message: "main: readme\n"})
 
-	// 合并：lib=v2 + README。
+	// Merge: lib=v2 + README.
 	mergedRoot := mkTree(t, lookup,
 		file(t, lookup, "README", "x"),
 		TreeEntry{Name: "lib", Mode: "40000", Target: libV2, IsDir: true})
@@ -196,8 +196,8 @@ func TestSplitHistoryPreservesMergeTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 变更集：c1（根）、cBranch（lib v2）、cMerge（相对 cMain 变化）。
-	// cMain 不变（lib 与其父 c1 相同）。
+	// Change set: c1 (root), cBranch (lib v2), cMerge (changed vs cMain).
+	// cMain is untouched (its lib equals its parent c1's).
 	if len(res.Commits) != 3 {
 		t.Fatalf("want 3 projected commits (base/branch/merge), got %d: %+v", len(res.Commits), res.Commits)
 	}
@@ -209,7 +209,7 @@ func TestSplitHistoryPreservesMergeTopology(t *testing.T) {
 	if pMerge == nil || pBranch == nil || pBase == nil {
 		t.Fatalf("missing projections: merge=%v branch=%v base=%v", pMerge != nil, pBranch != nil, pBase != nil)
 	}
-	// 合并点的两条 parent 边分别解析到 proj(base)（经 cMain）与 proj(branch)。
+	// The merge point's two parent edges resolve to proj(base) (via cMain) and proj(branch).
 	if len(pMerge.Parents) != 2 {
 		t.Fatalf("merge projection must keep 2 parents, got %v", pMerge.Parents)
 	}

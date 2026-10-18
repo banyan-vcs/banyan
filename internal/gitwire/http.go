@@ -12,20 +12,20 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// VirtualRepo 是 URL 解析出的（虚拟）仓库定位（docs/03 §1）：
+// VirtualRepo is the (virtual) repo location parsed from the URL (docs/03 §1):
 //
-//	/r/demo                 → {Repo: demo, Sub: "/"}          根仓库
-//	/r/demo/tree/src/lib    → {Repo: demo, Sub: "/src/lib"}   子树仓库
-//	/r/demo//src/lib        → 同上（服务端兼容旧 "//" 写法；注意标准
-//	                          git 客户端会把 URL 中 "//" 规范化为 "/"，
-//	                          因此对外统一使用 /tree/ 形式）
+//	/r/demo                 → {Repo: demo, Sub: "/"}          root repo
+//	/r/demo/tree/src/lib    → {Repo: demo, Sub: "/src/lib"}   subtree repo
+//	/r/demo//src/lib        → same as above (server tolerates the legacy "//" form; note standard
+//	                          git clients normalize "//" in URLs to "/",
+//	                          so /tree/ is the canonical external form)
 type VirtualRepo struct {
 	Repo    string
 	Sub     model.AnchorPath
-	RepoDir string // 请求路径中仓库段（含子树后缀），供端点匹配
+	RepoDir string // repo segment of the request path (incl. subtree suffix), for endpoint matching
 }
 
-// ParseVirtualRepo 解析 /r/... 请求路径（不含端点后缀）。
+// ParseVirtualRepo parses a /r/... request path (without the endpoint suffix).
 func ParseVirtualRepo(p string) (VirtualRepo, error) {
 	if !strings.HasPrefix(p, "/r/") {
 		return VirtualRepo{}, fmt.Errorf("not a repo path: %q", p)
@@ -58,27 +58,27 @@ func ParseVirtualRepo(p string) (VirtualRepo, error) {
 	return vr, nil
 }
 
-// Server 挂载 git smart HTTP v1 端点。
+// Server mounts the git smart HTTP v1 endpoints.
 type Server struct {
 	Meta    storage.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
 
 	projMu    sync.Mutex
-	viewCache map[viewKey]model.OID // 子树时间线 head 缓存（refs.go，v4）
+	viewCache map[viewKey]model.OID // subtree timeline head cache (refs.go, v4)
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
 	return &Server{Meta: meta, Objects: objects, Algo: algo, viewCache: map[viewKey]model.OID{}}
 }
 
-// Register 注册路由（docs/03 §1 端点表）。
+// Register registers routes (docs/03 §1 endpoint table).
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/r/", s.handleRepo)
 }
 
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
-	// 请求路径形如 /r/<repo>[//<sub>]/<endpoint>，先剥端点。
+	// Request path looks like /r/<repo>[//<sub>]/<endpoint>; strip the endpoint first.
 	path := r.URL.Path
 	for _, ep := range []string{"/info/refs", "/git-upload-pack", "/git-receive-pack"} {
 		if strings.HasSuffix(path, ep) {
@@ -101,15 +101,15 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// handleInfoRefs 服务引用发现（对照 http-backend.c 的 smart 协议分支）。
-// v1： pkt-line 序列 "<oid> <refname>\0<caps>\n"，以 flush 结束。
+// handleInfoRefs serves ref discovery (mirrors the smart protocol branch of http-backend.c).
+// v1: pkt-line sequence "<oid> <refname>\0<caps>\n", terminated by a flush.
 func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr VirtualRepo) {
 	service := r.URL.Query().Get("service")
 	if service != "git-upload-pack" && service != "git-receive-pack" {
 		http.Error(w, "dumb http not supported (use smart)", http.StatusBadRequest)
 		return
 	}
-	// demo 友好：push 首次打到不存在的仓库时自动建仓（M2 收紧为 ACL 策略）。
+	// Demo-friendly: auto-create the repo on first push to a missing repo (M2 will tighten to ACL policy).
 	if _, err := s.Meta.GetRepo(r.Context(), vr.Repo); err != nil {
 		if service == "git-receive-pack" {
 			if err := s.Meta.CreateRepo(r.Context(), vr.Repo, s.Algo); err != nil {
@@ -131,19 +131,19 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr Virtu
 		return
 	}
 	if len(refs) > 0 && !vr.Sub.IsRoot() {
-		// 调试：子树广告的请求级记录（定位并发广告不一致）。
+		// Debugging: per-request log of subtree advertisements (to locate concurrent advertisement inconsistency).
 		state, _ := s.Meta.Timeline(r.Context(), model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: s.defaultBranch(r.Context(), vr.Repo)})
 		log.Printf("ADVERT %s%s: tip=%s rootHead=%s", vr.Repo, vr.Sub, refs[0].OID, state.Head)
 	}
 
 	br := newBufWriter(w)
-	// 服务头 pkt（Smart HTTP v1 要求第一条为 "# service=..." + flush）。
+	// Service header pkt (Smart HTTP v1 requires "# service=..." as the first line + flush).
 	_ = WritePacket(br, []byte("# service="+service+"\n"))
 	_ = WriteFlush(br)
 
 	caps := s.capabilities(service, s.defaultBranch(r.Context(), vr.Repo))
 	if len(refs) == 0 {
-		// 空仓库：能力挂在虚拟 capability^{} 头上（对照 upload-pack.c 空仓处理）。
+		// Empty repo: capabilities hang off the virtual capability^{} header (mirrors upload-pack.c empty-repo handling).
 		zero := strings.Repeat("0", 40)
 		if s.Algo == model.SHA256 {
 			zero = strings.Repeat("0", 64)
@@ -164,7 +164,7 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr Virtu
 	_ = br.Flush()
 }
 
-// defaultBranch 返回仓库默认分支名（symref 目标），未知时回退 main。
+// defaultBranch returns the repo's default branch name (symref target), falling back to main when unknown.
 func (s *Server) defaultBranch(ctx context.Context, repo string) string {
 	if info, err := s.Meta.GetRepo(ctx, repo); err == nil && info.DefaultBranch != "" {
 		return info.DefaultBranch
@@ -172,9 +172,9 @@ func (s *Server) defaultBranch(ctx context.Context, repo string) string {
 	return "main"
 }
 
-// capabilities 返回能力协商串（docs/03 §2 能力表）。
-// MVP 只广告已完整实现的能力：不广告 side-band-64k（应答为裸 pack）、
-// 不广告 filter（M3 实现服务端过滤后再开）、不广告 no-done。
+// capabilities returns the capability advertisement string (docs/03 §2 capability table).
+// The MVP advertises only fully implemented capabilities: no side-band-64k (response is a bare pack),
+// no filter (enable after M3 implements server-side filtering), no no-done.
 func (s *Server) capabilities(service, defaultBranch string) string {
 	agent := "agent=banyan/0.1"
 	objFmt := "object-format=sha1"
@@ -184,15 +184,15 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 	if service == "git-upload-pack" {
 		return strings.Join([]string{
 			"symref=HEAD:refs/heads/" + defaultBranch,
-			"shallow", // deepen N / --unshallow（v0 核心浅化；deepen-since/not 不广告）
+			"shallow", // deepen N / --unshallow (v0 core shallowing; deepen-since/not not advertised)
 			agent, objFmt,
 		}, " ")
 	}
 	return strings.Join([]string{
 		agent, objFmt,
 		"report-status",
-		"delete-refs", // 未广告此能力时客户端会静默丢弃删除命令（gitprotocol-pack）
-		"no-thin", // 存储侧 pack 自包含（docs/03 §2）
+		"delete-refs", // clients silently drop delete commands when this capability is absent (gitprotocol-pack)
+		"no-thin", // storage-side packs are self-contained (docs/03 §2)
 	}, " ")
 }
 

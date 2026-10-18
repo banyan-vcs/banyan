@@ -5,10 +5,10 @@ import (
 	"strings"
 )
 
-// AnchorPath 是规范化的锚定目录路径："/" 或 "/a/b"（无尾斜杠、无空段、无 ".."）。
+// AnchorPath is a canonical anchoring directory path: "/" or "/a/b" (no trailing slash, no empty segments, no "..").
 type AnchorPath string
 
-// ParseAnchorPath 校验并规范化锚点路径。
+// ParseAnchorPath validates and canonicalizes an anchor path.
 func ParseAnchorPath(s string) (AnchorPath, error) {
 	if s == "" || s == "/" {
 		return RootAnchor, nil
@@ -27,7 +27,7 @@ func ParseAnchorPath(s string) (AnchorPath, error) {
 	return AnchorPath(s), nil
 }
 
-// Segments 返回路径各段；根锚点返回空。
+// Segments returns the path segments; the root anchor returns none.
 func (p AnchorPath) Segments() []string {
 	if p == RootAnchor {
 		return nil
@@ -35,7 +35,7 @@ func (p AnchorPath) Segments() []string {
 	return strings.Split(strings.TrimPrefix(string(p), "/"), "/")
 }
 
-// Parent 返回父锚点；根的自反（组装递归的终止条件）。
+// Parent returns the parent anchor; self-reflexive at the root (termination condition for assembly recursion).
 func (p AnchorPath) Parent() AnchorPath {
 	segs := p.Segments()
 	if len(segs) <= 1 {
@@ -46,7 +46,7 @@ func (p AnchorPath) Parent() AnchorPath {
 
 func (p AnchorPath) IsRoot() bool { return p == RootAnchor }
 
-// JoinPath 在锚点下拼接一段子路径（用于虚拟仓库 URL → 锚点解析）。
+// JoinPath appends a sub-path under the anchor (for virtual repo URL → anchor resolution).
 func (p AnchorPath) JoinPath(rel string) AnchorPath {
 	if rel == "" {
 		return p
@@ -54,35 +54,36 @@ func (p AnchorPath) JoinPath(rel string) AnchorPath {
 	return AnchorPath(strings.TrimSuffix(string(p), "/") + "/" + strings.TrimPrefix(rel, "/"))
 }
 
-// Timeline 标识一条 commit 时间线：(repo, anchor, name)（docs/01 §2）。
-// 根时间线（anchor="/"）语义等同 git branch；目录时间线即"该子目录
-// 作为独立仓库"的历史。
+// Timeline identifies a commit timeline: (repo, anchor, name) (docs/01 §2).
+// The root timeline (anchor="/") is semantically a git branch; a directory
+// timeline is the history of "that subdirectory as an independent repo".
 type Timeline struct {
 	Repo   string
 	Anchor AnchorPath
 	Name   string // 类 branch 名，如 "main"
 }
 
-// TimelineState 是 MetaStore 中的权威 head 记录。
+// TimelineState is the authoritative head record in MetaStore.
 type TimelineState struct {
 	Head OID
-	// Base 记录目录时间线分叉自根时间线的哪个 commit（快照分叉，
-	// 显式 rebase 语义，docs/01 §5.2 / §7）。根时间线 Base 为零值。
+	// Base records which root-timeline commit the directory timeline forked
+	// from (snapshot fork, explicit rebase semantics, docs/01 §5.2 / §7).
+	// The root timeline has a zero Base.
 	Base OID
 }
 
-// RefName 渲染该时间线在（虚拟）仓库内的 git 可见 ref。
+// RefName renders the git-visible ref of this timeline inside the (virtual) repo.
 func (t Timeline) RefName() string {
 	return "refs/heads/" + t.Name
 }
 
-// InternalRef 渲染 banyan 内部 ref（仅 rpc 暴露，不上 git wire，docs/03 §6）。
+// InternalRef renders the banyan-internal ref (exposed only via rpc, never on the git wire, docs/03 §6).
 func (t Timeline) InternalRef() string {
 	return "refs/banyan/" + strings.TrimPrefix(string(t.Anchor), "/") + "/" + t.Name
 }
 
-// VirtualRepoPath 渲染虚拟仓库 URL 路径（/tree/ 前缀形式，docs/03 §1：
-// 标准 git 客户端会把 URL 中 "//" 规范化，故对外统一用 /tree/）。
+// VirtualRepoPath renders the virtual repo URL path (/tree/ prefix form,
+// docs/03 §1: git clients normalize "//" in URLs, so /tree/ is canonical).
 func (t Timeline) VirtualRepoPath() string {
 	if t.Anchor.IsRoot() {
 		return "/r/" + t.Repo

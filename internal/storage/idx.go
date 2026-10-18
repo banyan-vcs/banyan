@@ -9,27 +9,27 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// git idx v2 编解码——格式基准：git 源码
-// Documentation/technical/pack-format.txt（"pack index format"节）。
+// git idx v2 encode/decode — format reference: git source
+// Documentation/technical/pack-format.txt ("pack index format" section).
 //
 //	 magic: \377tOc   version: 2
-//	 fanout[256]      (big-endian uint32 累积计数)
-//	 oids[]           (排序，raw 定宽)
-//	 crc32[]          (每对象 4 字节)
-//	 offsets[]        (uint32；MSB=1 时为 8 字节大偏移表索引)
+//	 fanout[256]      (big-endian uint32 cumulative counts)
+//	 oids[]           (sorted, fixed raw width)
+//	 crc32[]          (4 bytes per object)
+//	 offsets[]        (uint32; MSB=1 marks index into the 8-byte large-offset table)
 //	 [large offsets[]]
 //	 pack checksum + idx checksum
 
 const idxMagic = "\xfftOc"
 
-// PackIndex 是解析后的 idx 内容：OID → pack 内偏移。
+// PackIndex is the parsed idx content: OID → offset within the pack.
 type PackIndex struct {
-	PackOID  model.OID // pack trailer checksum（分片主键）
+	PackOID  model.OID // pack trailer checksum (shard primary key)
 	Entries  map[model.OID]uint32
-	OIDOrder []model.OID // 排序序（遍历用）
+	OIDOrder []model.OID // sorted order (for iteration)
 }
 
-// RawOIDWidth 按 hash 算法返回 raw oid 字节数。
+// RawOIDWidth returns the raw oid byte width for the hash algorithm.
 func RawOIDWidth(algo model.HashAlgo) int {
 	if algo == model.SHA256 {
 		return 32
@@ -37,8 +37,8 @@ func RawOIDWidth(algo model.HashAlgo) int {
 	return 20
 }
 
-// EncodeIdx 生成 idx v2 字节流（骨架不含 crc 精确校验，填 0；
-// M1 接入真实 crc32 —— 需与 pack 解码联动计算）。
+// EncodeIdx generates an idx v2 byte stream (skeleton: no precise crc check,
+// fills 0; M1 wires in real crc32 — must be computed in tandem with pack decoding).
 func EncodeIdx(algo model.HashAlgo, packOID model.OID, offsets map[model.OID]uint32) ([]byte, error) {
 	width := RawOIDWidth(algo)
 	oids := make([]string, 0, len(offsets))
@@ -51,7 +51,7 @@ func EncodeIdx(algo model.HashAlgo, packOID model.OID, offsets map[model.OID]uin
 	out = append(out, idxMagic...)
 	out = binary.BigEndian.AppendUint32(out, 2)
 
-	// fanout：按首字节累积。
+	// fanout: cumulative counts by first byte.
 	var fanout [256]uint32
 	for _, o := range oids {
 		fanout[hexFirstByte(o)]++
@@ -69,7 +69,7 @@ func EncodeIdx(algo model.HashAlgo, packOID model.OID, offsets map[model.OID]uin
 		out = append(out, raw...)
 	}
 	for range oids {
-		out = binary.BigEndian.AppendUint32(out, 0) // TODO(M1): 真实 crc32
+		out = binary.BigEndian.AppendUint32(out, 0) // TODO(M1): real crc32
 	}
 	var large []byte
 	for _, o := range oids {
@@ -117,7 +117,8 @@ func DecodeIdx(b []byte, algo model.HashAlgo) (*PackIndex, error) {
 		pi.Entries[pi.OIDOrder[i]] = binary.BigEndian.Uint32(b[pos : pos+4])
 		pos += 4
 	}
-	// 尾部 pack checksum 的解析 M1 补全（当前由调用方以分片名提供 PackOID）。
+	// Trailing pack checksum parsing is deferred past M1 (callers currently
+	// supply PackOID via the shard name).
 	return pi, nil
 }
 

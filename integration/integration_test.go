@@ -1,11 +1,12 @@
-// Package integration 将六轮手工测试（MVP → 统一 DAG → 协商 → 交叉
-// 压测 → 多人协作）固化为可自动回归的集成测试（docs/07-testing.md）。
+// Package integration codifies six rounds of manual testing (MVP → unified DAG
+// → negotiation → cross-view stress → multi-user collaboration) into automated
+// regression integration tests (docs/07-testing.md).
 //
-// 形态：httptest 进程内起完整服务端（MemoryMetaStore + LocalShardStore
-// + gitwire + rpc，与 cmd/banyand 同装配），外调真实 git CLI 作为客户端
-// ——与手工验证路径完全一致（协议级 bug 只能被真实客户端暴露）。
-// 全部用小仓库（毫秒级 push/clone），go-git 4043 提交级重载验证保留为
-// 手工场景（README 快速开始）。
+// Shape: httptest runs the full server in-process (MemoryMetaStore +
+// LocalShardStore + gitwire + rpc, same wiring as cmd/banyan) with the real git
+// CLI as client — exactly the manual verification path (protocol-level bugs only
+// surface with real clients). All repos are tiny (ms-level push/clone); the go-git
+// 4043-commit reload run remains a manual scenario (README quick start).
 package integration
 
 import (
@@ -28,7 +29,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// --- 测试基建 ---
+// --- Test infrastructure ---
 
 type server struct {
 	*httptest.Server
@@ -60,8 +61,8 @@ func needGit(t *testing.T) {
 	}
 }
 
-// git 执行真实 git 命令，失败即 Fatal（输出带在错误信息里）。
-// 统一注入 core.autocrlf=false（消除 Windows CRLF 噪音）与固定身份。
+// git runs a real git command; failure is Fatal (output included in the error).
+// Uniformly injects core.autocrlf=false (kills Windows CRLF noise) and a fixed identity.
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	out, err := gitTry(dir, args...)
@@ -71,7 +72,7 @@ func git(t *testing.T, dir string, args ...string) string {
 	return out
 }
 
-// gitTry 允许失败（用于断言拒绝类行为），返回合并输出。
+// gitTry tolerates failure (for asserting rejection behavior); returns combined output.
 func gitTry(dir string, args ...string) (string, error) {
 	full := append([]string{
 		"-c", "core.autocrlf=false",
@@ -118,8 +119,8 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// seedRepo 构造小仓库并 push 到服务端（触发自动建仓）：
-// README.md + lib/a.txt + lib/nested/SHARED.txt，单提交。
+// seedRepo builds a tiny repo and pushes it to the server (triggers auto-creation):
+// README.md + lib/a.txt + lib/nested/SHARED.txt, single commit.
 func seedRepo(t *testing.T, s *server, name string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -172,7 +173,7 @@ func fsckClean(t *testing.T, dir string) {
 	}
 }
 
-// --- T1 根仓库 push → clone 往返 ---
+// --- T1 root repo push → clone roundtrip ---
 func TestRootCloneRoundtrip(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
@@ -192,27 +193,27 @@ func TestRootCloneRoundtrip(t *testing.T) {
 	fsckClean(t, dst)
 }
 
-// --- T2 子树 clone：工作树=子目录内容，原始 hash 进入子树历史 ---
+// --- T2 subtree clone: worktree = subdirectory content, original hash enters subtree history ---
 func TestSubtreeCloneUnifiedDAG(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	src := seedRepo(t, s, "t2")
-	_ = src // v4：子树以投影链呈现（SHA 不同），src 仅用于种子
+	_ = src // v4: subtree appears as a projection chain (different SHA); src only seeds
 
 	sub := cloneRepo(t, s, s.treeURL("t2", "lib/nested"))
-	// 工作树根 = 子目录内容。
+	// Worktree root = subdirectory content.
 	if got := readFile(t, filepath.Join(sub, "SHARED.txt")); got != "base\n" {
 		t.Fatalf("子树工作树内容 = %q", got)
 	}
 	if _, err := os.Stat(filepath.Join(sub, "README.md")); err == nil {
 		t.Fatal("子树工作树不应包含父级文件 README.md")
 	}
-	// v4 时间线优先（docs/01 §12）：子树历史 = 本路径时间线（投影链，
-	// SHA 与根侧不同——允许），内容与根一致（blob 相等）。
+	// v4 timeline-first (docs/01 §12): subtree history = this path's timeline (projection
+	// chain, SHA differs from the root side — allowed); content matches the root (blob equality).
 	if got := blobOf(t, sub, "SHARED.txt"); got == "" || got != blobOf(t, src, "lib/nested/SHARED.txt") {
 		t.Fatalf("子树 blob(%s) 与源(%s)不一致", got, blobOf(t, src, "lib/nested/SHARED.txt"))
 	}
-	// CI 效率核心断言：子树 clone 只承担子树规模（对象数远小于全仓）。
+	// Core CI-efficiency assertion: subtree clone carries only subtree scale (far fewer objects than the full repo).
 	subObjects := countInPack(t, sub)
 	fullObjects := countInPack(t, cloneRepo(t, s, s.repoURL("t2")))
 	if subObjects >= fullObjects {
@@ -221,8 +222,8 @@ func TestSubtreeCloneUnifiedDAG(t *testing.T) {
 	fsckClean(t, sub)
 }
 
-// countInPack 返回仓库本地对象数（CI 效率指标；小仓库的 pack 会被
-// git 默认拆成松散对象——count + in-pack 之和）。
+// countInPack returns the repo's local object count (CI efficiency metric; on small
+// repos git splits packs into loose objects by default — sum of count + in-pack).
 func countInPack(t *testing.T, dir string) int {
 	t.Helper()
 	out := git(t, dir, "count-objects", "-v")
@@ -242,13 +243,13 @@ func countInPack(t *testing.T, dir string) int {
 	return total
 }
 
-// --- T3 ref 操作：新建 / 更新 / 删除分支 ---
+// --- T3 ref operations: create / update / delete branch ---
 func TestRefOperations(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	src := seedRepo(t, s, "t3")
 
-	// 新建分支。
+	// Create branch.
 	git(t, src, "checkout", "-qb", "feature")
 	write(t, filepath.Join(src, "feat.txt"), "f1\n")
 	git(t, src, "add", "-A")
@@ -258,19 +259,19 @@ func TestRefOperations(t *testing.T) {
 		t.Fatalf("ls-remote 缺 feature:\n%s", out)
 	}
 
-	// 更新分支。
+	// Update branch.
 	write(t, filepath.Join(src, "feat.txt"), "f2\n")
 	git(t, src, "commit", "-qam", "t3: feature update")
 	git(t, src, "push", "-q", s.repoURL("t3"), "feature")
 
-	// 删除分支（全零 new → 服务端 CAS 归零路径）。
+	// Delete branch (all-zero new → server CAS zeroing path).
 	git(t, src, "push", "-q", s.repoURL("t3"), ":feature")
 	if out := git(t, "", "ls-remote", s.repoURL("t3")); strings.Contains(out, "refs/heads/feature") {
 		t.Fatalf("删除分支后 ls-remote 仍有 feature:\n%s", out)
 	}
 }
 
-// --- T4 增量 push + 另一克隆 pull ---
+// --- T4 incremental push + pull from another clone ---
 func TestIncrementalPushPull(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
@@ -293,7 +294,7 @@ func TestIncrementalPushPull(t *testing.T) {
 	}
 }
 
-// --- T5 子树 push 收编：merge 双亲 / C 同 hash 进根 / 文件落位 ---
+// --- T5 subtree push adoption: merge parents / C enters root at same hash / file placement ---
 func TestSubtreePushAdoption(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
@@ -305,7 +306,7 @@ func TestSubtreePushAdoption(t *testing.T) {
 	git(t, sub, "push", "-q", "origin", "main")
 	cHash := headOf(t, sub)
 
-	// 根视图：merge commit（双亲）+ C 以同 hash 出现 + 工作树落位。
+	// Root view: merge commit (two parents) + C appears at the same hash + worktree placement.
 	root := cloneRepo(t, s, s.repoURL("t5"))
 	if !hasCommit(t, root, cHash) {
 		t.Fatalf("根历史缺少子树提交 %s（hash 一致性破坏）", cHash)
@@ -317,13 +318,13 @@ func TestSubtreePushAdoption(t *testing.T) {
 	if got := readFile(t, filepath.Join(root, "lib", "nested", "SHARED.txt")); got != "base\nline-1\n" {
 		t.Fatalf("根工作树文件 = %q", got)
 	}
-	// v4：父级视图以投影呈现同一变更（SHA 与 C 不同，允许）——
-	// 断言内容到达（blob 在三视图一致，见下）而非 hash。
+	// v4: the parent view presents the same change as a projection (SHA differs from C,
+	// allowed) — assert content arrival (blob equal across three views, below), not hash.
 	parent := cloneRepo(t, s, s.treeURL("t5", "lib"))
 	if got := readFile(t, filepath.Join(parent, "nested", "SHARED.txt")); got != "base\nline-1\n" {
 		t.Fatalf("父级视图内容 = %q", got)
 	}
-	// 三视图 blob hash 一致。
+	// Blob hash identical across three views.
 	bSub, bPar, bRoot := blobOf(t, sub, "SHARED.txt"),
 		blobOf(t, parent, "nested/SHARED.txt"), blobOf(t, root, "lib/nested/SHARED.txt")
 	if bSub != bPar || bSub != bRoot || bSub == "" {
@@ -334,9 +335,9 @@ func TestSubtreePushAdoption(t *testing.T) {
 	fsckClean(t, root)
 }
 
-// --- T7 子树连续 push（不 pull）+ 自身 pull = up to date ---
-// 回归：resolveViewTip 修复前，第二次 push 必被拒（广告 tip 是合成
-// 薄提交而非被收编的 C）。
+// --- T7 consecutive subtree pushes (no pull) + own pull = up to date ---
+// Regression: before the resolveViewTip fix the second push was always rejected
+// (the advertised tip was a synthetic thin commit, not the adopted C).
 func TestConsecutiveSubtreePushes(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
@@ -346,20 +347,20 @@ func TestConsecutiveSubtreePushes(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		appendLine(t, filepath.Join(sub, "SHARED.txt"), fmt.Sprintf("c%d\n", i))
 		git(t, sub, "commit", "-qam", fmt.Sprintf("t7: consecutive %d", i))
-		git(t, sub, "push", "-q", "origin", "main") // 任一次被拒即 Fatal
+		git(t, sub, "push", "-q", "origin", "main") // any rejection is Fatal
 	}
-	// push 后服务端 tip = 客户端刚推的提交 → 自身 pull 应 up to date。
+	// After push the server tip = the just-pushed commit → own pull should be up to date.
 	if out := git(t, sub, "pull"); !strings.Contains(out, "Already up to date") {
 		t.Fatalf("自身 pull 应为 up to date:\n%s", out)
 	}
 }
 
-// --- T8 非干扰并行 + 路径内互斥（docs/01 §12 核心目标的两面）---
+// --- T8 non-interference parallelism + in-path mutual exclusion (two sides of the docs/01 §12 core goal) ---
 //
-//	v4 语义：子树视图 tip 只随【本路径内容】移动——根侧改 X 之外的
-//	文件不移动子树 tip，陈旧子树 push 无需 pull 直接成功（大规模
-//	并行迭代互不干扰）；根侧改 X 之内则子树 tip 前移，陈旧 push 被
-//	拒（防丢失更新，恢复流 pull --rebase → push）。
+//	v4 semantics: a subtree view tip moves only with [this path's content] —
+//	root-side edits outside X leave the tip unmoved, so a stale subtree push
+//	succeeds without pull (parallel iteration never interferes); edits inside
+//	X advance the tip, and stale pushes are rejected (lost-update guard; recovery pull --rebase → push).
 func TestCrossViewNonInterference(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
@@ -368,14 +369,14 @@ func TestCrossViewNonInterference(t *testing.T) {
 	root := cloneRepo(t, s, s.repoURL("t8"))
 	sub := cloneRepo(t, s, s.treeURL("t8", "lib/nested"))
 
-	// ① 非干扰：根改 X 之外（lib/a.txt），陈旧子树 push 直接过。
+	// ① Non-interference: root edits outside X (lib/a.txt); the stale subtree push passes directly.
 	write(t, filepath.Join(root, "lib", "a.txt"), "a-v2\n")
 	git(t, root, "commit", "-qam", "t8: root advances (outside X)")
 	git(t, root, "push", "-q", "origin", "main")
 
 	appendLine(t, filepath.Join(sub, "SHARED.txt"), "parallel-ok\n")
 	git(t, sub, "commit", "-qam", "t8: sub parallel (unrelated root change)")
-	git(t, sub, "push", "-q", "origin", "main") // 无 pull：非干扰
+	git(t, sub, "push", "-q", "origin", "main") // no pull: non-interference
 
 	root2 := cloneRepo(t, s, s.repoURL("t8"))
 	if got := readFile(t, filepath.Join(root2, "lib", "a.txt")); got != "a-v2\n" {
@@ -385,7 +386,7 @@ func TestCrossViewNonInterference(t *testing.T) {
 		t.Fatalf("子树变更未达根: %q", got)
 	}
 
-	// ② 路径内互斥：根改 X 之内，陈旧子树 push 必须被拒 → 恢复流。
+	// ② In-path mutual exclusion: root edits inside X; the stale subtree push must be rejected → recovery flow.
 	sub2 := cloneRepo(t, s, s.treeURL("t8", "lib/nested"))
 	root2edit := cloneRepo(t, s, s.repoURL("t8"))
 	write(t, filepath.Join(root2edit, "lib", "nested", "SHARED.txt"), "base\nroot-inside-X\n")
@@ -398,7 +399,7 @@ func TestCrossViewNonInterference(t *testing.T) {
 	if err == nil || !strings.Contains(out, "rejected") {
 		t.Fatalf("X 内陈旧 push 未被拒: err=%v\n%s", err, out)
 	}
-	// 真冲突显式解决（docs/01 §12：服务端不做内容合并）。
+		// Real conflict resolved explicitly (docs/01 §12: the server does no content merge).
 	if out, err := gitTry(sub2, "pull", "--rebase"); err != nil && !strings.Contains(out, "CONFLICT") {
 		t.Fatalf("rebase 失败但非冲突: %v\n%s", err, out)
 	}
@@ -412,15 +413,15 @@ func TestCrossViewNonInterference(t *testing.T) {
 	}
 }
 
-// --- T9 过期克隆 pull（v1 have 协商）+ 二次 pull ---
-// 回归：终态 ACK 语义——协商死锁（remote hung up）与 bad pack header
-// 均出在这条路径；且 push 后自身 pull 不应重新拉取。
+// --- T9 stale clone pull (v1 have negotiation) + second pull ---
+// Regression: final-state ACK semantics — negotiation deadlock (remote hung up)
+// and bad pack header both hit this path; own pull after push must not refetch.
 func TestNegotiationPullStaleClone(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	seedRepo(t, s, "t9")
 
-	a := cloneRepo(t, s, s.repoURL("t9")) // 有全部对象的过期克隆
+	a := cloneRepo(t, s, s.repoURL("t9")) // stale clone holding all objects
 	b := cloneRepo(t, s, s.repoURL("t9"))
 
 	write(t, filepath.Join(b, "neg.txt"), "neg\n")
@@ -428,22 +429,22 @@ func TestNegotiationPullStaleClone(t *testing.T) {
 	git(t, b, "commit", "-qm", "t9: advance from b")
 	git(t, b, "push", "-q", "origin", "main")
 
-	// a 的 pull 走 have 协商（ACK/NAK 终态语义）。
+	// a's pull goes through have negotiation (ACK/NAK final-state semantics).
 	if out := git(t, a, "pull"); !strings.Contains(out, "Fast-forward") {
 		t.Fatalf("过期克隆 pull 未快进:\n%s", out)
 	}
 	if headOf(t, a) != headOf(t, b) {
 		t.Fatal("pull 后 head 不一致")
 	}
-	// 二次 pull：up to date。
+	// Second pull: up to date.
 	if out := git(t, a, "pull"); !strings.Contains(out, "Already up to date") {
 		t.Fatalf("二次 pull 应 up to date:\n%s", out)
 	}
 }
 
-// --- T10 多人协作：同一文件、根/父/子三视图、五轮串行交叉，零冲突 ---
-// 回归：视图 tip 链式化前，merge-base 落在全仓作用域根提交 → X 路径
-// add/add 伪冲突（即使编辑完全串行）。协作纪律：pull → 改 → push。
+// --- T10 multi-user collaboration: same file, root/parent/subtree three views, five serial cross rounds, zero conflicts ---
+// Regression: before view tips were chained, merge-base landed on the repo-scope root
+// commit → add/add phantom conflict on path X (even with fully serial edits). Discipline: pull → edit → push.
 func TestMultiUserSameFileCollaboration(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
@@ -464,7 +465,7 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 	}
 	var hashes []string
 	for _, r := range rounds {
-		// 先 pull：零冲突断言（冲突时 git 退出码非零且输出含 CONFLICT）。
+		// Pull first: zero-conflict assertion (on conflict git exits non-zero with CONFLICT in output).
 		out, err := gitTry(r.dir, "pull")
 		if err != nil || strings.Contains(out, "CONFLICT") {
 			t.Fatalf("[%s] pull 冲突/失败（串行协作不应冲突）: err=%v\n%s", r.msg, err, out)
@@ -478,7 +479,7 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 		hashes = append(hashes, headOf(t, r.dir))
 	}
 
-	// 收尾：全员 pull 后断言收敛。
+	// Wrap-up: everyone pulls, then assert convergence.
 	for _, d := range []string{R, P, S} {
 		if out, err := gitTry(d, "pull"); err != nil || strings.Contains(out, "CONFLICT") {
 			t.Fatalf("收尾 pull 失败: err=%v\n%s", err, out)
@@ -492,17 +493,17 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 	if got := readFile(t, filepath.Join(S, "SHARED.txt")); !strings.Contains(got, "line-E by bob") {
 		t.Fatalf("最终内容缺最后一行: %q", got)
 	}
-	// v4 一致性（docs/01 §12）：每个协作提交以【原 hash】出现在根视图
-	//（收编保留第二父 / 根直推天然在）——SHA 稳定可追溯；其他视图以
-	// 投影呈现同一变更（SHA 不同，明确允许），内容一致性由上方三视图
-	// blob hash 断言保证。
+	// v4 consistency (docs/01 §12): every collaboration commit appears in the root view
+	// at [original hash] (adoption keeps the second parent / direct root pushes land there
+	// natively) — SHA stays stable and traceable; other views present the same change as
+	// projections (different SHA, explicitly allowed); content consistency is guaranteed by the three-view blob hash assertion above.
 	for i, h := range hashes {
 		if !hasCommit(t, R, h) {
 			t.Fatalf("协作提交 %d（%s）未出现在根视图（收编第二父应保留原 hash）\nroot chain:\n%s",
 				i+1, h[:9], git(t, R, "log", "--oneline", "-12"))
 		}
 	}
-	// 作者自己的视图经身份映射同样保留原 hash（r1/r3=alice→S）。
+	// The author's own view also keeps the original hash via identity mapping (r1/r3=alice→S).
 	for _, i := range []int{0, 2} {
 		if !hasCommit(t, S, hashes[i]) {
 			t.Fatalf("协作提交 %d（%s）未出现在作者自己的子树视图（身份映射应保留原 hash）", i+1, hashes[i][:9])
@@ -513,19 +514,19 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 	}
 }
 
-// --- T11 /api/v1/log 路径过滤（X 视角归一 + hash 一致视图） ---
+// --- T11 /api/v1/log path filter (X-view normalization + hash-consistent view) ---
 func TestFilteredLogRPC(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	seedRepo(t, s, "t11")
 
-	// 根提交只改 README（不触碰 lib）。
+	// Root commit touches README only (not lib).
 	root := cloneRepo(t, s, s.repoURL("t11"))
 	write(t, filepath.Join(root, "README.md"), "readme-v2\n")
 	git(t, root, "commit", "-qam", "t11: readme only")
 	git(t, root, "push", "-q", "origin", "main")
 
-	// 子树提交改 lib/nested/SHARED.txt。
+	// Subtree commit touches lib/nested/SHARED.txt.
 	sub := cloneRepo(t, s, s.treeURL("t11", "lib/nested"))
 	appendLine(t, filepath.Join(sub, "SHARED.txt"), "x\n")
 	git(t, sub, "commit", "-qam", "t11: sub touches shared")
@@ -554,7 +555,7 @@ func TestFilteredLogRPC(t *testing.T) {
 		case strings.HasPrefix(e.Subject, "t11: sub touches shared"):
 			sawSub = true
 		case strings.HasPrefix(e.Subject, "t11: readme only"):
-			sawReadmeOnly = true // 不应出现：该提交未触碰该路径
+			sawReadmeOnly = true // must not appear: this commit never touched the path
 		}
 	}
 	if !sawSeed || !sawSub {
@@ -565,16 +566,18 @@ func TestFilteredLogRPC(t *testing.T) {
 	}
 }
 
-// --- T8b 服务端 sameXView：force push 绕过客户端检查后必须由服务端判定 ---
+// --- T8b server-side sameXView: force pushes bypass client checks, so the server must judge ---
 
-// pktLine 编码一条 pkt-line（协议测试基建）。
+// pktLine encodes one pkt-line (protocol test helper).
 func pktLine(s string) string {
 	return fmt.Sprintf("%04x", len(s)+4) + s
 }
 
-// rawPush 手工构造 receive-pack POST（协议级，确定性模拟竞态窗口）：
-// 客户端取完广告后另一路 push 已落地——old 为陈旧广告值。pack 段为空
-// （对象需已在服务端，见 uploadObjects）。返回 report-status 原文。
+// rawPush hand-crafts a receive-pack POST (protocol-level, deterministic
+// race-window simulation): another push landed after the client took the
+// advertisement, so old is the stale advertised value. The pack section is
+// empty (objects must already exist server-side, see uploadObjects).
+// Returns the raw report-status body.
 func rawPush(t *testing.T, s *server, rawurl, old, newOID, ref string) string {
 	t.Helper()
 	cmd := pktLine(fmt.Sprintf("%s %s %s\x00report-status", old, newOID, ref)) + "0000"
@@ -592,30 +595,33 @@ func rawPush(t *testing.T, s *server, rawurl, old, newOID, ref string) string {
 	return string(body)
 }
 
-// uploadObjects 把 dir 中某提交的对象上传到根仓库（借助临时分支），
-// 不触碰根 main。用于 rawPush 前置：对象必须在服务端。
+// uploadObjects uploads the objects of a commit from dir into the root repo
+// (via a temporary branch) without touching root main. Precondition for
+// rawPush: the objects must exist server-side.
 func uploadObjects(t *testing.T, s *server, repoName, dir, commitish string) {
 	t.Helper()
 	git(t, dir, "push", "-q", s.repoURL(repoName), commitish+":refs/heads/upload")
-	git(t, dir, "push", "-q", s.repoURL(repoName), ":refs/heads/upload") // 用后即删
+	git(t, dir, "push", "-q", s.repoURL(repoName), ":refs/heads/upload") // delete after use
 }
 
-// --- T8b 竞态窗口的陈旧 push 防护（服务端 sameXView）---
+// --- T8b race-window stale-push protection (server-side sameXView) ---
 //
-// 关键协议事实（本次审计实测确认）：git push 发送的 old 恒为【本次
-// 广告的当前值】——force 只解除客户端祖先检查，不改 old。因此
-// sameXView 防线不在 force 路径，而在竞态窗口（客户端取完广告后、
-// POST 到达前另一路 push 落地 → old ≠ curTip）与非规范客户端。
-// 本用例用 rawPush 确定性构造该窗口：
+// Key protocol fact (verified by audit): the old value a git push sends is
+// always the current advertised value — force only lifts the client-side
+// ancestry check, it does not change old. Hence sameXView's real line of
+// the force path but the race window (another push lands between the client's
+// advertisement fetch and its POST → old ≠ curTip) and non-conforming clients.
+// This case constructs that window deterministically via rawPush:
 //
-//	拒绝路径：X 内容自分叉后，陈旧 old 的 push 必须被拒（否则整块
-//	子树被静默回滚、丢失对方提交）；
-//	放行路径：根侧改动 X 之外的内容，X 视图未变——陈旧 old 放行
-//	（无关变更不阻塞协作）。
+//	reject path: after X content diverges, a push with stale old must be
+//	rejected (else the whole subtree silently rolls back, losing the peer's
+//	commits);
+//	allow path: root-side changes outside X leave the X view unchanged —
+//	stale old passes (unrelated changes must not block collaboration).
 func TestRaceWindowStalePushProtection(t *testing.T) {
 	needGit(t)
 
-	// ---- 拒绝路径 ----
+	// ---- reject path ----
 	s := newServer(t)
 	seedRepo(t, s, "t8br")
 	s1 := cloneRepo(t, s, s.treeURL("t8br", "lib/nested"))
@@ -631,30 +637,30 @@ func TestRaceWindowStalePushProtection(t *testing.T) {
 	c2 := headOf(t, s2)
 	uploadObjects(t, s, "t8br", s2, c2)
 
-	// 竞态窗口：s2 的 old 停留在 t0（广告后 s1 已落地）→ 必须拒绝。
+	// Race window: s2's old stays at t0 (s1 landed after the advertisement) → must reject.
 	report := rawPush(t, s, s.treeURL("t8br", "lib/nested"), t0, c2, "refs/heads/main")
 	if !strings.Contains(report, "ng refs/heads/main") || !strings.Contains(report, "non-fast-forward") {
 		t.Fatalf("竞态窗口陈旧 push 未被服务端拒绝:\n%s", report)
 	}
-	// s1 内容未被静默回滚。
+	// s1's content must not be silently rolled back.
 	fresh := cloneRepo(t, s, s.treeURL("t8br", "lib/nested"))
 	if got := readFile(t, filepath.Join(fresh, "SHARED.txt")); !strings.Contains(got, "line-1") {
 		t.Fatalf("胜者内容被静默回滚: %q", got)
 	}
 
-	// ---- 放行路径（独立仓库，X 内容未变的竞态）----
+	// ---- allow path (separate repo; race with X content unchanged) ----
 	s2srv := newServer(t)
 	seedRepo(t, s2srv, "t8ba")
 	sub := cloneRepo(t, s2srv, s2srv.treeURL("t8ba", "lib/nested"))
 	t0a := strings.TrimSpace(git(t, sub, "rev-parse", "origin/main"))
 
-	// 根侧改 README（X=lib/nested 之外），根 main 前进。
+	// Root side edits README (outside X=lib/nested); root main advances.
 	root := cloneRepo(t, s2srv, s2srv.repoURL("t8ba"))
 	write(t, filepath.Join(root, "README.md"), "readme-v2\n")
 	git(t, root, "commit", "-qam", "t8ba: root edits readme")
 	git(t, root, "push", "-q", "origin", "main")
 
-	// 陈旧（t0a 时点的广告）子树 push：X 视图内容未变 → 内容级 FF 放行。
+	// Stale (advertised at t0a) subtree push: X-view content unchanged → content-level FF passes.
 	appendLine(t, filepath.Join(sub, "SHARED.txt"), "line-9\n")
 	git(t, sub, "commit", "-qam", "t8ba: sub after unrelated root change")
 	c9 := headOf(t, sub)
@@ -663,7 +669,7 @@ func TestRaceWindowStalePushProtection(t *testing.T) {
 	if !strings.Contains(report, "ok refs/heads/main") {
 		t.Fatalf("无关根侧变更不应阻塞陈旧子树 push（X 内容未变应放行）:\n%s", report)
 	}
-	// 收敛：根工作树同时含 README v2 与子树新内容。
+	// Convergence: the root worktree holds both README v2 and the new subtree content.
 	root2 := cloneRepo(t, s2srv, s2srv.repoURL("t8ba"))
 	if got := readFile(t, filepath.Join(root2, "README.md")); got != "readme-v2\n" {
 		t.Fatalf("根 README = %q", got)
@@ -680,10 +686,11 @@ func firstLine(s string) string {
 	return s
 }
 
-// --- T13 协议兼容矩阵：v0 显式 / v2 强制（服务端 v1-only，客户端按规范降级）---
-// git ≥2.26 对 fetch 默认即 v2——其余全部用例的 clone/fetch/pull 已隐式
-// 覆盖"客户端尝试 v2 → 服务端回 v0 广告 → 降级"路径；此处显式钉住
-// 两种版本下的 clone / 增量协商 / 子树 URL 行为契约（git 2.50 实测）。
+// --- T13 protocol matrix: explicit v0 / forced v2 (server is v1-only, client downgrades per spec) ---
+// git ≥2.26 defaults fetch to v2 — every other case's clone/fetch/pull already
+// covers the "client tries v2 → server replies v0 advertisement → downgrade"
+// path implicitly; this case pins the explicit behavior contract for both
+// versions across clone / incremental negotiation / subtree URLs (git 2.50).
 func TestProtocolVersionMatrix(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
@@ -699,7 +706,7 @@ func TestProtocolVersionMatrix(t *testing.T) {
 		fsckClean(t, dst)
 	}
 
-	// 增量协商在 v2 强制下降级走 v1 终态 ACK 路径：新提交经 fetch 到达。
+	// Incremental negotiation under forced v2 downgrades to the v1 terminal-ACK path: new commits arrive via fetch.
 	git(t, src, "commit", "-q", "--allow-empty", "-m", "t13: advance")
 	git(t, src, "push", "-q", s.repoURL("t13"), "main")
 	dst := t.TempDir()
@@ -712,7 +719,7 @@ func TestProtocolVersionMatrix(t *testing.T) {
 		t.Fatalf("v2 强制增量 fetch 未到达新提交: %s", got)
 	}
 
-	// 子树 URL 在 v2 强制下同样可用。
+	// Subtree URLs also work under forced v2.
 	sub := t.TempDir()
 	git(t, "", "-c", "protocol.version=2", "clone", "-q", s.treeURL("t13", "lib/nested"), sub)
 	if got := readFile(t, filepath.Join(sub, "SHARED.txt")); got != "base\n" {
@@ -721,11 +728,12 @@ func TestProtocolVersionMatrix(t *testing.T) {
 	fsckClean(t, sub)
 }
 
-// --- T14 partial clone：未广告 filter 能力 → 客户端警告后回退全量克隆 ---
-// 行为契约（git 2.50 实测）：stderr 出现 "filtering not recognized by
-// server, ignoring"，clone 成功且对象集与全量 clone 完全一致；git 仍会写
-// remote.origin.promisor 配置（对象全在，无害），后续 fetch 继续携带
-// filter 行（uploadpack 对 filter 行显式忽略），不破坏。
+// --- T14 partial clone: filter capability not advertised → client warns and falls back to full clone ---
+// Behavior contract (git 2.50): stderr contains "filtering not recognized by
+// server, ignoring"; the clone succeeds with an object set identical to a full
+// clone; git still records remote.origin.promisor (harmless — all objects
+// present) and later fetches keep sending a filter line (uploadpack ignores
+// filter lines explicitly), without breakage.
 func TestPartialCloneFilterFallback(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
@@ -746,22 +754,25 @@ func TestPartialCloneFilterFallback(t *testing.T) {
 			t.Fatalf("filter=%s 工作树内容 = %q", filter, got)
 		}
 		fsckClean(t, dst)
-		// promisor 配置下的后续 fetch（请求携带 filter 行）不破坏。
+		// Later fetches under promisor config (requests carry a filter line) stay intact.
 		git(t, dst, "fetch", "-q", "origin")
 	}
 }
 
-// --- T15 shallow clone（--depth）：服务端浅化（upload-pack deepen 协议）---
-// 参考流对照（git 2.50 http-backend 实测，docs/03 §9）：deepen 请求的每个
-// 响应前置 shallow 段（新边界 shallow 行 + 客户端已补全边界的 unshallow
-// 行 + flush；空边界 = 裸 flush）；协商轮只发 shallow 段（无 NAK）；done 轮
-// 接 ACK/NAK + 按边界裁剪父链的 pack（边界提交保留 parent 头，客户端以
-// .git/shallow 嫁接）。
+// --- T15 shallow clone (--depth): server-side shallowing (upload-pack deepen protocol) ---
+// Reference-traffic parity (git 2.50 http-backend, docs/03 §9): every response
+// to a deepen request starts with a shallow section (shallow lines for the new
+// boundary + unshallow lines for client boundaries now completed + flush; an
+// empty boundary is a bare flush); the negotiation round carries only the
+// shallow section (no NAK); the done round adds ACK/NAK + a pack with parent
+// edges cut at the boundary (boundary commits keep their parent headers; the
+// client grafts via .git/shallow).
 func TestShallowClone(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	src := seedRepo(t, s, "t15")
-	// c2 落在 lib/nested 内（使子树投影历史 ≥2 提交，浅化语义可观察）。
+	// c2 lands inside lib/nested (gives the subtree projection ≥2 commits so
+	// shallowing semantics are observable).
 	write(t, filepath.Join(src, "lib", "nested", "SHARED.txt"), "base\nline-2\n")
 	git(t, src, "commit", "-qam", "t15: c2")
 	write(t, filepath.Join(src, "lib", "a.txt"), "a-v3\n")
@@ -769,7 +780,7 @@ func TestShallowClone(t *testing.T) {
 	git(t, src, "push", "-q", s.repoURL("t15"), "main")
 	tip := headOf(t, src)
 
-	// depth 1：仅 tip，边界 = tip 本身。
+	// depth 1: tip only; boundary is the tip itself.
 	d1 := t.TempDir()
 	git(t, "", "clone", "-q", "--depth", "1", s.repoURL("t15"), d1)
 	if n := countCommits(t, d1); n != 1 {
@@ -783,7 +794,7 @@ func TestShallowClone(t *testing.T) {
 	}
 	fsckClean(t, d1)
 
-	// depth 2：tip + 直接父；边界 = 父。
+	// depth 2: tip + direct parent; boundary is the parent.
 	d2 := t.TempDir()
 	git(t, "", "clone", "-q", "--depth", "2", s.repoURL("t15"), d2)
 	if n := countCommits(t, d2); n != 2 {
@@ -791,7 +802,8 @@ func TestShallowClone(t *testing.T) {
 	}
 	fsckClean(t, d2)
 
-	// 超深：全历史、非浅仓（空边界 = 裸 flush 段，客户端接受为全量）。
+	// Over-deep: full history, not a shallow repo (empty boundary = bare
+	// flush section, accepted by the client as full).
 	d9 := t.TempDir()
 	git(t, "", "clone", "-q", "--depth", "99", s.repoURL("t15"), d9)
 	if n := countCommits(t, d9); n != 3 {
@@ -802,7 +814,8 @@ func TestShallowClone(t *testing.T) {
 	}
 	fsckClean(t, d9)
 
-	// 子树 URL 浅化：投影历史按深度截断；unshallow 走投影 OID 空间。
+	// Subtree URL shallowing: projected history truncated by depth; unshallow
+	// runs in projection-OID space.
 	sub := t.TempDir()
 	git(t, "", "clone", "-q", "--depth", "1", s.treeURL("t15", "lib/nested"), sub)
 	if n := countCommits(t, sub); n != 1 {
@@ -821,27 +834,31 @@ func TestShallowClone(t *testing.T) {
 	fsckClean(t, sub)
 }
 
-// --- T16 浅仓增量：fetch（上报边界）/ 加深 / unshallow ---
-// 语义对照参考流（git 2.50 http-backend 实测）：浅仓普通 fetch 不带
-// deepen——客户端 want 新 tip + 上报当前浅边界 + have；服务端不发 shallow
-// 段，pack 裁剪至客户端边界（历史止于旧 tip，浅文件不变）。加深时客户端
-// 上报浅边界 + deepen N，服务端以 shallow <新边界> + unshallow <已补全>
-// 段应答。unshallow = deepen ∞ + unshallow 回显清除浅文件。
+// --- T16 shallow-repo increments: fetch (boundary reported) / deepen / unshallow ---
+// Semantics per reference traffic (git 2.50 http-backend): a plain fetch from
+// a shallow clone carries no deepen — the client wants the new tip, reports
+// its current boundary, and sends haves; the server sends no shallow section
+// and cuts the pack at the client boundary (history stops at the old tip, the
+// shallow file is unchanged). Deepening sends the boundary + deepen N; the
+// server answers with a shallow <new-boundary> + unshallow <completed>
+// section. Unshallow = deepen ∞; the unshallow echo clears the shallow file.
 func TestShallowFetchDeepen(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	src := seedRepo(t, s, "t16")
-	// 浅边界提交必须有父（对照参考流：git 会自动清除父链已完备的浅条目，
-	// 根提交做边界会被立即清理，语义不可观察）。
+	// The boundary commit must have a parent (per reference traffic: git
+	// auto-removes shallow entries whose parent chain is complete — a root
+	// commit as boundary gets cleaned immediately, hiding the semantics).
 	write(t, filepath.Join(src, "README.md"), "readme-v2\n")
 	git(t, src, "commit", "-qam", "t16: c2")
 	git(t, src, "push", "-q", s.repoURL("t16"), "main")
-	boundary := headOf(t, src) // c2：浅边界候选
+	boundary := headOf(t, src) // c2: shallow boundary candidate
 
 	d := t.TempDir()
 	git(t, "", "clone", "-q", "--depth", "1", s.repoURL("t16"), d)
 
-	// 服务端再前进两提交；浅仓普通 fetch：历史止于旧浅边界 c2，浅文件不变。
+	// Server advances two more commits; plain fetch from the shallow clone:
+	// history stops at the old boundary c2, shallow file unchanged.
 	write(t, filepath.Join(src, "README.md"), "readme-v3\n")
 	git(t, src, "commit", "-qam", "t16: c3")
 	write(t, filepath.Join(src, "README.md"), "readme-v4\n")
@@ -861,14 +878,16 @@ func TestShallowFetchDeepen(t *testing.T) {
 	}
 	fsckClean(t, d)
 
-	// 加深到 2：浅边界下移一层（c3 成新边界，c2 之下仍缺失）。
+	// Deepen to 2: boundary moves one level down (c3 becomes the new
+	// boundary; below c2 is still missing).
 	git(t, d, "fetch", "-q", "--depth=2", "origin")
 	if n := countCommits(t, d); n != 2 {
 		t.Fatalf("加深 2 后提交数 = %d, want 2", n)
 	}
 	fsckClean(t, d)
 
-	// unshallow：客户端上报浅边界 + deepen ∞，服务端 unshallow 回显清除。
+	// unshallow: client reports its boundary + deepen ∞; the server's
+	// unshallow echo clears the shallow file.
 	git(t, d, "fetch", "-q", "--unshallow", "origin")
 	if n := countCommits(t, d); n != 4 {
 		t.Fatalf("unshallow 后提交数 = %d, want 4（全历史）", n)

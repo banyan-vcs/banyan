@@ -6,34 +6,34 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// 内存派生索引（docs/02 §1.3 全局索引的补充层 + docs/04 commit-graph）：
+// In-memory derived indexes (complement to the docs/02 §1.3 global index + docs/04 commit-graph):
 //
-//   - CommitGraph：oid → (tree, parents, when)，闭包计算与投影遍历
-//     不再逐对象解码 commit 原始字节；push 时增量构建（对象在
-//     IngestPack 里本就已解码，构建零额外 IO）。
-//   - TreeMemo：oid → 解析后的条目表，路径行走（SubtreeAt/闭包展开）
-//     每棵树只解析一次。
+//   - CommitGraph: oid → (tree, parents, when); closure computation and
+//     projection traversal no longer decode raw commit bytes per object; built
+//     incrementally at push (objects are already decoded in IngestPack — zero extra IO).
+//   - TreeMemo: oid → parsed entry table; path walking (SubtreeAt/closure
+//     expansion) parses each tree exactly once.
 //
-// 生命周期与进程一致（MetaStore 内存态，M2 随元数据一起持久化）。
+// Lifetime matches the process (MetaStore in-memory; M2 persists it with metadata).
 
-// CommitInfo 是 commit-graph 的一条记录。
+// CommitInfo is one commit-graph record.
 type CommitInfo struct {
 	Tree    model.OID
 	Parents []model.OID
-	When    int64 // committer unix 时间（排序/generation 用）
+	When    int64 // committer unix time (for ordering/generation)
 }
 
 type repoIndex struct {
 	commits map[model.OID]*CommitInfo
 	trees   map[model.OID][]model.TreeEntry
-	// 轻量提交索引（docs/01 §11，设计 v3）：git oid → (tree 边, bmsg 引用)。
-	// 信封内容寻址去重；push 时构建并逐条验证字节级还原（renderFails 应恒 0）。
+	// Lightweight commit index (docs/01 §11, design v3): git oid → (tree edge, bmsg ref).
+	// Envelopes dedupe by content addressing; built at push with per-commit byte-level render verification (renderFails should stay 0).
 	records    map[model.OID]*model.CommitRecord
 	msgs       map[model.OID][]byte
 	renderFails int
 }
 
-// buildIndex 在 push 入库时构建/合并索引。
+// buildIndex builds/merges indexes at push ingest time.
 func (s *ObjectService) buildIndex(repo string, dp *DecodedPack) {
 	s.idxMu.Lock()
 	defer s.idxMu.Unlock()
@@ -54,8 +54,8 @@ func (s *ObjectService) buildIndex(repo string, dp *DecodedPack) {
 		if c, err := model.DecodeCommit(raw); err == nil {
 			ri.commits[oid] = &CommitInfo{Tree: c.TreeOID, Parents: c.Parents, When: c.Committer.When.Unix()}
 		}
-		// 拆解为轻量记录 + bmsg（字节级还原验证；失败计数而非拒绝——
-		// pack 原样在库，服务不受影响，仅轻量化索引缺此条）。
+		// Decompose into lightweight record + bmsg (byte-level render verification;
+		// failures counted, not rejected — the pack stays in storage untouched, only the lightweight index misses the entry).
 		if _, done := ri.records[oid]; done {
 			continue
 		}
@@ -81,7 +81,7 @@ func (s *ObjectService) buildIndex(repo string, dp *DecodedPack) {
 	}
 }
 
-// CommitIndexStats 返回轻量提交索引统计（提交数/唯一 bmsg/还原失败数）。
+// CommitIndexStats returns lightweight commit index stats (commits / unique bmsgs / render failures).
 func (s *ObjectService) CommitIndexStats(repo string) (commits, uniqueMsgs, renderFails int) {
 	s.idxMu.Lock()
 	defer s.idxMu.Unlock()
@@ -92,8 +92,8 @@ func (s *ObjectService) CommitIndexStats(repo string) (commits, uniqueMsgs, rend
 	return len(ri.records), len(ri.msgs), ri.renderFails
 }
 
-// CommitInfo 取 commit 结构信息：索引命中直接返回；未命中（合成投影
-// commit 等）解析一次并回填索引。
+// CommitInfo fetches commit structure: an index hit returns directly; a miss
+// (synthetic projection commits etc.) is parsed once and back-filled into the index.
 func (s *ObjectService) CommitInfo(repo string, oid model.OID) (*CommitInfo, error) {
 	s.idxMu.Lock()
 	if ci, ok := s.idx[repo].commits[oid]; ok {
@@ -123,8 +123,8 @@ func (s *ObjectService) CommitInfo(repo string, oid model.OID) (*CommitInfo, err
 	return ci, nil
 }
 
-// TreeEntries 取 tree 条目表：索引命中直接返回；未命中解析一次并回填。
-// 返回切片归索引所有，调用方不得修改。
+// TreeEntries fetches tree entries: index hit returns directly; a miss is parsed
+// once and back-filled. The returned slice is index-owned; callers must not modify it.
 func (s *ObjectService) TreeEntries(repo string, oid model.OID) ([]model.TreeEntry, error) {
 	s.idxMu.Lock()
 	if e, ok := s.idx[repo].trees[oid]; ok {

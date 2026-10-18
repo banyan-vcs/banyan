@@ -18,8 +18,8 @@
 - [x] subtree split 投影（**DAG 版**：全父遍历、合并提交保留双 parent 边；经真实仓库验证）
 - [x] push 自动建仓（demo 便利；M2 收紧为 ACL）
 - [x] 目录锚点 push 的向上组装（AssembleRoot 已接线：子树 push → synthetic commit 入根时间线，三层可见性实测 522/1019/4044）
-- [ ] `banyan clone` / `banyan fetch-objects`（CLI 侧）
-- [ ] have 增量协商（当前忽略 have、回全量闭包，正确但非最优）
+- [ ] `banyan clone` / `banyan fetch-objects`（CLI 侧；服务端 /api/v1/objects RPC 已就绪）
+- [ ] have 减除（协商终态 ACK 已实现；pack 仍为 wants 全量闭包，正确但非最优——docs/03 §10 偏离 #1）
 
 **已验证的端到端链路**（样本：go-git 仓库，4043 提交 / 28649 对象 / 11MiB pack）：
 
@@ -49,7 +49,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 - [ ] 服务端 filter 完整规格（blob:none / tree:0 / sparse:oid / subtree:<path>）
 - [x] 热路径整 pack 直传（已提前实现，docs/02 §1.3：闭包=整 pack 时字节直传，serve 2.77s→24ms）
 - [ ] repack（碎片合并 + delta 化）
-- [ ] 浅克隆支持
+- [x] 浅克隆支持（2026-10-18 提前实现，docs/03 §3a：deepen N / 加深 / unshallow / 客户端边界裁剪，对照 http-backend 参考流，T15/T16 钉住）
 
 ## M4 · Scion 级工作流
 

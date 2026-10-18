@@ -8,45 +8,45 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// MetaStore 是中心元数据服务接口（docs/02 §2）：全局对象索引、
-// pack 注册表、timeline head（CAS）、WAL 串行点。
-// M1 内存实现 / M2 持久化实现可替换，上层不感知。
+// MetaStore is the central metadata service interface (docs/02 §2): global
+// object index, pack registry, timeline heads (CAS), WAL serialization point.
+// M1 in-memory / M2 persistent implementations are swappable; callers can't tell.
 type MetaStore interface {
-	// --- 仓库注册表 ---
+	// --- repo registry ---
 	CreateRepo(ctx context.Context, repo string, algo model.HashAlgo) error
 	GetRepo(ctx context.Context, repo string) (RepoInfo, error)
 
-	// --- 全局对象索引（分布式检索入口，docs/02 §1.3）---
-	// PutPack 登记一个新分片：对象 → (packOID, nodes)，并注册 pack。
+	// --- global object index (distributed lookup entry, docs/02 §1.3) ---
+	// PutPack registers a new shard: object → (packOID, nodes), and registers the pack.
 	PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error
-	// LocateObjects 批量定位：oid → 所在 pack 与节点。
+	// LocateObjects batch-locates: oid → its pack and node.
 	LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]ObjectLocation, error)
 
-	// --- timeline heads（唯一串行点，CAS）---
+	// --- timeline heads (the sole serialization point, CAS) ---
 	Timeline(ctx context.Context, tl model.Timeline) (model.TimelineState, error)
-	// CASHead 乐观锁推进 head；expected 不符返回 ErrNonFastForward。
-	// 全零 next 表示删除 timeline。
+	// CASHead advances the head via optimistic lock; an expected mismatch
+	// returns ErrNonFastForward. An all-zero next deletes the timeline.
 	CASHead(ctx context.Context, tl model.Timeline, expected, next model.OID) error
-	// EnsureTimeline 幂等初始化：不存在时以 (head, base) 建立（子树
-	// timeline 首次 push 前，其 head 是投影 head，base 记分叉点）。
+	// EnsureTimeline idempotent init: creates with (head, base) when absent
+	// (before a subtree timeline's first push, its head is the projection head; base records the fork point).
 	EnsureTimeline(ctx context.Context, tl model.Timeline, head, base model.OID) error
 	ListTimelines(ctx context.Context, repo string, anchor model.AnchorPath) ([]model.Timeline, error)
 }
 
-// ObjectLocation 是全局索引的一条定位记录。
+// ObjectLocation is one global-index location record.
 type ObjectLocation struct {
 	PackOID model.OID
 	NodeID  string
 }
 
-// RepoInfo 是仓库注册信息。
+// RepoInfo is repo registration info.
 type RepoInfo struct {
 	ID      string
 	Algo    model.HashAlgo
 	DefaultBranch string
 }
 
-// ErrNonFastForward 对应 git push 的 non-fast-forward（docs/01 §4.3）。
+// ErrNonFastForward mirrors git push non-fast-forward (docs/01 §4.3).
 var ErrNonFastForward = fmt.Errorf("non-fast-forward: timeline head moved")
 
 // ErrRepoNotFound / ErrTimelineUnknown.
@@ -55,8 +55,8 @@ var (
 	ErrTimelineUnknown  = fmt.Errorf("timeline unknown")
 )
 
-// MemoryMetaStore 是单机内存实现（M1）。WAL 语义 = 单互斥锁内
-// 读写原子；对象写入不进 WAL（CAS 幂等），只有 head/索引提交进。
+// MemoryMetaStore is the single-node in-memory implementation (M1). WAL semantics
+// = atomic reads/writes under one mutex; object writes skip the WAL (CAS idempotent); only head/index commits enter it.
 type MemoryMetaStore struct {
 	mu        sync.Mutex
 	repos     map[string]RepoInfo
@@ -148,7 +148,7 @@ func (m *MemoryMetaStore) CASHead(_ context.Context, tl model.Timeline, expected
 		return ErrNonFastForward
 	}
 	if next == "" {
-		// ref 删除：head 归零即移除该 timeline 条目。
+		// ref deletion: zeroing the head removes the timeline entry.
 		delete(m.timelines[tl.Repo], tl)
 		return nil
 	}
@@ -175,7 +175,7 @@ func (m *MemoryMetaStore) EnsureTimeline(_ context.Context, tl model.Timeline, h
 		m.timelines[tl.Repo] = map[model.Timeline]model.TimelineState{}
 	}
 	if _, exists := m.timelines[tl.Repo][tl]; exists {
-		return nil // 已存在（含已本地提交的情形）：不覆盖
+		return nil // already exists (incl. locally committed): don't overwrite
 	}
 	m.timelines[tl.Repo][tl] = model.TimelineState{Head: head, Base: base}
 	return nil

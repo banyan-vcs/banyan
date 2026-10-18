@@ -4,18 +4,18 @@ import (
 	"fmt"
 )
 
-// git 投影（Projection，下行读路径）——docs/01 §5。
+// git projection (download read path) — docs/01 §5.
 //
-//   - 根投影：anchor="/" 的 commit 原样就是 git commit（零翻译）；
-//   - 子树投影：DAG 版 subtree split——全父遍历，保留分支提交与
-//     合并结构，语义对齐 `git log -- <path>` / `git subtree split`；
-//     纯函数 ⇒ SHA 稳定 ⇒ 可缓存、可增量。
+//   - Root projection: an anchor="/" commit is a git commit as-is (zero translation);
+//   - Subtree projection: DAG-version subtree split — full-parent traversal, preserving branch commits and
+//     merge structure, semantics aligned with `git log -- <path>` / `git subtree split`;
+//     pure function ⇒ stable SHA ⇒ cacheable, incremental.
 
-// ProjectionAlgoVer 是投影算法版本。变更此值 = 开辟新缓存空间，
-// 不破坏既有客户端（旧投影对象仍有效，仅不再续写）。
+// ProjectionAlgoVer is the projection algorithm version. Changing it = opening a new cache namespace
+// without breaking existing clients (old projected objects stay valid, just no longer extended).
 const ProjectionAlgoVer = 1
 
-// SubtreeAt 返回 root 树中 path 处子树的 OID（不存在时返回零值）。
+// SubtreeAt returns the OID of the subtree at path in the root tree (zero if absent).
 func SubtreeAt(lookup ObjectLookup, root OID, path AnchorPath) OID {
 	cur := root
 	for _, seg := range path.Segments() {
@@ -41,8 +41,8 @@ func SubtreeAt(lookup ObjectLookup, root OID, path AnchorPath) OID {
 	return cur
 }
 
-// SubtreeSplit 把一个根时间线 commit 投影为"以 path 子树为根"的
-// 投影 commit（docs/01 §5.2）。确定性：同输入必同输出。
+// SubtreeSplit projects a root-timeline commit into a projected commit
+// "rooted at the path subtree" (docs/01 §5.2). Deterministic: same input, same output.
 func SubtreeSplit(lookup ObjectLookup, algo HashAlgo, rootCommitOID OID, path AnchorPath) (*AnchoredCommit, error) {
 	c, err := lookup.Commit(rootCommitOID)
 	if err != nil {
@@ -53,9 +53,9 @@ func SubtreeSplit(lookup ObjectLookup, algo HashAlgo, rootCommitOID OID, path An
 		return nil, fmt.Errorf("split %s: %w", rootCommitOID, err)
 	}
 	return &AnchoredCommit{
-		Anchor:        RootAnchor, // 投影结果在"以 P 为根"的虚拟仓库里是根锚点
+		Anchor:        RootAnchor, // the projection is a root anchor in the virtual repo rooted at P
 		TreeOID:       sub,
-		Parents:       nil, // 由 SplitHistory 统一回填（OID 定稿依赖 parent 先定稿）
+		Parents:       nil, // backfilled uniformly by SplitHistory (OID finalization requires parents first)
 		Author:        c.Author,
 		Committer:     c.Committer,
 		Message:       c.Message,
@@ -63,7 +63,7 @@ func SubtreeSplit(lookup ObjectLookup, algo HashAlgo, rootCommitOID OID, path An
 	}, nil
 }
 
-// RequireSubtreeAt 同 SubtreeAt，但路径不存在时报错。
+// RequireSubtreeAt is like SubtreeAt but errors when the path is absent.
 func RequireSubtreeAt(lookup ObjectLookup, root OID, path AnchorPath) (OID, error) {
 	sub := SubtreeAt(lookup, root, path)
 	if sub.IsZero() {
@@ -72,29 +72,29 @@ func RequireSubtreeAt(lookup ObjectLookup, root OID, path AnchorPath) (OID, erro
 	return sub, nil
 }
 
-// SplitResult 是子树投影输出。
+// SplitResult is the subtree projection output.
 type SplitResult struct {
-	// Commits 为投影 commit（拓扑序，新→旧），仅含该路径发生变更的
-	// 提交；分支提交独立成节点，合并点保留多条 parent 边。
+	// Commits are the projected commits (topological order, new→old), containing only
+	// commits that changed the path; branch commits become standalone nodes, merges keep multiple parent edges.
 	Commits []*AnchoredCommit
-	// Head 是虚拟仓库的 head：head 本身或其最近投影祖先。
+	// Head is the virtual repo's head: the head itself or its nearest projected ancestor.
 	Head OID
 }
 
-// SplitHistory 沿根时间线做 DAG 版 subtree split（docs/01 §5.2）。
+// SplitHistory performs a DAG-version subtree split along the root timeline (docs/01 §5.2).
 //
-// 算法（自旧向新，保证 OID 定稿无环）：
-//  1. 全父 DFS 收集可达 commit，后序即拓扑序（旧→新）；
-//  2. changed(C) = 路径子树存在，且（无父 或 任一父的子树 ≠ C 的子树）；
-//  3. 自旧向新为 changed 提交建投影：Parents[P] = resolve(P)——沿父边
-//     找到的最近投影祖先（首个非零，按父序优先），此时后继投影均已
-//     定稿，OID 引用不会过期；resolve 对未变更节点做记忆化。
+// Algorithm (old→new, guaranteeing acyclic OID finalization):
+//  1. Full-parent DFS collects reachable commits; post-order is topological order (old→new);
+//  2. changed(C) = path subtree exists and (no parent, or any parent's subtree ≠ C's subtree);
+//  3. Old→new, build projections for changed commits: Parents[P] = resolve(P) — the nearest
+//     projected ancestor along parent edges (first non-zero, parent order first); successor
+//     projections are already final by then, so OID references never go stale; resolve memoizes unchanged nodes.
 func SplitHistory(lookup ObjectLookup, algo HashAlgo, head OID, path AnchorPath) (*SplitResult, error) {
-	const maxCommits = 1000000 // 防御失控；浅化截断由 M3 提供
+	const maxCommits = 1000000 // runaway guard; shallowing truncation arrives in M3
 
 	commits := map[OID]*AnchoredCommit{}
 	visited := map[OID]bool{}
-	var topo []OID // 旧→新
+	var topo []OID // old→new
 	steps := 0
 
 	var visit func(oid OID) error
@@ -124,13 +124,13 @@ func SplitHistory(lookup ObjectLookup, algo HashAlgo, head OID, path AnchorPath)
 		return nil, err
 	}
 
-	// 各 commit 在 path 处的子树（零值 = 路径不存在），记忆化。
+	// Subtree at path for each commit (zero = path absent), memoized.
 	subOf := map[OID]OID{}
 	for _, oid := range topo {
 		subOf[oid] = SubtreeAt(lookup, commits[oid].TreeOID, path)
 	}
 
-	// changed 集：路径有且相对任一父发生变化（含根提交）。
+	// changed set: path present and differs from any parent (root commits included).
 	changed := map[OID]bool{}
 	for _, oid := range topo {
 		s := subOf[oid]
@@ -149,10 +149,10 @@ func SplitHistory(lookup ObjectLookup, algo HashAlgo, head OID, path AnchorPath)
 		}
 	}
 
-	// 自旧向新：建投影、回填 parent、定稿 OID。
+	// Old→new: build projections, backfill parents, finalize OIDs.
 	res := &SplitResult{}
-	projOID := map[OID]OID{}  // changed commit → 投影最终 OID
-	resolveMemo := map[OID]OID{} // 未变更 commit → 最近投影祖先
+	projOID := map[OID]OID{}  // changed commit → final projected OID
+	resolveMemo := map[OID]OID{} // unchanged commit → nearest projected ancestor
 
 	var resolve func(oid OID) OID
 	resolve = func(oid OID) OID {
@@ -173,19 +173,19 @@ func SplitHistory(lookup ObjectLookup, algo HashAlgo, head OID, path AnchorPath)
 		return out
 	}
 
-	for _, oid := range topo { // 旧→新：后继投影先定稿
+	for _, oid := range topo { // old→new: successor projections finalize first
 		if !changed[oid] {
 			continue
 		}
-		// 身份映射（docs/01 §12）：本路径的收编 merge M=[rootPrev, C]
-		// （C 为 X 作用域、树等价）的 X 投影 = C 本尊——零新提交、
-		// 零重复，push 者的变更经根回流后仍是自己的 SHA。C 的父链
-		// 即其原有时间线锚点，不改写。
+		// Identity mapping (docs/01 §12): the X projection of this path's adoption merge
+		// M=[rootPrev, C] (C scoped to X, tree equivalence) = C itself — zero new commits,
+		// zero duplication; the pusher's change keeps its own SHA after flowing back through the root.
+		// C's parent chain stays its original timeline anchor, unrewritten.
 		c := commits[oid]
 		if len(c.Parents) == 2 && !subOf[oid].IsZero() &&
 			commits[c.Parents[1]].TreeOID == subOf[oid] {
-			// 树等价判定：第二父的树 == 根树在 X 处的子树 ⇒ 本路径的
-			// 收编 merge，投影 = 被收编提交本尊。
+			// Tree equivalence check: second parent's tree == the root tree's subtree at X
+			// ⇒ an adoption merge on this path; the projection = the adopted commit itself.
 			projOID[oid] = c.Parents[1]
 			continue
 		}
@@ -203,7 +203,7 @@ func SplitHistory(lookup ObjectLookup, algo HashAlgo, head OID, path AnchorPath)
 			}
 		}
 		pc.Parents = parents
-		projOID[oid] = pc.OID(algo) // 自此定稿，不再变更
+		projOID[oid] = pc.OID(algo) // final from here on, never changed
 		res.Commits = append(res.Commits, pc)
 	}
 	if len(res.Commits) == 0 {
@@ -211,9 +211,9 @@ func SplitHistory(lookup ObjectLookup, algo HashAlgo, head OID, path AnchorPath)
 	}
 	res.Head = resolve(head)
 	if res.Head.IsZero() {
-		res.Head = res.Commits[0].OID(algo) // 理论不可达：head 可达集内必有 changed 节点
+		res.Head = res.Commits[0].OID(algo) // theoretically unreachable: a changed node must exist in head's reachable set
 	}
-	// 输出反转成 新→旧，方便调用方取 head/遍历。
+	// Reverse the output to new→old, convenient for callers taking head/iterating.
 	for i, j := 0, len(res.Commits)-1; i < j; i, j = i+1, j-1 {
 		res.Commits[i], res.Commits[j] = res.Commits[j], res.Commits[i]
 	}

@@ -7,30 +7,30 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// 服务端 filter（docs/03 §4）：对齐 git partial clone 语义
-// （git 源码 Documentation/technical/partial-clone.adoc 与
-// list-objects-filter 规格），外加 banyan 扩展 subtree:<path>。
+// Server-side filter (docs/03 §4): aligned with git partial clone semantics
+// (git sources Documentation/technical/partial-clone.adoc and
+// list-objects-filter spec), plus the banyan extension subtree:<path>.
 //
-//	广告：upload-pack 能力 "filter"（对照 uploadpack.allowFilter）
-//	会话：客户端在 want 区发 "filter <spec>"
+//	Advertisement: upload-pack capability "filter" (mirrors uploadpack.allowFilter)
+//	Session: the client sends "filter <spec>" in the want section
 
-// FilterSpec 是解析后的过滤规格。
+// FilterSpec is a parsed filter specification.
 type FilterSpec struct {
 	Kind FilterKind
-	Path string // subtree:/sparse: 时有效
+	Path string // valid for subtree:/sparse:
 }
 
 type FilterKind int
 
 const (
 	FilterNone FilterKind = iota
-	FilterBlobNone                   // blob:none  不含 blob
-	FilterTreeZero                   // tree:0     仅 commit
-	FilterSparseOID                  // sparse:oid=<oid> 按稀疏模式
-	FilterSubtree                    // subtree:<path> banyan 扩展
+	FilterBlobNone                   // blob:none  no blobs
+	FilterTreeZero                   // tree:0     commits only
+	FilterSparseOID                  // sparse:oid=<oid> by sparse pattern
+	FilterSubtree                    // subtree:<path> banyan extension
 )
 
-// ParseFilterSpec 解析并校验 filter 规格。
+// ParseFilterSpec parses and validates a filter spec.
 func ParseFilterSpec(spec string) (*FilterSpec, error) {
 	switch {
 	case spec == "blob:none":
@@ -55,7 +55,7 @@ func ParseFilterSpec(spec string) (*FilterSpec, error) {
 	}
 }
 
-// Spec 渲染回规范字符串。
+// Spec renders back to the canonical string.
 func (f *FilterSpec) Spec() string {
 	switch f.Kind {
 	case FilterBlobNone:
@@ -71,11 +71,11 @@ func (f *FilterSpec) Spec() string {
 	}
 }
 
-// ApplyFilter 对（虚拟）仓库的对象闭包应用过滤。
-// TODO(M1): 在 upload-pack 闭包计算处接入：
-//   - blob:none / tree:0 / sparse:oid 按 git list-objects-filter 语义；
-//   - subtree:<path>：tree 遍历做路径前缀剪枝（仅子树内 blob/tree
-//     + 全部 commit），配合 banyan fetch-objects 事后按 OID 补取。
+// ApplyFilter applies filtering to the object closure of a (virtual) repo.
+// TODO(M1): wire in at the upload-pack closure computation:
+//   - blob:none / tree:0 / sparse:oid per git list-objects-filter semantics;
+//   - subtree:<path>: prune tree traversal by path prefix (only blobs/trees inside the subtree
+//     + all commits), paired with banyan fetch-objects fetching missing ones by OID afterwards.
 func ApplyFilter(objects []ObjectEntry, f *FilterSpec) []ObjectEntry {
 	if f == nil || f.Kind == FilterNone {
 		return objects
@@ -92,14 +92,14 @@ func ApplyFilter(objects []ObjectEntry, f *FilterSpec) []ObjectEntry {
 				out = append(out, o)
 			}
 		default:
-			// TODO(M1): sparse/subtree 的路径级过滤。
+			// TODO(M1): path-level filtering for sparse/subtree.
 			out = append(out, o)
 		}
 	}
 	return out
 }
 
-// ObjectEntry 是闭包计算的一个对象条目（M1 由投影+遍历产生）。
+// ObjectEntry is one object entry of closure computation (M1: produced by projection + traversal).
 type ObjectEntry struct {
 	OID  model.OID
 	Type model.ObjectType

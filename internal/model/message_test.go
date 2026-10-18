@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// 字节级无损不变式：真实 git commit（含 gpgsig 多行头、双亲 merge、
-// 无父根提交）拆解→渲染必须逐字节还原 ⇒ hash 恒等（docs/01 §11）。
+// Byte-level lossless invariant: real git commits (gpgsig multiline headers,
+// two-parent merges, parentless roots) must decompose→render byte-identically ⇒ hash identity (docs/01 §11).
 func TestDecomposeRenderRoundtripRealFixtures(t *testing.T) {
 	fixtures, err := filepath.Glob("testdata/commit-*.txt")
 	if err != nil || len(fixtures) == 0 {
@@ -30,7 +30,7 @@ func TestDecomposeRenderRoundtripRealFixtures(t *testing.T) {
 		if got := ObjectOID(CommitType, rendered, SHA1); got != ObjectOID(CommitType, raw, SHA1) {
 			t.Fatalf("%s: hash changed after roundtrip", f)
 		}
-		// tree 边与信封解耦：换 tree 渲染仍合法，且 bmsg OID 不变。
+		// tree edge decoupled from the envelope: swapping the tree still renders validly, and the bmsg OID is unchanged.
 		if MessageOID(envelope, SHA1).IsZero() {
 			t.Fatalf("%s: zero message oid", f)
 		}
@@ -43,7 +43,7 @@ func TestDecomposeRejectsNonTreeFirstHeader(t *testing.T) {
 	}
 }
 
-// 去重语义：相同信封 + 不同 tree ⇒ 同一 bmsg（结构共享），不同 git commit。
+// Dedup semantics: identical envelope + different tree ⇒ one bmsg (structure sharing), distinct git commits.
 func TestMessageDedupAcrossTrees(t *testing.T) {
 	who := ident("bot")
 	envA := (&AnchoredCommit{Anchor: RootAnchor, TreeOID: "1111111111111111111111111111111111111111", Author: who, Committer: who, Message: "ci: rebuild\n"}).Encode()
@@ -56,13 +56,13 @@ func TestMessageDedupAcrossTrees(t *testing.T) {
 	if treeA == treeB {
 		t.Fatal("trees should differ")
 	}
-	// 渲染产物仍是两个不同的合法 git commit。
+	// The rendered artifacts remain two distinct valid git commits.
 	if ObjectOID(CommitType, RenderCommit(treeA, envA), SHA1) == ObjectOID(CommitType, RenderCommit(treeB, envB), SHA1) {
 		t.Fatal("different trees must render to different commits")
 	}
 }
 
-// 轻量记录往返：记录 → 渲染 → hash 与原对象一致。
+// Lightweight record round-trip: record → render → hash matches the original object.
 func TestCommitRecordRender(t *testing.T) {
 	who := ident("a")
 	c := &AnchoredCommit{Anchor: RootAnchor, TreeOID: "abc0000000000000000000000000000000000000", Author: who, Committer: who, Message: "m\n"}

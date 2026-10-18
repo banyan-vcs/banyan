@@ -1,5 +1,5 @@
-// Package rpc 提供 banyan CLI 的服务端 RPC（docs/05-cli.md）：
-// HTTPS + JSON，读响应带 ETag（投影 head OID）实现不可变缓存。
+// Package rpc provides the server-side RPC for the banyan CLI (docs/05-cli.md):
+// HTTPS + JSON; read responses carry an ETag (projection head OID) for immutable caching.
 package rpc
 
 import (
@@ -10,7 +10,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// Server 挂载 /api/v1/* 端点。
+// Server mounts the /api/v1/* endpoints.
 type Server struct {
 	Meta    storage.MetaStore
 	Objects *storage.ObjectService
@@ -35,7 +35,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// --- POST /api/v1/objects：逐对象批量定位+获取（懒回填，docs/03 §4）---
+// --- POST /api/v1/objects: batch per-object locate+fetch (lazy backfill, docs/03 §4) ---
 
 type objectsRequest struct {
 	Repo string     `json:"repo"`
@@ -52,8 +52,8 @@ type objectMeta struct {
 type objectsResponse struct {
 	Found    map[string]objectMeta `json:"found"`
 	Missing  []string              `json:"missing"`
-	// TODO(M1): bytes 交付（base64 或 pack 流端点）——与 gitwire 的
-	// partial clone 补取（want=OID 的普通 fetch）共享对象定位代码。
+	// TODO(M1): bytes delivery (base64 or a pack-stream endpoint) — shares
+	// object-location code with gitwire's partial clone backfill (a plain want=OID fetch).
 }
 
 func (s *Server) handleObjects(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +78,7 @@ func (s *Server) handleObjects(w http.ResponseWriter, r *http.Request) {
 		}
 		t := "unknown"
 		if dp, err := s.Objects.BlobOrTreeOrCommit(r.Context(), req.Repo, oid); err == nil && len(dp) >= 0 {
-			// 类型判定在 M1 解码层精确化（blob/tree/commit）。
+			// Type detection is made exact in the M1 decode layer (blob/tree/commit).
 			t = guessType(req.Repo, oid)
 		}
 		resp.Found[string(oid)] = objectMeta{Type: t, Pack: string(loc.PackOID), Node: loc.NodeID}
@@ -94,10 +94,10 @@ func (s *Server) handleObjects(w http.ResponseWriter, r *http.Request) {
 func guessType(repo string, oid model.OID) string {
 	_ = repo
 	_ = oid
-	return "unknown" // M1：从 ObjectService 解码缓存取精确类型
+	return "unknown" // M1: take the exact type from ObjectService's decode cache
 }
 
-// --- GET /api/v1/timelines：锚点/timeline 枚举 ---
+// --- GET /api/v1/timelines: anchor/timeline enumeration ---
 
 type timelinesResponse struct {
 	Repo      string            `json:"repo"`
@@ -117,6 +117,6 @@ func (s *Server) handleTimelines(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "repo required"})
 		return
 	}
-	// TODO(M1): MetaStore 需要 ListAllTimelines(repo)（跨锚点枚举）。
+	// TODO(M1): MetaStore needs ListAllTimelines(repo) (cross-anchor enumeration).
 	writeJSON(w, http.StatusOK, timelinesResponse{Repo: repo, Timelines: []timelineSummary{}})
 }

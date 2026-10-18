@@ -1,5 +1,5 @@
-// banyan 是对标 Scion `sl` 的新 CLI（docs/05-cli.md）：
-// 智能遥控器 + git 兼容本地仓（promisor remote 指回 banyand）。
+// banyan is the new CLI benchmarked against Scion's `sl` (docs/05-cli.md):
+// smart remote control + a git-compatible local repo (a promisor remote pointing back at banyand).
 package main
 
 import (
@@ -30,12 +30,12 @@ func main() {
 	cmd, args := os.Args[1], os.Args[2:]
 	switch cmd {
 	case "clone":
-		// TODO(M1): git clone --filter=blob:none <url>（虚拟仓库 URL 自动
-		// 展开 "//" 形态）+ 配置 remote.promisor/partialclonefilter +
-		// 对象缺失回填 hook。
+		// TODO(M1): git clone --filter=blob:none <url> (virtual repo URLs auto-expand
+		// the "//" form) + configure remote.promisor/partialclonefilter +
+		// an object-missing backfill hook.
 		fmt.Printf("clone: not implemented yet (M1); url=%v\n", args)
 	case "fetch-objects":
-		// TODO(M1): POST /api/v1/objects 定位 + 取回（docs/05 RPC 契约）。
+		// TODO(M1): POST /api/v1/objects locate + fetch (docs/05 RPC contract).
 		fmt.Printf("fetch-objects: not implemented yet (M1); oids=%v\n", args)
 	case "log", "blame", "diff", "file-history", "snapshot", "stack":
 		fmt.Printf("%s: not implemented yet (see docs/06-roadmap.md)\n", cmd)

@@ -6,33 +6,34 @@ import (
 	"strings"
 )
 
-// Message 对象与轻量提交（设计 v3，docs/01 §11）。
+// Message objects and lightweight commits (design v3, docs/01 §11).
 //
-// commit 的源信息一分为二：
+// A commit's source information is split in two:
 //
-//	信封（envelope）＝ tree 行之外的一切：parents、author、committer、
-//	额外头（gpgsig/mergetag 等多行头）、消息正文——存为独立的内容寻址
-//	Message 对象（类型标签 bmsg，仅 banyan 内部，永不进入 git wire）；
-//	轻量提交记录＝ (tree 边, bmsg 引用) 两个定长指针。
+//	envelope = everything past the tree line: parents, author, committer,
+//	extra headers (gpgsig/mergetag and other multiline headers), message body —
+//	stored as an independent content-addressed Message object (type tag bmsg,
+//	banyan-internal only, never on the git wire); lightweight record = two fixed pointers (tree edge, bmsg ref).
 //
-// git commit 对象因此成为**运行时渲染产物**：
+// The git commit object thereby becomes **a runtime render artifact**:
 //
-//	render(tree, envelope) = "tree <oid>\n" + envelope   —— 字节级还原。
+//	render(tree, envelope) = "tree <oid>\n" + envelope   — byte-exact round-trip.
 //
-//	对 push 收编的 commit，信封原样保存 ⇒ 渲染恒等 ⇒ hash 恒等；
-//	对 banyan 原生 commit（视图 tip / 收编 merge，及未来的快照与栈式
-//	变更），渲染是确定性的（§10 的既有模式推广为普适机制）。
+//	For push-adopted commits the envelope is kept verbatim ⇒ render identity
+//	⇒ hash identity; for native banyan commits (view tip / adoption merge,
+//	plus future snapshots and stacked changes) rendering is deterministic (§10 pattern generalized).
 //
-// 收益：提交记录退化为图上的定长边（CommitGraph 的原生形态）；
-// 信封内容寻址去重（机器人/模板化 merge 消息在 monorepo 中大量重复）；
-// metadata-only 修改（amend）只新增 bmsg 不动结构。
+// Gains: the commit record degenerates to a fixed-width graph edge (the
+// CommitGraph's native shape); envelopes dedupe by content addressing (bot or
+// templated merge messages repeat heavily in monorepos); a metadata-only
+// amend adds one bmsg and touches no structure.
 //
-// 不变式：Decompose∘Render = 恒等（字节级）；bmsg 与 git 对象空间
-// 因类型标签不同而天然隔离。
+// Invariant: Decompose∘Render = identity (byte-level); bmsg and git object spaces stay disjoint by type tag.
 
-// DecomposeCommit 把 git commit 原始字节拆为 (tree, 信封)。
-// 信封＝首行 tree 之后的一切原样字节（含多行头的续行与空行）。
-// 首行不是 tree 头时报错——防御非规范对象，调用方按原样整体保存回退。
+// DecomposeCommit splits raw git commit bytes into (tree, envelope).
+// The envelope = all bytes after the first tree line, verbatim (incl. header
+// continuation lines and blank lines). A non-tree first line errors — guarding
+// against non-canonical objects; callers fall back to storing it whole.
 func DecomposeCommit(raw []byte) (OID, []byte, error) {
 	i := bytes.IndexByte(raw, '\n')
 	if i < 0 {
@@ -49,7 +50,7 @@ func DecomposeCommit(raw []byte) (OID, []byte, error) {
 	return tree, raw[i+1:], nil
 }
 
-// RenderCommit 运行时渲染 git commit：tree 行 + 信封，字节级还原。
+// RenderCommit renders a git commit at runtime: tree line + envelope, byte-exact round-trip.
 func RenderCommit(tree OID, envelope []byte) []byte {
 	out := make([]byte, 0, len(envelope)+len(tree)+6)
 	out = append(out, "tree "...)
@@ -58,15 +59,15 @@ func RenderCommit(tree OID, envelope []byte) []byte {
 	return append(out, envelope...)
 }
 
-// MessageOID 计算信封的 bmsg 对象 ID：沿用 git 哈希方案但类型标签为
-// bmsg——与 blob/tree/commit 的 OID 空间天然隔离，永不冲突。
+// MessageOID computes the envelope's bmsg object ID: same git hashing scheme
+// but type tag bmsg — naturally disjoint from the blob/tree/commit OID space.
 func MessageOID(envelope []byte, algo HashAlgo) OID {
 	return ObjectOID("bmsg", envelope, algo)
 }
 
-// CommitRecord 是轻量提交记录：git oid ↔ (tree 边, bmsg 引用)。
+// CommitRecord is a lightweight commit record: git oid ↔ (tree edge, bmsg ref).
 type CommitRecord struct {
-	GitOID OID // 渲染产物的 git 对象 ID
-	Tree   OID // tree 边（提交的核心语义）
-	Msg    OID // bmsg 引用（全部元信息）
+	GitOID OID // git object ID of the rendered artifact
+	Tree   OID // tree edge (the commit's core semantics)
+	Msg    OID // bmsg reference (all metadata)
 }

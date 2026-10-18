@@ -1,8 +1,8 @@
-// Package model 定义 banyan 的核心数据模型（docs/01-data-model.md）：
+// Package model defines banyan's core data model (docs/01-data-model.md):
 //
-//   - 对象层：blob/tree 为不可变内容寻址对象，编码与 git 逐字节兼容；
-//   - 提交层：AnchoredCommit 可锚定（anchor）任意目录的 tree，
-//     而非仅限仓库根树——git commit 是 anchor="/" 的特例。
+//   - Object layer: blob/tree are immutable content-addressed objects, byte-for-byte git-compatible encoding;
+//   - Commit layer: AnchoredCommit can anchor (anchor) a tree at any directory,
+//     not just the repo root tree — git commit is the anchor="/" special case.
 package model
 
 import (
@@ -13,8 +13,8 @@ import (
 	"hash"
 )
 
-// HashAlgo 选择对象哈希算法。默认 SHA-1 以获得最大 git 互操作性
-// （object-format=sha1）；SHA-256 仓库以 object-format=sha256 注册。
+// HashAlgo selects the object hash algorithm. SHA-1 is the default for maximal
+// git interop (object-format=sha1); SHA-256 repos register object-format=sha256.
 type HashAlgo int
 
 const (
@@ -29,15 +29,15 @@ func (a HashAlgo) New() hash.Hash {
 	return sha1.New()
 }
 
-// OID 是小写十六进制对象标识（SHA-1 为 40 字符，SHA-256 为 64 字符）。
+// OID is a lowercase hex object identifier (40 chars for SHA-1, 64 for SHA-256).
 type OID string
 
 func (o OID) IsZero() bool    { return o == "" }
 func (o OID) String() string  { return string(o) }
 func (o OID) Bytes() []byte   { b, _ := hex.DecodeString(string(o)); return b }
 
-// NormalizeZero 把 git 线上协议中的全零 ID（新建 ref 的 old 值、删除 ref
-// 的 new 值）与空零值统一归一为 ""。
+// NormalizeZero canonicalizes all-zero IDs from the git wire protocol (old value
+// when creating a ref, new value when deleting one) and the empty zero value to "".
 func (o OID) NormalizeZero() OID {
 	if o == "" {
 		return ""
@@ -50,7 +50,7 @@ func (o OID) NormalizeZero() OID {
 	return ""
 }
 
-// ObjectType 与 git 对象类型一致。
+// ObjectType matches the git object types.
 type ObjectType string
 
 const (
@@ -60,8 +60,8 @@ const (
 	TagType    ObjectType = "tag"
 )
 
-// ObjectOID 计算 git 兼容的对象 ID：H("<type> <size>\0" || content)。
-// 相同输入得到与 git 完全相同的 OID——这是投影层零翻译兼容的地基。
+// ObjectOID computes the git-compatible object ID: H("<type> <size>\0" || content).
+// Identical input yields exactly git's OID — the foundation of the projection layer's zero-translation compatibility.
 func ObjectOID(t ObjectType, content []byte, algo HashAlgo) OID {
 	h := algo.New()
 	h.Write([]byte(fmt.Sprintf("%s %d\x00", t, len(content))))
@@ -69,22 +69,22 @@ func ObjectOID(t ObjectType, content []byte, algo HashAlgo) OID {
 	return OID(hex.EncodeToString(h.Sum(nil)))
 }
 
-// Blob 是文件内容对象。
+// Blob is the file-content object.
 type Blob struct {
 	Content []byte
 }
 
 func (b *Blob) OID(algo HashAlgo) OID { return ObjectOID(BlobType, b.Content, algo) }
 
-// TreeEntry 是树的一条命名条目，与 git tree 编码兼容。
+// TreeEntry is a named tree entry, compatible with git tree encoding.
 type TreeEntry struct {
 	Name   string
-	Mode   string // "100644" "100755" "120000" "40000"(目录) "160000"(gitlink)
+	Mode   string // "100644" "100755" "120000" "40000" (dir) "160000" (gitlink)
 	Target OID
 	IsDir  bool
 }
 
-// Tree 是不可变目录对象。
+// Tree is an immutable directory object.
 type Tree struct {
 	Entries []TreeEntry
 }
@@ -97,8 +97,8 @@ func (t *Tree) OID(algo HashAlgo) OID {
 	return ObjectOID(TreeType, b, algo)
 }
 
-// Encode 按 git tree 格式编码："<mode> <name>\0<raw-oid>" 重复；
-// 条目按 git 规则排序（目录名按追加 '/' 后比较）。
+// Encode follows the git tree format: repeated "<mode> <name>\0<raw-oid>";
+// entries sorted per git rules (directory names compared with '/' appended).
 func (t *Tree) Encode() ([]byte, error) {
 	entries := append([]TreeEntry(nil), t.Entries...)
 	sortEntries(entries)
@@ -125,7 +125,7 @@ func (t *Tree) Encode() ([]byte, error) {
 	return out, nil
 }
 
-// DecodeTree 解析 git tree 编码。
+// DecodeTree parses the git tree encoding.
 func DecodeTree(b []byte) (*Tree, error) {
 	t := &Tree{}
 	for len(b) > 0 {
@@ -141,12 +141,12 @@ func DecodeTree(b []byte) (*Tree, error) {
 		}
 		name := string(b[:nul])
 		b = b[nul+1:]
-		oidLen := 20 // SHA-1 raw 长度
+		oidLen := 20 // SHA-1 raw length
 		if len(b) < oidLen {
 			return nil, fmt.Errorf("decode tree: truncated oid")
 		}
-		// SHA-256 仓库 raw oid 为 32 字节；按剩余数据推断无法可靠区分，
-		// 因此 DecodeTree 由调用方保证传入对应算法的编码（见 ObjectLookup）。
+		// SHA-256 repos use 32-byte raw oids; they cannot be reliably distinguished
+		// from remaining data, so callers of DecodeTree must pass encodings of the matching algo (see ObjectLookup).
 		t.Entries = append(t.Entries, TreeEntry{
 			Name:   name,
 			Mode:   mode,
@@ -158,7 +158,7 @@ func DecodeTree(b []byte) (*Tree, error) {
 	return t, nil
 }
 
-// sortEntries 按 git 树序排序：目录视为名字后带 '/'。
+// sortEntries sorts in git tree order: directories are treated as names with a trailing '/'.
 func sortEntries(entries []TreeEntry) {
 	less := func(i, j int) bool {
 		ni, nj := entries[i].Name, entries[j].Name
@@ -170,7 +170,7 @@ func sortEntries(entries []TreeEntry) {
 		}
 		return ni < nj
 	}
-	// 插入排序足够（骨架阶段，树条目数有限）；M1 换 sort.Slice。
+	// Insertion sort suffices (skeleton stage, limited tree entries); M1 switches to sort.Slice.
 	for i := 1; i < len(entries); i++ {
 		for j := i; j > 0 && less(j, j-1); j-- {
 			entries[j], entries[j-1] = entries[j-1], entries[j]

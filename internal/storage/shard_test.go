@@ -19,11 +19,11 @@ func TestPickNodesRendezvousStability(t *testing.T) {
 		}
 		return out
 	}
-	// 确定性：同 key 同结果。
+	// Determinism: same key, same result.
 	if p1, p2 := pick("pack-1"), pick("pack-1"); p1[0] != p2[0] || p1[1] != p2[1] {
 		t.Fatalf("rendezvous not deterministic: %v vs %v", p1, p2)
 	}
-	// 分布性：100 个 key 应覆盖多个节点（不至于全压一个）。
+	// Distribution: 100 keys should cover multiple nodes (not all on one).
 	seen := map[string]int{}
 	for i := 0; i < 100; i++ {
 		key := string(rune('a'+i%26)) + "-" + string(rune('0'+i%10))
@@ -32,7 +32,7 @@ func TestPickNodesRendezvousStability(t *testing.T) {
 	if len(seen) < 3 {
 		t.Fatalf("poor distribution: %v", seen)
 	}
-	// 节点摘除：其余 key 的首选应尽量少漂移（rendezvous 性质，期望 ~1/N）。
+	// Node removal: other keys' primaries should drift as little as possible (rendezvous property, expect ~1/N).
 	short := []Node{{ID: "a"}, {ID: "b"}, {ID: "c"}, {ID: "d"}}
 	same := 0
 	for i := 0; i < 100; i++ {
@@ -46,7 +46,7 @@ func TestPickNodesRendezvousStability(t *testing.T) {
 			same++
 		}
 	}
-	if same < 60 { // 摘除 1/5 节点，期望 ~80 个 key 不变
+	if same < 60 { // removing 1/5 of the nodes, expect ~80 keys unchanged
 		t.Fatalf("removing a node moved %d/100 primary keys (rendezvous should move ~20)", 100-same)
 	}
 }

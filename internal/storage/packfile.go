@@ -13,15 +13,15 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// packfile 编解码封装：go-git 作为编解码库使用（docs/00 基座选型）。
-// 边界原则：go-git 类型不泄漏出 storage 包。
+// packfile encode/decode wrapper: go-git is used purely as a codec library
+// (docs/00 base selection). Boundary rule: go-git types never leak out of the storage package.
 //
-// v5.13 API 对接：
-//   解码  packfile.NewScanner(r) + NewParserWithStorage(sc, storer) + Parse()
-//   编码  packfile.NewEncoder(w, storer, false /*无 delta*/) + Encode(wants, 0)
+// v5.13 API mapping:
+//   decode  packfile.NewScanner(r) + NewParserWithStorage(sc, storer) + Parse()
+//   encode  packfile.NewEncoder(w, storer, false /*no delta*/) + Encode(wants, 0)
 
-// memStorer 把解码出的对象收进内存表（storer.EncodedObjectStorer 适配）。
-// order 记录 Parser 的插入序（= pack 序），供 offset 配对使用。
+// memStorer collects decoded objects into an in-memory table (storer.EncodedObjectStorer adapter).
+// order records the Parser's insertion order (= pack order), used for offset pairing.
 type memStorer struct {
 	mu      sync.Mutex
 	objects map[plumbing.Hash]plumbing.EncodedObject
@@ -32,7 +32,7 @@ func newMemStorer() *memStorer {
 	return &memStorer{objects: map[plumbing.Hash]plumbing.EncodedObject{}}
 }
 
-// NewEncodedObject 满足 storer 接口：返回 MemoryObject。
+// NewEncodedObject satisfies the storer interface: returns a MemoryObject.
 func (m *memStorer) NewEncodedObject() plumbing.EncodedObject {
 	return &plumbing.MemoryObject{}
 }
@@ -69,7 +69,7 @@ func (m *memStorer) EncodedObject(t plumbing.ObjectType, h plumbing.Hash) (plumb
 	return o, nil
 }
 
-// HasEncodedObject 满足 storer 接口（返回 error 而非 bool）。
+// HasEncodedObject satisfies the storer interface (returns error, not bool).
 func (m *memStorer) HasEncodedObject(h plumbing.Hash) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -103,7 +103,7 @@ func (m *memStorer) IterEncodedObjects(t plumbing.ObjectType) (storer.EncodedObj
 	return &sliceIter{objs: objs}, nil
 }
 
-// sliceIter 是最简 EncodedObjectIter 实现。
+// sliceIter is the simplest EncodedObjectIter implementation.
 type sliceIter struct {
 	objs []plumbing.EncodedObject
 	i    int
@@ -129,20 +129,21 @@ func (s *sliceIter) ForEach(f func(plumbing.EncodedObject) error) error {
 
 func (s *sliceIter) Close() {}
 
-// DecodedPack 是一次 push pack 解码的结果。
+// DecodedPack is the result of decoding one push pack.
 type DecodedPack struct {
-	PackOID model.OID        // 分片主键（pack trailer checksum）
+	PackOID model.OID        // shard primary key (pack trailer checksum)
 	Blobs   map[model.OID][]byte
-	Trees   map[model.OID][]byte // 原始 tree 编码
-	Commits map[model.OID][]byte // 原始 commit 编码（含 banyan-anchor 头）
-	Order   []model.OID          // pack 内对象序（Scanner 序）
-	// Offsets 是 oid → pack 内偏移（idx v2 的数据源）。与 Parser 的
-	// 对象插入序按位配对得到；数量不齐时为空（调用方跳过 idx 写入）。
+	Trees   map[model.OID][]byte // raw tree encoding
+	Commits map[model.OID][]byte // raw commit encoding (incl. banyan-anchor headers)
+	Order   []model.OID          // object order within the pack (Scanner order)
+	// Offsets is oid → offset in the pack (the data source for idx v2).
+	// Paired positionally with the Parser's object insertion order; empty when
+	// counts mismatch (callers skip the idx write).
 	Offsets map[model.OID]uint32
 }
 
-// DecodePack 解析收到的 pack：Parser 展开 OFS/REF delta 并按 pack 序
-// 收集对象，第二遍 Scanner 收集对象头 offset，二者按位配对。
+// DecodePack parses a received pack: the Parser expands OFS/REF deltas and
+// collects objects in pack order; a second Scanner pass collects object-header offsets; paired positionally.
 func DecodePack(raw []byte) (*DecodedPack, error) {
 	st := newMemStorer()
 	parser, err := packfile.NewParserWithStorage(packfile.NewScanner(bytes.NewReader(raw)), st)
@@ -180,7 +181,7 @@ func DecodePack(raw []byte) (*DecodedPack, error) {
 			dp.Trees[oid] = content
 		case plumbing.CommitObject:
 			dp.Commits[oid] = content
-		default: // tag 等：M1 扩展
+		default: // tags etc.: M1 extension
 		}
 		dp.Order = append(dp.Order, oid)
 	}
@@ -190,7 +191,7 @@ func DecodePack(raw []byte) (*DecodedPack, error) {
 		dp.PackOID = syntheticPackOID(dp)
 	}
 
-	// 第二遍：Scanner 对象头（offset），与 Parser 插入序按位配对。
+	// Second pass: Scanner object headers (offsets), paired positionally with Parser insertion order.
 	if offs, serr := scanOffsets(raw); serr == nil && len(offs) == len(st.order) {
 		dp.Offsets = make(map[model.OID]uint32, len(offs))
 		for i, h := range st.order {
@@ -200,9 +201,9 @@ func DecodePack(raw []byte) (*DecodedPack, error) {
 	return dp, nil
 }
 
-// scanOffsets 顺序收集 pack 内每个对象头的偏移。
-// Scanner 不追踪对象边界，需先读 pack 头取对象数，按数循环——
-// 否则末尾会把 trailer 校验和当对象头解析而报错。
+// scanOffsets collects the offset of every object header in the pack, in order.
+// The Scanner does not track object boundaries: read the pack header first for
+// the object count and loop by count — otherwise the end-of-pack trailer checksum is parsed as an object header and errors.
 func scanOffsets(raw []byte) ([]int64, error) {
 	sc := packfile.NewScanner(bytes.NewReader(raw))
 	_, count, err := sc.Header()
@@ -220,8 +221,8 @@ func scanOffsets(raw []byte) ([]int64, error) {
 	return out, nil
 }
 
-// EncodePack 把对象集合合成为无 delta 的响应 pack（docs/03 §3 步骤⑤：
-// 正确性优先，delta 化是 repack 的职责）。
+// EncodePack synthesizes a delta-free response pack from an object set
+// (docs/03 §3 step 5: correctness first; deltification is repack's job).
 func EncodePack(w io.Writer, blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte) error {
 	st := newMemStorer()
 	want := make([]plumbing.Hash, 0, len(blobs)+len(trees)+len(commits))
@@ -271,7 +272,7 @@ func putObject(st *memStorer, t plumbing.ObjectType, oid model.OID, content []by
 }
 
 func syntheticPackOID(dp *DecodedPack) model.OID {
-	// 骨架阶段的分片主键回退：对象清单的 SHA-1。
+	// Skeleton-stage shard key fallback: SHA-1 of the object list.
 	var buf bytes.Buffer
 	for _, oid := range dp.Order {
 		buf.WriteString(string(oid))
