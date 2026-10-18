@@ -172,7 +172,11 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 
 // adoptSubtreePush 收编子树 push（统一 DAG，docs/01 §10）：
 //
-//	① 校验 old == 当前视图 tip（视图被根推进过则拒绝，客户端先 fetch）
+//	① 校验 old（内容级 fast-forward）：old 的 X 视图树 == 当前 tip 的
+//	  X 视图树才放行。三种情形均正确——连续 push（内容未变，放行；
+//	  祖先判据会造成子树第二次 push 被拒）；跨视图陈旧 push（X 内容
+//	  已被他人推进，拒绝——祖先判据会造成整块子树静默回滚、丢失对方
+//	  提交）；pull 后 push（客户端视角与服务端一致，放行）。
 //	② AdoptSubtreePush 生成 subtree-merge commit（C 原样保留为第二父）
 //	③ 根 head CAS 前进（冲突重试——ReplaceSubtree 幂等，C 不变）
 func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, old, newHead model.OID) error {
@@ -183,7 +187,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, old, newH
 	if curTip.IsZero() {
 		return fmt.Errorf("subtree view %s unavailable (root has no commits)", vr.Sub)
 	}
-	if !old.IsZero() && old != curTip {
+	if !old.IsZero() && old != curTip && !s.sameXView(vr, old, curTip) {
 		return storage.ErrNonFastForward
 	}
 
@@ -234,4 +238,40 @@ func (m *metaHeads) TimelineHead(tl model.Timeline) (model.TimelineState, error)
 		return model.TimelineState{}, nil
 	}
 	return st, err
+}
+
+// sameXView 内容级 fast-forward 判定：两个提交在路径 X 视角下的树
+// 是否相同（X 视角归一：全仓树取 X 子树；树不含 X 首段 ⇒ 该树本身
+// 即 X 视角根树——子树侧提交/视图 tip 的混合作用域）。
+func (s *Server) sameXView(vr VirtualRepo, a, b model.OID) bool {
+	ia, err := s.Objects.CommitInfo(vr.Repo, a)
+	if err != nil {
+		return false
+	}
+	ib, err := s.Objects.CommitInfo(vr.Repo, b)
+	if err != nil {
+		return false
+	}
+	ta := s.xviewTree(vr, ia.Tree)
+	tb := s.xviewTree(vr, ib.Tree)
+	return !ta.IsZero() && ta == tb
+}
+
+// xviewTree 把树归一到 X 视角（docs/01 §10 混合作用域）。
+func (s *Server) xviewTree(vr VirtualRepo, tree model.OID) model.OID {
+	lookup := s.Objects.Lookup(vr.Repo)
+	segs := vr.Sub.Segments()
+	if len(segs) == 0 {
+		return tree
+	}
+	t, err := lookup.Tree(tree)
+	if err != nil {
+		return ""
+	}
+	for _, e := range t.Entries {
+		if e.Name == segs[0] {
+			return model.SubtreeAt(lookup, tree, vr.Sub)
+		}
+	}
+	return tree // 树不含 X 首段 ⇒ 本身即 X 视角根树
 }

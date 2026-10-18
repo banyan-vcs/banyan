@@ -1,6 +1,7 @@
 package gitwire
 
 import (
+	"fmt"
 	"bufio"
 	"context"
 	"errors"
@@ -72,11 +73,14 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 	}, nil
 }
 
-// subtreeHead 返回子树视图 tip 与当前根 head（统一 DAG 设计）：
-// tip = SubtreeTip(根 head, path)——tree=子树内容、parent=根提交，
-// 祖先即统一 DAG，父树历史以原始 hash 进入子树视图（展示过滤交给
-// git 原生 `git log -- .`）。子树 push 经 AdoptSubtreePush 收编后根
-// head 前进，tip 随之推进——无独立子树 timeline。
+// subtreeHead 返回子树视图 tip 与当前根 head（统一 DAG 设计）。
+//
+// tip 解析优先级（resolveViewTip）：
+//  1. 根 head 是本路径的收编 merge（第二父的树 == 根树在本路径处的子树）
+//     → tip = 被收编的 C 本身——hash 与客户端推送的一致，连续 push /
+//     pull 的 fast-forward 语义完全对齐 git；
+//  2. 否则生成确定性合成薄 tip（SubtreeTip：tree=子树、parent=根提交），
+//     祖先即统一 DAG，父树历史以原始 hash 进入子树视图。
 func (s *Server) subtreeHead(ctx context.Context, vr VirtualRepo) (head, rootHead model.OID, err error) {
 	info, err := s.Meta.GetRepo(ctx, vr.Repo)
 	if err != nil {
@@ -95,40 +99,122 @@ func (s *Server) subtreeHead(ctx context.Context, vr VirtualRepo) (head, rootHea
 		return "", "", err
 	}
 	rootHead = state.Head
-	head, err = s.subtreeTip(vr, rootHead)
+	head, err = s.subtreeTip(vr, defaultBranch, rootHead)
 	if err != nil {
 		return "", "", err
 	}
 	return head, rootHead, nil
 }
 
-// subtreeTip 计算并缓存视图 tip：SubtreeTip 是 (rootOID, path) 的纯
-// 函数（确定性 hash），物化进合成对象层后可被 fetch 的闭包遍历命中。
-func (s *Server) subtreeTip(vr VirtualRepo, rootHead model.OID) (model.OID, error) {
-	key := projectionKey{repo: vr.Repo, sub: vr.Sub, root: rootHead}
+// subtreeTip 计算视图 tip（链式缓存 + resolveViewTip）。
+// 状态按 (repo, X, branch) 记忆：root 未变返回上次 tip；root 前进则
+// 以 [旧tip, 新根] 双亲建链式新 tip——保证客户端相邻两次 fetch 的
+// merge-base 是 X 作用域提交（详见 resolveViewTip 注释）。
+func (s *Server) subtreeTip(vr VirtualRepo, branch string, rootHead model.OID) (model.OID, error) {
+	key := viewKey{repo: vr.Repo, sub: vr.Sub, branch: branch}
 	s.projMu.Lock()
-	if oid, ok := s.projCache[key]; ok {
+	if st, ok := s.viewChain[key]; ok && st.root == rootHead {
+		oid := st.tip
 		s.projMu.Unlock()
 		return oid, nil
 	}
 	s.projMu.Unlock()
 
-	tip, err := model.SubtreeTip(s.Objects.Lookup(vr.Repo), s.Algo, rootHead, vr.Sub)
+	oid, err := s.resolveViewTip(vr, branch, rootHead)
 	if err != nil {
 		return "", err
 	}
-	oid := tip.OID(s.Algo)
-	s.Objects.PutSynthetic(vr.Repo, oid, model.CommitType, tip.Encode())
+	if oid.IsZero() {
+		return "", model.ErrObjectNotFound
+	}
 	s.projMu.Lock()
-	s.projCache[key] = oid
+	s.viewChain[key] = viewChainState{root: rootHead, tip: oid}
 	s.projMu.Unlock()
 	return oid, nil
 }
 
-type projectionKey struct {
-	repo string
-	sub  model.AnchorPath
+// resolveViewTip 解析视图 tip：
+//
+//  1. 根 head 是本路径的收编 merge（第二父的树 == 根树在本路径处的
+//     子树）→ tip = 被收编的提交本身（hash 与客户端推送一致）；
+//  2. 否则生成链式合成 tip：parents = [上一 tip, 根 head]。
+//     链式化的必要性：若 tip.parent = 根提交（全仓作用域树），客户端
+//     相邻两次 fetch 的 merge-base 落在全仓提交上——X 路径在 base 中
+//     不存在，任何跨视图同文件的串行编辑都会被 git 判为 add/add 伪
+//     冲突（实测：bob 在父级 pull 后追加一行即触发）。链式化后
+//     base = 旧 tip（X 作用域），pull 退化为 fast-forward 或规范的
+//     modify/modify 三方合并。
+//     第一父 = 旧 tip（客户端 log 的主脉络），第二父 = 根提交
+//     （统一 DAG 可见性）。
+//
+// 已知限制：链状态在内存（M2 随 MetaStore 持久化）；进程重启后第一
+// 个 tip 退化为单亲 [根 head]，重启窗口内未 pull 的客户端可能遇到
+// 一次伪冲突。
+func (s *Server) resolveViewTip(vr VirtualRepo, branch string, rootHead model.OID) (model.OID, error) {
+	lookup := s.Objects.Lookup(vr.Repo)
+	rootInfo, err := s.Objects.CommitInfo(vr.Repo, rootHead)
+	if err != nil {
+		return "", err
+	}
+	if len(rootInfo.Parents) == 2 {
+		if c2, err := s.Objects.CommitInfo(vr.Repo, rootInfo.Parents[1]); err == nil {
+			want := model.SubtreeAt(lookup, rootInfo.Tree, vr.Sub)
+			if !want.IsZero() && c2.Tree == want {
+				return rootInfo.Parents[1], nil
+			}
+		}
+	}
+	sub := model.SubtreeAt(lookup, rootInfo.Tree, vr.Sub)
+	if sub.IsZero() {
+		return "", model.ErrObjectNotFound
+	}
+	// 确定性身份：签名固定、时间取根提交 committer（SubtreeTip 同款）。
+	rootCommit, err := lookup.Commit(rootHead)
+	if err != nil {
+		return "", err
+	}
+	viewID := model.Identity{
+		Name:  "banyan-view",
+		Email: "view@banyan.local",
+		When:  rootCommit.Committer.When,
+	}
+	tip := &model.AnchoredCommit{
+		Anchor:    model.RootAnchor,
+		TreeOID:   sub,
+		Parents:   []model.OID{rootHead},
+		Author:    viewID,
+		Committer: viewID,
+		Message:   fmt.Sprintf("banyan: subtree view %s @ %s\n", vr.Sub, rootHead),
+	}
+	// 链式：有上一 tip 则作为第一父。
+	key := viewKey{repo: vr.Repo, sub: vr.Sub, branch: branch}
+	if prev := s.chainTip(key); !prev.IsZero() {
+		tip.Parents = []model.OID{prev, rootHead}
+	}
+	oid := tip.OID(s.Algo)
+	s.Objects.PutSynthetic(vr.Repo, oid, model.CommitType, tip.Encode())
+	return oid, nil
+}
+
+type viewKey struct {
+	repo   string
+	sub    model.AnchorPath
+	branch string
+}
+
+type viewChainState struct {
 	root model.OID
+	tip  model.OID
+}
+
+// chainTip 读取视图链的上一 tip（无状态返回零值）。
+func (s *Server) chainTip(key viewKey) model.OID {
+	s.projMu.Lock()
+	defer s.projMu.Unlock()
+	if st, ok := s.viewChain[key]; ok {
+		return st.tip
+	}
+	return ""
 }
 
 // bufWriter 聚合写（pkt 流不逐条 flush）。

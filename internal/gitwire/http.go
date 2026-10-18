@@ -65,11 +65,11 @@ type Server struct {
 	Algo    model.HashAlgo
 
 	projMu    sync.Mutex
-	projCache map[projectionKey]model.OID // 子树投影缓存（refs.go）
+	viewChain map[viewKey]viewChainState // 视图 tip 链状态（refs.go）
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
-	return &Server{Meta: meta, Objects: objects, Algo: algo, projCache: map[projectionKey]model.OID{}}
+	return &Server{Meta: meta, Objects: objects, Algo: algo, viewChain: map[viewKey]viewChainState{}}
 }
 
 // Register 注册路由（docs/03 §1 端点表）。
@@ -129,6 +129,11 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr Virtu
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if len(refs) > 0 && !vr.Sub.IsRoot() {
+		// 调试：子树广告的请求级记录（定位并发广告不一致）。
+		state, _ := s.Meta.Timeline(r.Context(), model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: s.defaultBranch(r.Context(), vr.Repo)})
+		log.Printf("ADVERT %s%s: tip=%s rootHead=%s", vr.Repo, vr.Sub, refs[0].OID, state.Head)
 	}
 
 	br := newBufWriter(w)
