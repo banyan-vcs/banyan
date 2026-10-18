@@ -190,6 +190,7 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 	return strings.Join([]string{
 		agent, objFmt,
 		"report-status",
+		"delete-refs", // 未广告此能力时客户端会静默丢弃删除命令（gitprotocol-pack）
 		"no-thin", // 存储侧 pack 自包含（docs/03 §2）
 	}, " ")
 }

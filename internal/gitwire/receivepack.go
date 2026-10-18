@@ -126,7 +126,6 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+err.Error()+"\n"))
 				continue
 			}
-
 			_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
 			continue
 		}
