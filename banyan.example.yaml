@@ -1,0 +1,19 @@
+# banyand 配置示例 — 复制为 banyan.yaml 并按需修改。
+# 解析优先级：内置默认 < 本文件（-config 指定）< 显式命令行标志。
+# 严格模式：未知键直接报错（防拼写错误/过期配置静默失效）。
+# 注意：相对路径（root/db）按 banyand 进程工作目录解析，建议部署时用绝对路径。
+
+# HTTP 监听地址
+listen: ":8080"
+
+# 本地分片存储根目录（pack + idx 落盘位置）
+root: "./data"
+
+# 元数据后端：mem（内存态，重启即失）| sqlite（持久化，docs/02 §2）
+meta: "mem"
+
+# SQLite 数据库路径（meta: sqlite 时生效；默认 <root>/banyan.db）
+# db: "./data/banyan.db"
+
+# 启动时创建的仓库名（可选）
+# init_repo: "demo"

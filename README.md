@@ -51,8 +51,12 @@ internal/derived/ 派生数据引擎（接口占位）
 ```bash
 go build ./... && go vet ./... && go test ./...
 
-# 启动服务端（单机模式：内存元数据 + 本地盘分片；重启即失，持久化见 M2）
-go run ./cmd/banyand --listen 127.0.0.1:8097 --root F:/Workspace/test/banyand-data
+# 启动服务端（单机模式）。配置三层解析：内置默认 < YAML 文件 < 显式标志
+# （见 banyan.example.yaml；未知配置键直接报错，保证配置一致性）
+go run ./cmd/banyand --config banyan.yaml
+
+# 等价的纯标志形式（SQLite 持久化元数据，重启不丢状态）
+go run ./cmd/banyand --listen 127.0.0.1:8097 --root F:/Workspace/test/banyand-data --meta sqlite
 
 # 任意 git 仓库推上来（首次 push 自动建仓）
 git remote add banyan http://127.0.0.1:8097/r/myrepo.git
