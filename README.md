@@ -33,6 +33,7 @@
 | [docs/06-roadmap.md](docs/06-roadmap.md) | 里程碑与演进路径 |
 | [docs/07-testing.md](docs/07-testing.md) | 集成测试矩阵（按测试目标拆分） |
 | [docs/08-big-picture.md](docs/08-big-picture.md) | 定位：通用代码存储层 + GitLab 等平台集成拓扑 |
+| [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | 索引（代数/树反向索引）与打包（have 减除/delta/repack）设计 |
 
 ## 代码骨架
 

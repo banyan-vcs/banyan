@@ -124,7 +124,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	}
 
 	closureStart := time.Now()
-	blobs, trees, commits, err := s.closure(r.Context(), vr, wants, depth, clientShallow)
+	blobs, trees, commits, excluded, err := s.closure(r.Context(), vr, wants, depth, clientShallow, haves)
 	closureDur := time.Since(closureStart)
 	if err != nil {
 		log.Printf("upload-pack %s%s: closure: %v", vr.Repo, vr.Sub, err)
@@ -159,8 +159,8 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		}
 	}
 	_ = out.Flush()
-	log.Printf("upload-pack %s%s: %d wants → %d commits, %d trees, %d blobs (closure %s, serve %s/%s)",
-		vr.Repo, vr.Sub, len(wants), len(commits), len(trees), len(blobs),
+	log.Printf("upload-pack %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, closure %s, serve %s/%s)",
+		vr.Repo, vr.Sub, len(wants), len(commits), len(trees), len(blobs), excluded,
 		closureDur.Round(time.Millisecond), served, time.Since(encodeStart).Round(time.Millisecond))
 }
 
@@ -246,11 +246,27 @@ func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included
 // Pruning: depth > 0 prunes parent chains at the shallowing boundary; with no deepen but a client-reported
 // shallow boundary (plain fetch from a shallow clone) the client boundary is the prune point — matching the
 // reference server's have-subtracted pack shape (objects below the graft layer stay out of the pack).
-func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID, depth int, clientShallow []model.OID) (
-	blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, err error) {
+//
+// Have subtraction (git upload-pack.c mark-uninteresting semantics, docs/09 §3):
+// the client's haves bound the set of objects it provably already has (a git
+// repo holding commit X holds X's full closure); every object reachable from
+// the known haves' commits is therefore excluded from the pack, and the main
+// walk never visits an excluded object. Excluded objects are not expanded —
+// their children are reachable only through excluded paths unless some other
+// included path reaches them, in which case that path enqueues them. The
+// wants themselves are never excluded (a degenerate client that wants
+// something it also has must still receive it). Server cost: one extra
+// traversal of the have side per fetch — the same trade git makes without
+// reachability bitmaps (docs/09 §3.3).
+func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID, depth int, clientShallow, haves []model.OID) (
+	blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, excludedObjects int, err error) {
 	blobs = map[model.OID][]byte{}
 	trees = map[model.OID][]byte{}
 	commits = map[model.OID][]byte{}
+	exclude := s.haveClosure(ctx, vr.Repo, haves, clientShallow)
+	for _, w := range wants {
+		delete(exclude, w)
+	}
 	visited := map[model.OID]bool{}
 	referrer := map[model.OID]model.OID{} // debugging: oid ← who enqueued it
 	var boundary map[model.OID]bool
@@ -272,12 +288,28 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 		}
 		visited[oid] = true
 
+		if exclude[oid] {
+			// The client provably has this object (reachable from its haves,
+			// bounded by its reported shallow boundaries). A non-shallow
+			// client also has its whole ancestry, so the walk prunes here;
+			// a shallow client's history is grafted at the boundary — what
+			// sits BELOW an excluded commit may still be wanted (deepen /
+			// unshallow), so the walk traverses THROUGH it, emitting nothing
+			// and respecting the depth boundary cut.
+			if len(clientShallow) > 0 && !boundary[oid] {
+				if ci, err := s.Objects.CommitInfo(vr.Repo, oid); err == nil {
+					queue = append(queue, ci.Parents...)
+				}
+			}
+			continue
+		}
+
 		t, raw, err := s.Objects.Raw(ctx, vr.Repo, oid)
 		if err != nil {
 			// Debugging: dump the referrer context (type + first 256 bytes of raw content).
 			refType, refRaw, rerr := s.Objects.Raw(ctx, vr.Repo, referrer[oid])
 			refDump := fmt.Sprintf("type=%s rerr=%v raw=%.256x", refType, rerr, refRaw)
-			return nil, nil, nil, fmt.Errorf("closure: %w (object %s, referred by %s [%s])", err, oid, referrer[oid], refDump)
+			return nil, nil, nil, 0, fmt.Errorf("closure: %w (object %s, referred by %s [%s])", err, oid, referrer[oid], refDump)
 		}
 		enq := func(child model.OID) {
 			if _, seen := referrer[child]; !seen {
@@ -291,7 +323,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			// Go through the commit-graph index: commits are no longer decoded one by one (docs/04).
 			ci, err := s.Objects.CommitInfo(vr.Repo, oid)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, 0, err
 			}
 			enq(ci.Tree)
 			if !boundary[oid] {
@@ -304,7 +336,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			// Go through the tree-entry index: path/child expansion no longer re-parses tree bytes.
 			entries, err := s.Objects.TreeEntries(vr.Repo, oid)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("closure: tree %s: %w", oid, err)
+				return nil, nil, nil, 0, fmt.Errorf("closure: tree %s: %w", oid, err)
 			}
 			for _, e := range entries {
 				enq(e.Target)
@@ -312,10 +344,75 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 		case model.BlobType:
 			blobs[oid] = raw
 		default:
-			return nil, nil, nil, fmt.Errorf("closure: unsupported object type %q for %s", t, oid)
+			return nil, nil, nil, 0, fmt.Errorf("closure: unsupported object type %q for %s", t, oid)
 		}
 	}
-	return blobs, trees, commits, nil
+	return blobs, trees, commits, len(exclude), nil
+}
+
+// haveClosure computes the object set provably present on a client holding
+// the given haves: the commit closure of the server-known haves, expanded
+// through their trees. Unknown haves are skipped.
+//
+// Shallow caveat: a client reporting shallow boundaries does NOT hold those
+// commits' parent closures (grafted at .git/shallow), so the commit walk
+// stops AT each reported boundary — the boundary commit and its tree closure
+// are excluded, everything below them is not. Without this bound the
+// unshallow/deepen path would exclude objects the client is precisely trying
+// to receive ("remote did not send all necessary objects").
+func (s *Server) haveClosure(ctx context.Context, repo string, haves, clientShallow []model.OID) map[model.OID]bool {
+	exclude := map[model.OID]bool{}
+	if len(haves) == 0 {
+		return exclude
+	}
+	shallowStop := map[model.OID]bool{}
+	for _, oid := range clientShallow {
+		shallowStop[oid] = true
+	}
+	commitSeen := map[model.OID]bool{}
+	queue := append([]model.OID(nil), haves...)
+	for len(queue) > 0 {
+		oid := queue[0]
+		queue = queue[1:]
+		if commitSeen[oid] {
+			continue
+		}
+		ci, err := s.Objects.CommitInfo(repo, oid)
+		if err != nil {
+			continue // unknown to the server: cannot anchor an exclusion
+		}
+		commitSeen[oid] = true
+		exclude[oid] = true
+		if !shallowStop[oid] {
+			queue = append(queue, ci.Parents...)
+		}
+	}
+	for oid := range commitSeen {
+		ci, _ := s.Objects.CommitInfo(repo, oid)
+		if ci == nil {
+			continue
+		}
+		var walk func(tree model.OID)
+		walk = func(tree model.OID) {
+			if exclude[tree] {
+				return
+			}
+			exclude[tree] = true
+			entries, err := s.Objects.TreeEntries(repo, tree)
+			if err != nil {
+				return
+			}
+			for _, e := range entries {
+				if e.IsDir {
+					walk(e.Target)
+				} else {
+					exclude[e.Target] = true
+				}
+			}
+		}
+		walk(ci.Tree)
+	}
+	return exclude
 }
 
 // firstKnown returns the first object in haves that the server already has (the v1 negotiation

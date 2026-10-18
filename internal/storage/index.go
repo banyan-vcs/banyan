@@ -12,8 +12,15 @@ import (
 //   - CommitGraph: oid → (tree, parents, when); closure computation and
 //     projection traversal no longer decode raw commit bytes per object; built
 //     incrementally at push (objects are already decoded in IngestPack — zero extra IO).
+//   - Generation: oid → generation number (1 + max over parents, git
+//     commit-graph semantics). Ancestry checks prune whole subtrees with it
+//     (descends O(history) → O(distance)); memoized, immutable-DAG-safe
+//     (new commits only ever add entries, never invalidate old ones).
 //   - TreeMemo: oid → parsed entry table; path walking (SubtreeAt/closure
 //     expansion) parses each tree exactly once.
+//   - treeCommits: tree → commits recording it (reverse index). "Is this tree
+//     already in this history" becomes a candidate lookup + ancestry check
+//     instead of a full-history scan.
 //
 // Lifetime matches the process (MetaStore in-memory; M2 persists it with metadata).
 
@@ -27,6 +34,17 @@ type CommitInfo struct {
 type repoIndex struct {
 	commits map[model.OID]*CommitInfo
 	trees   map[model.OID][]model.TreeEntry
+	// gen memoizes generation numbers (0 = not yet computed). Exact under the
+	// complete-objects invariant: a value is written only after every known
+	// ancestor resolved; missing objects are never cached. Ancestors that
+	// could not be resolved taint the entry (genTainted) — the value is then
+	// a lower bound and must not drive ancestry pruning.
+	gen         map[model.OID]uint32
+	genTainted  map[model.OID]bool
+	// treeCommits is the reverse index tree → commits (one entry per commit;
+	// total memory O(commits)). Uncapped on purpose: a capped list can miss
+	// the one ancestor carrying the tree and flip TreeKnown to false.
+	treeCommits map[model.OID][]model.OID
 	// Lightweight commit index (docs/01 §11, design v3): git oid → (tree edge, bmsg ref).
 	// Envelopes dedupe by content addressing; built at push with per-commit byte-level render verification (renderFails should stay 0).
 	records     map[model.OID]*model.CommitRecord
@@ -49,6 +67,7 @@ func (s *ObjectService) buildIndex(repo string, dp *DecodedPack) {
 		}
 		if c, err := model.DecodeCommit(raw); err == nil {
 			ri.commits[oid] = &CommitInfo{Tree: c.TreeOID, Parents: c.Parents, When: c.Committer.When.Unix()}
+			ri.treeCommits[c.TreeOID] = append(ri.treeCommits[c.TreeOID], oid)
 		}
 		// Decompose into lightweight record + bmsg (byte-level render verification;
 		// failures counted, not rejected — the pack stays in storage untouched, only the lightweight index misses the entry).
@@ -118,7 +137,10 @@ func (s *ObjectService) CommitInfo(repo string, oid model.OID) (*CommitInfo, err
 	if s.idx[repo] == nil {
 		s.idx[repo] = newRepoIndex()
 	}
-	s.idx[repo].commits[oid] = ci
+	if _, done := s.idx[repo].commits[oid]; !done {
+		s.idx[repo].commits[oid] = ci
+		s.idx[repo].treeCommits[ci.Tree] = append(s.idx[repo].treeCommits[ci.Tree], oid)
+	}
 	s.idxMu.Unlock()
 	return ci, nil
 }
@@ -160,9 +182,124 @@ func (s *ObjectService) TreeEntries(repo string, oid model.OID) ([]model.TreeEnt
 // buildIndex), or the later writer hits a nil map.
 func newRepoIndex() *repoIndex {
 	return &repoIndex{
-		commits: map[model.OID]*CommitInfo{},
-		trees:   map[model.OID][]model.TreeEntry{},
-		records: map[model.OID]*model.CommitRecord{},
-		msgs:    map[model.OID][]byte{},
+		commits:     map[model.OID]*CommitInfo{},
+		trees:       map[model.OID][]model.TreeEntry{},
+		gen:         map[model.OID]uint32{},
+		genTainted:  map[model.OID]bool{},
+		treeCommits: map[model.OID][]model.OID{},
+		records:     map[model.OID]*model.CommitRecord{},
+		msgs:        map[model.OID][]byte{},
 	}
+}
+
+// Generation returns the commit's generation number (1 for a root commit,
+// 1 + max(parents) otherwise — git commit-graph semantics) and whether it is
+// EXACT. A missing ancestor makes the value a lower bound; such entries are
+// tainted and reported exact=false — ancestry pruning must only use exact
+// values (an understated generation could prune a true ancestor). Results
+// are memoized; the walk warms CommitInfo (and the tree reverse index) over
+// the whole ancestry of the query, so follow-up ancestry questions on the
+// same history are index hits.
+func (s *ObjectService) Generation(repo string, oid model.OID) (uint32, bool) {
+	if oid.IsZero() {
+		return 0, false
+	}
+	s.idxMu.Lock()
+	ri := s.idx[repo]
+	if ri == nil {
+		ri = newRepoIndex()
+		s.idx[repo] = ri
+	}
+	if g, ok := ri.gen[oid]; ok {
+		tainted := ri.genTainted[oid]
+		s.idxMu.Unlock()
+		return g, !tainted
+	}
+	s.idxMu.Unlock()
+
+	// Iterative post-order DFS: recursion would follow worst-case linear
+	// histories deeper than is comfortable for goroutine stacks.
+	type frame struct {
+		oid     model.OID
+		parents []model.OID
+		next    int
+		tainted bool
+	}
+	var stack []*frame
+	onStack := map[model.OID]bool{}
+	push := func(o model.OID) {
+		s.idxMu.Lock()
+		_, resolved := s.idx[repo].gen[o]
+		s.idxMu.Unlock()
+		if resolved || onStack[o] {
+			return
+		}
+		ci, err := s.CommitInfo(repo, o)
+		if err != nil {
+			return // missing object: gen stays unknown, never cached
+		}
+		onStack[o] = true
+		stack = append(stack, &frame{oid: o, parents: ci.Parents})
+	}
+	push(oid)
+	for len(stack) > 0 {
+		f := stack[len(stack)-1]
+		if f.next < len(f.parents) {
+			p := f.parents[f.next]
+			f.next++
+			s.idxMu.Lock()
+			_, resolved := s.idx[repo].gen[p]
+			s.idxMu.Unlock()
+			if resolved || onStack[p] {
+				continue
+			}
+			ci, err := s.CommitInfo(repo, p)
+			if err != nil {
+				f.tainted = true // unresolvable parent: this gen will be a lower bound
+				continue
+			}
+			onStack[p] = true
+			stack = append(stack, &frame{oid: p, parents: ci.Parents})
+			continue
+		}
+		g := uint32(1)
+		tainted := f.tainted
+		s.idxMu.Lock()
+		for _, p := range f.parents {
+			pg, ok := s.idx[repo].gen[p]
+			if !ok || s.idx[repo].genTainted[p] {
+				tainted = true
+				continue
+			}
+			if pg >= g {
+				g = pg + 1
+			}
+		}
+		s.idx[repo].gen[f.oid] = g
+		if tainted {
+			s.idx[repo].genTainted[f.oid] = true
+		}
+		s.idxMu.Unlock()
+		onStack[f.oid] = false
+		stack = stack[:len(stack)-1]
+	}
+	s.idxMu.Lock()
+	g, resolved := s.idx[repo].gen[oid]
+	tainted := s.idx[repo].genTainted[oid]
+	s.idxMu.Unlock()
+	if !resolved {
+		return 0, false
+	}
+	return g, !tainted
+}
+
+// CommitsWithTree returns the commits that record this tree (reverse index).
+// The slice is index-owned; callers must not modify it. Empty when unknown.
+func (s *ObjectService) CommitsWithTree(repo string, tree model.OID) []model.OID {
+	s.idxMu.Lock()
+	defer s.idxMu.Unlock()
+	if ri := s.idx[repo]; ri != nil {
+		return ri.treeCommits[tree]
+	}
+	return nil
 }

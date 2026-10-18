@@ -172,10 +172,22 @@ func (s *Service) subtreeTip(repo string, sub model.AnchorPath, branch string, r
 	return head, nil
 }
 
-// descends reports whether target is an ancestor of from.
+// descends reports whether target is an ancestor of from. Generation numbers
+// (git commit-graph semantics) prune the walk: a parent with gen < gen(target)
+// cannot lead to target, and gen(from) ≤ gen(target) rules out ancestry
+// outright. Pruning uses EXACT generations only — tainted (lower-bound)
+// values are ignored so an understated gen can never prune a true ancestor.
+// The walk warms the generation memo over the visited ancestry, so repeated
+// materializations reuse it (docs/09 §2).
 func (s *Service) descends(repo string, from, target model.OID) bool {
 	if from.IsZero() || target.IsZero() || from == target {
 		return from == target
+	}
+	gT, okT := s.Objects.Generation(repo, target)
+	if okT {
+		if gF, okF := s.Objects.Generation(repo, from); okF && gF <= gT {
+			return false
+		}
 	}
 	visited := map[model.OID]bool{}
 	queue := []model.OID{from}
@@ -193,6 +205,11 @@ func (s *Service) descends(repo string, from, target model.OID) bool {
 		for _, p := range ci.Parents {
 			if p == target {
 				return true
+			}
+			if okT {
+				if gP, okP := s.Objects.Generation(repo, p); okP && gP < gT {
+					continue // target cannot sit under p
+				}
 			}
 			queue = append(queue, p)
 		}
@@ -574,29 +591,20 @@ func mergeStop(stop map[model.OID]bool, extra map[model.OID]bool) {
 
 // TreeKnown reports whether any commit in from's ancestry already records
 // this tree. Cross-view rewrites of one change carry identical trees, so a
-// graft whose tree is known carries nothing new to this view (bounded walk).
-// Exported for the receive-pack projection-side staleness guard.
+// graft whose tree is known carries nothing new to this view. The reverse
+// tree→commits index turns the full-history scan into a candidate lookup +
+// generation-pruned ancestry checks (docs/09 §2); warming via Generation
+// backfills the index over from's whole ancestry first, so no candidate in
+// that ancestry can be missed. Exported for the receive-pack staleness guard.
 func (s *Service) TreeKnown(repo string, from, tree model.OID) bool {
 	if from.IsZero() || tree.IsZero() {
 		return false
 	}
-	q := []model.OID{from}
-	seen := map[model.OID]bool{}
-	for len(q) > 0 && len(seen) < 100000 {
-		oid := q[0]
-		q = q[1:]
-		if seen[oid] {
-			continue
-		}
-		seen[oid] = true
-		ci, err := s.Objects.CommitInfo(repo, oid)
-		if err != nil {
-			continue
-		}
-		if ci.Tree == tree {
+	_, _ = s.Objects.Generation(repo, from) // warm: CommitInfo backfill feeds treeCommits
+	for _, c := range s.Objects.CommitsWithTree(repo, tree) {
+		if c == from || s.descends(repo, from, c) {
 			return true
 		}
-		q = append(q, ci.Parents...)
 	}
 	return false
 }

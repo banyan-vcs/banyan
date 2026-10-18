@@ -187,7 +187,7 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 
 | # | 偏离 | 影响 | 建议优先级 |
 |---|---|---|---|
-| 1 | **无 have 减除**：增量 fetch 的 pack = wants 全量闭包（git：减 common 可达集） | 带宽随历史线性放大；浅仓普通 fetch 已按客户端边界裁剪（§3a），普通 fetch 未裁 | **M2 首位**（对照 `upload-pack.c` reachable 减除） |
+| 1 | ~~无 have 减除~~ **已关闭（2026-10-18，docs/09 §3.1）**：haves 已知提交可达集排除；浅客户端按 shallow 边界止步 + 穿过排除提交遍历（T15/T16/T19 钉住）；代价 = have 侧一次遍历，位图终解 | — | ✅ |
 | 2 | 响应无 side-band（裸 pack） | 客户端无进度显示；大 clone 体验差 | M2/M3（广告 side-band-64k + 通道 2 进度） |
 | 3 | **tags 不支持**：`refs/tags/*` 收 `ng unsupported ref namespace` | `git push --tags` / tag clone 失败（干净拒绝，非静默） | M2/M3（tag ref 直通存储 + 广告 `^{} ` peeled） |
 | 4 | EncodePack 无 delta；push `no-thin` | 双向带宽 | M3 repack 职责（`pack-objects.c` delta 算法） |

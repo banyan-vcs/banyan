@@ -13,6 +13,7 @@ testify，文件按测试目标拆分）：
 | `protocol_compat_test.go` | git 协议兼容矩阵：版本降级、partial 回退、浅化 deepen/unshallow（T13–T16） |
 | `persistence_test.go` | SQLite 重启持久化（T17） |
 | `rpc_log_test.go` | /api/v1/log 路径过滤（T11） |
+| `packing_efficiency_test.go` | 索引与打包效率：have 减除增量包精确构成（T19） |
 
 ## 形态
 
@@ -48,6 +49,7 @@ testify，文件按测试目标拆分）：
 | T16 | `TestShallowFetchDeepen` | 浅仓增量：普通 fetch（上报边界裁剪、浅文件不变）/ 加深（边界下移+unshallow 回显）/ unshallow 清除 |
 | T17 | `TestSQLiteMetaRestartPersistence` | **M2 持久化**：整进程重启后仓库/pack/对象索引/时间线头全存活；冷启动 nil-index 崩溃回归；重启后可继续 push |
 | T18 | `TestSequentialMultiScopeStability` | 顺序多作用域到达：零重复折叠、tip 不漂移、X 外变更不阻塞；含冲突恢复后继续推送（投影守卫 TreeKnown） |
+| T19 | `TestIncrementalFetchHaveSubtraction` | **have 减除**（docs/09 §3.1）：增量包=精确 delta（1 提交/2 树/1 blob），未触碰对象不入包；子树 URL 同理；真实客户端端到端 |
 
 ## 运行
 
@@ -99,3 +101,5 @@ go test ./...                       # 单元 + 集成
 | T12 | 合并模式 pull（投影链全 X 作用域，merge-base 天然正确） |
 
 CI 效率基准（go-git 实测）：子树 clone **1547 对象** vs 全仓 30203（19.5×）。
+
+单元侧：`storage.TestGenerationDiamond`（代数精确/污染语义 + 树反向索引，docs/09 §2）。
