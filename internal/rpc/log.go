@@ -39,12 +39,13 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 		branch = "main"
 	}
 	if from.IsZero() {
-		state, err := s.Meta.Timeline(r.Context(), model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: branch})
-		if err != nil {
+		// The root view is derived on read (docs/01 §13): walk the woven tip.
+		tip, terr := s.Views.RootTip(r.Context(), repo, branch)
+		if terr != nil || tip.IsZero() {
 			writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "entries": []logEntry{}})
 			return
 		}
-		from = state.Head
+		from = tip
 	}
 
 	path := ""

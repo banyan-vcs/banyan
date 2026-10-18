@@ -11,12 +11,13 @@ import (
 //
 // Trigger: packs(repo) > fragment threshold (default 64) or object redundancy over threshold.
 // Execution: select the union of small packs → delta-encode by time/path locality
-//       → new pack+idx → versioned metadata switch (single transaction) → delete old packs once refcounts hit zero.
+//
+//	→ new pack+idx → versioned metadata switch (single transaction) → delete old packs once refcounts hit zero.
 type Repacker struct {
-	Meta   MetaStore
-	Local  *LocalShardStore
-	Nodes  []Node
-	Algo   model.HashAlgo
+	Meta  MetaStore
+	Local *LocalShardStore
+	Nodes []Node
+	Algo  model.HashAlgo
 
 	FragmentThreshold int // trigger threshold, default 64
 }

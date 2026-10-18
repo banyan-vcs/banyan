@@ -394,3 +394,21 @@ func (s *SQLiteMetaStore) ListTimelines(ctx context.Context, repo string, anchor
 	}
 	return out, rows.Err()
 }
+
+func (s *SQLiteMetaStore) ListAllTimelines(ctx context.Context, repo string) ([]model.Timeline, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT anchor, name FROM timelines WHERE repo=? ORDER BY anchor, name", repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.Timeline
+	for rows.Next() {
+		var anchor, name string
+		if err := rows.Scan(&anchor, &name); err != nil {
+			return nil, err
+		}
+		out = append(out, model.Timeline{Repo: repo, Anchor: model.AnchorPath(anchor), Name: name})
+	}
+	return out, rows.Err()
+}

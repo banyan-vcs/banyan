@@ -6,10 +6,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/view"
 )
 
 // VirtualRepo is the (virtual) repo location parsed from the URL (docs/03 §1):
@@ -63,13 +63,11 @@ type Server struct {
 	Meta    storage.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
-
-	projMu    sync.Mutex
-	viewCache map[viewKey]model.OID // subtree timeline head cache (refs.go, v4)
+	Views   *view.Service // derived-view engine (docs/01 §13 assembly-on-read)
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
-	return &Server{Meta: meta, Objects: objects, Algo: algo, viewCache: map[viewKey]model.OID{}}
+	return &Server{Meta: meta, Objects: objects, Algo: algo, Views: view.New(meta, objects, algo)}
 }
 
 // Register registers routes (docs/03 §1 endpoint table).
@@ -192,7 +190,7 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 		agent, objFmt,
 		"report-status",
 		"delete-refs", // clients silently drop delete commands when this capability is absent (gitprotocol-pack)
-		"no-thin", // storage-side packs are self-contained (docs/03 §2)
+		"no-thin",     // storage-side packs are self-contained (docs/03 §2)
 	}, " ")
 }
 

@@ -18,8 +18,8 @@ import (
 //	0002                    response-end (v2)
 
 const (
-	pktFlush = 0
-	pktDelim = 1
+	pktFlush  = 0
+	pktDelim  = 1
 	maxPktLen = 65520
 )
 

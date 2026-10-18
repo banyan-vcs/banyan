@@ -32,7 +32,7 @@ func ReplaceSubtree(store TreeStore, algo HashAlgo, baseRoot OID, path AnchorPat
 func replaceAt(store TreeStore, algo HashAlgo, treeOID OID, segs []string, subtree OID) (OID, error) {
 	tree, err := store.Tree(treeOID)
 	if err != nil {
-		return "", fmt.Errorf("replace subtree: %w", err)
+		return "", fmt.Errorf("replace subtree %s: %w", treeOID, err)
 	}
 	name := segs[0]
 	replaced := false
@@ -107,8 +107,8 @@ func CurrentTree(lookup ObjectLookup, heads HeadResolver, algo HashAlgo, tl Time
 
 // AssembleRoot performs upward assembly after a subdirectory commit (docs/01 §4.2):
 //
-//	1. root_new = ReplaceSubtree(CurrentTree("/"), path, C.TreeOID)
-//	2. synthetic commit into the root timeline (M1 synchronous mode)
+//  1. root_new = ReplaceSubtree(CurrentTree("/"), path, C.TreeOID)
+//  2. synthetic commit into the root timeline (M1 synchronous mode)
 //
 // Returns the synthetic commit to write; the caller CASes new objects and the root head.
 func AssembleRoot(store TreeStore, heads HeadResolver, algo HashAlgo, repo, rootName string, path AnchorPath, childCommit OID, by Identity) (*AnchoredCommit, error) {
@@ -138,12 +138,16 @@ func AssembleRoot(store TreeStore, heads HeadResolver, algo HashAlgo, repo, root
 		return nil, err
 	}
 	return &AnchoredCommit{
-		Anchor:     RootAnchor,
-		TreeOID:    newRoot,
-		Parents:    parents,
-		Author:     by,
-		Committer:  by,
-		Message:    fmt.Sprintf("banyan: assemble %s@%s\n", path, childCommit),
-		Synthetic:  true,
+		Anchor:    RootAnchor,
+		TreeOID:   newRoot,
+		Parents:   parents,
+		Author:    by,
+		Committer: by,
+		Message:   fmt.Sprintf("banyan: assemble %s@%s\n", path, childCommit),
+		Synthetic: true,
 	}, nil
 }
+
+// EmptyTreeOID exposes the content-addressed empty tree (the fold-genesis
+// base for view weaving, docs/01 §13).
+func EmptyTreeOID(algo HashAlgo) OID { return emptyTreeOID(algo) }

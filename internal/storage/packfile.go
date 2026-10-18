@@ -131,7 +131,7 @@ func (s *sliceIter) Close() {}
 
 // DecodedPack is the result of decoding one push pack.
 type DecodedPack struct {
-	PackOID model.OID        // shard primary key (pack trailer checksum)
+	PackOID model.OID // shard primary key (pack trailer checksum)
 	Blobs   map[model.OID][]byte
 	Trees   map[model.OID][]byte // raw tree encoding
 	Commits map[model.OID][]byte // raw commit encoding (incl. banyan-anchor headers)

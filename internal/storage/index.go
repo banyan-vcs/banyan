@@ -40,12 +40,7 @@ func (s *ObjectService) buildIndex(repo string, dp *DecodedPack) {
 	defer s.idxMu.Unlock()
 	ri := s.idx[repo]
 	if ri == nil {
-		ri = &repoIndex{
-			commits: map[model.OID]*CommitInfo{},
-			trees:   map[model.OID][]model.TreeEntry{},
-			records: map[model.OID]*model.CommitRecord{},
-			msgs:    map[model.OID][]byte{},
-		}
+		ri = newRepoIndex()
 		s.idx[repo] = ri
 	}
 	for oid, raw := range dp.Commits {
@@ -121,7 +116,7 @@ func (s *ObjectService) CommitInfo(repo string, oid model.OID) (*CommitInfo, err
 	ci := &CommitInfo{Tree: c.TreeOID, Parents: c.Parents, When: c.Committer.When.Unix()}
 	s.idxMu.Lock()
 	if s.idx[repo] == nil {
-		s.idx[repo] = &repoIndex{commits: map[model.OID]*CommitInfo{}, trees: map[model.OID][]model.TreeEntry{}}
+		s.idx[repo] = newRepoIndex()
 	}
 	s.idx[repo].commits[oid] = ci
 	s.idxMu.Unlock()
@@ -153,9 +148,21 @@ func (s *ObjectService) TreeEntries(repo string, oid model.OID) ([]model.TreeEnt
 	}
 	s.idxMu.Lock()
 	if s.idx[repo] == nil {
-		s.idx[repo] = &repoIndex{commits: map[model.OID]*CommitInfo{}, trees: map[model.OID][]model.TreeEntry{}}
+		s.idx[repo] = newRepoIndex()
 	}
 	s.idx[repo].trees[oid] = tree.Entries
 	s.idxMu.Unlock()
 	return tree.Entries, nil
+}
+
+// newRepoIndex is the single constructor — every map must exist regardless of
+// which path creates the entry first (cold-start backfill vs push-side
+// buildIndex), or the later writer hits a nil map.
+func newRepoIndex() *repoIndex {
+	return &repoIndex{
+		commits: map[model.OID]*CommitInfo{},
+		trees:   map[model.OID][]model.TreeEntry{},
+		records: map[model.OID]*model.CommitRecord{},
+		msgs:    map[model.OID][]byte{},
+	}
 }

@@ -23,11 +23,11 @@ type FilterSpec struct {
 type FilterKind int
 
 const (
-	FilterNone FilterKind = iota
-	FilterBlobNone                   // blob:none  no blobs
-	FilterTreeZero                   // tree:0     commits only
-	FilterSparseOID                  // sparse:oid=<oid> by sparse pattern
-	FilterSubtree                    // subtree:<path> banyan extension
+	FilterNone      FilterKind = iota
+	FilterBlobNone             // blob:none  no blobs
+	FilterTreeZero             // tree:0     commits only
+	FilterSparseOID            // sparse:oid=<oid> by sparse pattern
+	FilterSubtree              // subtree:<path> banyan extension
 )
 
 // ParseFilterSpec parses and validates a filter spec.
@@ -75,7 +75,7 @@ func (f *FilterSpec) Spec() string {
 // TODO(M1): wire in at the upload-pack closure computation:
 //   - blob:none / tree:0 / sparse:oid per git list-objects-filter semantics;
 //   - subtree:<path>: prune tree traversal by path prefix (only blobs/trees inside the subtree
-//     + all commits), paired with banyan fetch-objects fetching missing ones by OID afterwards.
+//   - all commits), paired with banyan fetch-objects fetching missing ones by OID afterwards.
 func ApplyFilter(objects []ObjectEntry, f *FilterSpec) []ObjectEntry {
 	if f == nil || f.Kind == FilterNone {
 		return objects

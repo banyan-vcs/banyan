@@ -32,9 +32,9 @@ func (a HashAlgo) New() hash.Hash {
 // OID is a lowercase hex object identifier (40 chars for SHA-1, 64 for SHA-256).
 type OID string
 
-func (o OID) IsZero() bool    { return o == "" }
-func (o OID) String() string  { return string(o) }
-func (o OID) Bytes() []byte   { b, _ := hex.DecodeString(string(o)); return b }
+func (o OID) IsZero() bool   { return o == "" }
+func (o OID) String() string { return string(o) }
+func (o OID) Bytes() []byte  { b, _ := hex.DecodeString(string(o)); return b }
 
 // NormalizeZero canonicalizes all-zero IDs from the git wire protocol (old value
 // when creating a ref, new value when deleting one) and the empty zero value to "".
@@ -104,6 +104,9 @@ func (t *Tree) Encode() ([]byte, error) {
 	sortEntries(entries)
 	out := make([]byte, 0, len(entries)*32)
 	for _, e := range entries {
+		if e.Name == "" {
+			panic("encode tree: empty entry name")
+		}
 		mode := e.Mode
 		if mode == "" {
 			if e.IsDir {
@@ -137,7 +140,7 @@ func DecodeTree(b []byte) (*Tree, error) {
 		b = b[sp+1:]
 		nul := indexByte(b, 0)
 		if nul <= 0 {
-			return nil, fmt.Errorf("decode tree: malformed name")
+			return nil, fmt.Errorf("decode tree: malformed name; head=%q mode=%q", b[:min(32, len(b))], mode)
 		}
 		name := string(b[:nul])
 		b = b[nul+1:]

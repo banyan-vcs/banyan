@@ -43,12 +43,12 @@ func SubtreeTip(lookup ObjectLookup, algo HashAlgo, rootOID OID, path AnchorPath
 		When:  rc.Committer.When,
 	}
 	return &AnchoredCommit{
-		Anchor:     RootAnchor, // the root anchor within an "X-as-root" view
-		TreeOID:    sub,
-		Parents:    []OID{rootOID},
-		Author:     viewID,
-		Committer:  viewID,
-		Message:    fmt.Sprintf("banyan: subtree view %s @ %s\n", path, rootOID),
+		Anchor:    RootAnchor, // the root anchor within an "X-as-root" view
+		TreeOID:   sub,
+		Parents:   []OID{rootOID},
+		Author:    viewID,
+		Committer: viewID,
+		Message:   fmt.Sprintf("banyan: subtree view %s @ %s\n", path, rootOID),
 	}, nil
 }
 

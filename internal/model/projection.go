@@ -151,7 +151,7 @@ func SplitHistory(lookup ObjectLookup, algo HashAlgo, head OID, path AnchorPath)
 
 	// Old→new: build projections, backfill parents, finalize OIDs.
 	res := &SplitResult{}
-	projOID := map[OID]OID{}  // changed commit → final projected OID
+	projOID := map[OID]OID{}     // changed commit → final projected OID
 	resolveMemo := map[OID]OID{} // unchanged commit → nearest projected ancestor
 
 	var resolve func(oid OID) OID

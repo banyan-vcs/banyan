@@ -53,6 +53,9 @@ type TimelineStore interface {
 	// (before a subtree timeline's first push, its head is the projection head; base records the fork point).
 	EnsureTimeline(ctx context.Context, tl model.Timeline, head, base model.OID) error
 	ListTimelines(ctx context.Context, repo string, anchor model.AnchorPath) ([]model.Timeline, error)
+	// ListAllTimelines enumerates every timeline of the repo across anchors
+	// (root view materialization input, docs/01 §13).
+	ListAllTimelines(ctx context.Context, repo string) ([]model.Timeline, error)
 }
 
 // ObjectLocation is one global-index location record.
@@ -229,4 +232,20 @@ func (m *MemoryMetaStore) EnsureTimeline(_ context.Context, tl model.Timeline, h
 	}
 	m.timelines[tl.Repo][tl] = model.TimelineState{Head: head, Base: base}
 	return nil
+}
+
+func (m *MemoryMetaStore) ListAllTimelines(_ context.Context, repo string) ([]model.Timeline, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []model.Timeline
+	for tl := range m.timelines[repo] {
+		out = append(out, tl)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Anchor != out[j].Anchor {
+			return out[i].Anchor < out[j].Anchor
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
 }

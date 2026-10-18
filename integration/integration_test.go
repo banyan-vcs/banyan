@@ -294,7 +294,11 @@ func TestIncrementalPushPull(t *testing.T) {
 	}
 }
 
-// --- T5 subtree push adoption: merge parents / C enters root at same hash / file placement ---
+// --- T5 subtree push: linear-weave root view / parent view sees it / file placement ---
+// v5 (docs/01 §13): the subtree push advances ONLY its own timeline; the root
+// view weaves the commit in linearly (same subject, different SHA — allowed),
+// no merge scaffolding; the parent view (lib) also sees the change via its
+// scoped weave.
 func TestSubtreePushAdoption(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
@@ -304,25 +308,27 @@ func TestSubtreePushAdoption(t *testing.T) {
 	appendLine(t, filepath.Join(sub, "SHARED.txt"), "line-1\n")
 	git(t, sub, "commit", "-qam", "t5: sub first")
 	git(t, sub, "push", "-q", "origin", "main")
-	cHash := headOf(t, sub)
 
-	// Root view: merge commit (two parents) + C appears at the same hash + worktree placement.
+	// Root view: subject woven in (SHA differs from C — v5 allows), content
+	// placed, and the history is LINEAR (zero merge commits).
 	root := cloneRepo(t, s, s.repoURL("t5"))
-	if !hasCommit(t, root, cHash) {
-		t.Fatalf("根历史缺少子树提交 %s（hash 一致性破坏）", cHash)
+	out := git(t, root, "log", "--format=%s")
+	if !strings.Contains(out, "t5: sub first") {
+		t.Fatalf("根 log 缺子树提交 subject:\n%s", out)
 	}
-	out := git(t, root, "log", "--format=%s", "-3")
-	if !strings.Contains(out, "Merge subtree '/lib/nested'") {
-		t.Fatalf("根 log 缺收编 merge:\n%s", out)
+	if merges := git(t, root, "log", "--merges", "--format=%s"); strings.TrimSpace(merges) != "" {
+		t.Fatalf("根历史应线性无 merge:\n%s", merges)
 	}
 	if got := readFile(t, filepath.Join(root, "lib", "nested", "SHARED.txt")); got != "base\nline-1\n" {
 		t.Fatalf("根工作树文件 = %q", got)
 	}
-	// v4: the parent view presents the same change as a projection (SHA differs from C,
-	// allowed) — assert content arrival (blob equal across three views, below), not hash.
+	// The parent view (lib) sees the descendant change via its scoped weave.
 	parent := cloneRepo(t, s, s.treeURL("t5", "lib"))
 	if got := readFile(t, filepath.Join(parent, "nested", "SHARED.txt")); got != "base\nline-1\n" {
 		t.Fatalf("父级视图内容 = %q", got)
+	}
+	if out := git(t, parent, "log", "--format=%s"); !strings.Contains(out, "t5: sub first") {
+		t.Fatalf("父级视图 log 缺子树提交 subject:\n%s", out)
 	}
 	// Blob hash identical across three views.
 	bSub, bPar, bRoot := blobOf(t, sub, "SHARED.txt"),
@@ -399,7 +405,7 @@ func TestCrossViewNonInterference(t *testing.T) {
 	if err == nil || !strings.Contains(out, "rejected") {
 		t.Fatalf("X 内陈旧 push 未被拒: err=%v\n%s", err, out)
 	}
-		// Real conflict resolved explicitly (docs/01 §12: the server does no content merge).
+	// Real conflict resolved explicitly (docs/01 §12: the server does no content merge).
 	if out, err := gitTry(sub2, "pull", "--rebase"); err != nil && !strings.Contains(out, "CONFLICT") {
 		t.Fatalf("rebase 失败但非冲突: %v\n%s", err, out)
 	}
@@ -450,8 +456,8 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 	s := newServer(t)
 	seedRepo(t, s, "t10")
 
-	R := cloneRepo(t, s, s.repoURL("t10"))            // carol：根
-	P := cloneRepo(t, s, s.treeURL("t10", "lib"))     // bob：父级
+	R := cloneRepo(t, s, s.repoURL("t10"))               // carol：根
+	P := cloneRepo(t, s, s.treeURL("t10", "lib"))        // bob：父级
 	S := cloneRepo(t, s, s.treeURL("t10", "lib/nested")) // alice：子树
 
 	rounds := []struct {
@@ -482,7 +488,8 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 	// Wrap-up: everyone pulls, then assert convergence.
 	for _, d := range []string{R, P, S} {
 		if out, err := gitTry(d, "pull"); err != nil || strings.Contains(out, "CONFLICT") {
-			t.Fatalf("收尾 pull 失败: err=%v\n%s", err, out)
+			t.Fatalf("收尾 pull 失败(%s): err=%v\n%s\nLOCAL:%s\nREMOTE:%s", d, err, out,
+				git(t, d, "log", "--oneline", "-3"), git(t, d, "log", "--oneline", "-3", "origin/main"))
 		}
 	}
 	bS, bP, bR := blobOf(t, S, "SHARED.txt"),
@@ -493,15 +500,19 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 	if got := readFile(t, filepath.Join(S, "SHARED.txt")); !strings.Contains(got, "line-E by bob") {
 		t.Fatalf("最终内容缺最后一行: %q", got)
 	}
-	// v4 consistency (docs/01 §12): every collaboration commit appears in the root view
-	// at [original hash] (adoption keeps the second parent / direct root pushes land there
-	// natively) — SHA stays stable and traceable; other views present the same change as
-	// projections (different SHA, explicitly allowed); content consistency is guaranteed by the three-view blob hash assertion above.
-	for i, h := range hashes {
-		if !hasCommit(t, R, h) {
-			t.Fatalf("协作提交 %d（%s）未出现在根视图（收编第二父应保留原 hash）\nroot chain:\n%s",
-				i+1, h[:9], git(t, R, "log", "--oneline", "-12"))
+	// v5 consistency (docs/01 §13): the root view is a linear weave — every
+	// collaboration commit appears exactly once by SUBJECT; subtree-scope
+	// commits enter as rewrites (SHA allowed to differ, T5 semantics), root
+	// pushes land verbatim; content consistency is guaranteed by the
+	// three-view blob hash assertion above.
+	rootLog := git(t, R, "log", "--format=%s")
+	for _, r := range rounds {
+		if n := strings.Count(rootLog, r.msg+"\n"); n != 1 {
+			t.Fatalf("根视图 subject %q 出现 %d 次:\n%s", r.msg, n, rootLog)
 		}
+	}
+	if merges := git(t, R, "log", "--merges", "--format=%s"); strings.TrimSpace(merges) != "" {
+		t.Fatalf("根历史应线性无 merge:\n%s", merges)
 	}
 	// The author's own view also keeps the original hash via identity mapping (r1/r3=alice→S).
 	for _, i := range []int{0, 2} {
@@ -973,4 +984,126 @@ func TestShallowFetchDeepen(t *testing.T) {
 		t.Fatal("unshallow 后仍为浅仓")
 	}
 	fsckClean(t, d)
+}
+
+// --- T18 sequential multi-scope arrivals: each commit folds exactly once ---
+// Demo-shaped flow (docs/01 §13): alternating arrivals across scopes must
+// not duplicate subjects nor churn advertised tips. The rewrite-space
+// exclusion (prevWoven ancestry) could never see graft sources — their
+// originals never enter it, only their rewrites do — so every
+// materialization re-folded them; per-source woven markers (source space)
+// close that. kind-2 ancestor entries no-op on the parent X-diff, not on
+// the current view tree (which misjudges forks and rolls X back).
+func TestSequentialMultiScopeStability(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	seedRepo(t, s, "t18")
+
+	nested := cloneRepo(t, s, s.treeURL("t18", "lib/nested"))
+	lib := cloneRepo(t, s, s.treeURL("t18", "lib"))
+	root := cloneRepo(t, s, s.repoURL("t18"))
+	for _, d := range []string{nested, lib, root} {
+		git(t, d, "config", "pull.rebase", "true")
+	}
+
+	// n1 → root pull → l1 → root pull → r1 (outside X) → n2 without pull.
+	appendLine(t, filepath.Join(nested, "SHARED.txt"), "n1\n")
+	git(t, nested, "commit", "-qam", "n1")
+	git(t, nested, "push", "-q", "origin", "main")
+	git(t, root, "pull", "-q", "origin", "main")
+	// The lib view legitimately moved (nested ⊂ lib), so lib pulls before
+	// pushing — git-equivalent fetch-first, not cross-directory locking.
+	git(t, lib, "pull", "-q", "origin", "main")
+
+	appendLine(t, filepath.Join(lib, "a.txt"), "l1\n")
+	git(t, lib, "commit", "-qam", "l1")
+	git(t, lib, "push", "-q", "origin", "main")
+	git(t, root, "pull", "-q", "origin", "main")
+
+	write(t, filepath.Join(root, "README.md"), "r1\n")
+	git(t, root, "commit", "-qam", "r1")
+	git(t, root, "push", "-q", "origin", "main")
+
+	appendLine(t, filepath.Join(nested, "SHARED.txt"), "n2\n")
+	git(t, nested, "commit", "-qam", "n2")
+	if out, err := gitTry(nested, "push", "origin", "main"); err != nil {
+		t.Fatalf("子树无 pull push 被拒（非干扰语义破坏）: %v\n%s", err, out)
+	}
+	git(t, root, "pull", "-q", "origin", "main")
+
+	// Every subject exactly once, linear history, content intact.
+	log := git(t, root, "log", "--format=%s")
+	for _, subj := range []string{"n1", "l1", "r1", "n2"} {
+		if n := strings.Count(log, subj+"\n"); n != 1 {
+			t.Fatalf("subject %q 出现 %d 次（重复折叠）:\n%s", subj, n, log)
+		}
+	}
+	if merges := git(t, root, "log", "--merges", "--format=%s"); strings.TrimSpace(merges) != "" {
+		t.Fatalf("根历史应线性无 merge:\n%s", merges)
+	}
+	if got := readFile(t, filepath.Join(root, "lib", "nested", "SHARED.txt")); got != "base\nn1\nn2\n" {
+		t.Fatalf("根视图 SHARED = %q", got)
+	}
+	if got := readFile(t, filepath.Join(root, "lib", "a.txt")); got != "a-v1\nl1\n" {
+		t.Fatalf("根视图 a.txt = %q", got)
+	}
+
+	// Advertised root tip must not churn across other views' materializations.
+	remote := s.repoURL("t18")
+	h1 := git(t, root, "ls-remote", remote, "refs/heads/main")
+	git(t, lib, "pull", "-q", "origin", "main")
+	h2 := git(t, root, "ls-remote", remote, "refs/heads/main")
+	if h1 != h2 || !strings.Contains(h1, "refs/heads/main") {
+		t.Fatalf("根 tip 在其他视图物化间漂移:\n%s\n%s", h1, h2)
+	}
+
+	// All three views converge to identical content.
+	git(t, nested, "pull", "-q", "origin", "main")
+	if got := readFile(t, filepath.Join(nested, "SHARED.txt")); got != "base\nn1\nn2\n" {
+		t.Fatalf("nested 视图 SHARED = %q", got)
+	}
+	if got := readFile(t, filepath.Join(lib, "a.txt")); got != "a-v1\nl1\n" {
+		t.Fatalf("lib 视图 a.txt = %q", got)
+	}
+	fsckClean(t, nested)
+	fsckClean(t, lib)
+	fsckClean(t, root)
+
+	// Rebase recovery, then continue pushing: after resolving an in-X
+	// divergence the client's chain holds a cross-view rewrite of the
+	// projection PLUS newer local content — ahead of, not stale against,
+	// the root side. The projection-side guard must admit it (docs/01 §13).
+	root2 := cloneRepo(t, s, s.repoURL("t18"))
+	appendLine(t, filepath.Join(root2, "lib", "nested", "SHARED.txt"), "root-in-X\n")
+	git(t, root2, "commit", "-qam", "root-in-X")
+	git(t, root2, "push", "-q", "origin", "main")
+
+	appendLine(t, filepath.Join(nested, "SHARED.txt"), "stale\n")
+	git(t, nested, "commit", "-qam", "nested-stale")
+	if out, err := gitTry(nested, "push", "origin", "main"); err == nil || !strings.Contains(out, "rejected") {
+		t.Fatalf("X 内陈旧 push 未被拒: err=%v\n%s", err, out)
+	}
+	// Same-file divergence: the rebase conflicts; resolve explicitly (the
+	// server does no content merge, docs/01 §12).
+	if out, err := gitTry(nested, "pull", "-q", "--rebase", "origin", "main"); err != nil && !strings.Contains(out, "CONFLICT") {
+		t.Fatalf("rebase 失败但非冲突: %v\n%s", err, out)
+	}
+	write(t, filepath.Join(nested, "SHARED.txt"), "base\nn1\nn2\nroot-in-X\nstale\n")
+	git(t, nested, "add", "-A")
+	git(t, nested, "-c", "core.editor=true", "rebase", "--continue")
+	if out, err := gitTry(nested, "push", "origin", "main"); err != nil {
+		t.Fatalf("恢复后 push 被拒（投影侧守卫误判领先客户端）: %v\n%s", err, out)
+	}
+	// And the very next round-trip still flows.
+	appendLine(t, filepath.Join(nested, "SHARED.txt"), "after-recovery\n")
+	git(t, nested, "commit", "-qam", "after-recovery")
+	if out, err := gitTry(nested, "push", "origin", "main"); err != nil {
+		t.Fatalf("恢复后下一轮 push 被拒: %v\n%s", err, out)
+	}
+	git(t, root, "pull", "-q", "origin", "main")
+	if got := readFile(t, filepath.Join(root, "lib", "nested", "SHARED.txt")); got != "base\nn1\nn2\nroot-in-X\nstale\nafter-recovery\n" {
+		t.Fatalf("根视图最终 SHARED = %q", got)
+	}
+	fsckClean(t, nested)
+	fsckClean(t, root)
 }

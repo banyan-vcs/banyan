@@ -36,14 +36,14 @@ const RootAnchor AnchorPath = "/"
 //   - anchor != "/" appends a "banyan-anchor <path>" header after the tree line,
 //     so the OID space is naturally disjoint from git objects and never collides.
 type AnchoredCommit struct {
-	Anchor     AnchorPath
-	TreeOID    OID
-	Parents    []OID
-	Author     Identity
-	Committer  Identity
-	Message    string
-	Synthetic  bool // produced by the assembly algorithm (carries a banyan-synthetic trailer)
-	ProjectedFrom OID // non-zero marks this as a projection commit split from the root timeline
+	Anchor        AnchorPath
+	TreeOID       OID
+	Parents       []OID
+	Author        Identity
+	Committer     Identity
+	Message       string
+	Synthetic     bool // produced by the assembly algorithm (carries a banyan-synthetic trailer)
+	ProjectedFrom OID  // non-zero marks this as a projection commit split from the root timeline
 }
 
 // Encode renders the git-compatible commit object body.

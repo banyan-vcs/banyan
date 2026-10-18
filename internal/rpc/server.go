@@ -8,6 +8,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/view"
 )
 
 // Server mounts the /api/v1/* endpoints.
@@ -15,10 +16,11 @@ type Server struct {
 	Meta    storage.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
+	Views   *view.Service // derived-view engine (docs/01 sec.13)
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
-	return &Server{Meta: meta, Objects: objects, Algo: algo}
+	return &Server{Meta: meta, Objects: objects, Algo: algo, Views: view.New(meta, objects, algo)}
 }
 
 func (s *Server) Register(mux *http.ServeMux) {
@@ -38,20 +40,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // --- POST /api/v1/objects: batch per-object locate+fetch (lazy backfill, docs/03 §4) ---
 
 type objectsRequest struct {
-	Repo string     `json:"repo"`
+	Repo string      `json:"repo"`
 	OIDs []model.OID `json:"oids"`
 }
 
 type objectMeta struct {
-	Type  string `json:"type"`
-	Size  int64  `json:"size"`
-	Pack  string `json:"pack"`
-	Node  string `json:"node"`
+	Type string `json:"type"`
+	Size int64  `json:"size"`
+	Pack string `json:"pack"`
+	Node string `json:"node"`
 }
 
 type objectsResponse struct {
-	Found    map[string]objectMeta `json:"found"`
-	Missing  []string              `json:"missing"`
+	Found   map[string]objectMeta `json:"found"`
+	Missing []string              `json:"missing"`
 	// TODO(M1): bytes delivery (base64 or a pack-stream endpoint) — shares
 	// object-location code with gitwire's partial clone backfill (a plain want=OID fetch).
 }

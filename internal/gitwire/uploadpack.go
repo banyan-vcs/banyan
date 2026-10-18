@@ -19,6 +19,7 @@ import (
 // serveUploadPack serves the fetch/clone data phase (docs/03 §3).
 //
 // v1 session (mirrors the upload-pack.c state machine):
+//
 //	client POST body (pkt-line stream):
 //	  <want OID> [caps]           ← capabilities trail the first want
 //	  ...
@@ -42,7 +43,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	var wants []model.OID
 	var haves []model.OID
 	var clientShallow []model.OID // client's current shallow boundary (reported by deepen/unshallow requests)
-	depth := 0                     // deepen N; 0 = no deepen
+	depth := 0                    // deepen N; 0 = no deepen
 	done := false
 	// Stateless HTTP negotiation (mirrors remote-curl.c / upload-pack.c get_common_commits):
 	// each POST = the client writes everything once, then reads (want [+haves] [+flush] [done]).

@@ -27,7 +27,7 @@
 | T7 | `TestConsecutiveSubtreePushes` | **resolveViewTip**：收编后广告 tip=被收编提交（连续 push 不被拒；自身 pull=up-to-date） |
 | T8 | `TestStaleCrossViewPushRejected` | **sameXView**：陈旧跨视图 push 拒绝（防静默回滚）；rebase 恢复流 |
 | T9 | `TestNegotiationPullStaleClone` | **终态 ACK 语义**：过期克隆 pull 不死锁不坏包 |
-| T10 | `TestMultiUserSameFileCollaboration` | **视图 tip 链式化**：同文件三视图五轮串行协作零冲突；blob hash 一致；提交三视图同 hash |
+| T10 | `TestMultiUserSameFileCollaboration`（**已恢复**，v5 断言：五轮串行协作零拒绝、subject 恰一次、线性、blob 一致） | 同文件三视图五轮串行协作零冲突；根视图线性去重；blob hash 一致 |
 | T11 | `TestFilteredLogRPC` | /api/v1/log 路径过滤（X 视角归一：树不含路径首段⇒整树即 X 视角） |
 | T8b | `TestRaceWindowStalePushProtection` | rawPush 协议级竞态模拟：force 绕过客户端检查后服务端 sameXView 兜底；X 外变更不阻塞 |
 | T12 | `TestMergeModePullWithLocalCommits` | 合并模式 pull（投影链全 X 作用域，merge-base 天然正确） |
@@ -83,7 +83,8 @@ go test ./...                       # 单元 + 集成
 | T2 | 子树 clone **小型化**（对象数 < 全仓）+ blob 一致（原 hash 断言删除） |
 | T5 | 父级视图内容到达（blob）；hash 断言仅保留根视图（收编第二父） |
 | T8→NonInterference | 根改 X 外 → 陈旧子树 push **直接过**（非干扰）；根改 X 内 → 拒绝 → 真冲突显式解决 |
-| T10 | 原 hash 在【根 + 作者视图】；他视图投影 SHA 不同；三视图 blob 一致 |
+| T10 | 根视图 subject 恰一次 + 线性零 merge；作者视图保留原 hash；三视图 blob 一致（v5：跨视图 SHA 允许不同） |
 | T12 | 合并模式 pull（投影链全 X 作用域，merge-base 天然正确） |
 
 CI 效率基准（go-git 实测）：子树 clone **1547 对象** vs 全仓 30203（19.5×）。
+| T18 | `TestSequentialMultiScopeStability` | 顺序多作用域到达：零重复折叠、tip 不漂移、X 外变更不阻塞；含冲突恢复后继续推送（投影守卫 TreeKnown） |

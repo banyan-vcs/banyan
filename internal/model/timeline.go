@@ -29,7 +29,7 @@ func ParseAnchorPath(s string) (AnchorPath, error) {
 
 // Segments returns the path segments; the root anchor returns none.
 func (p AnchorPath) Segments() []string {
-	if p == RootAnchor {
+	if p == RootAnchor || p == "" {
 		return nil
 	}
 	return strings.Split(strings.TrimPrefix(string(p), "/"), "/")

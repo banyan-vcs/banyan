@@ -24,8 +24,8 @@ type PathHistory interface {
 
 // BlameHunk is one attribution region of a blame.
 type BlameHunk struct {
-	Start, End  int    // line range [Start, End)
-	Commit      model.OID
+	Start, End int // line range [Start, End)
+	Commit     model.OID
 }
 
 // Blame is blame derived data: Scion's file-level diff recursive merge algorithm (docs/04 §1).

@@ -1,10 +1,9 @@
 package gitwire
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"bufio"
+	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -14,19 +13,20 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// serveReceivePack serves push (docs/03 §5, write path docs/02 §4).
+// serveReceivePack serves push (docs/03 ÃÂ§5, write path docs/02 ÃÂ§4).
 //
 // v1 session (mirrors receive-pack.c):
+//
 //	client POST body:
-//	  <old> <new> <refname> [caps]     ← ref command lines, capabilities trail the first one
+//	  <old> <new> <refname> [caps]     Ã¢ÂÂ ref command lines, capabilities trail the first one
 //	  ...
 //	  flush
 //	  packfile bytes (delete-only pushes carry no pack section)
 //	server:
-//	  ① pack validation and ingest (chunked CAS, not disassembled)
-//	  ② verify the new head is in the pack and is a commit
-//	  ③ head CAS (all-zero old = create, all-zero new = delete; failure reports non-fast-forward)
-//	  ④ report-status receipt
+//	  Ã¢ÂÂ  pack validation and ingest (chunked CAS, not disassembled)
+//	  Ã¢ÂÂ¡ verify the new head is in the pack and is a commit
+//	  Ã¢ÂÂ¢ head CAS (all-zero old = create, all-zero new = delete; failure reports non-fast-forward)
+//	  Ã¢ÂÂ£ report-status receipt
 func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr VirtualRepo) {
 	w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -88,7 +88,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		_ = out.Flush()
 	}
 
-	// ① pack decode + chunked ingest (error if no pack yet non-delete updates exist).
+	// Ã¢ÂÂ  pack decode + chunked ingest (error if no pack yet non-delete updates exist).
 	var dp *storage.DecodedPack
 	if len(packBytes) > 0 {
 		dp, err = storage.DecodePack(packBytes)
@@ -102,7 +102,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		}
 	}
 
-	// ②③ per-ref validation + head CAS. report-status mandates the order:
+	// Ã¢ÂÂ¡Ã¢ÂÂ¢ per-ref validation + head CAS. report-status mandates the order:
 	// the first pkt is "unpack ok", followed by per-ref statuses (mirrors receive-pack.c).
 	_ = WritePacket(out, []byte("unpack ok\n"))
 	for _, u := range updates {
@@ -122,7 +122,11 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 				continue
 			}
 			tl := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: name}
-			if err := s.Meta.CASHead(r.Context(), tl, u.Old, u.New); err != nil {
+			expected := u.Old
+			if st, serr := s.Meta.Timeline(r.Context(), tl); serr == nil {
+				expected = st.Head // the advertised (derived) tip maps to stored state
+			}
+			if err := s.Meta.CASHead(r.Context(), tl, expected, u.New); err != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+err.Error()+"\n"))
 				continue
 			}
@@ -130,7 +134,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			continue
 		}
 		// The new head must be in this pack and be a commit (for the re-push case where
-		// the object is already in a pack: also accept already-ingested objects — global-index fallback).
+		// the object is already in a pack: also accept already-ingested objects Ã¢ÂÂ global-index fallback).
 		if dp != nil {
 			if _, ok := dp.Commits[u.New]; !ok {
 				if _, _, rerr := s.Objects.Raw(r.Context(), vr.Repo, u.New); rerr != nil {
@@ -144,9 +148,9 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		}
 
 		if !vr.Sub.IsRoot() {
-			// ④ subtree-view push: adopt into the unified DAG (docs/01 §10) — create the canonical
-			// subtree-merge commit (parents=[root head, C as-is]); C's hash
-			// stays consistent across subtree and parent views; the root head advances and the view tip follows.
+			// Ã¢ÂÂ£ subtree-view push (docs/01 ÃÂ§13): the write path touches ONLY
+			// this directory's timeline Ã¢ÂÂ no root head CAS, no adoption merge.
+			// The root view is derived on read (view.RootTip weave).
 			if aerr := s.adoptSubtreePush(r.Context(), vr, name, u.Old, u.New); aerr != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+aerr.Error()+"\n"))
 				continue
@@ -155,9 +159,26 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			continue
 		}
 
-		// Root repo: regular timeline CAS.
-		tl := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: name}
-		if err := s.Meta.CASHead(r.Context(), tl, u.Old, u.New); err != nil {
+		// Root repo: the client chain lands VERBATIM as root-local history
+		// (docs/01 §13) — its boundary parent is the advertised woven tip,
+		// which the weave persists via the /.woven timeline, so the chain is
+		// self-consistent root-local state; the incremental weave then
+		// identity-reuses those commits (same tree, same parents).
+		_ = dp
+		tl := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: name}
+		expected := u.Old
+		if st, serr := s.Meta.Timeline(r.Context(), tl); serr == nil {
+			// Race-window guard: the client's old is the advertised woven tip;
+			// it must still equal the tip derivable now, else another push
+			// landed in between (fetch first, git-equivalent semantics).
+			if curWoven, werr := s.Views.RootTip(r.Context(), vr.Repo, name); werr == nil &&
+				!u.Old.IsZero() && !curWoven.IsZero() && u.Old != curWoven {
+				_ = WritePacket(out, []byte("ng "+u.Name+" "+storage.ErrNonFastForward.Error()+"\n"))
+				continue
+			}
+			expected = st.Head
+		}
+		if err := s.Meta.CASHead(r.Context(), tl, expected, u.New); err != nil {
 			_ = WritePacket(out, []byte("ng "+u.Name+" "+err.Error()+"\n"))
 			continue
 		}
@@ -169,94 +190,78 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	_ = out.Flush()
 }
 
-// adoptSubtreePush is the v4 write path for subtree pushes (docs/01 §12 timeline-first):
+// adoptSubtreePush is the v5 write path for subtree pushes (docs/01 ÃÂ§13):
 //
-//	① content-level check (race-window guard, unchanged): admit only when old's X-view tree == the current merged
-//	  head's X-view tree — consecutive pushes admitted / stale cross-view rejected (prevents silent rollback) /
+//	Ã¢ÂÂ  content-level check (race-window guard, unchanged): admit only when old's X-view tree == the current merged
+//	  head's X-view tree Ã¢ÂÂ consecutive pushes admitted / stale cross-view rejected (prevents silent rollback) /
 //	  post-pull admitted;
-//	② subtree timeline CAS advance: the first push anchors via EnsureTimeline
-//	  (head=merged head, base=root divergence point); later pushes use the current local head as expected;
-//	③ AdoptSubtreePush adopts into the root (C kept as-is as second parent, root head CAS
-//	  advances, retry on contention). Post-adoption the projection maps back to C itself —
-//	  the pusher's changes keep their own SHA after flowing back, and pull is always fast-forward.
+//	Ã¢ÂÂ¡ subtree timeline CAS advance: the first push anchors via EnsureTimeline
+//	  (head=merged head, base=root divergence point); later pushes use the current local head as expected.
+//
+// No root-side write: the root view is derived on read (view.RootTip), so a
+// subtree push contends on exactly one CAS Ã¢ÂÂ its own directory's timeline.
 func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch string, old, newHead model.OID) error {
-	curTip, rootHead, err := s.subtreeHead(ctx, vr)
+	curTip, rootLocal, err := s.Views.SubtreeHead(ctx, vr.Repo, vr.Sub, branch)
 	if err != nil {
 		return err
 	}
 	if curTip.IsZero() {
 		return fmt.Errorf("subtree view %s unavailable (root has no commits)", vr.Sub)
 	}
-	if !old.IsZero() && old != curTip && !s.sameXView(vr, old, curTip) {
-		return storage.ErrNonFastForward
+	// Content-level staleness guard, both sides (docs/01 §13):
+	//   local side — old must match the combined view tip X-content
+	//     (consecutive pushes pass; a divergent peer local push rejects —
+	//     the v4 race-window rule);
+	//   root side — old must CONTAIN the current projection tip: by OID
+	//     ancestry, by identical X content, or by the projection's X-tree
+	//     already recorded in old's history. The last form matters after a
+	//     rebase recovery: the client's chain holds a cross-view REWRITE of
+	//     the projection (different OID) plus newer local content, so it is
+	//     ahead of, not stale against, the root side.
+	if !old.IsZero() {
+		log.Printf("GUARD %s%s: old=%s curTip=%s same=%v", vr.Repo, vr.Sub, old, curTip, s.sameXView(vr, old, curTip))
+		if !s.sameXView(vr, old, curTip) {
+			return storage.ErrNonFastForward
+		}
+		if projTip, perr := s.Views.ProjectionTip(vr.Repo, vr.Sub, rootLocal); perr == nil &&
+			!projTip.IsZero() && !s.Views.Descends(vr.Repo, old, projTip) && !s.sameXView(vr, old, projTip) {
+			projTree := model.OID("")
+			if pci, ciErr := s.Objects.CommitInfo(vr.Repo, projTip); ciErr == nil {
+				projTree = pci.Tree
+			}
+			if projTree.IsZero() || !s.Views.TreeKnown(vr.Repo, old, projTree) {
+				return storage.ErrNonFastForward
+			}
+		}
 	}
 
-	// ② subtree timeline CAS. First push: EnsureTimeline anchors at the merged head
+	// Ã¢ÂÂ¡ subtree timeline CAS. First push: EnsureTimeline anchors at the merged head
 	// (head=curTip, base=root divergence point); expected is that anchored head.
 	localTL := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: branch}
 	localTip := curTip
 	if st, terr := s.Meta.Timeline(ctx, localTL); terr == nil {
 		localTip = st.Head
-	} else if terr := s.Meta.EnsureTimeline(ctx, localTL, curTip, rootHead); terr != nil {
+	} else if terr := s.Meta.EnsureTimeline(ctx, localTL, curTip, s.rootLocalHead(ctx, vr.Repo, branch)); terr != nil {
 		return terr
 	}
 	if err := s.Meta.CASHead(ctx, localTL, localTip, newHead); err != nil {
 		return err
 	}
+	log.Printf("subtree %s%s: /%s Ã¢ÂÂ %s (root-local untouched)", vr.Repo, vr.Sub, branch, newHead)
+	return nil
+}
 
-	// ③ adopt into the root.
-	info, err := s.Meta.GetRepo(ctx, vr.Repo)
+func (s *Server) rootLocalHead(ctx context.Context, repo, branch string) model.OID {
+	state, err := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: branch})
 	if err != nil {
-		return err
+		return ""
 	}
-	rootName := info.DefaultBranch
-	if rootName == "" {
-		rootName = "main"
-	}
-	rootTL := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: rootName}
-	heads := &metaHeads{meta: s.Meta, ctx: ctx}
-	store := s.Objects.TreeStoreFor(vr.Repo)
-
-	for attempt := 0; attempt < 3; attempt++ {
-		merge, aerr := model.AdoptSubtreePush(store, s.Algo, vr.Repo, rootName, vr.Sub, newHead, heads)
-		if aerr != nil {
-			return aerr
-		}
-		oid := merge.OID(s.Algo)
-		s.Objects.PutSynthetic(vr.Repo, oid, model.CommitType, merge.Encode())
-		if err := s.Meta.CASHead(ctx, rootTL, rootHead, oid); err == nil {
-			log.Printf("adopt %s: subtree %s push %s → root merge %s (parents [%s %s])",
-				vr.Repo, vr.Sub, newHead, oid, rootHead, newHead)
-			return nil
-		}
-		// Root advanced concurrently: reread the root head and recompute (the merge's C side is unchanged).
-		state, terr := s.Meta.Timeline(ctx, rootTL)
-		if terr != nil {
-			return terr
-		}
-		rootHead = state.Head
-	}
-	return fmt.Errorf("root head CAS contention after 3 attempts")
-}
-
-// metaHeads adapts MetaStore to the model layer's HeadResolver (unknown timeline
-// treated as zero head — adoption uses this to make C the sole parent).
-type metaHeads struct {
-	meta storage.MetaStore
-	ctx  context.Context
-}
-
-func (m *metaHeads) TimelineHead(tl model.Timeline) (model.TimelineState, error) {
-	st, err := m.meta.Timeline(m.ctx, tl)
-	if errors.Is(err, storage.ErrTimelineUnknown) {
-		return model.TimelineState{}, nil
-	}
-	return st, err
+	return state.Head
 }
 
 // sameXView is the content-level fast-forward check: whether two commits have the same
-// tree under the path-X view (X-view normalization: a full-repo tree maps to its X subtree; a tree lacking X's first segment ⇒ the tree itself
-// is the X-view root tree — the mixed scope of subtree-side commits / view tips).
+// tree under the path-X view (X-view normalization: a full-repo tree maps to its X subtree; a tree lacking X's first segment Ã¢ÂÂ the tree itself
+// is the X-view root tree Ã¢ÂÂ the mixed scope of subtree-side commits / view tips).
 func (s *Server) sameXView(vr VirtualRepo, a, b model.OID) bool {
 	ia, err := s.Objects.CommitInfo(vr.Repo, a)
 	if err != nil {
@@ -271,7 +276,7 @@ func (s *Server) sameXView(vr VirtualRepo, a, b model.OID) bool {
 	return !ta.IsZero() && ta == tb
 }
 
-// xviewTree normalizes a tree to the X view (docs/01 §10 mixed scope).
+// xviewTree normalizes a tree to the X view (docs/01 ÃÂ§10 mixed scope).
 func (s *Server) xviewTree(vr VirtualRepo, tree model.OID) model.OID {
 	lookup := s.Objects.Lookup(vr.Repo)
 	segs := vr.Sub.Segments()
@@ -287,5 +292,5 @@ func (s *Server) xviewTree(vr VirtualRepo, tree model.OID) model.OID {
 			return model.SubtreeAt(lookup, tree, vr.Sub)
 		}
 	}
-	return tree // tree lacks X's first segment ⇒ it is itself the X-view root tree
+	return tree // tree lacks X's first segment Ã¢ÂÂ it is itself the X-view root tree
 }
