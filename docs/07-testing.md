@@ -1,7 +1,18 @@
 # 07 · 集成测试
 
 六轮手工测试（MVP → 统一 DAG → 轮询协商 → 交叉压测 → 多人协作）的
-全部验证点已固化为**可自动回归的集成测试**（`integration/integration_test.go`）。
+全部验证点已固化为**可自动回归的集成测试**（`integration/`，断言用
+testify，文件按测试目标拆分）：
+
+| 文件 | 测试目标 |
+|---|---|
+| `helpers_test.go` | 共享基建：进程内服务端装配、git CLI 封装、种子/克隆/断言辅助 |
+| `transport_basic_test.go` | 基础传输：根/子树克隆往返、引用操作、增量推送拉取（T1–T4） |
+| `subtree_collaboration_test.go` | 子树协作语义：线性织入、连续推送、非干扰/路径内互斥、多用户同文件、多作用域稳定性（T5/T7/T8/T10/T18） |
+| `push_guards_test.go` | 服务端守卫与协商：v1 have 协商终态 ACK、竞态窗口 sameXView 兜底（T8b/T9） |
+| `protocol_compat_test.go` | git 协议兼容矩阵：版本降级、partial 回退、浅化 deepen/unshallow（T13–T16） |
+| `persistence_test.go` | SQLite 重启持久化（T17） |
+| `rpc_log_test.go` | /api/v1/log 路径过滤（T11） |
 
 ## 形态
 
@@ -36,6 +47,7 @@
 | T15 | `TestShallowClone` | **浅化协议**：depth 1/2/超深（空边界=裸 flush）+ 子树投影空间浅化/unshallow（docs/03 §3a 参考流对照） |
 | T16 | `TestShallowFetchDeepen` | 浅仓增量：普通 fetch（上报边界裁剪、浅文件不变）/ 加深（边界下移+unshallow 回显）/ unshallow 清除 |
 | T17 | `TestSQLiteMetaRestartPersistence` | **M2 持久化**：整进程重启后仓库/pack/对象索引/时间线头全存活；冷启动 nil-index 崩溃回归；重启后可继续 push |
+| T18 | `TestSequentialMultiScopeStability` | 顺序多作用域到达：零重复折叠、tip 不漂移、X 外变更不阻塞；含冲突恢复后继续推送（投影守卫 TreeKnown） |
 
 ## 运行
 
@@ -87,4 +99,3 @@ go test ./...                       # 单元 + 集成
 | T12 | 合并模式 pull（投影链全 X 作用域，merge-base 天然正确） |
 
 CI 效率基准（go-git 实测）：子树 clone **1547 对象** vs 全仓 30203（19.5×）。
-| T18 | `TestSequentialMultiScopeStability` | 顺序多作用域到达：零重复折叠、tip 不漂移、X 外变更不阻塞；含冲突恢复后继续推送（投影守卫 TreeKnown） |
