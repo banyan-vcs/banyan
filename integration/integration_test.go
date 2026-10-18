@@ -679,3 +679,202 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// --- T13 协议兼容矩阵：v0 显式 / v2 强制（服务端 v1-only，客户端按规范降级）---
+// git ≥2.26 对 fetch 默认即 v2——其余全部用例的 clone/fetch/pull 已隐式
+// 覆盖"客户端尝试 v2 → 服务端回 v0 广告 → 降级"路径；此处显式钉住
+// 两种版本下的 clone / 增量协商 / 子树 URL 行为契约（git 2.50 实测）。
+func TestProtocolVersionMatrix(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	src := seedRepo(t, s, "t13")
+	seedHead := headOf(t, src)
+
+	for _, ver := range []string{"0", "2"} {
+		dst := t.TempDir()
+		git(t, "", "-c", "protocol.version="+ver, "clone", "-q", s.repoURL("t13"), dst)
+		if headOf(t, dst) != seedHead {
+			t.Fatalf("protocol v%s clone 头不一致", ver)
+		}
+		fsckClean(t, dst)
+	}
+
+	// 增量协商在 v2 强制下降级走 v1 终态 ACK 路径：新提交经 fetch 到达。
+	git(t, src, "commit", "-q", "--allow-empty", "-m", "t13: advance")
+	git(t, src, "push", "-q", s.repoURL("t13"), "main")
+	dst := t.TempDir()
+	git(t, "", "clone", "-q", s.repoURL("t13"), dst)
+	write(t, filepath.Join(src, "README.md"), "readme-v2\n")
+	git(t, src, "commit", "-qam", "t13: more")
+	git(t, src, "push", "-q", s.repoURL("t13"), "main")
+	git(t, dst, "-c", "protocol.version=2", "fetch", "-q", "origin")
+	if got := strings.TrimSpace(git(t, dst, "rev-parse", "origin/main")); got != headOf(t, src) {
+		t.Fatalf("v2 强制增量 fetch 未到达新提交: %s", got)
+	}
+
+	// 子树 URL 在 v2 强制下同样可用。
+	sub := t.TempDir()
+	git(t, "", "-c", "protocol.version=2", "clone", "-q", s.treeURL("t13", "lib/nested"), sub)
+	if got := readFile(t, filepath.Join(sub, "SHARED.txt")); got != "base\n" {
+		t.Fatalf("v2 子树 clone 内容 = %q", got)
+	}
+	fsckClean(t, sub)
+}
+
+// --- T14 partial clone：未广告 filter 能力 → 客户端警告后回退全量克隆 ---
+// 行为契约（git 2.50 实测）：stderr 出现 "filtering not recognized by
+// server, ignoring"，clone 成功且对象集与全量 clone 完全一致；git 仍会写
+// remote.origin.promisor 配置（对象全在，无害），后续 fetch 继续携带
+// filter 行（uploadpack 对 filter 行显式忽略），不破坏。
+func TestPartialCloneFilterFallback(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	seedRepo(t, s, "t14")
+	full := cloneRepo(t, s, s.repoURL("t14"))
+	wantObjects := countInPack(t, full)
+
+	for _, filter := range []string{"blob:none", "tree:0"} {
+		dst := t.TempDir()
+		out, _ := gitTry("", "clone", "--filter="+filter, s.repoURL("t14"), dst)
+		if !strings.Contains(out, "filtering not recognized by server, ignoring") {
+			t.Fatalf("filter=%s 应回退并警告:\n%s", filter, out)
+		}
+		if n := countInPack(t, dst); n != wantObjects {
+			t.Fatalf("filter=%s 回退后对象不完整: %d != 全量 %d", filter, n, wantObjects)
+		}
+		if got := readFile(t, filepath.Join(dst, "README.md")); got != "readme-v1\n" {
+			t.Fatalf("filter=%s 工作树内容 = %q", filter, got)
+		}
+		fsckClean(t, dst)
+		// promisor 配置下的后续 fetch（请求携带 filter 行）不破坏。
+		git(t, dst, "fetch", "-q", "origin")
+	}
+}
+
+// --- T15 shallow clone（--depth）：服务端浅化（upload-pack deepen 协议）---
+// 参考流对照（git 2.50 http-backend 实测，docs/03 §9）：deepen 请求的每个
+// 响应前置 shallow 段（新边界 shallow 行 + 客户端已补全边界的 unshallow
+// 行 + flush；空边界 = 裸 flush）；协商轮只发 shallow 段（无 NAK）；done 轮
+// 接 ACK/NAK + 按边界裁剪父链的 pack（边界提交保留 parent 头，客户端以
+// .git/shallow 嫁接）。
+func TestShallowClone(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	src := seedRepo(t, s, "t15")
+	// c2 落在 lib/nested 内（使子树投影历史 ≥2 提交，浅化语义可观察）。
+	write(t, filepath.Join(src, "lib", "nested", "SHARED.txt"), "base\nline-2\n")
+	git(t, src, "commit", "-qam", "t15: c2")
+	write(t, filepath.Join(src, "lib", "a.txt"), "a-v3\n")
+	git(t, src, "commit", "-qam", "t15: c3")
+	git(t, src, "push", "-q", s.repoURL("t15"), "main")
+	tip := headOf(t, src)
+
+	// depth 1：仅 tip，边界 = tip 本身。
+	d1 := t.TempDir()
+	git(t, "", "clone", "-q", "--depth", "1", s.repoURL("t15"), d1)
+	if n := countCommits(t, d1); n != 1 {
+		t.Fatalf("depth1 提交数 = %d, want 1", n)
+	}
+	if got := strings.TrimSpace(readFile(t, filepath.Join(d1, ".git", "shallow"))); got != tip {
+		t.Fatalf("depth1 浅边界 = %s, want tip %s", got, tip)
+	}
+	if got := readFile(t, filepath.Join(d1, "README.md")); got != "readme-v1\n" {
+		t.Fatalf("depth1 工作树 = %q", got)
+	}
+	fsckClean(t, d1)
+
+	// depth 2：tip + 直接父；边界 = 父。
+	d2 := t.TempDir()
+	git(t, "", "clone", "-q", "--depth", "2", s.repoURL("t15"), d2)
+	if n := countCommits(t, d2); n != 2 {
+		t.Fatalf("depth2 提交数 = %d, want 2", n)
+	}
+	fsckClean(t, d2)
+
+	// 超深：全历史、非浅仓（空边界 = 裸 flush 段，客户端接受为全量）。
+	d9 := t.TempDir()
+	git(t, "", "clone", "-q", "--depth", "99", s.repoURL("t15"), d9)
+	if n := countCommits(t, d9); n != 3 {
+		t.Fatalf("depth99 提交数 = %d, want 3", n)
+	}
+	if _, err := os.Stat(filepath.Join(d9, ".git", "shallow")); !os.IsNotExist(err) {
+		t.Fatal("depth99 不应有浅边界文件")
+	}
+	fsckClean(t, d9)
+
+	// 子树 URL 浅化：投影历史按深度截断；unshallow 走投影 OID 空间。
+	sub := t.TempDir()
+	git(t, "", "clone", "-q", "--depth", "1", s.treeURL("t15", "lib/nested"), sub)
+	if n := countCommits(t, sub); n != 1 {
+		t.Fatalf("子树 depth1 提交数 = %d, want 1", n)
+	}
+	if got := readFile(t, filepath.Join(sub, "SHARED.txt")); got != "base\nline-2\n" {
+		t.Fatalf("子树 depth1 工作树 = %q", got)
+	}
+	git(t, sub, "fetch", "-q", "--unshallow", "origin")
+	if n := countCommits(t, sub); n != 2 {
+		t.Fatalf("子树 unshallow 后提交数 = %d, want 2（投影全历史）", n)
+	}
+	if out := strings.TrimSpace(git(t, sub, "rev-parse", "--is-shallow-repository")); out != "false" {
+		t.Fatal("子树 unshallow 后仍为浅仓")
+	}
+	fsckClean(t, sub)
+}
+
+// --- T16 浅仓增量：fetch（上报边界）/ 加深 / unshallow ---
+// 语义对照参考流（git 2.50 http-backend 实测）：浅仓普通 fetch 不带
+// deepen——客户端 want 新 tip + 上报当前浅边界 + have；服务端不发 shallow
+// 段，pack 裁剪至客户端边界（历史止于旧 tip，浅文件不变）。加深时客户端
+// 上报浅边界 + deepen N，服务端以 shallow <新边界> + unshallow <已补全>
+// 段应答。unshallow = deepen ∞ + unshallow 回显清除浅文件。
+func TestShallowFetchDeepen(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	src := seedRepo(t, s, "t16")
+	// 浅边界提交必须有父（对照参考流：git 会自动清除父链已完备的浅条目，
+	// 根提交做边界会被立即清理，语义不可观察）。
+	write(t, filepath.Join(src, "README.md"), "readme-v2\n")
+	git(t, src, "commit", "-qam", "t16: c2")
+	git(t, src, "push", "-q", s.repoURL("t16"), "main")
+	boundary := headOf(t, src) // c2：浅边界候选
+
+	d := t.TempDir()
+	git(t, "", "clone", "-q", "--depth", "1", s.repoURL("t16"), d)
+
+	// 服务端再前进两提交；浅仓普通 fetch：历史止于旧浅边界 c2，浅文件不变。
+	write(t, filepath.Join(src, "README.md"), "readme-v3\n")
+	git(t, src, "commit", "-qam", "t16: c3")
+	write(t, filepath.Join(src, "README.md"), "readme-v4\n")
+	git(t, src, "commit", "-qam", "t16: c4")
+	git(t, src, "push", "-q", s.repoURL("t16"), "main")
+
+	git(t, d, "fetch", "-q", "origin")
+	if got := strings.TrimSpace(git(t, d, "rev-parse", "origin/main")); got != headOf(t, src) {
+		t.Fatalf("浅仓 fetch 未到新 tip: %s", got)
+	}
+	git(t, d, "merge", "-q", "--ff-only", "origin/main")
+	if n := countCommits(t, d); n != 3 {
+		t.Fatalf("普通 fetch 后提交数 = %d, want 3（c4,c3,旧边界 c2）", n)
+	}
+	if got := strings.TrimSpace(readFile(t, filepath.Join(d, ".git", "shallow"))); got != boundary {
+		t.Fatalf("普通 fetch 后浅边界 = %s, want 不变 %s", got, boundary)
+	}
+	fsckClean(t, d)
+
+	// 加深到 2：浅边界下移一层（c3 成新边界，c2 之下仍缺失）。
+	git(t, d, "fetch", "-q", "--depth=2", "origin")
+	if n := countCommits(t, d); n != 2 {
+		t.Fatalf("加深 2 后提交数 = %d, want 2", n)
+	}
+	fsckClean(t, d)
+
+	// unshallow：客户端上报浅边界 + deepen ∞，服务端 unshallow 回显清除。
+	git(t, d, "fetch", "-q", "--unshallow", "origin")
+	if n := countCommits(t, d); n != 4 {
+		t.Fatalf("unshallow 后提交数 = %d, want 4（全历史）", n)
+	}
+	if out := strings.TrimSpace(git(t, d, "rev-parse", "--is-shallow-repository")); out != "false" {
+		t.Fatal("unshallow 后仍为浅仓")
+	}
+	fsckClean(t, d)
+}

@@ -1,13 +1,16 @@
 package gitwire
 
 import (
-	"time"
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
@@ -38,6 +41,8 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 
 	var wants []model.OID
 	var haves []model.OID
+	var clientShallow []model.OID // 客户端当前浅边界（加深/unshallow 请求会上报）
+	depth := 0                     // deepen N；0 = 无 deepen
 	done := false
 	// 无状态 HTTP 协商（对照 remote-curl.c / upload-pack.c get_common_commits）：
 	// 每个 POST = 客户端一次完整写完再读（want [+haves] [+flush] [done]）。
@@ -45,11 +50,20 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	// 双 ACK，客户端 do{ACK}while(ACK) 会把 PACK 字节当 ACK 行解析
 	// （bad pack header）。done 轮 = 终态 ACK/NAK + pack；协商轮 =
 	// ACK/NAK + flush-pkt。
+	// shallow（deepen）请求例外（对照 git 2.50 http-backend 实测参考流）：
+	// 每个响应都以 shallow 段开头——shallow 行（新边界）+ unshallow 行
+	// （客户端上报边界中已补全者）+ flush-pkt；协商轮**只**发 shallow 段
+	// （无 NAK），done 轮在其后接 ACK/NAK + 按边界裁剪的 pack。
 	for !done {
 		line, _, err := ReadPacketText(br)
 		if err != nil {
 			if len(wants) == 0 && len(haves) == 0 {
 				http.Error(w, "read request: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if depth > 0 {
+				s.writeShallowSection(out, vr.Repo, wants, clientShallow, depth)
+				_ = out.Flush()
 				return
 			}
 			// 协商轮（请求体结束、无 done）——对照 upload-pack.c
@@ -75,6 +89,12 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 			wants = append(wants, model.OID(strings.SplitN(fields[0], "\x00", 2)[0]))
 		case strings.HasPrefix(line, "have "):
 			haves = append(haves, model.OID(strings.TrimPrefix(line, "have ")))
+		case strings.HasPrefix(line, "shallow "):
+			clientShallow = append(clientShallow, model.OID(strings.TrimSpace(strings.TrimPrefix(line, "shallow "))))
+		case strings.HasPrefix(line, "deepen "):
+			if n, derr := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "deepen "))); derr == nil && n > 0 {
+				depth = n // 2147483647（--unshallow）等超深值自然覆盖全历史
+			}
 		case strings.HasPrefix(line, "filter "):
 			// 未广告 filter 能力，正常客户端不会发送；忽略以防万一。
 		case line == "done":
@@ -87,6 +107,9 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	}
 
 	if done {
+		if depth > 0 {
+			s.writeShallowSection(out, vr.Repo, wants, clientShallow, depth)
+		}
 		if common := s.firstKnown(r.Context(), vr.Repo, haves); !common.IsZero() {
 			_ = WritePacket(out, []byte("ACK "+string(common)+"\n"))
 		} else {
@@ -100,7 +123,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	}
 
 	closureStart := time.Now()
-	blobs, trees, commits, err := s.closure(r.Context(), vr, wants)
+	blobs, trees, commits, err := s.closure(r.Context(), vr, wants, depth, clientShallow)
 	closureDur := time.Since(closureStart)
 	if err != nil {
 		log.Printf("upload-pack %s%s: closure: %v", vr.Repo, vr.Sub, err)
@@ -140,16 +163,104 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		closureDur.Round(time.Millisecond), served, time.Since(encodeStart).Round(time.Millisecond))
 }
 
+// writeShallowSection 写响应开头的 shallow 段（deepen 请求专用）：
+//   - shallow 行：本次深度计算得到的新边界（已纳入但父未全纳入的提交）；
+//   - unshallow 行：客户端上报的边界中、本次已补全父链者（--unshallow /
+//     加深场景客户端据此清除 .git/shallow 对应条目）；
+//   - flush-pkt 收尾（空边界 = 裸 flush，参考流 d99 实测）。
+//
+// 输出序固定（字典序）保证可测试性；行文无换行，对照参考流字节。
+func (s *Server) writeShallowSection(out io.Writer, repo string, wants, clientShallow []model.OID, depth int) {
+	included, boundary := s.shallowCut(repo, wants, depth)
+	for _, oid := range sortedOIDs(boundary) {
+		_ = WritePacket(out, []byte("shallow "+string(oid)))
+	}
+	cs := map[model.OID]bool{}
+	for _, oid := range clientShallow {
+		cs[oid] = true
+	}
+	for _, oid := range sortedOIDs(cs) {
+		if included[oid] && !boundary[oid] {
+			_ = WritePacket(out, []byte("unshallow "+string(oid)))
+		}
+	}
+	_ = WriteFlush(out)
+}
+
+func sortedOIDs(set map[model.OID]bool) []model.OID {
+	out := make([]model.OID, 0, len(set))
+	for oid := range set {
+		out = append(out, oid)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// shallowCut 从 wants 沿全部父边 BFS，纳入深度 0..depth-1 层
+// （--unshallow 的 2147483647 或超历史深度自然收敛为全量）。
+// 返回 (纳入集, 边界集)；边界 = 已纳入但存在未纳入父的提交——
+// 这些提交的父链不入 pack，客户端以 .git/shallow 嫁接。
+func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included, boundary map[model.OID]bool) {
+	included = map[model.OID]bool{}
+	boundary = map[model.OID]bool{}
+	parents := map[model.OID][]model.OID{}
+	type node struct {
+		oid model.OID
+		d   int
+	}
+	queue := make([]node, 0, len(wants))
+	for _, w := range wants {
+		queue = append(queue, node{w, 0})
+	}
+	for len(queue) > 0 {
+		n := queue[0]
+		queue = queue[1:]
+		if n.d >= depth || included[n.oid] {
+			continue
+		}
+		included[n.oid] = true
+		ci, err := s.Objects.CommitInfo(repo, n.oid)
+		if err != nil {
+			continue // 非 commit 对象（防御）：不影响其余层
+		}
+		parents[n.oid] = ci.Parents
+		for _, p := range ci.Parents {
+			queue = append(queue, node{p, n.d + 1})
+		}
+	}
+	for oid := range included {
+		for _, p := range parents[oid] {
+			if !included[p] {
+				boundary[oid] = true
+				break
+			}
+		}
+	}
+	return included, boundary
+}
+
 // closure 从 wants 出发收集对象闭包：commit 沿全部 parents 展开、tree
 // 沿全部条目展开、blob 收集为止（docs/01 §5——根仓库与子树仓库同一条
 // 遍历路径：投影 commit 的 tree 即子树，parents 已在投影时重写）。
-func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID) (
+// 裁剪：depth > 0 时按浅化边界裁父链；无 deepen 但客户端上报了 shallow
+// 边界（浅仓普通 fetch）时以客户端边界为裁剪点——对照参考服务端的
+// have 减除 pack 形状（嫁接层之下对象不入包）。
+func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID, depth int, clientShallow []model.OID) (
 	blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, err error) {
 	blobs = map[model.OID][]byte{}
 	trees = map[model.OID][]byte{}
 	commits = map[model.OID][]byte{}
 	visited := map[model.OID]bool{}
 	referrer := map[model.OID]model.OID{} // 调试：oid ← 谁把它入队
+	var boundary map[model.OID]bool
+	if depth > 0 {
+		_, boundary = s.shallowCut(vr.Repo, wants, depth)
+	} else if len(clientShallow) > 0 {
+		boundary = map[model.OID]bool{}
+		for _, oid := range clientShallow {
+			boundary[oid] = true
+		}
+	}
 
 	queue := append([]model.OID(nil), wants...)
 	for len(queue) > 0 {
@@ -182,8 +293,10 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID)
 				return nil, nil, nil, err
 			}
 			enq(ci.Tree)
-			for _, p := range ci.Parents {
-				enq(p)
+			if !boundary[oid] {
+				for _, p := range ci.Parents {
+					enq(p)
+				}
 			}
 		case model.TreeType:
 			trees[oid] = raw

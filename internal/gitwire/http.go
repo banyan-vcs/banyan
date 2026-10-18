@@ -184,6 +184,7 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 	if service == "git-upload-pack" {
 		return strings.Join([]string{
 			"symref=HEAD:refs/heads/" + defaultBranch,
+			"shallow", // deepen N / --unshallow（v0 核心浅化；deepen-since/not 不广告）
 			agent, objFmt,
 		}, " ")
 	}

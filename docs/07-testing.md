@@ -29,6 +29,12 @@
 | T9 | `TestNegotiationPullStaleClone` | **终态 ACK 语义**：过期克隆 pull 不死锁不坏包 |
 | T10 | `TestMultiUserSameFileCollaboration` | **视图 tip 链式化**：同文件三视图五轮串行协作零冲突；blob hash 一致；提交三视图同 hash |
 | T11 | `TestFilteredLogRPC` | /api/v1/log 路径过滤（X 视角归一：树不含路径首段⇒整树即 X 视角） |
+| T8b | `TestRaceWindowStalePushProtection` | rawPush 协议级竞态模拟：force 绕过客户端检查后服务端 sameXView 兜底；X 外变更不阻塞 |
+| T12 | `TestMergeModePullWithLocalCommits` | 合并模式 pull（投影链全 X 作用域，merge-base 天然正确） |
+| T13 | `TestProtocolVersionMatrix` | 协议版本矩阵：v0 显式 / v2 强制（降级走 v1）clone + 增量 fetch + 子树 URL（docs/03 §9） |
+| T14 | `TestPartialCloneFilterFallback` | 未广告 filter → 警告 + 全量回退（对象集=全量 clone）+ promisor 配置下后续 fetch 不破坏 |
+| T15 | `TestShallowClone` | **浅化协议**：depth 1/2/超深（空边界=裸 flush）+ 子树投影空间浅化/unshallow（docs/03 §3a 参考流对照） |
+| T16 | `TestShallowFetchDeepen` | 浅仓增量：普通 fetch（上报边界裁剪、浅文件不变）/ 加深（边界下移+unshallow 回显）/ unshallow 清除 |
 
 ## 运行
 
