@@ -98,4 +98,4 @@ banyan 把这句话作为第一性约束：**对客户端的承诺只有 git wir
 
 ## 阅读顺序
 
-先读 [01-data-model.md](01-data-model.md)（理解模型分歧点），再读 [02-storage.md](02-storage.md) 与 [03-git-compat.md](03-git-compat.md)（两个承诺：分布式与兼容性），最后 [04](04-derived-data.md)、[05](05-cli.md)、[06](06-roadmap.md)。
+先读 [01-data-model.md](01-data-model.md)（理解模型分歧点），再读 [02-storage.md](02-storage.md) 与 [03-git-compat.md](03-git-compat.md)（两个承诺：分布式与兼容性），最后 [04](04-derived-data.md)、[05](05-cli.md)、[06](06-roadmap.md)；定位与平台集成看 [08-big-picture.md](08-big-picture.md)。

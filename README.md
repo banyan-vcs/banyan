@@ -31,6 +31,8 @@
 | [docs/04-derived-data.md](docs/04-derived-data.md) | 派生数据：commit-graph、路径历史、blame、记忆化 |
 | [docs/05-cli.md](docs/05-cli.md) | `banyan` CLI 设计（对标 `sl`） |
 | [docs/06-roadmap.md](docs/06-roadmap.md) | 里程碑与演进路径 |
+| [docs/07-testing.md](docs/07-testing.md) | 集成测试矩阵（按测试目标拆分） |
+| [docs/08-big-picture.md](docs/08-big-picture.md) | 定位：通用代码存储层 + GitLab 等平台集成拓扑 |
 
 ## 代码骨架
 

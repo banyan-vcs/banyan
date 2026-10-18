@@ -66,3 +66,13 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 | 组装风暴（多目录高频 push） | 根时间线写热点 | M1 同步简单正确；M4 合并队列批量组装 |
 | go-git 协议边界 bug | wire 兼容性 | 协议层薄封装，可换自研解析（pkt-line 解析工作量可控） |
 | subtree split 历史膨胀 | 大仓库虚拟 clone 变慢 | split 缓存 + 深度截断 + 懒 split（按需展开历史窗口） |
+
+## M5 · 平台集成（企业代码托管兼容）
+
+详见 [08-big-picture.md](08-big-picture.md)：协议层已就绪（L1），镜像拓扑靠
+GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
+
+- [ ] token 认证（PAT / CI job token 透传，仓库级 R/W scope）+ 自动建仓收紧开关
+- [ ] webhook 派发（push event → 平台 trigger）
+- [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）
+- [ ] 命名空间映射（平台 group/project ↔ banyan repo）
