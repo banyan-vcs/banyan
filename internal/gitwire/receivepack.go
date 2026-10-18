@@ -147,7 +147,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			// ④ 子树视图 push：收编进统一 DAG（docs/01 §10）——生成规范
 			// subtree-merge commit（parents=[根head, C 原样]），C 的 hash
 			// 在子树与父视图中保持一致；根 head 前进，视图 tip 随之推进。
-			if aerr := s.adoptSubtreePush(r.Context(), vr, u.Old, u.New); aerr != nil {
+			if aerr := s.adoptSubtreePush(r.Context(), vr, name, u.Old, u.New); aerr != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+aerr.Error()+"\n"))
 				continue
 			}
@@ -169,16 +169,17 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	_ = out.Flush()
 }
 
-// adoptSubtreePush 收编子树 push（统一 DAG，docs/01 §10）：
+// adoptSubtreePush 子树 push 的 v4 写路径（docs/01 §12 时间线优先）：
 //
-//	① 校验 old（内容级 fast-forward）：old 的 X 视图树 == 当前 tip 的
-//	  X 视图树才放行。三种情形均正确——连续 push（内容未变，放行；
-//	  祖先判据会造成子树第二次 push 被拒）；跨视图陈旧 push（X 内容
-//	  已被他人推进，拒绝——祖先判据会造成整块子树静默回滚、丢失对方
-//	  提交）；pull 后 push（客户端视角与服务端一致，放行）。
-//	② AdoptSubtreePush 生成 subtree-merge commit（C 原样保留为第二父）
-//	③ 根 head CAS 前进（冲突重试——ReplaceSubtree 幂等，C 不变）
-func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, old, newHead model.OID) error {
+//	① 内容级校验（竞态防护，不变）：old 的 X 视图树 == 当前合头的
+//	  X 视图树才放行——连续 push 放行 / 陈旧跨视图拒绝（防静默回滚）/
+//	  pull 后放行；
+//	② 子树时间线 CAS 前进：first push 经 EnsureTimeline 锚定
+//	  （head=合头、base=根分叉点），后续以当前本地头为 expected；
+//	③ AdoptSubtreePush 收编进根（C 原样保留为第二父，根 head CAS
+//	  前进，冲突重试）。收编后投影经身份映射还原为 C 本尊——
+//	  push 者的变更回流后仍是自己的 SHA，pull 恒 fast-forward。
+func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch string, old, newHead model.OID) error {
 	curTip, rootHead, err := s.subtreeHead(ctx, vr)
 	if err != nil {
 		return err
@@ -190,6 +191,20 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, old, newH
 		return storage.ErrNonFastForward
 	}
 
+	// ② 子树时间线 CAS。首次 push：EnsureTimeline 以合头锚定
+	//（head=curTip、base=根分叉点），expected 即为该锚定头。
+	localTL := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: branch}
+	localTip := curTip
+	if st, terr := s.Meta.Timeline(ctx, localTL); terr == nil {
+		localTip = st.Head
+	} else if terr := s.Meta.EnsureTimeline(ctx, localTL, curTip, rootHead); terr != nil {
+		return terr
+	}
+	if err := s.Meta.CASHead(ctx, localTL, localTip, newHead); err != nil {
+		return err
+	}
+
+	// ③ 收编进根。
 	info, err := s.Meta.GetRepo(ctx, vr.Repo)
 	if err != nil {
 		return err

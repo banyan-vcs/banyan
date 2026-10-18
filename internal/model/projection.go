@@ -177,6 +177,18 @@ func SplitHistory(lookup ObjectLookup, algo HashAlgo, head OID, path AnchorPath)
 		if !changed[oid] {
 			continue
 		}
+		// 身份映射（docs/01 §12）：本路径的收编 merge M=[rootPrev, C]
+		// （C 为 X 作用域、树等价）的 X 投影 = C 本尊——零新提交、
+		// 零重复，push 者的变更经根回流后仍是自己的 SHA。C 的父链
+		// 即其原有时间线锚点，不改写。
+		c := commits[oid]
+		if len(c.Parents) == 2 && !subOf[oid].IsZero() &&
+			commits[c.Parents[1]].TreeOID == subOf[oid] {
+			// 树等价判定：第二父的树 == 根树在 X 处的子树 ⇒ 本路径的
+			// 收编 merge，投影 = 被收编提交本尊。
+			projOID[oid] = c.Parents[1]
+			continue
+		}
 		pc, err := SubtreeSplit(lookup, algo, oid, path)
 		if err != nil {
 			return nil, err

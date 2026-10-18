@@ -65,11 +65,11 @@ type Server struct {
 	Algo    model.HashAlgo
 
 	projMu    sync.Mutex
-	viewChain map[viewKey]viewChainState // 视图 tip 链状态（refs.go）
+	viewCache map[viewKey]model.OID // 子树时间线 head 缓存（refs.go，v4）
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
-	return &Server{Meta: meta, Objects: objects, Algo: algo, viewChain: map[viewKey]viewChainState{}}
+	return &Server{Meta: meta, Objects: objects, Algo: algo, viewCache: map[viewKey]model.OID{}}
 }
 
 // Register 注册路由（docs/03 §1 端点表）。

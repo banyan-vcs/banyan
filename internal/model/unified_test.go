@@ -111,3 +111,54 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// v4 身份映射（docs/01 §12）：收编 merge M=[rootPrev, C]（C 为 X 作用域、
+// 树等价）在 split 中的投影 = C 本尊——不产生新提交。
+func TestSplitHistoryIdentityMappingForAdoption(t *testing.T) {
+	lookup := NewMemoryLookup(SHA1)
+	nestedV1 := mkTree(t, lookup, file(t, lookup, "SHARED.txt", "base\n"))
+	rootTree := mkTree(t, lookup,
+		file(t, lookup, "README", "r"),
+		TreeEntry{Name: "lib", Mode: "40000", Target: mkTree(t, lookup,
+			file(t, lookup, "a.txt", "a"),
+			TreeEntry{Name: "nested", Mode: "40000", Target: nestedV1, IsDir: true},
+		), IsDir: true},
+	)
+	seed := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: rootTree, Author: ident("a"), Committer: ident("a"), Message: "seed\n"})
+
+	// C：X 作用域树、无父（首推锚定在旧投影上，此处简化为无父）。
+	nestedV2 := mkTree(t, lookup, file(t, lookup, "SHARED.txt", "base\nline\n"))
+	cX := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: nestedV2, Author: ident("u"), Committer: ident("u"), Message: "sub: edit\n"})
+
+	// 收编 merge M=[seed, C]：ReplaceSubtree 语义。
+	newRoot := mkTree(t, lookup,
+		file(t, lookup, "README", "r"),
+		TreeEntry{Name: "lib", Mode: "40000", Target: mkTree(t, lookup,
+			file(t, lookup, "a.txt", "a"),
+			TreeEntry{Name: "nested", Mode: "40000", Target: nestedV2, IsDir: true},
+		), IsDir: true},
+	)
+	m := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: newRoot, Parents: []OID{seed, cX}, Author: ident("u"), Committer: ident("u"), Message: "Merge subtree '/lib/nested': sub: edit\n"})
+
+	res, err := SplitHistory(lookup, SHA1, m, "/lib/nested")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 身份映射：链中不应出现 M 的新投影；head 的树 = C 的树。
+	for _, pc := range res.Commits {
+		if pc.ProjectedFrom == m {
+			t.Fatalf("收编 merge 被投影为新提交（身份映射未生效）: %+v", pc)
+		}
+	}
+	if res.Head == "" || res.Head == m {
+		t.Fatalf("head 异常: %s", res.Head)
+	}
+	// head 应为 C 本尊（C 的 X 树 == SubtreeAt(M.tree, X)）。
+	headCommit, err := lookup.Commit(res.Head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headCommit.TreeOID != nestedV2 {
+		t.Fatalf("head 树 = %s, want C 的树 %s", headCommit.TreeOID, nestedV2)
+	}
+}

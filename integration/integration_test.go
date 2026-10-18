@@ -197,7 +197,7 @@ func TestSubtreeCloneUnifiedDAG(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	src := seedRepo(t, s, "t2")
-	seedHash := headOf(t, src)
+	_ = src // v4：子树以投影链呈现（SHA 不同），src 仅用于种子
 
 	sub := cloneRepo(t, s, s.treeURL("t2", "lib/nested"))
 	// 工作树根 = 子目录内容。
@@ -207,11 +207,39 @@ func TestSubtreeCloneUnifiedDAG(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(sub, "README.md")); err == nil {
 		t.Fatal("子树工作树不应包含父级文件 README.md")
 	}
-	// 统一 DAG：原始提交以原始 hash 出现在子树历史（视图 tip 之上）。
-	if !hasCommit(t, sub, seedHash) {
-		t.Fatalf("子树历史缺少原始提交 %s", seedHash)
+	// v4 时间线优先（docs/01 §12）：子树历史 = 本路径时间线（投影链，
+	// SHA 与根侧不同——允许），内容与根一致（blob 相等）。
+	if got := blobOf(t, sub, "SHARED.txt"); got == "" || got != blobOf(t, src, "lib/nested/SHARED.txt") {
+		t.Fatalf("子树 blob(%s) 与源(%s)不一致", got, blobOf(t, src, "lib/nested/SHARED.txt"))
+	}
+	// CI 效率核心断言：子树 clone 只承担子树规模（对象数远小于全仓）。
+	subObjects := countInPack(t, sub)
+	fullObjects := countInPack(t, cloneRepo(t, s, s.repoURL("t2")))
+	if subObjects >= fullObjects {
+		t.Fatalf("子树 clone 对象数(%d)应远小于全仓(%d)", subObjects, fullObjects)
 	}
 	fsckClean(t, sub)
+}
+
+// countInPack 返回仓库本地对象数（CI 效率指标；小仓库的 pack 会被
+// git 默认拆成松散对象——count + in-pack 之和）。
+func countInPack(t *testing.T, dir string) int {
+	t.Helper()
+	out := git(t, dir, "count-objects", "-v")
+	total := 0
+	for _, line := range strings.Split(out, "\n") {
+		for _, key := range []string{"count:", "in-pack:"} {
+			if strings.HasPrefix(line, key) {
+				n := 0
+				fmt.Sscanf(strings.TrimSpace(line), key+" %d", &n)
+				total += n
+			}
+		}
+	}
+	if total == 0 {
+		t.Fatalf("count-objects 解析失败: %s", out)
+	}
+	return total
 }
 
 // --- T3 ref 操作：新建 / 更新 / 删除分支 ---
@@ -289,10 +317,11 @@ func TestSubtreePushAdoption(t *testing.T) {
 	if got := readFile(t, filepath.Join(root, "lib", "nested", "SHARED.txt")); got != "base\nline-1\n" {
 		t.Fatalf("根工作树文件 = %q", got)
 	}
-	// 父级视图同样包含 C。
+	// v4：父级视图以投影呈现同一变更（SHA 与 C 不同，允许）——
+	// 断言内容到达（blob 在三视图一致，见下）而非 hash。
 	parent := cloneRepo(t, s, s.treeURL("t5", "lib"))
-	if !hasCommit(t, parent, cHash) {
-		t.Fatal("父级历史缺少子树提交")
+	if got := readFile(t, filepath.Join(parent, "nested", "SHARED.txt")); got != "base\nline-1\n" {
+		t.Fatalf("父级视图内容 = %q", got)
 	}
 	// 三视图 blob hash 一致。
 	bSub, bPar, bRoot := blobOf(t, sub, "SHARED.txt"),
@@ -325,10 +354,13 @@ func TestConsecutiveSubtreePushes(t *testing.T) {
 	}
 }
 
-// --- T8 跨视图 stale push：拒绝 → pull --rebase → push 收编 ---
-// 回归：sameXView 修复前，祖先判据会让父级陈旧树整块覆盖子树提交
-// （静默回滚）；相等判据会拒绝一切合法连续 push。
-func TestStaleCrossViewPushRejected(t *testing.T) {
+// --- T8 非干扰并行 + 路径内互斥（docs/01 §12 核心目标的两面）---
+//
+//	v4 语义：子树视图 tip 只随【本路径内容】移动——根侧改 X 之外的
+//	文件不移动子树 tip，陈旧子树 push 无需 pull 直接成功（大规模
+//	并行迭代互不干扰）；根侧改 X 之内则子树 tip 前移，陈旧 push 被
+//	拒（防丢失更新，恢复流 pull --rebase → push）。
+func TestCrossViewNonInterference(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	seedRepo(t, s, "t8")
@@ -336,25 +368,47 @@ func TestStaleCrossViewPushRejected(t *testing.T) {
 	root := cloneRepo(t, s, s.repoURL("t8"))
 	sub := cloneRepo(t, s, s.treeURL("t8", "lib/nested"))
 
-	// 根先走（改 lib/a.txt——子树路径之外的文件）。
+	// ① 非干扰：根改 X 之外（lib/a.txt），陈旧子树 push 直接过。
 	write(t, filepath.Join(root, "lib", "a.txt"), "a-v2\n")
-	git(t, root, "commit", "-qam", "t8: root advances")
+	git(t, root, "commit", "-qam", "t8: root advances (outside X)")
 	git(t, root, "push", "-q", "origin", "main")
 
-	// 子树（陈旧）提交并 push → 应被拒（客户端侧即可判定）。
-	appendLine(t, filepath.Join(sub, "SHARED.txt"), "stale\n")
-	git(t, sub, "commit", "-qam", "t8: sub stale")
-	out, err := gitTry(sub, "push", "origin", "main")
-	if err == nil || !strings.Contains(out, "rejected") {
-		t.Fatalf("陈旧 push 未被拒: err=%v\n%s", err, out)
+	appendLine(t, filepath.Join(sub, "SHARED.txt"), "parallel-ok\n")
+	git(t, sub, "commit", "-qam", "t8: sub parallel (unrelated root change)")
+	git(t, sub, "push", "-q", "origin", "main") // 无 pull：非干扰
+
+	root2 := cloneRepo(t, s, s.repoURL("t8"))
+	if got := readFile(t, filepath.Join(root2, "lib", "a.txt")); got != "a-v2\n" {
+		t.Fatalf("根侧变更丢失: %q", got)
+	}
+	if got := readFile(t, filepath.Join(root2, "lib", "nested", "SHARED.txt")); !strings.Contains(got, "parallel-ok") {
+		t.Fatalf("子树变更未达根: %q", got)
 	}
 
-	// 恢复流：pull --rebase → push 成功；根可见。
-	git(t, sub, "pull", "--rebase")
-	git(t, sub, "push", "-q", "origin", "main")
-	root2 := cloneRepo(t, s, s.repoURL("t8"))
-	if !hasCommit(t, root2, headOf(t, sub)) {
-		t.Fatal("恢复 push 后根未见子树提交")
+	// ② 路径内互斥：根改 X 之内，陈旧子树 push 必须被拒 → 恢复流。
+	sub2 := cloneRepo(t, s, s.treeURL("t8", "lib/nested"))
+	root2edit := cloneRepo(t, s, s.repoURL("t8"))
+	write(t, filepath.Join(root2edit, "lib", "nested", "SHARED.txt"), "base\nroot-inside-X\n")
+	git(t, root2edit, "commit", "-qam", "t8: root edits inside X")
+	git(t, root2edit, "push", "-q", "origin", "main")
+
+	appendLine(t, filepath.Join(sub2, "SHARED.txt"), "divergent\n")
+	git(t, sub2, "commit", "-qam", "t8: sub2 stale inside X")
+	out, err := gitTry(sub2, "push", "origin", "main")
+	if err == nil || !strings.Contains(out, "rejected") {
+		t.Fatalf("X 内陈旧 push 未被拒: err=%v\n%s", err, out)
+	}
+	// 真冲突显式解决（docs/01 §12：服务端不做内容合并）。
+	if out, err := gitTry(sub2, "pull", "--rebase"); err != nil && !strings.Contains(out, "CONFLICT") {
+		t.Fatalf("rebase 失败但非冲突: %v\n%s", err, out)
+	}
+	write(t, filepath.Join(sub2, "SHARED.txt"), "base\nroot-inside-X\ndivergent\n(resolved)\n")
+	git(t, sub2, "add", "-A")
+	git(t, sub2, "-c", "core.editor=true", "rebase", "--continue")
+	git(t, sub2, "push", "-q", "origin", "main")
+	root3 := cloneRepo(t, s, s.repoURL("t8"))
+	if got := readFile(t, filepath.Join(root3, "lib", "nested", "SHARED.txt")); !strings.Contains(got, "divergent") {
+		t.Fatalf("恢复后子树变更未达根: %q", got)
 	}
 }
 
@@ -438,12 +492,20 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 	if got := readFile(t, filepath.Join(S, "SHARED.txt")); !strings.Contains(got, "line-E by bob") {
 		t.Fatalf("最终内容缺最后一行: %q", got)
 	}
-	// 每个协作提交以同 hash 出现在三个视图。
+	// v4 一致性（docs/01 §12）：每个协作提交以【原 hash】出现在根视图
+	//（收编保留第二父 / 根直推天然在）——SHA 稳定可追溯；其他视图以
+	// 投影呈现同一变更（SHA 不同，明确允许），内容一致性由上方三视图
+	// blob hash 断言保证。
 	for i, h := range hashes {
-		for _, d := range []string{R, P, S} {
-			if !hasCommit(t, d, h) {
-				t.Fatalf("协作提交 %d（%s）在视图 %s 缺失", i+1, h[:9], d)
-			}
+		if !hasCommit(t, R, h) {
+			t.Fatalf("协作提交 %d（%s）未出现在根视图（收编第二父应保留原 hash）\nroot chain:\n%s",
+				i+1, h[:9], git(t, R, "log", "--oneline", "-12"))
+		}
+	}
+	// 作者自己的视图经身份映射同样保留原 hash（r1/r3=alice→S）。
+	for _, i := range []int{0, 2} {
+		if !hasCommit(t, S, hashes[i]) {
+			t.Fatalf("协作提交 %d（%s）未出现在作者自己的子树视图（身份映射应保留原 hash）", i+1, hashes[i][:9])
 		}
 	}
 	for _, d := range []string{R, P, S} {
@@ -609,4 +671,11 @@ func TestRaceWindowStalePushProtection(t *testing.T) {
 	if got := readFile(t, filepath.Join(root2, "lib", "nested", "SHARED.txt")); !strings.Contains(got, "line-9") {
 		t.Fatalf("根工作树缺子树新内容: %q", got)
 	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
