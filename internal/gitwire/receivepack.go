@@ -106,8 +106,15 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	// the first pkt is "unpack ok", followed by per-ref statuses (mirrors receive-pack.c).
 	_ = WritePacket(out, []byte("unpack ok\n"))
 	for _, u := range updates {
-		if !strings.HasPrefix(u.Name, "refs/heads/") {
+		// Ref namespaces: refs/heads/* are branch timelines (weave on read);
+		// any other refs/<ns>/<name> (tags, notes, custom) is an auxiliary
+		// ref — root repo only, stored verbatim, plain CAS (docs/03 §6).
+		if !strings.HasPrefix(u.Name, "refs/") || !strings.Contains(strings.TrimPrefix(u.Name, "refs/"), "/") {
 			_ = WritePacket(out, []byte("ng "+u.Name+" unsupported ref namespace\n"))
+			continue
+		}
+		if !strings.HasPrefix(u.Name, "refs/heads/") {
+			s.handleAuxRefUpdate(out, r, vr, u.Old, u.New, u.Name, dp)
 			continue
 		}
 		name := strings.TrimPrefix(u.Name, "refs/heads/")
@@ -188,6 +195,41 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 
 	_ = WriteFlush(out)
 	_ = out.Flush()
+}
+
+// handleAuxRefUpdate stores refs/tags/* and any other non-heads namespace
+// (docs/03 §6): a fixed pointer to an existing server-side object —
+// annotated tags point at tag objects, lightweight tags at commits. The
+// timeline name IS the full ref name; the head is the raw OID with no
+// derived-view semantics; deletion mirrors the branch path's expected
+// mapping (the advertised value equals the stored head).
+func (s *Server) handleAuxRefUpdate(out *bufWriter, r *http.Request, vr VirtualRepo, old, newHead model.OID, refName string, dp *storage.DecodedPack) {
+	if !vr.Sub.IsRoot() {
+		_ = WritePacket(out, []byte("ng "+refName+" auxiliary refs only supported in the root repo\n"))
+		return
+	}
+	if !newHead.IsZero() {
+		// Any object type is a valid target (unlike branch heads).
+		known := dp != nil && (dp.Commits[newHead] != nil || dp.Tags[newHead] != nil ||
+			dp.Trees[newHead] != nil || dp.Blobs[newHead] != nil)
+		if !known {
+			if _, _, rerr := s.Objects.Raw(r.Context(), vr.Repo, newHead); rerr != nil {
+				_ = WritePacket(out, []byte("ng "+refName+" target object missing\n"))
+				return
+			}
+		}
+	}
+	tl := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: refName}
+	expected := old
+	if st, serr := s.Meta.Timeline(r.Context(), tl); serr == nil {
+		expected = st.Head
+	}
+	if err := s.Meta.CASHead(r.Context(), tl, expected, newHead); err != nil {
+		_ = WritePacket(out, []byte("ng "+refName+" "+err.Error()+"\n"))
+		return
+	}
+	_ = WritePacket(out, []byte("ok "+refName+"\n"))
+	log.Printf("receive-pack %s: %s → %s", vr.Repo, refName, newHead)
 }
 
 // adoptSubtreePush is the v5 write path for subtree pushes (docs/01 ÃÂ§13):

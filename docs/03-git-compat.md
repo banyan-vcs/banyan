@@ -189,7 +189,7 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 |---|---|---|---|
 | 1 | ~~无 have 减除~~ **已关闭（2026-10-18，docs/09 §3.1）**：haves 已知提交可达集排除；浅客户端按 shallow 边界止步 + 穿过排除提交遍历（T15/T16/T19 钉住）；代价 = have 侧一次遍历，位图终解 | — | ✅ |
 | 2 | 响应无 side-band（裸 pack） | 客户端无进度显示；大 clone 体验差 | M2/M3（广告 side-band-64k + 通道 2 进度） |
-| 3 | **tags 不支持**：`refs/tags/*` 收 `ng unsupported ref namespace` | `git push --tags` / tag clone 失败（干净拒绝，非静默） | M2/M3（tag ref 直通存储 + 广告 `^{} ` peeled） |
+| 3 | **tags 不支持**：`refs/tags/*` 收 `ng unsupported ref namespace` | `git push --tags` / tag clone 失败（干净拒绝，非静默） | ✅ 已关闭（2026-10-18，T20：refs/tags/* + 任意 refs/<ns>/<name>，tag 对象入包/闭包剥离/浅克隆） |
 | 4 | EncodePack 无 delta；push `no-thin` | 双向带宽 | M3 repack 职责（`pack-objects.c` delta 算法） |
 | 5 | 无 multi_ack/multi_ack_detailed/no-done | 大仓库协商轮数多（单 ACK 终态即可收敛） | 低（规模化后再议） |
 | 6 | 浅仓 push 400（参考端 403 + 消息） | 错误提示不够友好 | 低（对齐状态码与 ng 原因行） |

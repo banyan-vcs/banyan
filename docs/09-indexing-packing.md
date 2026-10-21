@@ -66,9 +66,13 @@ git 对照（`pack-objects.c`）：对象按（类型→目录路径→name-hash
 
 落地路径（优先级序）：
 
-1. **repack（M3，桩已就位）**：碎片合并时统一 delta——PutSynthetic 单对象
-   pack 是最大碎片源；合并 + 窗口 delta 后，ExactPackHit 命中率与直传带宽
-   同步改善。repack 与服务路径解耦（后台事务切换 pack 版本）。
+1. **repack（✅ 2026-10-18 落地）**：全量分片合并 + delta 编码（编码器滑窗为
+   go-git encoder 内建）。协议：**合并包注册先行**（注册即重指向全部对象位置）→
+   旧分片元数据/文件/缓存清理；崩溃窗口只留重复位置（仍正确，下次清理）。
+   sqlite 对象行由 INSERT OR IGNORE 改 **UPSERT**（首写者胜不会重指向，DropPack
+   会把仍指旧分片的行删掉——T21b 抓出）。触发：Repacker 阈值（默认 64）+
+   POST /api/v1/repack；周期性背景触发挂 banyand（待 auth 一起做）。织入物化
+   持续产生新碎片（T21 实测克隆广告后即再碎片化）——这正是阈值触发的理由。
 2. **合成路径按需 delta**：have 减除后增量包本身很小，delta 收益有限、
    CPU 在线付出——仅当基准测试证明必要时启用（`NewEncoder` 第三参已支持）。
 3. **可达性位图**（对照 pack bitmaps）：闭包/排除集从遍历 → 位图并集，

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 )
@@ -36,8 +37,14 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 		if err != nil {
 			return nil, err
 		}
+		isAux := func(name string) bool {
+			return strings.HasPrefix(name, "refs/") // tags/notes/custom: stored under the full ref name
+		}
 		var refs []Ref
 		for _, tl := range tls {
+			if isAux(tl.Name) {
+				continue // advertised below, verbatim
+			}
 			tip, terr := s.Views.RootTip(ctx, vr.Repo, tl.Name)
 			if terr != nil || tip.IsZero() {
 				continue
@@ -47,6 +54,16 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 			}
 		}
 		for _, tl := range tls {
+			if isAux(tl.Name) {
+				// Auxiliary refs point at fixed objects (tag objects,
+				// commits) — no derived view: the stored head is the ref.
+				st, serr := s.Meta.Timeline(ctx, tl)
+				if serr != nil || st.Head.IsZero() {
+					continue
+				}
+				refs = append(refs, Ref{Name: tl.Name, OID: st.Head})
+				continue
+			}
 			tip, terr := s.Views.RootTip(ctx, vr.Repo, tl.Name)
 			if terr != nil || tip.IsZero() {
 				continue

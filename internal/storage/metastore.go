@@ -34,6 +34,13 @@ type PackRegistry interface {
 	PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error
 	GetPack(ctx context.Context, repo string, packOID model.OID) (PackInfo, error)
 	ListPacks(ctx context.Context, repo string) ([]PackInfo, error)
+	// PackObjects lists the object set of one pack (repack merge input).
+	PackObjects(ctx context.Context, repo string, packOID model.OID) ([]model.OID, error)
+	// DropPack unregisters a pack and its object locations (repack old-shard
+	// cleanup after the replacement is registered). Crash window between
+	// registration and drop leaves duplicate locations — still correct, the
+	// next repack cleans up.
+	DropPack(ctx context.Context, repo string, packOID model.OID) error
 }
 
 // ObjectIndex is the global object index (distributed lookup entry,
@@ -93,6 +100,7 @@ type MemoryMetaStore struct {
 	mu        sync.Mutex
 	repos     map[string]RepoInfo
 	packs     map[string]map[model.OID][]string       // repo → packOID → nodes
+	packObjs  map[string]map[model.OID][]model.OID    // repo → packOID → objects
 	index     map[string]map[model.OID]ObjectLocation // repo → oid → location
 	timelines map[string]map[model.Timeline]model.TimelineState
 }
@@ -101,6 +109,7 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 	return &MemoryMetaStore{
 		repos:     map[string]RepoInfo{},
 		packs:     map[string]map[model.OID][]string{},
+		packObjs:  map[string]map[model.OID][]model.OID{},
 		index:     map[string]map[model.OID]ObjectLocation{},
 		timelines: map[string]map[model.Timeline]model.TimelineState{},
 	}
@@ -139,6 +148,10 @@ func (m *MemoryMetaStore) PutPack(_ context.Context, repo string, packOID model.
 		m.index[repo] = map[model.OID]ObjectLocation{}
 	}
 	m.packs[repo][packOID] = nodes
+	if m.packObjs[repo] == nil {
+		m.packObjs[repo] = map[model.OID][]model.OID{}
+	}
+	m.packObjs[repo][packOID] = append([]model.OID(nil), objects...)
 	for _, oid := range objects {
 		m.index[repo][oid] = ObjectLocation{PackOID: packOID, NodeID: nodes[0]}
 	}
@@ -177,6 +190,32 @@ func (m *MemoryMetaStore) ListPacks(_ context.Context, repo string) ([]PackInfo,
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PackOID < out[j].PackOID })
 	return out, nil
+}
+
+func (m *MemoryMetaStore) PackObjects(_ context.Context, repo string, packOID model.OID) ([]model.OID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	objs, ok := m.packObjs[repo][packOID]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
+	}
+	return append([]model.OID(nil), objs...), nil
+}
+
+func (m *MemoryMetaStore) DropPack(_ context.Context, repo string, packOID model.OID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.packs[repo][packOID]; !ok {
+		return fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
+	}
+	delete(m.packs[repo], packOID)
+	delete(m.packObjs[repo], packOID)
+	for oid, loc := range m.index[repo] {
+		if loc.PackOID == packOID {
+			delete(m.index[repo], oid)
+		}
+	}
+	return nil
 }
 
 func (m *MemoryMetaStore) Timeline(_ context.Context, tl model.Timeline) (model.TimelineState, error) {

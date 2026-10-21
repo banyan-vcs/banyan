@@ -124,7 +124,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	}
 
 	closureStart := time.Now()
-	blobs, trees, commits, excluded, err := s.closure(r.Context(), vr, wants, depth, clientShallow, haves)
+	blobs, trees, commits, tags, excluded, err := s.closure(r.Context(), vr, wants, depth, clientShallow, haves)
 	closureDur := time.Since(closureStart)
 	if err != nil {
 		log.Printf("upload-pack %s%s: closure: %v", vr.Repo, vr.Sub, err)
@@ -135,7 +135,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	encodeStart := time.Now()
 	// Hot-path whole-pack direct serve (docs/02 §5): when the closure exactly equals a stored pack,
 	// stream the pack's raw bytes back, skipping re-hash + re-compression.
-	wanted := make(map[model.OID]bool, len(commits)+len(trees)+len(blobs))
+	wanted := make(map[model.OID]bool, len(commits)+len(trees)+len(blobs)+len(tags))
 	for oid := range commits {
 		wanted[oid] = true
 	}
@@ -143,6 +143,9 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		wanted[oid] = true
 	}
 	for oid := range blobs {
+		wanted[oid] = true
+	}
+	for oid := range tags {
 		wanted[oid] = true
 	}
 	served := "encode"
@@ -154,7 +157,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		}
 	}
 	if served == "encode" {
-		if err := storage.EncodePack(out, blobs, trees, commits); err != nil {
+		if err := storage.EncodePack(out, blobs, trees, commits, tags); err != nil {
 			log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
 		}
 	}
@@ -211,7 +214,7 @@ func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included
 	}
 	queue := make([]node, 0, len(wants))
 	for _, w := range wants {
-		queue = append(queue, node{w, 0})
+		queue = append(queue, node{s.peelToCommit(repo, w), 0})
 	}
 	for len(queue) > 0 {
 		n := queue[0]
@@ -259,10 +262,11 @@ func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included
 // traversal of the have side per fetch — the same trade git makes without
 // reachability bitmaps (docs/09 §3.3).
 func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID, depth int, clientShallow, haves []model.OID) (
-	blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, excludedObjects int, err error) {
+	blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, tags map[model.OID][]byte, excludedObjects int, err error) {
 	blobs = map[model.OID][]byte{}
 	trees = map[model.OID][]byte{}
 	commits = map[model.OID][]byte{}
+	tags = map[model.OID][]byte{}
 	exclude := s.haveClosure(ctx, vr.Repo, haves, clientShallow)
 	for _, w := range wants {
 		delete(exclude, w)
@@ -309,7 +313,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			// Debugging: dump the referrer context (type + first 256 bytes of raw content).
 			refType, refRaw, rerr := s.Objects.Raw(ctx, vr.Repo, referrer[oid])
 			refDump := fmt.Sprintf("type=%s rerr=%v raw=%.256x", refType, rerr, refRaw)
-			return nil, nil, nil, 0, fmt.Errorf("closure: %w (object %s, referred by %s [%s])", err, oid, referrer[oid], refDump)
+			return nil, nil, nil, nil, 0, fmt.Errorf("closure: %w (object %s, referred by %s [%s])", err, oid, referrer[oid], refDump)
 		}
 		enq := func(child model.OID) {
 			if _, seen := referrer[child]; !seen {
@@ -323,7 +327,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			// Go through the commit-graph index: commits are no longer decoded one by one (docs/04).
 			ci, err := s.Objects.CommitInfo(vr.Repo, oid)
 			if err != nil {
-				return nil, nil, nil, 0, err
+				return nil, nil, nil, nil, 0, err
 			}
 			enq(ci.Tree)
 			if !boundary[oid] {
@@ -336,18 +340,27 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			// Go through the tree-entry index: path/child expansion no longer re-parses tree bytes.
 			entries, err := s.Objects.TreeEntries(vr.Repo, oid)
 			if err != nil {
-				return nil, nil, nil, 0, fmt.Errorf("closure: tree %s: %w", oid, err)
+				return nil, nil, nil, nil, 0, fmt.Errorf("closure: tree %s: %w", oid, err)
 			}
 			for _, e := range entries {
 				enq(e.Target)
 			}
 		case model.BlobType:
 			blobs[oid] = raw
+		case model.TagType:
+			// Annotated tag: serve the tag object and walk into its target
+			// (git peels tags when computing the closure).
+			tags[oid] = raw
+			tg, terr := model.DecodeTag(raw)
+			if terr != nil {
+				return nil, nil, nil, nil, 0, terr
+			}
+			enq(tg.Object)
 		default:
-			return nil, nil, nil, 0, fmt.Errorf("closure: unsupported object type %q for %s", t, oid)
+			return nil, nil, nil, nil, 0, fmt.Errorf("closure: unsupported object type %q for %s", t, oid)
 		}
 	}
-	return blobs, trees, commits, len(exclude), nil
+	return blobs, trees, commits, tags, len(exclude), nil
 }
 
 // haveClosure computes the object set provably present on a client holding
@@ -425,4 +438,22 @@ func (s *Server) firstKnown(ctx context.Context, repo string, haves []model.OID)
 		}
 	}
 	return ""
+}
+
+// peelToCommit follows annotated-tag chains (want <tag-oid> must behave like
+// wanting the tagged commit for depth computation; the closure walk serves
+// the tag objects themselves). Bounded against malformed tag loops.
+func (s *Server) peelToCommit(repo string, oid model.OID) model.OID {
+	for i := 0; i < 16; i++ {
+		t, raw, err := s.Objects.Raw(context.Background(), repo, oid)
+		if err != nil || t != model.TagType {
+			return oid
+		}
+		tg, terr := model.DecodeTag(raw)
+		if terr != nil {
+			return oid
+		}
+		oid = tg.Object
+	}
+	return oid
 }

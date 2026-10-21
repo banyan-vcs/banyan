@@ -27,6 +27,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/objects", s.handleObjects)
 	mux.HandleFunc("/api/v1/timelines", s.handleTimelines)
 	mux.HandleFunc("/api/v1/log", s.handleLog)
+	mux.HandleFunc("/api/v1/repack", s.handleRepack)
 	// TODO(M2): /api/v1/diff  /api/v1/file-history
 	// TODO(M3): /api/v1/blame
 }
@@ -121,4 +122,25 @@ func (s *Server) handleTimelines(w http.ResponseWriter, r *http.Request) {
 	}
 	// TODO(M1): MetaStore needs ListAllTimelines(repo) (cross-anchor enumeration).
 	writeJSON(w, http.StatusOK, timelinesResponse{Repo: repo, Timelines: []timelineSummary{}})
+}
+
+// --- POST /api/v1/repack: merge a repo's pack fragments (docs/02 §5, docs/09 §3.2) ---
+
+type repackRequest struct {
+	Repo      string `json:"repo"`
+	Threshold int    `json:"threshold"` // 0 = server default
+}
+
+func (s *Server) handleRepack(w http.ResponseWriter, r *http.Request) {
+	var req repackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	res, err := s.Objects.Repack(r.Context(), req.Repo, req.Threshold)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }

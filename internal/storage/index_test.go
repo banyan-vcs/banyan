@@ -41,6 +41,7 @@ func buildTestPack(t *testing.T) (blobOID, treeOID, commitOID model.OID, pack []
 		map[model.OID][]byte{blobOID: []byte("hello index\n")},
 		map[model.OID][]byte{treeOID: treeRaw},
 		map[model.OID][]byte{commitOID: commit.Encode()},
+		nil,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +161,7 @@ func TestGenerationDiamond(t *testing.T) {
 	e := mkCommit(td, missing) // parent never ingested: tainted lower bound
 
 	var buf bytes.Buffer
-	if err := EncodePack(&buf, blobs, trees, commits); err != nil {
+	if err := EncodePack(&buf, blobs, trees, commits, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.IngestPack(ctx, "gen", buf.Bytes()); err != nil {

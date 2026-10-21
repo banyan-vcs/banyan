@@ -48,7 +48,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 - [ ] 可达性位图（upload-pack 闭包加速）
 - [ ] 服务端 filter 完整规格（blob:none / tree:0 / sparse:oid / subtree:<path>）
 - [x] 热路径整 pack 直传（已提前实现，docs/02 §1.3：闭包=整 pack 时字节直传，serve 2.77s→24ms）
-- [ ] repack（碎片合并 + delta 化）
+- [x] repack（碎片合并 + delta 化，2026-10-18：合并 pack 注册先行→旧分片元数据/文件/缓存清理；sqlite 对象行 UPSERT 重指向；rpc /api/v1/repack + Repacker 阈值触发；T21/T21b 钉住——对象保全、字节收缩、重启存活）
 - [x] 浅克隆支持（2026-10-18 提前实现，docs/03 §3a：deepen N / 加深 / unshallow / 客户端边界裁剪，对照 http-backend 参考流，T15/T16 钉住）
 
 ## M4 · Scion 级工作流
@@ -72,6 +72,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 详见 [08-big-picture.md](08-big-picture.md)：协议层已就绪（L1），镜像拓扑靠
 GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
 
+- [x] tags 与任意 refs/<ns> 命名空间（2026-10-18：辅助 ref 全名存储/原样广告/tag 对象入包闭包剥离；T20 钉住——annotated/lightweight/删除/自定义命名空间/浅克隆 tag）
 - [ ] token 认证（PAT / CI job token 透传，仓库级 R/W scope）+ 自动建仓收紧开关
 - [ ] webhook 派发（push event → 平台 trigger）
 - [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）

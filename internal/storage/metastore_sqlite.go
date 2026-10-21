@@ -158,7 +158,10 @@ func (s *SQLiteMetaStore) PutPack(ctx context.Context, repo string, packOID mode
 			end = len(objects)
 		}
 		var b strings.Builder
-		b.WriteString("INSERT OR IGNORE INTO objects(repo, oid, pack_oid, node_id) VALUES")
+		// UPSERT (not INSERT OR IGNORE): repack registers a merged pack while
+		// object rows still point at the old shards — they must re-point to the
+		// newly registered pack, or the subsequent DropPack deletes them.
+		b.WriteString("INSERT INTO objects(repo, oid, pack_oid, node_id) VALUES")
 		args := make([]any, 0, (end-start)*4)
 		for i := start; i < end; i++ {
 			if i > start {
@@ -167,7 +170,7 @@ func (s *SQLiteMetaStore) PutPack(ctx context.Context, repo string, packOID mode
 			b.WriteString("(?, ?, ?, ?)")
 			args = append(args, repo, string(objects[i]), string(packOID), primary)
 		}
-		if _, err := tx.ExecContext(ctx, b.String(), args...); err != nil {
+		if _, err := tx.ExecContext(ctx, b.String()+" ON CONFLICT(repo, oid) DO UPDATE SET pack_oid=excluded.pack_oid, node_id=excluded.node_id", args...); err != nil {
 			return err
 		}
 	}
@@ -229,6 +232,76 @@ func (s *SQLiteMetaStore) ListPacks(ctx context.Context, repo string) ([]PackInf
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PackOID < out[j].PackOID })
 	return out, nil
+}
+
+func (s *SQLiteMetaStore) PackObjects(ctx context.Context, repo string, packOID model.OID) ([]model.OID, error) {
+	var one string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT 1 FROM packs WHERE repo=? AND pack_oid=?", repo, string(packOID)).Scan(&one)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT oid FROM objects WHERE repo=? AND pack_oid=?", repo, string(packOID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.OID
+	for rows.Next() {
+		var oid string
+		if err := rows.Scan(&oid); err != nil {
+			return nil, err
+		}
+		out = append(out, model.OID(oid))
+	}
+	return out, rows.Err()
+}
+
+// DropPack unregisters the pack and its object locations in one transaction.
+// Missing-object rows are tolerated (they may have been re-registered to the
+// replacement pack already); a missing pack row is ErrPackNotFound.
+func (s *SQLiteMetaStore) DropPack(ctx context.Context, repo string, packOID model.OID) error {
+	var one string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT 1 FROM packs WHERE repo=? AND pack_oid=?", repo, string(packOID)).Scan(&one)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
+	}
+	if err != nil {
+		return err
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	fail := func(err error) error {
+		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		return err
+	}
+	// Object rows pointing at this pack are deleted only when they still do:
+	// the replacement pack's registration may have already re-pointed them.
+	if _, err := conn.ExecContext(ctx,
+		"DELETE FROM objects WHERE repo=? AND pack_oid=?", repo, string(packOID)); err != nil {
+		return fail(err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		"DELETE FROM pack_nodes WHERE repo=? AND pack_oid=?", repo, string(packOID)); err != nil {
+		return fail(err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		"DELETE FROM packs WHERE repo=? AND pack_oid=?", repo, string(packOID)); err != nil {
+		return fail(err)
+	}
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	return err
 }
 
 func (s *SQLiteMetaStore) LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]ObjectLocation, error) {

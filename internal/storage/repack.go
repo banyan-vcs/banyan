@@ -1,35 +1,142 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Repacker does background fragment merging and deltification (docs/02 §5).
+// Repack merges a repo's pack fragments into one delta-encoded pack
+// (docs/02 §5, docs/09 §3.2 — git repack -a + pack-objects window deltas).
 //
-// Trigger: packs(repo) > fragment threshold (default 64) or object redundancy over threshold.
-// Execution: select the union of small packs → delta-encode by time/path locality
+// Fragment source: every server-side synthesis (projection commits, woven
+// rewrites) persists as a single-object pack (PutSynthetic write-through), so
+// a busy repo accumulates hundreds of fragments — storage bloat, index
+// dilution, and ExactPackHit whole-pack direct serve degrades to online
+// re-encoding.
 //
-//	→ new pack+idx → versioned metadata switch (single transaction) → delete old packs once refcounts hit zero.
+// Protocol: register the merged pack FIRST (its registration re-points every
+// object location), then drop the old shards. The crash window between the
+// two leaves duplicate locations — still correct (either pack resolves the
+// object), the next repack cleans up.
 type Repacker struct {
-	Meta  MetaStore
-	Local *LocalShardStore
-	Nodes []Node
-	Algo  model.HashAlgo
-
-	FragmentThreshold int // trigger threshold, default 64
+	Objects           *ObjectService
+	FragmentThreshold int // repos below this many packs are left alone
 }
 
-func NewRepacker(meta MetaStore, local *LocalShardStore, nodes []Node, algo model.HashAlgo) *Repacker {
-	return &Repacker{Meta: meta, Local: local, Nodes: nodes, Algo: algo, FragmentThreshold: 64}
+func NewRepacker(objects *ObjectService, fragmentThreshold int) *Repacker {
+	if fragmentThreshold <= 0 {
+		fragmentThreshold = 64
+	}
+	return &Repacker{Objects: objects, FragmentThreshold: fragmentThreshold}
 }
 
-// RunOnce executes one repack round. Skeleton: returns a plan description; M1/M2 fill in the real merge.
+// RepackResult reports one round's effect (observability + tests).
+type RepackResult struct {
+	PacksBefore, PacksAfter int
+	Objects                 int
+	BytesBefore, BytesAfter int64
+	Delta                   bool // the merged pack is delta-encoded
+}
+
+// RunOnce executes one repack round for one repo. Below the fragment
+// threshold it is a no-op ("" plan, nil error).
 func (r *Repacker) RunOnce(ctx context.Context, repo string) (string, error) {
-	// TODO(M1): enumerate packs → select the union → merge-rewrite.
-	// TODO(M2): deltification (sliding window + same-directory blobs as preferred bases);
-	//           hot-path whole-pack direct serve (response body is the stored pack, zero re-encoding).
-	return "", fmt.Errorf("repack: not implemented (M1)")
+	res, err := r.Objects.Repack(ctx, repo, r.FragmentThreshold)
+	if err != nil {
+		return "", err
+	}
+	if res.PacksAfter == res.PacksBefore {
+		return fmt.Sprintf("no-op: %d packs (threshold %d)", res.PacksBefore, r.FragmentThreshold), nil
+	}
+	return fmt.Sprintf("merged %d → %d packs, %d objects, %d → %d bytes (delta=%v)",
+		res.PacksBefore, res.PacksAfter, res.Objects, res.BytesBefore, res.BytesAfter, res.Delta), nil
+}
+
+// Repack is the implementation (on ObjectService: it owns the pack cache and
+// in-memory indexes that must follow the swap).
+func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) (RepackResult, error) {
+	packs, err := s.Meta.ListPacks(ctx, repo)
+	if err != nil {
+		return RepackResult{}, err
+	}
+	res := RepackResult{PacksBefore: len(packs)}
+	if len(packs) < 2 || (threshold > 0 && len(packs) < threshold) {
+		res.PacksAfter = len(packs)
+		return res, nil
+	}
+
+	// 1. Merge: read every fragment, union by object identity (content
+	// addressing makes duplicates interchangeable).
+	var blobs, trees, commits, tags = map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}
+	var bytesBefore int64
+	for _, p := range packs {
+		dp, derr := s.Local.GetDecoded(repo, p.PackOID)
+		if derr != nil {
+			// A vanished fragment (racing deletion) is skipped; its objects
+			// re-register to surviving packs on their next ingest.
+			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, derr)
+			continue
+		}
+		if raw, rerr := s.Local.GetPackBytes(repo, p.PackOID); rerr == nil {
+			bytesBefore += int64(len(raw))
+		}
+		for oid, b := range dp.Blobs {
+			blobs[oid] = b
+		}
+		for oid, t := range dp.Trees {
+			trees[oid] = t
+		}
+		for oid, c := range dp.Commits {
+			commits[oid] = c
+		}
+		for oid, tg := range dp.Tags {
+			tags[oid] = tg
+		}
+	}
+	res.Objects = len(blobs) + len(trees) + len(commits) + len(tags)
+	if res.Objects == 0 {
+		res.PacksAfter = len(packs)
+		return res, nil
+	}
+
+	// 2. Encode one delta pack (window heuristics are the encoder's) and
+	// register it — registration re-points every object location atomically
+	// per object, so reads switch to the merged pack as of this call.
+	var buf bytes.Buffer
+	if err := EncodePackDelta(&buf, blobs, trees, commits, tags); err != nil {
+		return RepackResult{}, err
+	}
+	newOID, err := s.IngestPack(ctx, repo, buf.Bytes())
+	if err != nil {
+		return RepackResult{}, err
+	}
+	res.Delta = true
+	res.BytesAfter = int64(buf.Len())
+
+	// 3. Drop the old shards (metadata first, then files, then caches).
+	for _, p := range packs {
+		if p.PackOID == newOID {
+			continue // CAS idempotency: the merged pack may equal a fragment
+		}
+		if derr := s.Meta.DropPack(ctx, repo, p.PackOID); derr != nil {
+			log.Printf("repack %s: drop meta %s: %v", repo, p.PackOID, derr)
+			continue
+		}
+		s.Local.DeletePack(repo, p.PackOID)
+		s.mu.Lock()
+		delete(s.cache[repo], p.PackOID)
+		delete(s.packOrder[repo], p.PackOID)
+		s.mu.Unlock()
+	}
+	packsAfter, err := s.Meta.ListPacks(ctx, repo)
+	if err == nil {
+		res.PacksAfter = len(packsAfter)
+	} else {
+		res.PacksAfter = 1
+	}
+	return res, nil
 }

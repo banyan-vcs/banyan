@@ -78,7 +78,7 @@ func (s *ObjectService) PutSynthetic(repo string, oid model.OID, t model.ObjectT
 		commits = map[model.OID][]byte{oid: data}
 	}
 	var buf bytes.Buffer
-	if err := EncodePack(&buf, blobs, trees, commits); err != nil {
+	if err := EncodePack(&buf, blobs, trees, commits, nil); err != nil {
 		log.Printf("synth %s/%s: encode: %v (memory-only)", repo, oid, err)
 		return
 	}
@@ -109,6 +109,9 @@ func (s *ObjectService) Raw(ctx context.Context, repo string, oid model.OID) (mo
 	}
 	if c, ok := dp.Commits[oid]; ok {
 		return model.CommitType, c, nil
+	}
+	if tg, ok := dp.Tags[oid]; ok {
+		return model.TagType, tg, nil
 	}
 	return "", nil, fmt.Errorf("%w: %s", model.ErrObjectNotFound, oid)
 }
@@ -342,6 +345,13 @@ func (l *LocalShardStore) PutPack(repo string, packOID model.OID, packBytes, idx
 // GetPackBytes reads raw pack bytes.
 func (l *LocalShardStore) GetPackBytes(repo string, packOID model.OID) ([]byte, error) {
 	return os.ReadFile(l.packPath(repo, packOID))
+}
+
+// DeletePack removes the pack and idx files from disk (repack old-shard
+// cleanup; missing files are tolerated — CAS re-ingest may have skipped writes).
+func (l *LocalShardStore) DeletePack(repo string, packOID model.OID) {
+	_ = os.Remove(l.packPath(repo, packOID))
+	_ = os.Remove(l.idxPath(repo, packOID))
 }
 
 // GetDecoded reads back and decodes a pack (miss path; object bodies then stay in cache).

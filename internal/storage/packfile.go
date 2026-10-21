@@ -135,6 +135,7 @@ type DecodedPack struct {
 	Blobs   map[model.OID][]byte
 	Trees   map[model.OID][]byte // raw tree encoding
 	Commits map[model.OID][]byte // raw commit encoding (incl. banyan-anchor headers)
+	Tags    map[model.OID][]byte // raw annotated-tag encoding
 	Order   []model.OID          // object order within the pack (Scanner order)
 	// Offsets is oid → offset in the pack (the data source for idx v2).
 	// Paired positionally with the Parser's object insertion order; empty when
@@ -161,6 +162,7 @@ func DecodePack(raw []byte) (*DecodedPack, error) {
 		Blobs:   map[model.OID][]byte{},
 		Trees:   map[model.OID][]byte{},
 		Commits: map[model.OID][]byte{},
+		Tags:    map[model.OID][]byte{},
 	}
 	for _, h := range st.order {
 		o := st.objects[h]
@@ -181,7 +183,9 @@ func DecodePack(raw []byte) (*DecodedPack, error) {
 			dp.Trees[oid] = content
 		case plumbing.CommitObject:
 			dp.Commits[oid] = content
-		default: // tags etc.: M1 extension
+		case plumbing.TagObject:
+			dp.Tags[oid] = content
+		default: // future object types
 		}
 		dp.Order = append(dp.Order, oid)
 	}
@@ -223,9 +227,20 @@ func scanOffsets(raw []byte) ([]int64, error) {
 
 // EncodePack synthesizes a delta-free response pack from an object set
 // (docs/03 §3 step 5: correctness first; deltification is repack's job).
-func EncodePack(w io.Writer, blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte) error {
+func EncodePack(w io.Writer, blobs, trees, commits, tags map[model.OID][]byte) error {
+	return encodePack(w, blobs, trees, commits, tags, false)
+}
+
+// EncodePackDelta synthesizes a delta-encoded pack (git pack-objects window
+// heuristics are the encoder library's; docs/09 §3.2: repack merges
+// fragments with deltification, the serve path stays delta-free).
+func EncodePackDelta(w io.Writer, blobs, trees, commits, tags map[model.OID][]byte) error {
+	return encodePack(w, blobs, trees, commits, tags, true)
+}
+
+func encodePack(w io.Writer, blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, tags map[model.OID][]byte, delta bool) error {
 	st := newMemStorer()
-	want := make([]plumbing.Hash, 0, len(blobs)+len(trees)+len(commits))
+	want := make([]plumbing.Hash, 0, len(blobs)+len(trees)+len(commits)+len(tags))
 	for oid, content := range blobs {
 		h, err := putObject(st, plumbing.BlobObject, oid, content)
 		if err != nil {
@@ -247,7 +262,14 @@ func EncodePack(w io.Writer, blobs map[model.OID][]byte, trees map[model.OID][]b
 		}
 		want = append(want, h)
 	}
-	enc := packfile.NewEncoder(w, st, false)
+	for oid, content := range tags {
+		h, err := putObject(st, plumbing.TagObject, oid, content)
+		if err != nil {
+			return err
+		}
+		want = append(want, h)
+	}
+	enc := packfile.NewEncoder(w, st, delta)
 	if _, err := enc.Encode(want, 0); err != nil {
 		return fmt.Errorf("encode pack: %w", err)
 	}

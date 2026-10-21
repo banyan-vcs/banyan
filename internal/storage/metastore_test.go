@@ -91,6 +91,30 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 		t.Fatalf("listpacks = %v, %v", packs, err)
 	}
 
+	// --- repack support: PackObjects / DropPack ---
+	objs1, err := m.PackObjects(ctx, "r1", "p1")
+	if err != nil || len(objs1) != 3 {
+		t.Fatalf("packobjects = %v, %v", objs1, err)
+	}
+	if _, err := m.PackObjects(ctx, "r1", "pX"); !errors.Is(err, ErrPackNotFound) {
+		t.Fatalf("packobjects missing = %v, want ErrPackNotFound", err)
+	}
+	if err := m.DropPack(ctx, "r1", "p0"); err != nil {
+		t.Fatalf("droppack: %v", err)
+	}
+	if err := m.DropPack(ctx, "r1", "p0"); !errors.Is(err, ErrPackNotFound) {
+		t.Fatalf("droppack twice = %v, want ErrPackNotFound", err)
+	}
+	if packs, _ := m.ListPacks(ctx, "r1"); len(packs) != 1 || packs[0].PackOID != "p1" {
+		t.Fatalf("post-drop packs = %v", packs)
+	}
+	if loc, _ := m.LocateObjects(ctx, "r1", []model.OID{"a0"}); len(loc) != 0 {
+		t.Fatalf("dropped objects still located: %v", loc)
+	}
+	if loc, _ := m.LocateObjects(ctx, "r1", []model.OID{"a2"}); len(loc) != 1 {
+		t.Fatalf("surviving objects lost: %v", loc)
+	}
+
 	// --- branch ref-map (timelines) ---
 	root := model.Timeline{Repo: "r1", Anchor: model.RootAnchor, Name: "main"}
 	if _, err := m.Timeline(ctx, root); !errors.Is(err, ErrTimelineUnknown) {

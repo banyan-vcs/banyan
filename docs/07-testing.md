@@ -14,6 +14,7 @@ testify，文件按测试目标拆分）：
 | `persistence_test.go` | SQLite 重启持久化（T17） |
 | `rpc_log_test.go` | /api/v1/log 路径过滤（T11） |
 | `packing_efficiency_test.go` | 索引与打包效率：have 减除增量包精确构成（T19） |
+| `refs_and_repack_test.go` | tags/自定义命名空间端到端 + repack 碎片合并/delta/重启（T20/T21/T21b） |
 
 ## 形态
 
@@ -50,6 +51,8 @@ testify，文件按测试目标拆分）：
 | T17 | `TestSQLiteMetaRestartPersistence` | **M2 持久化**：整进程重启后仓库/pack/对象索引/时间线头全存活；冷启动 nil-index 崩溃回归；重启后可继续 push |
 | T18 | `TestSequentialMultiScopeStability` | 顺序多作用域到达：零重复折叠、tip 不漂移、X 外变更不阻塞；含冲突恢复后继续推送（投影守卫 TreeKnown） |
 | T19 | `TestIncrementalFetchHaveSubtraction` | **have 减除**（docs/09 §3.1）：增量包=精确 delta（1 提交/2 树/1 blob），未触碰对象不入包；子树 URL 同理；真实客户端端到端 |
+| T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |
+| T21 | `TestRepackFragmentMerge` / `TestRepackRestartSurvival` | **repack**：碎片合并+delta（字节收缩、对象保全、ExactPackHit 恢复）、SQLite 重启后存活（UPSERT 重指向回归） |
 
 ## 运行
 
