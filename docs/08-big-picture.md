@@ -16,9 +16,10 @@ DevOps 平台——MR/issue/CI/权限体系/审计报表不在边界内。
 | CI/CD 流水线 | 已有平台 | Runner 按协议取 banyan 或平台代码 |
 | 组织/权限/合规 | 已有平台 | banyan 只做存储层凭证（见 §3.3） |
 
-类比：Gitaly 之于 GitLab——但 banyan 走**协议原生**路线：对任何平台都表现为
-"一个标准 git 远端"，不实现任何平台的私有 API。git wire 协议是二十年稳定的
-公共契约，跟私有契约（Gitaly RPC/praefect）意味着永久跟随者身份。
+类比：Gitaly 之于 GitLab——默认走**协议原生**路线（对任何平台都是标准 git 远端，
+git wire 协议是二十年稳定的公共契约）；另提供**可选的** Gitaly gRPC 兼容前端，
+让 GitLab 直连 banyand 作为底层存储节点（决策更新 2026-10-22：原"不实现私有
+API"改为分阶段兼容，私有契约差异隔离在适配层内，见 [10-service-api.md](10-service-api.md)）。
 
 **差异化价值**（为什么平台自带存储之外还需要 banyan）：
 
@@ -115,10 +116,12 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
 | webhook | receive-pack 成功后派发 push event（根视图 OID + ref）→ GitLab trigger API 触发流水线 | 无，gitwire 尾部挂钩即可 |
 | 权限 | 仓库级 token 起步；目录时间线天然提供**路径级写隔离**原语（同目录 CAS 才互斥）——平台 ACL 映射到 banyan 凭证 scope | 设计点，未实现 |
 | CI 取码 | Runner 直连 banyan（协议兼容，可用 `--depth` 减量）或镜像后走 GitLab | 协议侧就绪，无额外开发 |
+| 存储后端直连 | Gitaly gRPC 兼容前端（P1 读+git 传输 → P2 网页写路径）：GitLab 把 banyand 当 Gitaly 存储节点，免镜像、单真相源 | 规划（[10-service-api.md](10-service-api.md) §4） |
 
 ### 3.4 明确的非目标
 
-- 不实现 Gitaly RPC / praefect 协议（私有契约，深度耦合 GitLab 内部）；
+- praefect 复制/事务协议不承诺（直连单节点 Gitaly 模式先行，多副本走 docs/02 自身路线）；
+  Gitaly 兼容为可选分阶段前端，私有契约随 GitLab 版本的漂移在适配层吸收（docs/10）；
 - 不做平台 UI、MR 流水线、组织权限树；
 - 不做双向强一致多主存储（真相源唯一原则）。
 

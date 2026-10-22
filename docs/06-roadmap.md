@@ -39,6 +39,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 - [ ] ShardStore 远端实现（HTTP 节点间协议）+ rendezvous 放置 + R 副本
 - [ ] commit-graph + merge-base（generation number）
 - [x] log RPC（/api/v1/log，路径过滤 + hash 一致视图）
+- [ ] 服务层抽取（internal/service：CLI API / Gitaly / gitwire 三前端共核心，docs/10）
 - [ ] 路径历史 / diff RPC
 - [x] 全局对象索引批量定位 + pack cache（内存层 M1 已落地；CommitGraph/TreeMemo 派生索引见 docs/02 §1.3）
 
@@ -74,6 +75,7 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
 
 - [x] tags 与任意 refs/<ns> 命名空间（2026-10-18：辅助 ref 全名存储/原样广告/tag 对象入包闭包剥离；T20 钉住——annotated/lightweight/删除/自定义命名空间/浅克隆 tag）
 - [ ] token 认证（PAT / CI job token 透传，仓库级 R/W scope）+ 自动建仓收紧开关
+- [ ] Gitaly gRPC 兼容前端 P1（Server/Repository/SmartHTTP/Ref/Commit/Blob/Diff 子集；GitLab 直连 banyand 为存储节点，docs/10 §4）
 - [ ] webhook 派发（push event → 平台 trigger）
 - [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）
 - [ ] 命名空间映射（平台 group/project ↔ banyan repo）
