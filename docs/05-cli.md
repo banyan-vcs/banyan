@@ -123,8 +123,7 @@ banyan commit:
 | 端点 | 状态 |
 |---|---|
 | `/api/v1/objects` `/api/v1/timelines` `/api/v1/log` `/api/v1/repack` | **已有** |
-| `/api/v1/fetch-trees` `/api/v1/commit`（含 payload objects） | 待建（CLI 前置） |
-| `/api/v1/refs` `/api/v1/repos` | 待建（配合 M5） |
+| `/api/v1/fetch-trees` `/api/v1/commit` `/api/v1/objects/content`（上传）/ `GET /api/v1/objects`（单取）/ `/api/v1/refs`（GET ls + POST CAS）/ `/api/v1/resolve` / `GET /api/v1/repos` | **已落地**（2026-10-23，T22 钉住） |
 | `/api/v1/diff` `/api/v1/file-history` | M2 |
 | `/api/v1/blame` | M3 |
 
@@ -158,3 +157,9 @@ banyan 不隐藏 git：`--git` 仓内 `git status` / IDE 全部可用；薄工�
 | M3 | diff / blame / file-history / pull --rebase | diff/blame/file-history RPC |
 | M4 | snapshot / stack / sync / merge | 服务端合并与重放 |
 | M5 | auth / repo / admin（repack、mirror） | token 认证 + 建仓收紧 |
+
+**进度（2026-10-23）**：M2 组除 `fetch`（独立命令，pull 已覆盖网络半程）外全部
+落地——`clone/status/commit/pull/log/cat/fetch-objects/branch/tag/repo ls`，
+`internal/cli` + `cmd/banyan`，T22/T22b 以真 git 客户端交叉验证（fresh clone +
+fsck + 逐字节内容断言）。薄工作区语义即 §2/§4 设计原样：无 .git、无历史下载、
+commit 即发布（changeset 服务端组装 + 目录时间线 CAS）、冲突退出码 1。

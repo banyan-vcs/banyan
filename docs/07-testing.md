@@ -15,6 +15,7 @@ testify，文件按测试目标拆分）：
 | `rpc_log_test.go` | /api/v1/log 路径过滤（T11） |
 | `packing_efficiency_test.go` | 索引与打包效率：have 减除增量包精确构成（T19） |
 | `refs_and_repack_test.go` | tags/自定义命名空间端到端 + repack 碎片合并/delta/重启（T20/T21/T21b） |
+| `cli_workspace_test.go` | 薄工作区 CLI：最小化 clone/status/commit/pull/log/cat + 冲突恢复 + 子树工作区（T22/T22b） |
 
 ## 形态
 
@@ -53,6 +54,7 @@ testify，文件按测试目标拆分）：
 | T19 | `TestIncrementalFetchHaveSubtraction` | **have 减除**（docs/09 §3.1）：增量包=精确 delta（1 提交/2 树/1 blob），未触碰对象不入包；子树 URL 同理；真实客户端端到端 |
 | T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |
 | T21 | `TestRepackFragmentMerge` / `TestRepackRestartSurvival` | **repack**：碎片合并+delta（字节收缩、对象保全、ExactPackHit 恢复）、SQLite 重启后存活（UPSERT 重指向回归） |
+| T22 | `TestCLIThinWorkspace` / `TestCLISubtreeWorkspace` | **薄工作区 CLI**（docs/05/10）：最小化 clone（无 .git、无提交闭包）、离线 status、服务端 changeset commit 经**真 git 客户端交叉验证**（fresh clone + fsck + subject）、log/cat 零下载、pull=服务端 tree-diff、base-moved 冲突退出码 1→pull→重提、子树工作区 commit 织入根视图 |
 
 ## 运行
 

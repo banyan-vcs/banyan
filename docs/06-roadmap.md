@@ -18,8 +18,9 @@
 - [x] subtree split 投影（**DAG 版**：全父遍历、合并提交保留双 parent 边；经真实仓库验证）
 - [x] push 自动建仓（demo 便利；M2 收紧为 ACL）
 - [x] 目录锚点 push 的向上组装（AssembleRoot 已接线：子树 push → synthetic commit 入根时间线，三层可见性实测 522/1019/4044）
-- [ ] `banyan clone` / `banyan fetch-objects`（CLI 侧；服务端 /api/v1/objects RPC 已就绪）
-- [ ] have 减除（协商终态 ACK 已实现；pack 仍为 wants 全量闭包，正确但非最优——docs/03 §10 偏离 #1）
+- [x] `banyan clone` / `banyan fetch-objects`（CLI 侧；服务端 /api/v1/objects RPC 已就绪）
+- [x] have 减除（2026-10-18 关闭 docs/03 §10 偏离 #1，见 M3/T19；此条为 M1 遗留记录）
+- [x] **薄工作区 CLI 首批命令**（2026-10-23，超越原 M1 设定）：clone（最小化下载，无 .git/无历史闭包）/ status（离线）/ commit（服务端 changeset 组装，docs/05 §4.2）/ pull（服务端 tree-diff 增量）/ log / cat / fetch-objects / branch/tag / repo ls；T22/T22b 以真 git 客户端交叉验证
 
 **已验证的端到端链路**（样本：go-git 仓库，4043 提交 / 28649 对象 / 11MiB pack）：
 
@@ -39,7 +40,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 - [ ] ShardStore 远端实现（HTTP 节点间协议）+ rendezvous 放置 + R 副本
 - [ ] commit-graph + merge-base（generation number）
 - [x] log RPC（/api/v1/log，路径过滤 + hash 一致视图）
-- [ ] 服务层抽取（internal/service：CLI API / Gitaly / gitwire 三前端共核心，docs/10）
+- [x] 服务层抽取（internal/service，2026-10-23：rpc 全量薄化为适配层、fetch-trees/commit/refs/objects 扩展/resolve/repos 落地、log 下沉共享实现；gitwire 发布路径迁移至 CommitService 留待 Gitaly 前端，docs/10 §6）
 - [ ] 路径历史 / diff RPC
 - [x] 全局对象索引批量定位 + pack cache（内存层 M1 已落地；CommitGraph/TreeMemo 派生索引见 docs/02 §1.3）
 
