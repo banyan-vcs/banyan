@@ -122,6 +122,25 @@ func (s *SQLiteMetaStore) GetRepo(ctx context.Context, repo string) (RepoInfo, e
 	return info, nil
 }
 
+func (s *SQLiteMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT name, algo, default_branch FROM repos ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RepoInfo
+	for rows.Next() {
+		var info RepoInfo
+		var algo int
+		if err := rows.Scan(&info.ID, &algo, &info.DefaultBranch); err != nil {
+			return nil, err
+		}
+		info.Algo = model.HashAlgo(algo)
+		out = append(out, info)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLiteMetaStore) PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {
 	if len(nodes) == 0 {
 		return fmt.Errorf("putpack %s/%s: no nodes", repo, packOID)

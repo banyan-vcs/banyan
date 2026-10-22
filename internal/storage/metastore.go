@@ -24,6 +24,8 @@ type MetaStore interface {
 type RepoRegistry interface {
 	CreateRepo(ctx context.Context, repo string, algo model.HashAlgo) error
 	GetRepo(ctx context.Context, repo string) (RepoInfo, error)
+	// ListRepos enumerates all repos (CLI repo ls / Gitaly RepositoryService).
+	ListRepos(ctx context.Context) ([]RepoInfo, error)
 }
 
 // PackRegistry is the central pack table: pack → replica nodes. Packs are
@@ -133,6 +135,17 @@ func (m *MemoryMetaStore) GetRepo(_ context.Context, repo string) (RepoInfo, err
 		return RepoInfo{}, fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
 	return info, nil
+}
+
+func (m *MemoryMetaStore) ListRepos(_ context.Context) ([]RepoInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]RepoInfo, 0, len(m.repos))
+	for _, info := range m.repos {
+		out = append(out, info)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 func (m *MemoryMetaStore) PutPack(_ context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {
