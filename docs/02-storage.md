@@ -132,7 +132,7 @@ wants = 客户端协商所得对象集合
   ⑥ side-band-64k 流式回写
 ```
 
-缓存三层同构（Scion 思想）：同一套「定位 → 拉取 → 编码」逻辑运行在 banyand 进程内 cache、独立的 cache 层、存储节点上——pack 不可变 ⇒ 缓存键即 pack_oid ⇒ 无失效问题。
+缓存三层同构：同一套「定位 → 拉取 → 编码」逻辑运行在 banyand 进程内 cache、独立的 cache 层、存储节点上——pack 不可变 ⇒ 缓存键即 pack_oid ⇒ 无失效问题。
 
 ## 4. 写路径（服务一次 push）
 
@@ -169,13 +169,13 @@ push pack 通常小而碎（一次 push 一个 pack），长期累积会拖垮�
   ⑤ 旧 pack 引用计数（在途读 + 在途 cache）归零后删除
 ```
 
-与 git `pack-objects` 的差异：**不追求全局最优 pack**，追求"合并碎片 + 局部性 delta"的成本收益；大 pack 的进一步优化交给 M3 的分层策略（热路径 pack 直传：客户端要的对象恰好整 pack 命中时，直接把存储侧 pack 作为响应体回传，零重编码——Scion "整树 RPC" 的 pack 版）。
+与 git `pack-objects` 的差异：**不追求全局最优 pack**，追求"合并碎片 + 局部性 delta"的成本收益；大 pack 的进一步优化交给 M3 的分层策略（热路径 pack 直传：客户端要的对象恰好整 pack 命中时，直接把存储侧 pack 作为响应体回传，零重编码）。
 
 ## 6. 生产选型（设计层面，M2+）
 
 | 组件 | 选型 | 说明 |
 |---|---|---|
-| 元数据服务 | 分布式 SQL（TiDB / CockroachDB）或 MySQL + 单写者 | WAL 与 CAS 需要线性化；Spanner 正是 Scion 的选择 |
+| 元数据服务 | 分布式 SQL（TiDB / CockroachDB）或 MySQL + 单写者 | WAL 与 CAS 需要线性化 |
 | 存储节点 | 无状态 HTTP 服务，底层对象存储（S3 类）或本地盘 | pack 不可变，S3 语义天然契合 |
 | 副本策略 | rendezvous × R，或对象存储自带 EC | pack 大且不可变，纠删码收益高 |
 | 缓存层 | 独立 cache 进程（LRU by pack_oid） | 三层同构，见 §3 |

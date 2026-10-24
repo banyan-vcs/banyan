@@ -1,12 +1,11 @@
 # 05 · banyan CLI 命令设计
 
-> 参考 git 常用命令面 × Scion 设计原则（Anthropic《Redesigning source control》，2026-10）。
-> 本文只做命令设计，不含实现。核心立场（用户决策）：**不默认 clone 全仓，最小化下载；
+> 参考 git 常用命令面梳理。本文只做命令设计，不含实现。核心立场（用户决策）：**不默认 clone 全仓，最小化下载；
 > 读操作（log/blame 等）经常性走 API，由服务端完成**。
 
-## 1. 设计原则（Scion 原则 → banyan 映射）
+## 1. 设计原则
 
-| Scion 原则 | banyan 映射 | 现状 |
+| 原则 | banyan 映射 | 现状 |
 |---|---|---|
 | 客户端永远在线，按需取对象 | CLI 无离线承诺；默认只下载工作区所需 | 待建 |
 | 客户端-服务端不对称：历史/合并服务端算，客户端只有工作区 + 有界缓存 | log/blame/diff 全走 RPC；commit 服务端组装 | log/objects RPC 已有 |
@@ -14,7 +13,7 @@
 | 提交廉价、增量、无锁；ref 移动与变更创建解耦 | 目录时间线追加即发布，head 单点 CAS；根视图读时装配 | **v5 写路径已同构** |
 | 工作区按读付费（sparse/virtualized） | 子树即仓库（`/tree/<path>`）；仓内再稀疏化 | 子树已有 |
 
-与 Scion 的差异化取舍：banyan 对象模型仍是 git（blob/tree/commit）。thin CLI 走
+关键取舍：banyan 对象模型仍是 git（blob/tree/commit）。thin CLI 走
 API 直取内容寻址对象；git 客户端走 wire pack——**同一服务端双协议面**，不另造对象格式。
 
 ## 2. 客户端形态：薄工作区（默认）
@@ -43,7 +42,7 @@ API 直取内容寻址对象；git 客户端走 wire pack——**同一服务端
 | ——（partial 补取） | `banyan fetch-objects <oid>...` | 批量对象 RPC（懒回填内部命令；restore/cat 兜底） |
 
 clone 协商差异（对照 git 的 have/want pack 协商）：native CLI 不做协商，按树递归
-请求不可变对象——可断点续传、任意 HTTP 缓存可服务（Scion `scn` 同款思路）。
+请求不可变对象——可断点续传、任意 HTTP 缓存可服务。
 pack 协商留给 git 协议面（含 have 减除，docs/09 §3.1）。
 
 ### 3.2 本地与提交
@@ -81,12 +80,12 @@ pack 协商留给 git 协议面（含 have 减除，docs/09 §3.1）。
 | 命令 | 对标 | 里程碑 |
 |---|---|---|
 | `banyan snapshot` | `git stash`（快照式本地状态） | M4 |
-| `banyan stack` | Scion stacked changesets | M4 |
+| `banyan stack` | 栈式变更（stacked changes） | M4 |
 | `banyan sync` / `merge` / `rebase` | 服务端合并/重放（子树对根对齐） | M3/M4 |
 | `banyan auth login` | token（PAT / CI job token） | M5 |
 | `banyan admin repack / mirror ...` | 运维面（拓扑 A/B 建立/巡检/对账） | M5 |
 
-不设 grep/search——搜索属派生索引范畴（Scion derived data 同类），随派生数据机制远期评估。
+不设 grep/search——搜索属派生索引范畴，随派生数据机制远期评估。
 
 ## 4. 关键协议
 
@@ -113,7 +112,7 @@ banyan commit:
 → {head, root_view}    # root_view = 织入后根视图 OID（CI/webhook 定位用，docs/08 §3.2）
 ```
 
-与 Scion changeset 同构（"相对首父的变更清单 + 内容寻址指针"），但落地为标准 git
+changeset 语义（"相对首父的变更清单 + 内容寻址指针"）直接落地为标准 git
 树/提交——git 客户端与镜像拓扑完全无感。同目录并发冲突：base ≠ 服务端 head →
 拒绝，提示 `banyan pull --rebase`（服务端按变更清单重放到新 head）；真冲突则
 返回双方内容，CLI 物化冲突标记，解决后重新 commit。

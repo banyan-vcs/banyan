@@ -101,7 +101,7 @@ v1 会话流程（对照 `upload-pack.c` 协商状态机）：
 
 `subtree:<path>` 是虚拟仓库的下载优化：`git clone --filter=subtree:/src/lib` 等价于克隆子树仓库但 URL 仍在根仓库——供不想改变 URL 语义的 CI 场景使用。实现位于 `gitwire/filter.go`，对闭包内的 tree 遍历做路径前缀剪枝。
 
-**补取路径**：partial clone 客户端事后 `git fetch` 缺失对象时，git 会发起一次普通 fetch（want=缺失 OID）。此请求同样落在 `/git-upload-pack`，服务端按 OID 直取（全局索引 → 分片节点），无需可达性计算——这正是 Scion「客户端精确要什么就给什么」思想在 git 协议内的实现。`banyan` CLI 的懒回填 RPC（05）与之共享同一对象定位代码。
+**补取路径**：partial clone 客户端事后 `git fetch` 缺失对象时，git 会发起一次普通 fetch（want=缺失 OID）。此请求同样落在 `/git-upload-pack`，服务端按 OID 直取（全局索引 → 分片节点），无需可达性计算——这正是「客户端精确要什么就给什么」在 git 协议内的实现。`banyan` CLI 的懒回填 RPC（05）与之共享同一对象定位代码。
 
 ## 5. receive-pack（服务 push）
 
@@ -141,7 +141,7 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 
 ## 7. hooks / 策略点
 
-`receive-pack.c` 的 pre-receive/post-receive/update 钩子在 banyan 中抽象为 `Policy` 接口（M1 仅日志策略）：push 校验、组装前准入（M4 合并队列的挂点）、CI 触发（对照 Scion 的 commit-vote）。
+`receive-pack.c` 的 pre-receive/post-receive/update 钩子在 banyan 中抽象为 `Policy` 接口（M1 仅日志策略）：push 校验、组装前准入（M4 合并队列的挂点）、CI 触发。
 
 ## 8. 已知限制（接受并记录）
 

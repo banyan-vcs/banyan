@@ -1,6 +1,6 @@
 # 04 · 派生数据引擎（derived）
 
-> Scion 的核心方法论："递归定义的派生数据，可选急算或懒算，可选同步或异步最终一致。"（recursively defined derived data, computed eagerly or lazily, synchronously or with async eventual consistency）
+派生数据的统一方法论："递归定义，可选急算或懒算，可选同步或异步最终一致。"
 
 banyan 中一切"从对象与时间线推出的答案"都是派生数据。派生数据引擎（`internal/derived/`）统一四个接口约束：
 
@@ -22,26 +22,16 @@ type Derived[T any] interface {
 | **merge-base(a,b)** | gca：gen(a) 与 gen(b) 对齐后上溯的公共节点 | log/diff 依赖 | 懒算 + 记忆化 | M2 |
 | **diff(c1, c2)** | tree 递归对比（同锚点直接比；跨锚点先投影到公共锚点） | `diff` RPC | 懒算 | M1 |
 | **路径历史 /path** | commits(c, /p) = 若 c.tree@/p ≠ c.parents.tree@/p 则含 c ∪ 各 parent 的 commits(...) | `file-history` RPC | 懒算 + 位图（M3） | M2 |
-| **blame(/p, rev)** | blame = { 块 → 引入 commit }；对路径历史做 diff3 递归归并（Scion 算法） | `blame` RPC | 懒算 + 记忆化 | M3 |
+| **blame(/p, rev)** | blame = { 块 → 引入 commit }；对路径历史做 diff3 递归归并 | `blame` RPC | 懒算 + 记忆化 | M3 |
 | **subtree split(root, P)** | split(c) = c.tree 提升 P 子树（01 §5.2） | 虚拟仓库 clone | push 后急算（缓存） | M1 |
 | **可达性位图** | reach(c) = {c} ∪ reach(parents)；按 timeline head 存位图 | upload-pack 闭包计算 | repack 时急算 | M3 |
 
-## 2. 与 Scion 的对照
-
-| Scion 派生数据 | banyan 对应 | 差异 |
-|---|---|---|
-| blame（文件级 diff 递归） | 同左 | 相同；banyan 的路径历史天然按目录分片 |
-| commit-graph（generation number） | 同左 | 直接采用 git 社区算法（`commit-graph.c`），OID 空间含投影 commit |
-| 路径历史索引 | 同左 | banyan 额外受益：目录时间线让"该目录的完整历史"是原生数据而非遍历结果 |
-| 统一概念模型（branch ≡ changeset 属性） | timeline ≡ 元数据表一行 | 相同方向：ref 从"移动指针"降级为"记录行" |
-| 快照 header（API 响应可缓存） | 投影 head 的 OID 即 ETag | 相同思想：不可变 ⇒ 可缓存 |
-
-## 3. 一致性级别
+## 2. 一致性级别
 
 - **读路径派生**（diff/blame/file-history）：懒算 + 记忆化，最终一致可接受（上游前进一步即重算增量）。
 - **写路径派生**（subtree split 缓存、组装）：push 后同步或紧随其后急算——虚拟仓库 clone 依赖它，不可滞后太多。
 - **性能派生**（位图、commit-graph）：repack 时机急算，滞后只影响速度不影响正确性。
 
-## 4. 骨架对应
+## 3. 骨架对应
 
 `internal/derived/`：`commitgraph.go`、`pathhistory.go`、`blame.go` 仅定义接口与算法注释，M2/M3 填充。`model/projection.go` 中的 subtree split 是第一个落地的派生数据（M1 就需要）。

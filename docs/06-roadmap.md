@@ -53,11 +53,11 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 - [x] repack（碎片合并 + delta 化，2026-10-18：合并 pack 注册先行→旧分片元数据/文件/缓存清理；sqlite 对象行 UPSERT 重指向；rpc /api/v1/repack + Repacker 阈值触发；T21/T21b 钉住——对象保全、字节收缩、重启存活）
 - [x] 浅克隆支持（2026-10-18 提前实现，docs/03 §3a：deepen N / 加深 / unshallow / 客户端边界裁剪，对照 http-backend 参考流，T15/T16 钉住）
 
-## M4 · Scion 级工作流
+## M4 · 高并发工作流
 
 - [ ] 快照式本地状态（banyan snapshot / status）
 - [ ] 栈式变更（banyan stack）
-- [ ] 组装异步化：合并队列（受影响测试集，对照 Scion commit-vote）
+- [ ] 组装异步化：合并队列（受影响测试集）
 - [ ] `banyan sync`（子目录显式 rebase 对齐根）
 
 ## 风险登记

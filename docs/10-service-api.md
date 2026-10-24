@@ -73,7 +73,7 @@ type CommitService interface {
     // receive-pack / CLI commit RPC / Gitaly receive 三处复用。
 }
 
-type HistoryService interface {                    // 读侧集中计算（Scion 判断 #1）
+type HistoryService interface {                    // 读侧集中计算
     Log(ctx, repo, rev, path string, n int) ([]CommitInfo, error)
     Commit(ctx, repo, rev string) (CommitInfo, error)   // show 元数据
     Diff(ctx, repo string, from, to, path string) ([]FileDiff, error)

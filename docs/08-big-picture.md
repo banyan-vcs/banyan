@@ -11,7 +11,7 @@ DevOps 平台——MR/issue/CI/权限体系/审计报表不在边界内。
 | 代码存储（pack/索引/repack） | **banyan** | 分片 pack CAS + 中心元数据 |
 | git 协议接入（clone/push/pull） | **banyan** | smart HTTP v1，客户端零改动 |
 | 视图派生（子树 clone/读时装配） | **banyan** | `/tree/<path>` 虚拟仓库，O(子目录) 传输 |
-| 读侧服务（log/blame/diff RPC） | **banyan** | 服务端集中计算（Scion 判断 #1） |
+| 读侧服务（log/blame/diff RPC） | **banyan** | 服务端集中计算 |
 | 协作流程（MR/review/issue） | 已有平台 | GitLab/Gitea/自建，**不做** |
 | CI/CD 流水线 | 已有平台 | Runner 按协议取 banyan 或平台代码 |
 | 组织/权限/合规 | 已有平台 | banyan 只做存储层凭证（见 §3.3） |
@@ -128,7 +128,7 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
 ## 4. 演进视角（与 docs/06 对应）
 
 ```
-M1 单机端到端 ──▶ M2 持久化/分布式 ──▶ M3 派生数据/传输优化 ──▶ M4 Scion 工作流
+M1 单机端到端 ──▶ M2 持久化/分布式 ──▶ M3 派生数据/传输优化 ──▶ M4 高并发工作流
       └──────────────▶ M5 平台集成（本篇）：token auth → 自动建仓收紧 →
                         webhook 派发 → 镜像管理（banyan CLI）→ 命名空间映射
 ```

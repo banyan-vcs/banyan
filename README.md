@@ -1,91 +1,134 @@
-# Banyan（榕树）
+# Banyan
 
-一个 **git 兼容**的版本控制系统服务端，采用"目录锚定时间线（anchored timeline）"数据模型与"分片 pack CAS + 中心元数据"的分布式存储架构。
+**English** | [简体中文](README.zh-CN.md)
 
-> 名字取意**独木成林**：一棵榕树即一片森林——主干是根时间线，气生根垂地自成支撑却同属一树，正如目录时间线独立成仓库、锚定同一根系统。
+A **git-compatible** version control server with a directory-anchored timeline
+data model and a sharded pack-CAS + central-metadata storage architecture.
 
-> 灵感来源：[Redesigning source control at Anthropic](https://www.anthropic.com/engineering/redesigning-source-control)（Scion）——"git 服务端不必和 git 客户端一样工作"。
+> The name comes from the banyan tree (榕树， "one tree becomes a forest"):
+> the trunk is the root timeline; the aerial roots are directory timelines —
+> each an independent repo, all anchored to the same tree.
 
-## 设计目标
+## Design goals
 
-1. **完全兼容 git 命令行**：标准 `git clone / fetch / push` 直接可用（Smart HTTP v1 + receive-pack）。
-2. **任意子目录可 clone 为独立仓库**：不是 partial clone 的"稀疏检出"，而是每个目录拥有自己的 commit timeline，`/r/{repo}/tree/{subdir}` 即一个语义完整的仓库。
-3. **新的核心数据模型**：tree/blob 存储与 commit 存储分离；commit 可锚定（anchor）任意 tree；目录嵌套关系将各层 timeline 自底向上组装成整棵树。
-4. **分布式 pack 存储**：packfile 为不可变分片单元，按内容哈希分片到多存储节点，idx 实现分布式对象检索，后台异步 repack。
-5. **全新 CLI（`banyan`）**：对标 Scion 的 `sl`，读操作走服务端集中计算 RPC（log/blame/diff/file-history），本地保持 git 兼容仓形态。
+1. **Drop-in git compatibility** — plain `git clone / fetch / push` just works
+   (Smart HTTP v1; v2 clients negotiate back automatically).
+2. **Any subdirectory is a repo** — not sparse checkout: every directory owns
+   its commit timeline, and `/r/{repo}/tree/{subdir}` serves a semantically
+   complete repository with full projected history.
+3. **Timeline-first write path (v5)** — pushing to a directory touches only
+   that directory's timeline (a single CAS): zero cross-directory locks, and
+   the root view is woven linearly on read — no adoption-merge noise.
+4. **Sharded pack storage** — packfiles are immutable, content-addressed
+   shards with a central metadata index; server-side repack merges fragments
+   with delta encoding.
+5. **A thin client (`banyan`)** — minimal download by default: the workspace
+   holds the checkout manifest and a content-addressed cache, never the
+   commit closure; history queries (log/blame/diff) are answered by the
+   server over the JSON API.
 
-## 非目标（当前阶段）
+## What works today
 
-- 不实现 protocol v2（v1 足以服务标准 git 客户端，客户端自动协商回退）。
-- 不自造客户端对象格式：`banyan` CLI 的本地仓就是标准 git 仓 + promisor remote。
-- 不做 ACL / 多租户 / Web 界面。
-
-## 文档索引
-
-| 文档 | 内容 |
+| Capability | Status |
 |---|---|
-| [docs/00-overview.md](docs/00-overview.md) | 愿景、Scion 思想映射、总体架构 |
-| [docs/01-data-model.md](docs/01-data-model.md) | **核心**：目录锚定时间线模型、组装算法、git 投影 |
-| [docs/02-storage.md](docs/02-storage.md) | 分布式 pack 存储：分片 CAS、双 idx 体系、repack |
-| [docs/03-git-compat.md](docs/03-git-compat.md) | git 兼容层：Smart HTTP、虚拟子树仓库、服务端 filter |
-| [docs/04-derived-data.md](docs/04-derived-data.md) | 派生数据：commit-graph、路径历史、blame、记忆化 |
-| [docs/05-cli.md](docs/05-cli.md) | `banyan` CLI 设计（对标 `sl`） |
-| [docs/06-roadmap.md](docs/06-roadmap.md) | 里程碑与演进路径 |
-| [docs/07-testing.md](docs/07-testing.md) | 集成测试矩阵（按测试目标拆分） |
-| [docs/08-big-picture.md](docs/08-big-picture.md) | 定位：通用代码存储层 + GitLab 等平台集成拓扑 |
-| [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | 索引（代数/树反向索引）与打包（have 减除/delta/repack）设计 |
+| Root + subtree `git clone/fetch/push` (Smart HTTP v1) | ✅ verified against real git clients |
+| Subtree virtual repos (`/tree/<path>`), full-history projection | ✅ |
+| Per-directory timelines, linear woven root view (v5) | ✅ |
+| Shallow clone (depth / deepen / unshallow) | ✅ |
+| Incremental fetch with have subtraction | ✅ |
+| Repack: fragment merge + delta encoding | ✅ |
+| Tags and arbitrary `refs/<ns>` namespaces | ✅ |
+| SQLite metadata persistence + YAML config | ✅ |
+| Service layer + JSON API (`/api/v1/*`, error envelope) | ✅ |
+| Thin-workspace CLI (`clone/status/commit/pull/log/cat/...`) | ✅ |
+| Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
+| Gitaly gRPC frontend (act as GitLab's storage node) | 🚧 planned (docs/10 §4) |
 
-## 代码骨架
+23 integration cases pin the behavior with the **real git CLI** as the client
+([docs/07](docs/07-testing.md)) — the thin-CLI commit path is cross-verified
+by fresh git clones plus `fsck`.
+
+## Repository layout
 
 ```
-cmd/banyand/       服务端守护进程
-cmd/banyan/        新 CLI
-internal/model/   核心数据模型（anchored commit / timeline / assembly / projection）
-internal/storage/ 分布式 pack 存储（shard / metastore / packfile / repack）
-internal/gitwire/ git 兼容层（smart HTTP v1 / upload-pack / receive-pack / filter）
-internal/rpc/     banyan CLI 的服务端 RPC
-internal/derived/ 派生数据引擎（接口占位）
+cmd/banyand/        server daemon (git smart HTTP + JSON API)
+cmd/banyan/         thin-workspace CLI
+internal/model/     core data model (anchored commit / timeline / assembly / projection)
+internal/storage/   sharded pack storage (shard / metastore / packfile / index / repack)
+internal/view/      read-time view engine (v5 weave, subtree views)
+internal/gitwire/   git wire protocol (smart HTTP v1 / upload-pack / receive-pack)
+internal/service/   protocol-agnostic service layer (shared by all frontends, docs/10)
+internal/rpc/       httpd JSON frontend (/api/v1)
+internal/cli/       thin-workspace client implementation
+internal/config/    layered config (defaults < YAML < flags)
 ```
 
-## 快速开始（M1：git server MVP 可用）
-
-**测试约定**：所有测试仓库与服务端数据统一放在 `F:\Workspace\test\`（样本仓库 `go-git`、根/子树 clone、小仓库、服务端数据 `banyand-data/`）。
+## Quick start
 
 ```bash
-go build ./... && go vet ./... && go test ./...
+go build ./... && go vet ./... && go test ./...   # ~65s (integration needs git on PATH)
 
-# 启动服务端（单机模式）。配置三层解析：内置默认 < YAML 文件 < 显式标志
-# （见 banyan.example.yaml；未知配置键直接报错，保证配置一致性）
-go run ./cmd/banyand --config banyan.yaml
+# Start the server. Config resolves as defaults < YAML (-config) < explicit flags;
+# unknown config keys are rejected. See banyan.example.yaml.
+go run ./cmd/banyand -listen 127.0.0.1:8097 -root ./banyand-data -meta sqlite
 
-# 等价的纯标志形式（SQLite 持久化元数据，重启不丢状态）
-go run ./cmd/banyand --listen 127.0.0.1:8097 --root F:/Workspace/test/banyand-data --meta sqlite
-
-# 任意 git 仓库推上来（首次 push 自动建仓）
+# Push any git repo (first push auto-creates it)
 git remote add banyan http://127.0.0.1:8097/r/myrepo.git
 git push banyan main
 
-# 根仓库 clone（零翻译投影）
+# Clone the root repo (byte-identical HEAD, verified up to 4k-commit repos)
 git clone http://127.0.0.1:8097/r/myrepo.git
 
-# ★ 任意子目录 clone 为独立仓库——完整历史（DAG 版 subtree split，
-#   合并拓扑保留），git log / git show / git fsck 全部可用
+# Clone any subdirectory as a standalone repo — full projected history,
+# git log / git show / git fsck all work on it
 git clone http://127.0.0.1:8097/r/myrepo.git/tree/plumbing/format/packfile
+
+# Thin workspace: minimal download, no .git, server-side history
+go run ./cmd/banyan clone http://127.0.0.1:8097/r/myrepo.git
+cd myrepo
+go run ../cmd/banyan status        # offline: manifest vs worktree
+echo change >> README && go run ../cmd/banyan commit -m "edit"   # server-side assembly
+go run ../cmd/banyan pull          # server-side tree-diff increment
+go run ../cmd/banyan log           # remote history, zero download
 ```
 
-已用 go-git 仓库实测（4043 提交 / 28649 对象）：根 clone HEAD 逐字节一致；`plumbing/format/packfile` 子树 clone 得 521 个提交（`--full-history` 口径）、工作树即该目录内容、`git fsck` 干净。详见 [docs/06-roadmap.md](docs/06-roadmap.md)。
+## Non-goals (current stage)
 
-## 开发与提交约定
+- No protocol v2 (v1 serves standard clients fine).
+- No DevOps platform features (MR/CI/permissions UI) — banyan is a
+  **storage layer**; collaboration stays on existing platforms (docs/08).
+- No praefect replication protocol; multi-replica follows banyan's own
+  sharding roadmap (docs/02).
 
-阶段性提交、可独立回滚：
+## Documentation
 
-- **按层拆分**（自底向上）：`docs` → `model` → `storage` → `gitwire` → `serve`（cmd/rpc/derived），每个代码提交**独立可构建、单测通过**（`go build ./... && go test ./...`）；
-- **里程碑必提交**：每完成一个可验证的能力（如 M1 端到端、索引加速）即提交，出问题可 `git revert` / `git checkout` 回滚到上一个稳定点；
-- 提交信息格式：`层: 动作描述（关键点）`，如 `storage: 分片 pack 存储与三层索引`。
+| Doc | Contents |
+|---|---|
+| [docs/00-overview.md](docs/00-overview.md) | Vision, design principles, architecture |
+| [docs/01-data-model.md](docs/01-data-model.md) | **Core**: anchored timelines, assembly, git projection |
+| [docs/02-storage.md](docs/02-storage.md) | Sharded pack storage: CAS, dual indexes, repack |
+| [docs/03-git-compat.md](docs/03-git-compat.md) | Git compatibility: Smart HTTP, virtual subtree repos |
+| [docs/04-derived-data.md](docs/04-derived-data.md) | Derived data: commit-graph, path history, blame |
+| [docs/05-cli.md](docs/05-cli.md) | Thin-client CLI command design |
+| [docs/06-roadmap.md](docs/06-roadmap.md) | Milestones |
+| [docs/07-testing.md](docs/07-testing.md) | Integration test matrix |
+| [docs/08-big-picture.md](docs/08-big-picture.md) | Positioning: universal code storage layer + GitLab integration |
+| [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
+| [docs/10-service-api.md](docs/10-service-api.md) | Service layer + httpd/Gitaly dual frontend, API contracts |
 
-## 技术基座
+## Conventions
 
-- Go + [go-git](https://github.com/go-git/go-git)（对象模型、packfile/idx 编解码、协议 v1 库）
-- 自研：服务端 filter、目录时间线模型、分布式存储、虚拟仓库视图、smart HTTP 层、`banyan` CLI
+- Layered commits (bottom-up): `docs → model → storage → gitwire → service →
+  cli`; every commit builds and passes its tests independently.
+- New capabilities land with an integration case registered in
+  [docs/07](docs/07-testing.md); assertions use testify (require = scenario
+  gates, assert = independent checks).
+- git is the behavioral reference (its source is the oracle); go-git is just
+  a codec library, confined to `internal/storage/packfile.go`.
 
-go-git 能力边界调研结论见 [docs/00-overview.md](docs/00-overview.md#基座选型go-git)。
+## Tech base
+
+- Go + [go-git](https://github.com/go-git/go-git) (object model, packfile/idx
+  codec — library only, never a behavioral boundary)
+- Homegrown: timeline model, read-time weaving, sharded storage, virtual
+  repos, Smart HTTP layer, service layer, thin CLI

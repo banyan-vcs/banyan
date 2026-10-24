@@ -4,32 +4,28 @@
 
 banyan 是一个 git 兼容的服务端版本控制系统：**客户端仍是标准 git，服务端换掉了数据模型与存储架构**——用"目录锚定时间线"替代"单一 root tree 历史"，用"分片 pack CAS + 中心元数据"替代"单机松散对象 + 本地 repack"。
 
-## 为什么这么做：Scion 文章的启示映射
+## 为什么这么做：核心设计判断
 
-Anthropic 的 Scion 迁移（2025 年 6 月完成）验证了一组判断，banyan 逐条对应：
+六条判断贯穿 banyan 的全部设计：
 
-| Scion 的判断 | Scion 的做法 | banyan 的做法 |
-|---|---|---|
-| 客户端永远在线 → 服务端集中计算 | diff/blame/merge/commit 全部服务端，客户端只管理工作副本 | `banyan` CLI 的读操作全部走服务端 RPC；git 客户端照旧走 wire 协议 |
-| 数据结构决定扩展性 | changeset 写前日志（文件级增量，无 tree 遍历） | 目录锚定 commit（tree/blob 与 commit 分离），子目录提交 O(子目录大小) |
-| ref 是元数据瓶颈 | changeset 栈替代 99% ref | timeline head 即元数据表一行，CAS 更新 |
-| 获取协议应该是"要什么"而非"有什么" | 客户点单式 RPC，逐树逐 blob | 服务端逐对象批量 RPC（banyan CLI 懒回填）+ git 侧 partial clone filter |
-| 不可变内容可无限缓存 | blob 内容寻址 + snapshot header 缓存 | pack 即不可变分片，daemon/cache/server 三层同构缓存 |
-| 服务端 ≠ 客户端架构 | 三层服务架构（daemon/cache/中心服务） | 存储节点无状态分片 + 中心元数据单写者 |
+| 判断 | banyan 的做法 |
+|---|---|
+| 客户端永远在线 → 服务端集中计算 | `banyan` CLI 的读操作全部走服务端 RPC；git 客户端照旧走 wire 协议 |
+| 数据结构决定扩展性 | 目录锚定 commit（tree/blob 与 commit 分离），子目录提交 O(子目录大小) |
+| ref 是元数据瓶颈 | timeline head 即元数据表一行，CAS 更新 |
+| 获取协议应该是"要什么"而非"有什么" | 服务端逐对象批量 RPC（banyan CLI 懒回填）+ git 侧 partial clone filter |
+| 不可变内容可无限缓存 | pack 即不可变分片，daemon/cache/server 三层同构缓存 |
+| 服务端 ≠ 客户端架构 | 存储节点无状态分片 + 中心元数据单写者 |
 
-关键定位来自文章结论：
-
-> "A git server doesn't have to work the same way as a git client does; novel server architectures exist that provide significant scaling improvements."
-> （git 服务端不必和 git 客户端一样工作；新颖的服务端架构能带来显著的扩展性改进。）
-
-banyan 把这句话作为第一性约束：**对客户端的承诺只有 git wire 协议语义；服务端内部自由重构。**
+第一性约束：**git 服务端不必和 git 客户端一样工作**——对客户端的承诺只有
+git wire 协议语义，服务端内部自由重构。
 
 ## 总体架构
 
 ```
                     ┌──────────────────────────────────────────────┐
                     │                客户端生态                       │
-                    │  标准 git CLI      banyan CLI（对标 sl）         │
+                    │  标准 git CLI      banyan CLI（薄工作区）      │
                     │  clone/fetch/push  log/blame/diff/懒取对象      │
                     └───────┬─────────────────────┬────────────────┘
                             │ Smart HTTP v1        │ JSON RPC (HTTPS)
