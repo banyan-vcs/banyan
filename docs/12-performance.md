@@ -42,54 +42,56 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 
 ## 2. 优化项清单
 
-### P0（perf-1：集群读写主路径，预期一个数量级）
+> 治理状态（2026-10-25，perf-1 全部 + perf-2 主体已落地；基线数字见 §3）：
+> P0-1/P0-2/P1-1/P1-2/P1-3/P1-5 ✅；P1-4 部分落地（serve 路径 delta 化 ✅ +
+> filter 广告 ✅，真 thin pack 仍为 P2-6）；B6/B7/B9 仍开放（P2）。
 
-**P0-1 定位批量 + 定位缓存（治 B1）**
-- 网关加 oid→packOID LRU（不可变内容寻址：位置只在 repack 时变，
-  失效由 repack 事件驱动——命中率高且语义安全）；
-- closure/fetch-trees/织入的批量读改走批量 LocateObjects（RPC 契约已有
-  数组入参，改调用方攒批即可）；
-- 收益：集群织入/克隆的 refs RPC 从 O(对象数) 降到 O(pack 数)。
+### P0（perf-1：集群读写主路径，预期一个数量级）✅ 已落地
 
-**P0-2 织入物化批量化（治 B3）**
-- 一次 weave 物化的全部 synthetic（织入锚、重写提交、新树）缓冲后
-  **合为一个 pack 一次 IngestPack**——集群网络操作从 N×(R+1) 降为 R+1；
-- 兼得 repack 收益（碎片不再按织入次数产生）。
-- 实施点：view 引擎在 fold 结束后统一 flush；PutSynthetic 保留为兜底。
+**P0-1 定位批量 + 定位缓存（治 B1）✅**
+- 网关 oid→packOID LRU（不可变内容寻址：位置只在 repack 时变，
+  失效由 repack 事件驱动 + 跨网关陈旧读一次失效重试兜底）；
+- closure/fetch-trees 的树展开点批量 Prefetch（一次 RPC 定位整棵树的
+  子对象），协商 have 检查改走批量 Known（不取对象字节）；
+- 实测收益：集群冷走查 refs RPC 从 O(对象数) 降为 O(树数)。
+
+**P0-2 织入物化批量化（治 B3）✅**
+- 一次 weave 物化的全部 synthetic 缓冲后合为一个 pack 一次 IngestPack
+  （BeginSynthBatch/EndSynthBatch 按仓引用计数嵌套）；**pre-CAS flush**
+  保证"登记即事实"（头提交前对象必须已注册——集群下其他网关可见）；
+- 兼得 repack 收益（碎片不再按织入次数产生）。T31：一次子树物化 = 1 个
+  合成 pack。
 
 ### P1（perf-2）
 
-**P1-1 idx 单对象解压（治 B2）**
-- 用已写盘的 idx v2 拿偏移，仅解压目标对象及其 delta 基链
-  （OFS/REF 递归），替代全包 DecodePack；
-- 首先覆盖集群 miss 路径（免整包 HTTP 传输），单机路径次之（内存缓存
-  命中率高，收益小）。
+**P1-1 idx 单对象解压（治 B2）✅**
+- idx 偏移 + 对象头解析 + OFS/REF delta 基链递归解压（packobj.go，对照
+  pack-format.txt）；集群 wire 从整包降为单对象（/internal/object）；
+- 落地时击落既有 bug：idx oid→offset 此前按 Scanner/Parser 顺序按位
+  配对，delta pack 上错位——改用 Parser Observer 权威源，并补齐 crc 段
+  真值。
 
-**P1-2 fetch-trees 二进制化（治 B4）**
-- 响应改二进制帧（或 gzip 的 JSON）；base64 的 33% 直接消失。
-  薄 CLI 是自己人，无兼容包袱。
+**P1-2 fetch-trees 二进制化（治 B4）✅**
+- "format":"bin" → 二进制帧（magic + JSON 头行 + kind/oid/varint 记录），
+  base64 的 33% 直接消失；JSON 保留兼容。T33：两帧语义全等 + 实测收缩。
 
-**P1-3 性能 SLO 基准门（工程纪律，参照教训 3）**
-- `internal/bench`：固定种子仓（小 / 中 / go-git 4k），口径分
-  冷（重启后首访）/ 暖 / 增量；
-- 场景：clone 字节与耗时、增量 fetch 对象数、push 耗时、织入物化耗时、
-  集群 R=3 写路径 RPC 计数；
-- 门：任一指标回归 >20% 变红（夜间跑，不进单元 CI 热路径）。
+**P1-3 性能 SLO 基准门（工程纪律，参照教训 3）✅**
+- `cmd/banyan-bench`（§3）：种子仓 + git http-backend 对等基线 + 三口径
+  + `--check` 20% 红线；夜间跑，不进单元 CI 热路径。
 
-**P1-4 增量 fetch 字节效率（治 B8+B10，场景二 review 产出）**
-- 服务路径 delta 化（原 P2-1 升档）：在线服务按收益阈值选
-  EncodePackDelta——吃掉 thin pack 收益的大头；
-- 广告 `filter` 能力：filter.go 已就绪，广告后 partial clone 客户端
-  （--filter=blob:none）不再退化为全量拉取——大仓 clone 带宽直降；
-- 真 thin pack（对客户端 haves 出 REF_DELTA）依赖编码器能力，列远期。
+**P1-4 增量 fetch 字节效率（治 B8+B10）——部分落地 ✅**
+- serve 路径 delta 化 ✅：原始负载过 64KiB 阈值后在线 delta 编码
+  （OFS_DELTA 优先/REF_DELTA 兜底；修复 go-git 编码器 window=0 语义
+  陷阱——repack 此前实际未产出 delta）；T29/T20 钉住；
+- `filter` 广告 ✅：blob:none / tree:0 + allow-reachable-sha1-in-want
+  惰性取回全链路（T14）；v2 `fetch=filter` 同批（T30）；
+- 真 thin pack（对客户端 haves 出 REF_DELTA）仍列 P2-6——§3 实测此缺口
+  为增量 fetch 的 1.6–1.8x 字节。
 
-**P1-5 protocol v2（fetch 侧命令面）**
-- git 协议 v2 只定义 ls-refs 与 fetch（receive-push 按 git 语义恒 v0）；
-- 对 banyan 的效率价值：**按需 ref 广告**（ref-prefixes——多 ref/辅助
-  命名空间仓的每次 fetch 不再全量广告）与服务端驱动协商（减少复杂
-  fetch 的协商轮次）；与 B10 的 filter 广告天然同批；
-- 现状 v1-only 是实测兼容的（v2 客户端自动回退，T13），v2 是效率与
-  生态位项而非兼容项。
+**P1-5 protocol v2（fetch 侧命令面）✅**
+- ls-refs（ref-prefix/peel/symrefs/unborn）+ fetch（acknowledgments/
+  shallow-info/packfile 段、sideband pack 帧、done 省 acks 段——两处
+  wire 细节由真实 git 客户端钉住）；receive-pack 恒 v0；T30。
 
 ### P2（perf-3 及以后）
 
@@ -102,37 +104,67 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 | P2-5 同目录写队列 | B7 | M4：tekeburak 形态的 change request 状态机 + 投机流水线（FIFO 公平 + p99 稳定 + 重启恰好一次） |
 | P2-6 真 thin pack | B8 | 对客户端 haves 出 REF_DELTA（依赖编码器对缺席基对象的支持），P1-4 之后视残余收益评估 |
 
-## 3. 基准设计（P1-3 展开）
+## 3. 基准设计与实测（P1-3 已落地：`cmd/banyan-bench`）
 
-```
-场景 × 口径矩阵（记录字节 / 耗时 / RPC 计数三类指标）：
-  clone(root)         冷 / 暖 / 集群冷
-  clone(subtree)      冷 / 暖
-  fetch(增量 1 提交)   暖（have 减除生效）
-  fetch-trees(薄CLI)  全量 / tree-diff 增量
-  push                首推 / 增量 / 织入触发
-  repack 前/后         serve 耗时与字节
-红线：相对基线回归 >20%（基线随特性落地滚动更新并记录）
-```
+方法对齐三方对比报告的 tekeburak 教训（同机对等基线、三口径诚实标注、
+20% 红线进夜间门）：
 
-与现有测试的关系：集成用例（27 个）锁正确性；bench 门锁性能——
-两者都不豁免（tekeburak 的"三口径诚实标注"方法照搬：冷/暖/服务端暖
-客户端冷分开报，不挑好看的口径）。
+- **对等基线**：真 `git http-backend`（进程内 CGI 包装，同一 smart HTTP
+  传输、同一仓库对象集、同机同栈）——不是"和本地 git 比"；
+- **三口径**：冷（种子 push 后首个请求——重启后首访，织入/视图/定位全
+  冷）/ 暖（同服务端重复操作）/ 增量（已持有历史的客户端取 1 个新提交
+  ——协商与 have 减除效率；即 scion"服务端暖客户端冷"的等价场景）；
+- **确定性**：固定种子生成仓库（small：30 提交 × 5 目录 × 5 文件；
+  medium：120 × 10 × 8），同一种子产出相同对象集；
+- **指标**：双向字节（服务端计数代理逐请求统计，头开销对称不计）+ 墙钟；
+- **门**：`--save` 存基线（机器本地 JSON），`--check` 任一指标回归
+  >20% 退出码 1（夜间跑，不进 go test 热路径）。
+
+本机示例（Windows 开发机，small/medium 各 3 轮；数字随机器浮动，回归
+判断以 `--check` 门为准）：
+
+| 场景 | banyan | git http-backend | 字节比 | 耗时比 |
+|---|---|---|---|---|
+| clone 全量 cold（small/medium） | 37.1KB / 260.4KB | 34.4KB / 242.2KB | 1.07–1.08x | 0.51x |
+| clone 全量 warm | 37.1KB / 260.4KB | 34.4KB / 242.3KB | 1.07x | 0.52x |
+| clone 子树 | 10.1KB / 37.9KB | —（git 无子树克隆） | — | — |
+| fetch 增量（1 提交） | 1.5–1.6KB | 0.9KB | 1.63–1.76x | 0.52x |
+| push 1 提交 | 0.3KB | 0.3KB | 0.92x | 0.40x |
+| ls-remote | 0.2KB | 0.3KB | 0.85x | 0.44x |
+
+读数（诚实标注）：
+
+1. **克隆字节持平**（ExactPackHit 整包直传）。耗时 2x 差主要来自 git 侧
+   CGI 每请求冷启动（进程 spawn），常驻服务形态下会收敛——所以字节才是
+   结构性指标；
+2. **子树克隆是结构性优势**：下载量 = 子树闭包（全量的 15–27%），git
+   基线无对应能力，这是 banyan 的存在理由之一；
+3. **fetch 增量的 1.6–1.8x 字节差就是 B8 的量化**：git 对客户端 haves
+   出 delta（准 thin pack），我们发全量新对象——P2-6 真 thin pack 的
+   预期收益上限；
+4. cold==warm 字节（视图与定位缓存生效），cold 耗时 ≈ warm（此规模
+   织入亚毫秒）。
+
+与集成测试的关系：集成用例（T1–T33）锁正确性；bench 门锁性能——两者
+都不豁免。扩展位（后续）：集群口径的 RPC 计数（refs RPC/对象数比）与
+scion 复刻对等基线（需 Rust 工具链；tekeburak 自己的对等基准数字也
+注明了要打折读）。
 
 ## 4. 排期对位
 
 ```
-perf-1（P0）：定位批量+缓存、织入批量化              → 集群读/写主路径
-perf-2（P1）：idx 单对象解压、fetch-trees 二进制、SLO 基准门、
-              增量 fetch 字节效率（服务 delta + filter 广告）、protocol v2
+perf-1（P0）✅：定位批量+缓存、织入批量化（2026-10-25 落地）
+perf-2（P1）✅ 主体：idx 单对象解压、fetch-trees 二进制、SLO 基准门、
+              serve 路径 delta + filter 广告、protocol v2
 perf-3（P2）：磁盘 cache、子树投影包缓存、预热、扇出下沉（部分与 HA-2 合并）、
-              真 thin pack
+              真 thin pack（§3 实测缺口 = 增量 fetch 的 1.6–1.8x 字节）
 M4（既定）  ：同目录写队列（P2-5，参照 land worker）
 ```
 
-依赖关系：P0-1/P0-2 无前置，可立即开工；P1-1 依赖 idx 写盘质量（crc 段
-目前为 0，需补齐或跳过）；P1-3 建议在 P0 落地后建基线（否则基线立刻作废）；
-P1-5（v2）与 P1-4 的 filter 广告同批实施最省（协商面一次动完）。
+依赖关系（落地后复核）：P0-1/P0-2 已落地；P1-1 落地时一并修复 idx 配对
+错位并补齐 crc（原注记的"依赖 idx 写盘质量"即此）；P1-3 基线已建
+（本机数字见 §3，各部署用 --save 自建）；P1-5 与 P1-4 的 filter 广告
+确已同批。
 
 ## 5. 架构判据记录：pack 磁盘存储 vs per-object 对象存储（2026-10-24 review 定稿）
 

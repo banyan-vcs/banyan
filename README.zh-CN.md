@@ -45,7 +45,9 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 
 | 能力 | 状态 |
 |---|---|
-| 根/子树 `git clone/fetch/push`（Smart HTTP v1） | ✅ 真实 git 客户端实测 |
+| 根/子树 `git clone/fetch/push`（Smart HTTP v1 + v2） | ✅ 真实 git 客户端实测 |
+| partial clone（`--filter=blob:none`/`tree:0` + 惰性取回） | ✅ |
+| serve 路径 delta 包（过 64KiB 阈值 OFS/REF-delta） | ✅ |
 | 子树虚拟仓库（`/tree/<path>`，完整历史投影） | ✅ |
 | 目录时间线 + 线性织入根视图（v5） | ✅ |
 | 浅克隆（depth / deepen / unshallow） | ✅ |
@@ -146,7 +148,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 
 ## 非目标（当前阶段）
 
-- push 路径无 protocol v2（git 本身 receive-pack 恒 v0；fetch 侧 v2 命令面已规划，docs/12 P1-5）。
+- push 恒走 v0（git 本身从未为 receive-pack 定义 v2）；fetch 侧原生 v2（ls-refs + fetch 命令面，docs/03 §9b）。
 - 不做 DevOps 平台能力（MR/CI/权限界面）——banyan 是**存储层**，协作留在已有
   平台（docs/08）。
 - 不做 praefect 复制协议；多副本走 banyan 自身分片路线（docs/02）。

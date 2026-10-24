@@ -94,7 +94,7 @@ git wire 协议语义，服务端内部自由重构。
 | packfile/idx decode/encode | ✅ | 存储层与 wire 层的编解码底座 |
 | 对象模型（blob/tree/commit/tag，SHA-256） | ✅ | model 层的 git 投影直接复用 |
 | 协议 v0/v1 客户端 + `transport/server` 服务端 | ✅ | wire 层参考/复用其协商代码 |
-| protocol v2 | ❌（已立项 perf-2，docs/12 P1-5） | v1 服务全量存量用例；v2 补 ls-refs/fetch 命令面（按需 ref 广告 + 服务端驱动协商），push 恒 v0 |
+| protocol v2 | ✅（2026-10-25，docs/03 §9b/T30） | ls-refs（ref-prefix/peel/symrefs/unborn）+ fetch（段式响应、sideband pack 帧、shallow/filter/ofs-delta）；receive-pack 按语义恒 v0（git 本身如此） |
 | 服务端 filter（"Not offered when serving"） | ❌ | **自研**（子目录 clone 的关键） |
 | 客户端 `--filter` 懒回填缺失对象 | ❌（可发 filter 请求、记录 promisor 状态，不能按需取回） | `banyan` CLI 自研逐对象批量 RPC 补齐 |
 | multi-pack-index / cruft packs | ❌ | 分布式 idx 布局自行定义 |

@@ -85,17 +85,20 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 v1 实施偏差（docs/11 §0 记录）：refs 后端仅 SQLite（重启 RPO=0 已钉住，T26）；
 CommitPush 单事务未做（保持 PutPack+CASHead 两步，崩溃窗口=无害孤儿 pack）。
 
-## perf · 性能优化（规划 2026-10-24，[12-performance.md](12-performance.md)，未实施）
+## perf · 性能优化（规划 2026-10-24，[12-performance.md](12-performance.md)；perf-1/perf-2 主体已落地 2026-10-25）
 
-- [ ] perf-1（P0）：定位批量+定位缓存（治逐对象 LocateObjects RPC）+ 织入
-      物化批量化（治单对象 pack 风暴）——集群读/写主路径
-- [ ] perf-2（P1）：idx 单对象解压、fetch-trees 二进制化（去 base64 33%）、
-      性能 SLO 基准门（>20% 回归变红）、**增量 fetch 字节效率**（服务路径
-      delta 化 + filter 能力广告，治 B8/B10）、**protocol v2**（ls-refs/fetch
-      命令面：按需 ref 广告 + 服务端驱动协商；push 按语义恒 v0）
+- [x] perf-1（P0）：定位批量+LRU 缓存（含 repack 失效与跨网关陈旧重试）+
+      织入物化批量化（pre-CAS flush 保登记即事实）——集群读/写主路径（T31）
+- [x] perf-2（P1）主体：idx 单对象解压（/internal/object，修 idx 配对错位
+      + 补 crc）、fetch-trees 二进制帧（T33）、性能 SLO 基准门
+      （`cmd/banyan-bench`：git http-backend 对等基线 + 三口径 + 20% 红线，
+      实测数字 docs/12 §3）、**增量 fetch 字节效率**（serve 路径 delta 化 +
+      filter/allow-reachable 广告，T14/T29）、**protocol v2**（ls-refs/fetch
+      命令面，T30；push 按语义恒 v0）
 - [ ] perf-3（P2）：网关磁盘 pack cache、子树投影包缓存（治子树 clone 恒
       在线编码）、push 后预热织入、写路径扇出下沉（与 HA-2 合并）、
-      真 thin pack（对 haves 出 REF_DELTA）
+      真 thin pack（对 haves 出 REF_DELTA；bench 实测缺口 = 增量 fetch
+      1.6–1.8x 字节，docs/12 §3）
 - 同目录写队列（P2-5）并入 M4（参照 tekeburak land worker 投机流水线）
 
 ## M5 · 平台集成（企业代码托管兼容）

@@ -57,7 +57,7 @@ directory timelines align both boundaries at the same granularity.
 ## Design goals
 
 1. **Drop-in git compatibility** — plain `git clone / fetch / push` just works
-   (Smart HTTP v1; v2 is planned — fetch-side command surface, docs/12; v2 clients fall back automatically today).
+   (Smart HTTP v1 + v2 fetch-side command set — ls-refs/fetch, docs/03 9b).
 2. **Any subdirectory is a repo** — not sparse checkout: every directory owns
    its commit timeline, and `/r/{repo}/tree/{subdir}` serves a semantically
    complete repository with full projected history.
@@ -76,7 +76,9 @@ directory timelines align both boundaries at the same granularity.
 
 | Capability | Status |
 |---|---|
-| Root + subtree `git clone/fetch/push` (Smart HTTP v1) | ✅ verified against real git clients |
+| Root + subtree `git clone/fetch/push` (Smart HTTP v1 + v2) | ✅ verified against real git clients |
+| Partial clone (`--filter=blob:none`/`tree:0` + lazy fetch) | ✅ |
+| Serve-path delta packs (OFS/REF-delta past 64KiB) | ✅ |
 | Subtree virtual repos (`/tree/<path>`), full-history projection | ✅ |
 | Per-directory timelines, linear woven root view (v5) | ✅ |
 | Shallow clone (depth / deepen / unshallow) | ✅ |
@@ -180,7 +182,7 @@ go run ../cmd/banyan log           # remote history, zero download
 
 ## Non-goals (current stage)
 
-- No protocol v2 on the push path (git itself keeps receive-pack at v0; the fetch-side v2 command surface is planned, docs/12 P1-5).
+- Push stays on protocol v0 (git itself never defined v2 for receive-pack); the fetch side speaks v2 natively (ls-refs + fetch, docs/03 9b).
 - No DevOps platform features (MR/CI/permissions UI) — banyan is a
   **storage layer**; collaboration stays on existing platforms (docs/08).
 - No praefect replication protocol; multi-replica follows banyan's own
