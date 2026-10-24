@@ -22,6 +22,11 @@ type ShardBackend interface {
 	// GetPack reads one pack, trying the given holders in order (docs/11 §3:
 	// any holder may serve — the OID trailer checksum proves integrity).
 	GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error)
+	// GetObject extracts one object from a pack (docs/12 P1-1): the holder
+	// resolves it via its local idx without transferring or decoding the
+	// whole pack — the wire carries one object, not megabytes. Errors fall
+	// back to the whole-pack path at the caller.
+	GetObject(ctx context.Context, repo string, packOID, oid model.OID, holders []string, algo model.HashAlgo) (model.ObjectType, []byte, error)
 	// DeletePack removes the pack from the given holders (repack old-shard
 	// cleanup / replica trim). Missing files are tolerated.
 	DeletePack(ctx context.Context, repo string, packOID model.OID, holders []string)
@@ -42,6 +47,10 @@ func (b *LocalBackend) PutPack(_ context.Context, repo string, packOID model.OID
 
 func (b *LocalBackend) GetPack(_ context.Context, repo string, packOID model.OID, _ []string) ([]byte, error) {
 	return b.Local.GetPackBytes(repo, packOID)
+}
+
+func (b *LocalBackend) GetObject(_ context.Context, repo string, packOID, oid model.OID, _ []string, algo model.HashAlgo) (model.ObjectType, []byte, error) {
+	return b.Local.GetObject(repo, packOID, oid, algo)
 }
 
 func (b *LocalBackend) DeletePack(_ context.Context, repo string, packOID model.OID, _ []string) {

@@ -58,7 +58,7 @@ func TestEncodeDecodeIdxRoundTrip(t *testing.T) {
 		"ffffffffffffffffffffffffffffffffffffffff": 0x90,
 	}
 	packOID := model.OID("abcdefabcdefabcdefabcdefabcdefabcdefabcd")
-	b, err := EncodeIdx(model.SHA1, packOID, offsets)
+	b, err := EncodeIdx(model.SHA1, packOID, offsets, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -138,18 +138,46 @@ type DecodedPack struct {
 	Trees   map[model.OID][]byte // raw tree encoding
 	Commits map[model.OID][]byte // raw commit encoding (incl. banyan-anchor headers)
 	Tags    map[model.OID][]byte // raw annotated-tag encoding
-	Order   []model.OID          // object order within the pack (Scanner order)
-	// Offsets is oid → offset in the pack (the data source for idx v2).
-	// Paired positionally with the Parser's object insertion order; empty when
-	// counts mismatch (callers skip the idx write).
+	Order   []model.OID          // object order within the pack (Parser resolution order)
+	// Offsets is oid → offset in the pack (the data source for idx v2),
+	// CRCs the per-object crc32 — both collected from the Parser's observer
+	// callbacks, which carry the offset explicitly (the Parser's resolution
+	// order differs from pack order for delta entries, so the old
+	// positional pairing mis-mapped delta packs; found by P1-1 extraction).
 	Offsets map[model.OID]uint32
+	CRCs    map[model.OID]uint32
 }
 
+// idxObserver collects the authoritative oid → offset/crc mapping from the
+// Parser's observer callbacks (the same feed go-git's idx encoder uses).
+type idxObserver struct {
+	offsets map[model.OID]uint32
+	crcs    map[model.OID]uint32
+}
+
+func (o *idxObserver) OnHeader(uint32) error { return nil }
+func (o *idxObserver) OnInflatedObjectHeader(plumbing.ObjectType, int64, int64) error {
+	return nil
+}
+func (o *idxObserver) OnInflatedObjectContent(h plumbing.Hash, pos int64, crc uint32, _ []byte) error {
+	if o.offsets == nil {
+		o.offsets = map[model.OID]uint32{}
+		o.crcs = map[model.OID]uint32{}
+	}
+	oid := model.OID(h.String())
+	o.offsets[oid] = uint32(pos)
+	o.crcs[oid] = crc
+	return nil
+}
+func (o *idxObserver) OnFooter(plumbing.Hash) error { return nil }
+
 // DecodePack parses a received pack: the Parser expands OFS/REF deltas and
-// collects objects in pack order; a second Scanner pass collects object-header offsets; paired positionally.
+// collects objects in resolution order; an observer collects the per-object
+// idx offsets and crcs.
 func DecodePack(raw []byte) (*DecodedPack, error) {
 	st := newMemStorer()
-	parser, err := packfile.NewParserWithStorage(packfile.NewScanner(bytes.NewReader(raw)), st)
+	obs := &idxObserver{}
+	parser, err := packfile.NewParserWithStorage(packfile.NewScanner(bytes.NewReader(raw)), st, obs)
 	if err != nil {
 		return nil, fmt.Errorf("decode pack: %w", err)
 	}
@@ -196,35 +224,11 @@ func DecodePack(raw []byte) (*DecodedPack, error) {
 	} else {
 		dp.PackOID = syntheticPackOID(dp)
 	}
-
-	// Second pass: Scanner object headers (offsets), paired positionally with Parser insertion order.
-	if offs, serr := scanOffsets(raw); serr == nil && len(offs) == len(st.order) {
-		dp.Offsets = make(map[model.OID]uint32, len(offs))
-		for i, h := range st.order {
-			dp.Offsets[model.OID(h.String())] = uint32(offs[i])
-		}
+	if len(obs.offsets) == len(st.order) {
+		dp.Offsets = obs.offsets
+		dp.CRCs = obs.crcs
 	}
 	return dp, nil
-}
-
-// scanOffsets collects the offset of every object header in the pack, in order.
-// The Scanner does not track object boundaries: read the pack header first for
-// the object count and loop by count — otherwise the end-of-pack trailer checksum is parsed as an object header and errors.
-func scanOffsets(raw []byte) ([]int64, error) {
-	sc := packfile.NewScanner(bytes.NewReader(raw))
-	_, count, err := sc.Header()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]int64, 0, count)
-	for i := uint32(0); i < count; i++ {
-		h, err := sc.NextObjectHeader()
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, h.Offset)
-	}
-	return out, nil
 }
 
 // EncodePack synthesizes a delta-free response pack from an object set

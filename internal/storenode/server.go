@@ -41,10 +41,37 @@ func New(nodeID, root, refsAddr, advertise string) *Server {
 // Register mounts the internal pack endpoints.
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/internal/pack", s.hPack)
+	mux.HandleFunc("/internal/object", s.hObject)
 	mux.HandleFunc("/internal/status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"role":"storage"}`))
 	})
+}
+
+// hObject serves single-object extraction (docs/12 P1-1): the pack's idx
+// locates the object's offset; only that entry (plus its delta base chain)
+// inflates. The response body is the raw object; X-Banyan-Type carries the
+// git object type. Missing pack/idx/object answer 404 — the gateway falls
+// back to the whole-pack path.
+func (s *Server) hObject(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	repo, pack, oid := q.Get("repo"), model.OID(q.Get("pack")), model.OID(q.Get("oid"))
+	if repo == "" || pack.IsZero() || oid.IsZero() {
+		http.Error(w, "repo, pack and oid required", http.StatusBadRequest)
+		return
+	}
+	t, data, err := s.local.GetObject(repo, pack, oid, storage.AlgoFromQuery(q.Get("algo")))
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Banyan-Type", string(t))
+	_, _ = w.Write(data)
 }
 
 func (s *Server) hPack(w http.ResponseWriter, r *http.Request) {

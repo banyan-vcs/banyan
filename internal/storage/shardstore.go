@@ -399,8 +399,8 @@ func objectFromDecoded(dp *DecodedPack, oid model.OID) (model.ObjectType, []byte
 }
 
 // objectFromPack reads one object out of its located pack: decoded-cache
-// fast path, then whole-pack fetch + decode (the miss path; docs/12 P1-1
-// replaces the fetch with single-object extraction).
+// fast path, single-object extraction (docs/12 P1-1), then whole-pack fetch
+// + decode as the fallback (idx-less packs, old nodes, extraction errors).
 func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid model.OID, loc ObjectLocation) (model.ObjectType, []byte, error) {
 	s.mu.Lock()
 	dp := s.cache[repo][loc.PackOID]
@@ -409,6 +409,9 @@ func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid mod
 		return objectFromDecoded(dp, oid)
 	}
 	holders := s.packHolders(ctx, repo, loc.PackOID, loc.NodeID)
+	if t, data, err := s.Backend.GetObject(ctx, repo, loc.PackOID, oid, holders, s.Algo); err == nil {
+		return t, data, nil
+	}
 	raw, err := s.Backend.GetPack(ctx, repo, loc.PackOID, holders)
 	if err != nil {
 		return "", nil, err
@@ -438,10 +441,10 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 	if err != nil {
 		return "", err
 	}
-	// idx v2: written only when offsets pair up fully; crc section stays 0 for now (TODO(M2), see idx.go).
+	// idx v2: written when the observer collected full offset/crc data.
 	var idxBytes []byte
 	if len(dp.Offsets) == len(dp.Order) {
-		if b, err := EncodeIdx(s.Algo, dp.PackOID, dp.Offsets); err == nil {
+		if b, err := EncodeIdx(s.Algo, dp.PackOID, dp.Offsets, dp.CRCs); err == nil {
 			idxBytes = b
 		} else {
 			log.Printf("ingest %s: idx encode failed (skip): %v", repo, err)
@@ -646,11 +649,32 @@ func (l *LocalShardStore) DeletePack(repo string, packOID model.OID) {
 }
 
 // GetDecoded reads back and decodes a pack (miss path; object bodies then stay in cache).
-// TODO(M2): idx offset lookup → single-object inflate, avoiding a full-pack decode.
+// Single-object reads go through GetObject instead (docs/12 P1-1): idx offset
+// + delta-chain inflate, no whole-pack decode.
 func (l *LocalShardStore) GetDecoded(repo string, packOID model.OID) (*DecodedPack, error) {
 	raw, err := l.GetPackBytes(repo, packOID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: pack %s: %v", model.ErrObjectNotFound, packOID, err)
 	}
 	return DecodePack(raw)
+}
+
+// GetObject extracts one object from a stored pack via its idx v2 (docs/12
+// P1-1): header parse at the located offset + delta-chain inflate. A missing
+// or unusable idx surfaces as an error — callers fall back to the whole-pack
+// path.
+func (l *LocalShardStore) GetObject(repo string, packOID, oid model.OID, algo model.HashAlgo) (model.ObjectType, []byte, error) {
+	idxRaw, err := os.ReadFile(l.idxPath(repo, packOID))
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: idx of %s: %v", model.ErrObjectNotFound, packOID, err)
+	}
+	pi, err := DecodeIdx(idxRaw, algo)
+	if err != nil {
+		return "", nil, err
+	}
+	raw, err := l.GetPackBytes(repo, packOID)
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: pack %s: %v", model.ErrObjectNotFound, packOID, err)
+	}
+	return ExtractObject(raw, pi, algo, oid)
 }

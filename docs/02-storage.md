@@ -50,7 +50,7 @@ Shard ::= {
 
 **实现状态（2026-10-17，M1 已落地）**：
 
-- 磁盘层：push pack 原样落盘为 `pack-<oid>.pack` + `pack-<oid>.idx`（idx v2，真实 offset，Scanner 头序与 Parser 插入序按位配对；crc 段暂 0，M2 补）；
+- 磁盘层：push pack 原样落盘为 `pack-<oid>.pack` + `pack-<oid>.idx`（idx v2，真实 offset 与 crc32，均来自 Parser Observer 回调——按位配对在 delta pack 上会错位，P1-1 单对象解压时被击落）；
 - 内存层：CommitGraph/TreeMemo 在 IngestPack 时零额外 IO 构建；闭包计算与投影遍历全部走索引——**28,649 对象的闭包 88ms**（此前为逐对象解码的主导开销）；
 - **热路径整 pack 直传**（原 M3 项提前实现）：闭包恰等于某已存 pack 的对象集时直接流式回传 pack 字节（`ExactPackHit`），跳过重哈希+重压缩——根仓库 clone 的 serve 阶段从 2.77s 降到 **24ms**，端到端 4.4s → 1.7s。
 

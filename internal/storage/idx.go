@@ -26,6 +26,7 @@ const idxMagic = "\xfftOc"
 type PackIndex struct {
 	PackOID  model.OID // pack trailer checksum (shard primary key)
 	Entries  map[model.OID]uint32
+	CRCs     map[model.OID]uint32
 	OIDOrder []model.OID // sorted order (for iteration)
 }
 
@@ -37,9 +38,10 @@ func RawOIDWidth(algo model.HashAlgo) int {
 	return 20
 }
 
-// EncodeIdx generates an idx v2 byte stream (skeleton: no precise crc check,
-// fills 0; M1 wires in real crc32 — must be computed in tandem with pack decoding).
-func EncodeIdx(algo model.HashAlgo, packOID model.OID, offsets map[model.OID]uint32) ([]byte, error) {
+// EncodeIdx generates an idx v2 byte stream. CRCs are the per-object crc32
+// values collected at decode time (the Parser's observer feed — the same
+// source git's index-pack uses); a nil map writes zeros.
+func EncodeIdx(algo model.HashAlgo, packOID model.OID, offsets map[model.OID]uint32, crcs map[model.OID]uint32) ([]byte, error) {
 	width := RawOIDWidth(algo)
 	oids := make([]string, 0, len(offsets))
 	for o := range offsets {
@@ -68,8 +70,12 @@ func EncodeIdx(algo model.HashAlgo, packOID model.OID, offsets map[model.OID]uin
 		}
 		out = append(out, raw...)
 	}
-	for range oids {
-		out = binary.BigEndian.AppendUint32(out, 0) // TODO(M1): real crc32
+	for _, o := range oids {
+		if crcs == nil {
+			out = binary.BigEndian.AppendUint32(out, 0)
+		} else {
+			out = binary.BigEndian.AppendUint32(out, crcs[model.OID(o)])
+		}
 	}
 	var large []byte
 	for _, o := range oids {
@@ -105,14 +111,17 @@ func DecodeIdx(b []byte, algo model.HashAlgo) (*PackIndex, error) {
 	if len(b) < need {
 		return nil, fmt.Errorf("decode idx: truncated")
 	}
-	pi := &PackIndex{Entries: map[model.OID]uint32{}}
+	pi := &PackIndex{Entries: map[model.OID]uint32{}, CRCs: map[model.OID]uint32{}}
 	pos := 8 + 256*4
 	for i := 0; i < n; i++ {
 		oid := model.OID(hex.EncodeToString(b[pos : pos+width]))
 		pos += width
 		pi.OIDOrder = append(pi.OIDOrder, oid)
 	}
-	pos += n * 4 // 跳过 crc32 段
+	for i := 0; i < n; i++ {
+		pi.CRCs[pi.OIDOrder[i]] = binary.BigEndian.Uint32(b[pos : pos+4])
+		pos += 4
+	}
 	for i := 0; i < n; i++ {
 		pi.Entries[pi.OIDOrder[i]] = binary.BigEndian.Uint32(b[pos : pos+4])
 		pos += 4

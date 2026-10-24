@@ -82,6 +82,51 @@ func (n *NodeClient) DeletePack(ctx context.Context, repo string, packOID model.
 	return nil // 404 tolerated: CAS re-ingest may have skipped the write
 }
 
+func (n *NodeClient) objectURL(repo string, packOID, oid model.OID, algo model.HashAlgo) string {
+	return n.Addr + "/internal/object?repo=" + url.QueryEscape(repo) +
+		"&pack=" + url.QueryEscape(string(packOID)) +
+		"&oid=" + url.QueryEscape(string(oid)) +
+		"&algo=" + algoQuery(algo)
+}
+
+func algoQuery(algo model.HashAlgo) string {
+	if algo == model.SHA256 {
+		return "sha256"
+	}
+	return "sha1"
+}
+
+// AlgoFromQuery parses the algo parameter of /internal/object (storenode side).
+func AlgoFromQuery(v string) model.HashAlgo {
+	if v == "sha256" {
+		return model.SHA256
+	}
+	return model.SHA1
+}
+
+// GetObject extracts one object on the node via its local idx (docs/12
+// P1-1): the response body is the object, X-Banyan-Type carries its type.
+func (n *NodeClient) GetObject(ctx context.Context, repo string, packOID, oid model.OID, algo model.HashAlgo) (model.ObjectType, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, n.objectURL(repo, packOID, oid, algo), nil)
+	if err != nil {
+		return "", nil, err
+	}
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		return "", nil, fmt.Errorf("storage %s object %s/%s: status %d", n.Addr, packOID, oid, resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, err
+	}
+	return model.ObjectType(resp.Header.Get("X-Banyan-Type")), data, nil
+}
+
 // --- ScatteredStore: the gateway's shard backend (docs/11 §3/§5) ---
 
 // ScatteredStore places each pack on R random healthy nodes, confirms W
@@ -236,6 +281,33 @@ func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model
 		return nil, lastErr
 	}
 	return nil, errNoHolder(packOID, holders)
+}
+
+// GetObject single-object extraction with holder fallback (docs/12 P1-1):
+// the holder resolves the object via its local idx — the wire carries one
+// object instead of the whole pack. Any failure surfaces as an error; the
+// caller falls back to GetPack.
+func (s *ScatteredStore) GetObject(ctx context.Context, repo string, packOID, oid model.OID, holders []string, algo model.HashAlgo) (model.ObjectType, []byte, error) {
+	byID := map[string]string{}
+	for _, n := range s.healthyNodes(ctx) {
+		byID[n.ID] = n.Addr
+	}
+	var lastErr error
+	for _, id := range holders {
+		addr, ok := byID[id]
+		if !ok {
+			continue
+		}
+		t, data, err := s.client(addr).GetObject(ctx, repo, packOID, oid, algo)
+		if err == nil {
+			return t, data, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return "", nil, lastErr
+	}
+	return "", nil, errNoHolder(packOID, holders)
 }
 
 func (s *ScatteredStore) DeletePack(ctx context.Context, repo string, packOID model.OID, holders []string) {

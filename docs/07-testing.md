@@ -57,6 +57,7 @@ testify，文件按测试目标拆分）：
 | T29 | `TestServePathDelta` | **serve 路径 delta 化**（docs/12 P1-4）：跨包闭包在线编码过阈值后 OFS_DELTA 化（字节显著收缩）、真实客户端解包 delta 包（clone+fsck） |
 | T30 | `TestV2*`（5 用例） | **protocol v2 命令面**（docs/03 §9b）：广告格式（无 service 前导）、ls-refs（ref-prefix/peel/symrefs/unborn、空格分隔属性）、fetch 段组帧（done 省 acks 段、sideband pack 帧、ready 终态轮）、真实 git clone/fetch/ls-remote/浅化/unshallow/partial/子树/push 恒 v0；两处被真实客户端钉住的 wire 细节（TAB 分隔符、done 省 acks）记录于 docs/03 §9b |
 | T31 | `TestSynthBatchSinglePack` + storage `TestSynthBatchPacksOnce`/`TestLocationCacheHitsAndInvalidation` | **P0 落地**（docs/12）：B3 一次织入物化=一个合成 pack（含 pre-CAS flush 持久化点）；B1 定位 LRU（重复读零定位、Prefetch 批量、Known 批量存在性、repack 失效+重定位） |
+| T32 | storage `TestExtractObjectRoundTrip`/`TestLocalGetObjectViaDisk` + T23-T26 回归 | **P1-1 单对象解压**（docs/12）：idx 偏移 + delta 基链递归解压（含 ofs/ref 两型）；集群 wire 从整包降为单对象（/internal/object 端点）；修复 idx oid→offset 在 delta pack 上的按位配对错位（Parser Observer 为权威源），idx crc 段补真值 |
 | T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |
 | T21 | `TestRepackFragmentMerge` / `TestRepackRestartSurvival` | **repack**：碎片合并+delta（字节收缩、对象保全、ExactPackHit 恢复）、SQLite 重启后存活（UPSERT 重指向回归） |
 | T22 | `TestCLIThinWorkspace` / `TestCLISubtreeWorkspace` | **薄工作区 CLI**（docs/05/10）：最小化 clone（无 .git、无提交闭包）、离线 status、服务端 changeset commit 经**真 git 客户端交叉验证**（fresh clone + fsck + subject）、log/cat 零下载、pull=服务端 tree-diff、base-moved 冲突退出码 1→pull→重提、子树工作区 commit 织入根视图 |
