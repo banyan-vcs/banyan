@@ -137,9 +137,14 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 
 ```jsonc
 // POST /api/v1/fetch-trees —— clone 无 haveTree；pull 有 → 下载量 = 两检出差异
-→ { "repo": "demo", "sub": "/src/lib", "rev": "main", "haveTree": "sha…", "paths": ["core"] }
+→ { "repo": "demo", "sub": "/src/lib", "rev": "main", "haveTree": "sha…", "paths": ["core"], "format": "bin" }
 ← { "trees": {"<oid>": "<raw>"}, "blobs": {"<oid>": "<raw，≤256KiB 内联>"},
     "pending": ["<大 blob oid，走 GET /api/v1/objects>"] }
+// format:"bin"（薄 CLI 默认）→ Content-Type: application/x-banyan-fetch-trees，
+// 二进制帧（docs/12 P1-2，JSON base64 的 +33% 消失）：
+//   "banyan-fetch-1
+" + JSON 头行（branch/head/tree/full/pending/algo）
+//   + *记录：kind('t'|'b') + 原始 oid（20/32B）+ uvarint 长度 + 内容；省略 format 走 JSON（兼容）
 
 // POST /api/v1/commit —— changeset 语义，服务端组装（docs/05 §4.2）
 → { "repo": "demo", "sub": "/src/lib", "base": "sha…", "message": "…",

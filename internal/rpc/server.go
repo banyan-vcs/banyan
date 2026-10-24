@@ -7,6 +7,7 @@ package rpc
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -242,6 +243,16 @@ func (s *Server) handleFetchTrees(w http.ResponseWriter, r *http.Request) {
 	}
 	if !res.Head.IsZero() {
 		w.Header().Set("ETag", "\""+string(res.Head)+"\"")
+	}
+	// Binary framing on request ("format":"bin") — the thin CLI's dominant
+	// transfer drops JSON's base64 +33% (docs/12 P1-2). JSON stays default.
+	if req.Format == "bin" {
+		w.Header().Set("Content-Type", "application/x-banyan-fetch-trees")
+		w.WriteHeader(http.StatusOK)
+		if err := writeFetchBinary(w, res, s.Algo); err != nil {
+			log.Printf("fetch-trees %s: binary encode: %v", req.Repo, err)
+		}
+		return
 	}
 	writeJSON(w, http.StatusOK, res)
 }

@@ -27,6 +27,7 @@ type FetchRequest struct {
 	Rev      string    `json:"rev,omitempty"`      // branch; "" = repo default
 	HaveTree model.OID `json:"haveTree,omitempty"` // client's cached view tree (pull)
 	Paths    []string  `json:"paths,omitempty"`    // sparse: top-level names to include
+	Format   string    `json:"format,omitempty"`   // "bin": binary framing response (docs/10 §3.3)
 }
 
 type FetchResult struct {

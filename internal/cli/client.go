@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -81,6 +84,28 @@ func (c *client) post(path string, in, out any) error {
 	return decodeResp(resp, out)
 }
 
+// postRaw sends a JSON request and returns the raw response (callers inspect
+// Content-Type and parse accordingly).
+func (c *client) postRaw(path string, in any) (*http.Response, error) {
+	var body io.Reader
+	if in != nil {
+		raw, err := json.Marshal(in)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(raw)
+	}
+	resp, err := c.do(http.MethodPost, path, body, "application/json")
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		return nil, envelopeErr(resp)
+	}
+	return resp, nil
+}
+
 func (c *client) getJSON(path string, out any) error {
 	resp, err := c.do(http.MethodGet, path, nil, "")
 	if err != nil {
@@ -138,7 +163,7 @@ type fetchTreesResponse struct {
 }
 
 func (c *client) fetchTrees(repo, sub, rev, haveTree string, paths []string) (*fetchTreesResponse, error) {
-	req := map[string]any{"repo": repo}
+	req := map[string]any{"repo": repo, "format": "bin"} // binary framing (docs/10 §3.3)
 	if sub != "" {
 		req["sub"] = sub
 	}
@@ -151,11 +176,83 @@ func (c *client) fetchTrees(repo, sub, rev, haveTree string, paths []string) (*f
 	if len(paths) > 0 {
 		req["paths"] = paths
 	}
+	resp, err := c.postRaw("/api/v1/fetch-trees", req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/x-banyan-fetch-trees") {
+		return parseFetchTreesBinary(resp.Body)
+	}
+	// Older server: JSON response (content negotiation by response type).
 	var out fetchTreesResponse
-	if err := c.post("/api/v1/fetch-trees", req, &out); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// parseFetchTreesBinary decodes the binary framing:
+// magic line, JSON header line, then records [kind][raw oid][uvarint size][content].
+func parseFetchTreesBinary(r io.Reader) (*fetchTreesResponse, error) {
+	br := bufio.NewReaderSize(r, 64*1024)
+	magic, err := br.ReadString('\n')
+	if err != nil || magic != "banyan-fetch-1\n" {
+		return nil, fmt.Errorf("fetch-trees: bad binary magic %q", magic)
+	}
+	hdrLine, err := br.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	var hdr struct {
+		Branch  string   `json:"branch"`
+		Head    string   `json:"head"`
+		Tree    string   `json:"tree"`
+		Full    bool     `json:"full"`
+		Pending []string `json:"pending"`
+		Algo    string   `json:"algo"`
+	}
+	if err := json.Unmarshal([]byte(hdrLine), &hdr); err != nil {
+		return nil, fmt.Errorf("fetch-trees: binary header: %w", err)
+	}
+	oidWidth := 20
+	if hdr.Algo == "sha256" {
+		oidWidth = 32
+	}
+	out := &fetchTreesResponse{
+		Branch: hdr.Branch, Head: hdr.Head, Tree: hdr.Tree, Full: hdr.Full,
+		Pending: hdr.Pending, Trees: map[string][]byte{}, Blobs: map[string][]byte{},
+	}
+	oidBuf := make([]byte, oidWidth)
+	for {
+		kind, err := br.ReadByte()
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.ReadFull(br, oidBuf); err != nil {
+			return nil, err
+		}
+		size, err := binary.ReadUvarint(br)
+		if err != nil {
+			return nil, err
+		}
+		content := make([]byte, size)
+		if _, err := io.ReadFull(br, content); err != nil {
+			return nil, err
+		}
+		oid := hex.EncodeToString(oidBuf)
+		switch kind {
+		case 't':
+			out.Trees[oid] = content
+		case 'b':
+			out.Blobs[oid] = content
+		default:
+			return nil, fmt.Errorf("fetch-trees: bad record kind %q", kind)
+		}
+	}
 }
 
 func (c *client) putObjects(repo string, objs []map[string]any) error {

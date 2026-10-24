@@ -7,6 +7,10 @@ package integration
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/banyan-vcs/banyan/internal/cli"
+	"github.com/banyan-vcs/banyan/internal/rpc"
 )
 
 // runCLI runs the thin client in-process; returns stdout, stderr and the exit code.
@@ -176,4 +181,74 @@ func TestCLISubtreeWorkspace(t *testing.T) {
 	out, errOut, code = runCLI(t, "-C", ws, "pull")
 	require.Equal(t, 0, code, "子树 pull 失败\nstdout:%s\nstderr:%s", out, errOut)
 	assert.Equal(t, "root-peer\n", readFile(t, filepath.Join(ws, "nested", "SHARED.txt")))
+}
+
+// --- T33 fetch-trees binary framing (docs/10 §3.3; docs/12 P1-2) ---
+// The thin CLI negotiates "format":"bin" — tree/blob bytes travel as binary
+// records instead of JSON base64 (a flat +33%). The JSON response stays for
+// compatibility. Both framings must be semantically identical, and the
+// binary one measurably smaller.
+func TestFetchTreesBinary(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	src := seedRepo(t, s, "t33")
+	write(t, filepath.Join(src, "lib", "bulk.txt"), strings.Repeat("payload line for framing test\n", 512))
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-qm", "t33: bulk")
+	git(t, src, "push", "-q", s.repoURL("t33"), "main")
+
+	fetch := func(format string) (int, string) {
+		t.Helper()
+		body := fmt.Sprintf(`{"repo":"t33","format":%q}`, format)
+		resp, err := http.Post(s.URL+"/api/v1/fetch-trees", "application/json", strings.NewReader(body))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return len(raw), resp.Header.Get("Content-Type")
+	}
+	binLen, binCT := fetch("bin")
+	jsonLen, _ := fetch("")
+
+	require.Contains(t, binCT, "application/x-banyan-fetch-trees", "bin 请求应返回二进制 content-type")
+	assert.Less(t, binLen, jsonLen, "二进制帧应小于 JSON base64（%d vs %d）", binLen, jsonLen)
+
+	// Semantics: parse both, compare the object sets.
+	resp, err := http.Post(s.URL+"/api/v1/fetch-trees", "application/json",
+		strings.NewReader(`{"repo":"t33","format":"bin"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	branch, head, treeOID, full, pending, trees, blobs, perr := rpc.ParseFetchBinary(resp.Body)
+	require.NoError(t, perr)
+
+	var jr struct {
+		Branch string            `json:"branch"`
+		Head   string            `json:"head"`
+		Tree   string            `json:"tree"`
+		Full   bool              `json:"full"`
+		Trees  map[string][]byte `json:"trees"`
+		Blobs  map[string][]byte `json:"blobs"`
+		Pending []string         `json:"pending"`
+	}
+	jresp, err := http.Post(s.URL+"/api/v1/fetch-trees", "application/json", strings.NewReader(`{"repo":"t33"}`))
+	require.NoError(t, err)
+	defer jresp.Body.Close()
+	require.NoError(t, json.NewDecoder(jresp.Body).Decode(&jr))
+
+	assert.Equal(t, jr.Branch, branch)
+	assert.Equal(t, jr.Head, head)
+	assert.Equal(t, jr.Tree, treeOID)
+	assert.Equal(t, jr.Full, full)
+	assert.Equal(t, jr.Pending, pending)
+	assert.Equal(t, jr.Trees, trees, "树集合应与 JSON 完全一致")
+	assert.Equal(t, jr.Blobs, blobs, "blob 集合应与 JSON 完全一致")
+	assert.NotEmpty(t, trees)
+
+	// The real CLI consumes the binary path end to end: clone materializes
+	// through fetchTrees with format=bin (in-process runner, same as T22).
+	ws := filepath.Join(t.TempDir(), "ws")
+	stdout, stderr, code := runCLI(t, "clone", s.repoURL("t33"), ws)
+	require.Zero(t, code, "clone 失败: %s %s", stdout, stderr)
+	assert.Equal(t, strings.Repeat("payload line for framing test\n", 512),
+		readFile(t, filepath.Join(ws, "lib", "bulk.txt")), "CLI 二进制路径物化内容")
 }
