@@ -71,15 +71,15 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 
 ## HA · 高可用与集群部署（设计定稿 2026-10-24，[11-ha.md](11-ha.md)，未实施）
 
-- [ ] HA-1：RaftMetaStore（hashicorp/raft + SQLite FSM）+ 角色拆分
-      （all-in-one 默认 / gateway / node，同一二进制）+ 节点间数据 RPC +
-      仓库级动态副本 placement + reconciler 对账
-- [ ] HA-2：成员运维（learner 加入/提升/移除）、快照与备份、leader-lease 读
+- [ ] HA-1：三角色拆分（gateway / meta / storage，all-in-one 默认）+ 元数据
+      主备与只读副本 + pack 存储层 per-repo raft 组（组池模型）+ reconciler
+- [ ] HA-2：组运维（成员变更/节点上下线自动化）、lease 读、备份
 - [ ] HA-3：机架/可用区感知放置、跨集群异步复制（容灾）
 
-核心决策：控制面（元数据）走 raft 日志，数据面（pack 字节）不走——网关直连
-目标节点并行流式写、先落盘后提交元数据；一体化部署 = 单成员 raft 组，无特例
-代码路径。
+核心决策：**元数据与对象存储分离求吞吐**（pack 大流量不经元数据路径）；
+**raft 体现在 pack 存储层**（组内 quorum 提交/选主/成员变更，per-repo 副本数
+R 直接映射 raft 容错——R≥3 读写皆续、R=2 可读写阻塞、R=1 无冗余）；元数据
+保持单写者 + CommitPush 单事务原子提交；一体化 = 三角色同进程，无特例路径。
 
 ## M5 · 平台集成（企业代码托管兼容）
 

@@ -56,7 +56,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 服务层 + JSON API（`/api/v1/*`，统一错误信封） | ✅ |
 | 薄工作区 CLI（`clone/status/commit/pull/log/cat/...`） | ✅ |
 | token 认证 + 建仓收紧、diff/blame RPC | 🚧 下一步（M5 / M2–M3） |
-| 高可用：一体化部署 或 网关 + Raft 集群，仓库级动态副本 | 🚧 设计定稿（[docs/11](docs/11-ha.md)） |
+| 高可用：一体化，或拆分为 网关 + 元数据服务 + Raft 复制的 pack 存储；仓库级动态副本 | 🚧 设计定稿（[docs/11](docs/11-ha.md)） |
 | Gitaly gRPC 前端（作为 GitLab 底层存储节点） | 🚧 规划中（docs/10 §4） |
 
 23 个集成用例以**真实 git CLI** 作客户端钉住行为（[docs/07](docs/07-testing.md)）；
