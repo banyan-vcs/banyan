@@ -1,0 +1,68 @@
+# Cluster demo (docs/11): one refs service, four storage nodes, one gateway.
+#   docker compose -f docker-compose.cluster.yml up -d --build
+#   git push → http://localhost:8100/r/<repo>.git
+# Walkthrough script: demo/cluster-demo.sh
+services:
+  refs:
+    build: .
+    image: banyan:dev
+    container_name: banyan-refs
+    command:
+      ["-role", "refs", "-listen", "0.0.0.0:8102", "-meta", "sqlite",
+       "-db", "/var/lib/banyan/refs.db", "-root", "/var/lib/banyan",
+       "-default-replicas", "3",
+       "-health-suspect-sec", "10", "-health-dead-sec", "30", "-recon-interval-sec", "10"]
+    volumes:
+      - banyan-refs:/var/lib/banyan
+    ports:
+      - "8102:8102" # demo visibility: health table + manual reconcile
+
+  s1:
+    build: .
+    image: banyan:dev
+    container_name: banyan-s1
+    command: ["-role", "storage", "-listen", "0.0.0.0:8103", "-node-id", "s1",
+              "-advertise", "s1:8103", "-refs-addr", "refs:8102", "-root", "/var/lib/banyan"]
+    volumes: [banyan-s1:/var/lib/banyan]
+    depends_on: [refs]
+  s2:
+    build: .
+    image: banyan:dev
+    container_name: banyan-s2
+    command: ["-role", "storage", "-listen", "0.0.0.0:8103", "-node-id", "s2",
+              "-advertise", "s2:8103", "-refs-addr", "refs:8102", "-root", "/var/lib/banyan"]
+    volumes: [banyan-s2:/var/lib/banyan]
+    depends_on: [refs]
+  s3:
+    build: .
+    image: banyan:dev
+    container_name: banyan-s3
+    command: ["-role", "storage", "-listen", "0.0.0.0:8103", "-node-id", "s3",
+              "-advertise", "s3:8103", "-refs-addr", "refs:8102", "-root", "/var/lib/banyan"]
+    volumes: [banyan-s3:/var/lib/banyan]
+    depends_on: [refs]
+  s4:
+    build: .
+    image: banyan:dev
+    container_name: banyan-s4
+    command: ["-role", "storage", "-listen", "0.0.0.0:8103", "-node-id", "s4",
+              "-advertise", "s4:8103", "-refs-addr", "refs:8102", "-root", "/var/lib/banyan"]
+    volumes: [banyan-s4:/var/lib/banyan]
+    depends_on: [refs]
+
+  gateway:
+    build: .
+    image: banyan:dev
+    container_name: banyan-gateway
+    command: ["-role", "gateway", "-listen", "0.0.0.0:8080",
+              "-refs-addr", "refs:8102", "-root", "/tmp"]
+    ports:
+      - "8100:8080" # git + JSON API
+    depends_on: [refs, s1, s2, s3, s4]
+
+volumes:
+  banyan-refs:
+  banyan-s1:
+  banyan-s2:
+  banyan-s3:
+  banyan-s4:

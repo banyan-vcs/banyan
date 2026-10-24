@@ -55,8 +55,8 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | SQLite 元数据持久化 + YAML 配置 | ✅ |
 | 服务层 + JSON API（`/api/v1/*`，统一错误信封） | ✅ |
 | 薄工作区 CLI（`clone/status/commit/pull/log/cat/...`） | ✅ |
+| HA 集群：网关 + ref 服务 + 散布多副本 pack 存储、节点故障恢复、仓库级动态副本 | ✅ 核心（本地盘集群，T23-T26；MySQL/raft refs 后端 → HA-2） |
 | token 认证 + 建仓收紧、diff/blame RPC | 🚧 下一步（M5 / M2–M3） |
-| 高可用：一体化，或拆分为 网关 + ref 服务 + 散布多副本 pack 存储；仓库级动态副本 | 🚧 设计定稿（[docs/11](docs/11-ha.md)） |
 | Gitaly gRPC 前端（作为 GitLab 底层存储节点） | 🚧 规划中（docs/10 §4） |
 
 23 个集成用例以**真实 git CLI** 作客户端钉住行为（[docs/07](docs/07-testing.md)）；
@@ -99,6 +99,21 @@ docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
 
 受限网络可走镜像构建：
 `docker compose build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/`。
+
+### HA 集群 demo
+
+一条命令启动拆分部署（docs/11）：refs 服务 + 4 个存储节点 + 无状态网关——
+pack 散布在存储节点上各 3 副本；杀掉一个存储节点，读写继续，reconciler
+自动恢复副本目标。
+
+```bash
+bash demo/cluster-demo.sh   # 完整走查：push → 杀节点 → 恢复 → 动态调 R
+```
+
+也可手动：`docker compose -f docker-compose.cluster.yml up -d`，推送到
+`http://localhost:8100/r/demo.git`，观察 `GET /api/v1/cluster/nodes`，
+`docker stop banyan-s4` 后继续 push，再 `POST :8102/internal/reconcile`。
+相同链路由集成测试 T23–T26 在进程内钉住。
 
 ### 源码构建
 

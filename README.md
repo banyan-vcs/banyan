@@ -86,8 +86,8 @@ directory timelines align both boundaries at the same granularity.
 | SQLite metadata persistence + YAML config | ✅ |
 | Service layer + JSON API (`/api/v1/*`, error envelope) | ✅ |
 | Thin-workspace CLI (`clone/status/commit/pull/log/cat/...`) | ✅ |
+| HA cluster: gateway + refs service + scattered multi-replica pack storage, node failure recovery, dynamic per-repo replicas | ✅ core (local-disk cluster, T23-T26; MySQL/raft refs backend → HA-2) |
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
-| High availability: all-in-one, or split into gateway + ref service + scattered multi-replica pack storage; per-repo dynamic replicas | 🚧 designed ([docs/11](docs/11-ha.md)) |
 | Gitaly gRPC frontend (act as GitLab's storage node) | 🚧 planned (docs/10 §4) |
 
 23 integration cases pin the behavior with the **real git CLI** as the client
@@ -131,6 +131,23 @@ docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
 
 Constrained networks can build through a mirror:
 `docker compose build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/`.
+
+### HA cluster demo
+
+One command boots the split deployment (docs/11): a refs service, four
+storage nodes and a stateless gateway — packs scatter across the storage
+nodes with 3 replicas each; killing a storage node keeps reads and writes
+alive while the reconciler restores the replica target.
+
+```bash
+bash demo/cluster-demo.sh   # full walkthrough: push, kill a node, recover, resize R
+```
+
+Or drive it by hand: `docker compose -f docker-compose.cluster.yml up -d`,
+push to `http://localhost:8100/r/demo.git`, watch
+`GET /api/v1/cluster/nodes`, `docker stop banyan-s4`, push again, then
+`POST :8102/internal/reconcile`. The same flows are pinned in-process by
+integration tests T23–T26.
 
 ### From source
 

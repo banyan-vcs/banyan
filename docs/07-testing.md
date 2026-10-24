@@ -16,6 +16,7 @@ testify，文件按测试目标拆分）：
 | `packing_efficiency_test.go` | 索引与打包效率：have 减除增量包精确构成（T19） |
 | `refs_and_repack_test.go` | tags/自定义命名空间端到端 + repack 碎片合并/delta/重启（T20/T21/T21b） |
 | `cli_workspace_test.go` | 薄工作区 CLI：最小化 clone/status/commit/pull/log/cat + 冲突恢复 + 子树工作区（T22/T22b） |
+| `ha_cluster_test.go` | HA 集群（docs/11）：进程内 refs+storage×4+gateway，散布放置/节点宕恢复/动态副本/refs 重启（T23-T26） |
 
 ## 形态
 
@@ -55,6 +56,10 @@ testify，文件按测试目标拆分）：
 | T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |
 | T21 | `TestRepackFragmentMerge` / `TestRepackRestartSurvival` | **repack**：碎片合并+delta（字节收缩、对象保全、ExactPackHit 恢复）、SQLite 重启后存活（UPSERT 重指向回归） |
 | T22 | `TestCLIThinWorkspace` / `TestCLISubtreeWorkspace` | **薄工作区 CLI**（docs/05/10）：最小化 clone（无 .git、无提交闭包）、离线 status、服务端 changeset commit 经**真 git 客户端交叉验证**（fresh clone + fsck + subject）、log/cat 零下载、pull=服务端 tree-diff、base-moved 冲突退出码 1→pull→重提、子树工作区 commit 织入根视图 |
+| T23 | `TestHAClusterScatteredPlacement` | **散布放置**（docs/11 §3）：每 pack 持有集=3 个不同节点、任一持有者可服务且校验和通过、登记即事实（读不依赖放置函数）、增量 push 新随机放置、cluster/nodes 端点 |
+| T24 | `TestHANodeFailureAndRecovery` | **节点宕故障转移与恢复**（docs/11 §8）：kill 后新写/克隆照常（W=2 掩蔽死节点）、健康表 dead 判定、reconciler 补齐回 3 副本且 dead 节点移出持有集、恢复后克隆仍正确 |
+| T25 | `TestHAPlacementDynamic` | **动态副本**（docs/11 §6）：R 3→2 触发剪枝（先登记后删除）、2→3 触发补齐；剪枝后读正常 |
+| T26 | `TestHARefsRestart` | **refs 重启 RPO=0**（docs/11 §4）：SQLite 句柄释放+同址重启、心跳重新注册、重启前提交零丢失、重启后继续 push/clone |
 
 ## 运行
 
