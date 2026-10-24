@@ -9,6 +9,51 @@ data model and a sharded pack-CAS + central-metadata storage architecture.
 > the trunk is the root timeline; the aerial roots are directory timelines —
 > each an independent repo, all anchored to the same tree.
 
+## Why banyan
+
+**Git is the inescapable industry standard.** Two decades deep, from personal
+projects to the largest enterprises — any new approach must not ask anyone
+to leave git.
+
+**But git does not host huge repositories well.** Android-scale monorepos
+hit its limits: tens of GB, millions of objects, hour-long clones.
+Shallow / sparse / partial clone treat the symptoms, not the "reachable
+means cloned" assumption underneath.
+
+**Monorepo is where enterprise code maintenance is heading.** On modern
+build systems (Bazel / Buck), source dependency is the most efficient way
+to keep code alive: atomic cross-package changes, no release lag, one
+commit coordinating many parties.
+
+**And monorepo inevitably needs directory-level permissions** — departmental
+boundaries, compliance isolation, vendor visibility — which native git
+cannot express; splitting directories into separate repos destroys the
+integrity a monorepo exists to provide.
+
+**AI agents multiply collaboration frequency** from human-days to
+agent-minutes, amplifying git's centralized-ref bottlenecks (push locks,
+full negotiation, force-push/rebase cascades) and the collaboration risks
+that come with them.
+
+Banyan answers by **redesigning the git-compatible storage server**:
+
+- **Distributed by construction** — sharded pack CAS + central metadata:
+  storage scales horizontally and never binds to a single machine, solving
+  the reliability problem of storing code — the core enterprise asset.
+- **A directory-anchored timeline data model** — every directory owns its
+  commit history, making directory-level collaboration (any subtree is a
+  repo, O(subdirectory) transfers, zero cross-directory locks) and
+  directory-level governance (permission boundaries are timeline
+  boundaries) **native capabilities** rather than add-ons.
+
+**Vision**: code storage becomes an independent infrastructure layer, like
+a database — any platform (GitLab / Gitea / self-hosted), any client
+(git CLI / IDE / CI / AI agents), any scale (personal project to enterprise
+monorepo), one storage layer over standard protocols. Banyan owns "where
+code lives and how it is served efficiently"; collaboration flows stay on
+the platforms, organization and permissions stay with the enterprise —
+directory timelines align both boundaries at the same granularity.
+
 ## Design goals
 
 1. **Drop-in git compatibility** — plain `git clone / fetch / push` just works
