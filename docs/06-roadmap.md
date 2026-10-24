@@ -69,17 +69,18 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 | go-git 协议边界 bug | wire 兼容性 | 协议层薄封装，可换自研解析（pkt-line 解析工作量可控） |
 | subtree split 历史膨胀 | 大仓库虚拟 clone 变慢 | split 缓存 + 深度截断 + 懒 split（按需展开历史窗口） |
 
-## HA · 高可用与集群部署（设计定稿 2026-10-24，[11-ha.md](11-ha.md)，未实施）
+## HA · 高可用与集群部署（设计 v0.3 定稿 2026-10-24，[11-ha.md](11-ha.md)，未实施）
 
-- [ ] HA-1：三角色拆分（gateway / meta / storage，all-in-one 默认）+ 元数据
-      主备与只读副本 + pack 存储层 per-repo raft 组（组池模型）+ reconciler
-- [ ] HA-2：组运维（成员变更/节点上下线自动化）、lease 读、备份
-- [ ] HA-3：机架/可用区感知放置、跨集群异步复制（容灾）
+- [ ] HA-1：三角色拆分（gateway / refs / storage，all-in-one 默认）+ pack
+      散布随机多副本写（W=quorum 确认）+ ref 服务（MySQL/PG 后端 + 只读副本，
+      CommitPush 单事务承载前序判断）+ reconciler 对账
+- [ ] HA-2：ref 内嵌 raft 后端、节点间扇出写、备份与恢复工具
+- [ ] HA-3：机架/可用区感知放置、跨集群异步复制（容灾）、S3 类对象存储后端
 
-核心决策：**元数据与对象存储分离求吞吐**（pack 大流量不经元数据路径）；
-**raft 体现在 pack 存储层**（组内 quorum 提交/选主/成员变更，per-repo 副本数
-R 直接映射 raft 容错——R≥3 读写皆续、R=2 可读写阻塞、R=1 无冗余）；元数据
-保持单写者 + CommitPush 单事务原子提交；一体化 = 三角色同进程，无特例路径。
+核心决策（v0.3，用户模型定稿）：git 协议唯一串行点 = **ref 更新的前序判断**
+（old/new 比对 + FF），只依赖 ref 状态、与 pack 位置无关 ⇒ ref 存储与
+packfile 存储分离；packfile 散布多服务器、随机多副本、零共识机制
+（不可变内容寻址，OID 即校验和）；一体化 = 三角色同进程，无特例路径。
 
 ## M5 · 平台集成（企业代码托管兼容）
 

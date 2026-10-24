@@ -87,7 +87,7 @@ directory timelines align both boundaries at the same granularity.
 | Service layer + JSON API (`/api/v1/*`, error envelope) | ✅ |
 | Thin-workspace CLI (`clone/status/commit/pull/log/cat/...`) | ✅ |
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
-| High availability: all-in-one, or split into gateway + metadata service + Raft-replicated pack storage; per-repo dynamic replicas | 🚧 designed ([docs/11](docs/11-ha.md)) |
+| High availability: all-in-one, or split into gateway + ref service + scattered multi-replica pack storage; per-repo dynamic replicas | 🚧 designed ([docs/11](docs/11-ha.md)) |
 | Gitaly gRPC frontend (act as GitLab's storage node) | 🚧 planned (docs/10 §4) |
 
 23 integration cases pin the behavior with the **real git CLI** as the client
