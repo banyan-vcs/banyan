@@ -85,6 +85,16 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 v1 实施偏差（docs/11 §0 记录）：refs 后端仅 SQLite（重启 RPO=0 已钉住，T26）；
 CommitPush 单事务未做（保持 PutPack+CASHead 两步，崩溃窗口=无害孤儿 pack）。
 
+## perf · 性能优化（规划 2026-10-24，[12-performance.md](12-performance.md)，未实施）
+
+- [ ] perf-1（P0）：定位批量+定位缓存（治逐对象 LocateObjects RPC）+ 织入
+      物化批量化（治单对象 pack 风暴）——集群读/写主路径
+- [ ] perf-2（P1）：idx 单对象解压、fetch-trees 二进制化（去 base64 33%）、
+      性能 SLO 基准门（>20% 回归变红）
+- [ ] perf-3（P2）：应答 delta 化、网关磁盘 pack cache、push 后预热织入、
+      写路径扇出下沉（与 HA-2 合并）
+- 同目录写队列（P2-5）并入 M4（参照 tekeburak land worker 投机流水线）
+
 ## M5 · 平台集成（企业代码托管兼容）
 
 详见 [08-big-picture.md](08-big-picture.md)：协议层已就绪（L1），镜像拓扑靠

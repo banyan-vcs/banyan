@@ -167,6 +167,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | 索引（代数）与打包（have 减除/delta/repack）设计 |
 | [docs/10-service-api.md](docs/10-service-api.md) | 服务层抽象 + httpd/Gitaly 双前端与 API 契约 |
 | [docs/11-ha.md](docs/11-ha.md) | 高可用：一体化 vs 网关 + Raft 集群、仓库级副本 |
+| [docs/12-performance.md](docs/12-performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门 |
 
 ## 开发与提交约定
 

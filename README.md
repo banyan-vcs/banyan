@@ -202,6 +202,7 @@ go run ../cmd/banyan log           # remote history, zero download
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
 | [docs/10-service-api.md](docs/10-service-api.md) | Service layer + httpd/Gitaly dual frontend, API contracts |
 | [docs/11-ha.md](docs/11-ha.md) | High availability: all-in-one vs gateway + Raft cluster, per-repo replicas |
+| [docs/12-performance.md](docs/12-performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates |
 
 ## Conventions
 
