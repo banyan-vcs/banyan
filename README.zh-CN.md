@@ -30,7 +30,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 ## 设计目标
 
 1. **完全兼容 git 命令行**：标准 `git clone / fetch / push` 直接可用（Smart HTTP
-   v1；v2 客户端自动协商回退）。
+   v1；v2 已规划——fetch 侧命令面（docs/12），当前 v2 客户端自动回退）。
 2. **任意子目录可 clone 为独立仓库**：不是 partial clone 的"稀疏检出"，而是每个
    目录拥有自己的 commit timeline，`/r/{repo}/tree/{subdir}` 即一个语义完整、
    带完整投影历史的仓库。
@@ -146,7 +146,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 
 ## 非目标（当前阶段）
 
-- 不实现 protocol v2（v1 足以服务标准 git 客户端）。
+- push 路径无 protocol v2（git 本身 receive-pack 恒 v0；fetch 侧 v2 命令面已规划，docs/12 P1-5）。
 - 不做 DevOps 平台能力（MR/CI/权限界面）——banyan 是**存储层**，协作留在已有
   平台（docs/08）。
 - 不做 praefect 复制协议；多副本走 banyan 自身分片路线（docs/02）。

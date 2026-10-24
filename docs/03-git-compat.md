@@ -1,6 +1,6 @@
 # 03 · git 兼容层（gitwire）
 
-兼容性承诺：**标准 git CLI 的 clone / fetch / push 对根仓库与虚拟子树仓库都直接可用**。协议取 Smart HTTP v1（go-git 同款；标准 git 客户端自动协商回退，无需 v2）。
+兼容性承诺：**标准 git CLI 的 clone / fetch / push 对根仓库与虚拟子树仓库都直接可用**。协议取 Smart HTTP v1（go-git 同款；标准 git 客户端自动协商回退）。protocol v2 已立项（perf-2，docs/12 P1-5）——ls-refs/fetch 命令面。
 
 ## 1. 端点路由
 
@@ -147,10 +147,11 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 
 | 限制 | 影响 | 缓解 |
 |---|---|---|
-| 无 protocol v2 | git 客户端自动回退 v1（§9 实测），无感 | 需要时 M3 补 |
+| 无 protocol v2 | git 客户端自动回退 v1（§9 实测），无感 | **已立项 perf-2**（docs/12 P1-5）：ls-refs/fetch 命令面（按需 ref 广告 + 服务端驱动协商），push 按语义恒 v0 |
 | ~~v1 have 协商~~ | 已实现（终态 ACK 语义：有公共提交时 ACK 即终态、同响应内送包） | 组合测试实测过期客户端 pull 正常 |
 | push `no-thin` | 客户端 push 略增流量 | 服务端存储简单性优先 |
-| go-git 服务端 filter 缺失 | 自研（本层 §4） | 代码就绪未广告 |
+| 增量 fetch 无 thin pack | 字节效率低于最优 git 服务器 2–5×（源码 delta 比） | **已立项 perf-2**（服务路径 delta 化吃大头；真 thin pack 远期，docs/12 B8/P2-6） |
+| go-git 服务端 filter 缺失 | 自研（本层 §4） | 代码就绪，**广告已立项 perf-2**（docs/12 B10） |
 | ~~浅克隆（deepen）~~ | **已实现**（§3a：deepen N / 加深 / unshallow / 客户端边界上报裁剪，对照 git 2.50 http-backend 参考流字节级实现） | T15/T16 钉住 |
 | `deepen-since` / `deepen-not` | 未广告未实现（`--shallow-since`/`--shallow-exclude`） | 需要时按 §3a 同框架扩展 |
 | 浅仓 push | 拒绝（HTTP 400）——对照参考服务端默认行为（`receive.shallowUpdate=false` → 403），同为干净拒绝 | 完整仓库 push 不受影响 |

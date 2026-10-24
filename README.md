@@ -57,7 +57,7 @@ directory timelines align both boundaries at the same granularity.
 ## Design goals
 
 1. **Drop-in git compatibility** — plain `git clone / fetch / push` just works
-   (Smart HTTP v1; v2 clients negotiate back automatically).
+   (Smart HTTP v1; v2 is planned — fetch-side command surface, docs/12; v2 clients fall back automatically today).
 2. **Any subdirectory is a repo** — not sparse checkout: every directory owns
    its commit timeline, and `/r/{repo}/tree/{subdir}` serves a semantically
    complete repository with full projected history.
@@ -180,7 +180,7 @@ go run ../cmd/banyan log           # remote history, zero download
 
 ## Non-goals (current stage)
 
-- No protocol v2 (v1 serves standard clients fine).
+- No protocol v2 on the push path (git itself keeps receive-pack at v0; the fetch-side v2 command surface is planned, docs/12 P1-5).
 - No DevOps platform features (MR/CI/permissions UI) — banyan is a
   **storage layer**; collaboration stays on existing platforms (docs/08).
 - No praefect replication protocol; multi-replica follows banyan's own

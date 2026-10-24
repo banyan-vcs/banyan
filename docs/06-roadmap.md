@@ -90,9 +90,12 @@ CommitPush 单事务未做（保持 PutPack+CASHead 两步，崩溃窗口=无害
 - [ ] perf-1（P0）：定位批量+定位缓存（治逐对象 LocateObjects RPC）+ 织入
       物化批量化（治单对象 pack 风暴）——集群读/写主路径
 - [ ] perf-2（P1）：idx 单对象解压、fetch-trees 二进制化（去 base64 33%）、
-      性能 SLO 基准门（>20% 回归变红）
-- [ ] perf-3（P2）：应答 delta 化、网关磁盘 pack cache、push 后预热织入、
-      写路径扇出下沉（与 HA-2 合并）
+      性能 SLO 基准门（>20% 回归变红）、**增量 fetch 字节效率**（服务路径
+      delta 化 + filter 能力广告，治 B8/B10）、**protocol v2**（ls-refs/fetch
+      命令面：按需 ref 广告 + 服务端驱动协商；push 按语义恒 v0）
+- [ ] perf-3（P2）：网关磁盘 pack cache、子树投影包缓存（治子树 clone 恒
+      在线编码）、push 后预热织入、写路径扇出下沉（与 HA-2 合并）、
+      真 thin pack（对 haves 出 REF_DELTA）
 - 同目录写队列（P2-5）并入 M4（参照 tekeburak land worker 投机流水线）
 
 ## M5 · 平台集成（企业代码托管兼容）
