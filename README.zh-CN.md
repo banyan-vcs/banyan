@@ -48,6 +48,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 根/子树 `git clone/fetch/push`（Smart HTTP v1 + v2） | ✅ 真实 git 客户端实测 |
 | partial clone（`--filter=blob:none`/`tree:0` + 惰性取回） | ✅ |
 | serve 路径 delta 包（过 64KiB 阈值 OFS/REF-delta） | ✅ |
+| 增量 fetch 真 thin pack（对客户端持有基对象出 REF_DELTA） | ✅（字节 0.87× git，docs/12 §3） |
 | 子树虚拟仓库（`/tree/<path>`，完整历史投影） | ✅ |
 | 目录时间线 + 线性织入根视图（v5） | ✅ |
 | 浅克隆（depth / deepen / unshallow） | ✅ |

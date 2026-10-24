@@ -34,6 +34,7 @@ POST {base}/r/{repo}/git-receive-pack                       # push 数据
 | `shallow` | fetch | deepen N / 加深 / unshallow（§3a；deepen-since/not 未实现不广告） |
 | `filter` | fetch | **已广告已接线**（§4）：`blob:none` / `tree:0`；不支持的 spec 以 ERR 拒绝（对照 upload-pack.c） |
 | `ofs-delta` | fetch | serve 路径 delta 包（docs/12 P1-4）：过阈值后在线 delta 化，OFS_DELTA 优先（客户端未接受时 REF_DELTA）；push 侧 go-git 解码器本就接受两种 |
+| `thin-pack` | fetch | 增量 fetch 对客户端 haves 出 REF_DELTA（docs/12 P2-6）：基对象限于排除集（客户端可证持有），客户端 index-pack --fix-thin / unpack-objects 本地解析 |
 | `allow-reachable-sha1-in-want` | fetch | 非广告 want（partial clone 惰性取回按 OID 点名 blob/tree）须从广告 tips 可达——`haveClosure` 全闭包走查即为该契约的校验实现 |
 | `no-thin` | push | 拒绝 thin pack（存储侧 pack 必须自包含；M3 可放开） |
 
@@ -156,7 +157,7 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 | ~~v1 have 协商~~ | 已实现（终态 ACK 语义：有公共提交时 ACK 即终态、同响应内送包） | 组合测试实测过期客户端 pull 正常 |
 | push `no-thin` | 客户端 push 略增流量 | 服务端存储简单性优先 |
 | ~~serve 路径零 delta~~ | **已实现**（docs/12 P1-4）：原始负载过 64KiB 阈值后在线 delta 化（OFS_DELTA 优先/REF_DELTA 兜底），相似对象 2–5× 字节差 | T20 + storage 单测钉住 |
-| 增量 fetch 无真 thin pack | 对客户端已有对象出 REF_DELTA 的字节收益仍缺 | 依赖编码器对缺席基对象的支持，远期（docs/12 P2-6） |
+| ~~增量 fetch 无真 thin pack~~ | **已实现**（docs/12 P2-6）：同路径基选择 + 自研 thin pack 写出器；实测增量 fetch 字节 0.87× git（docs/12 §3） | T37 钉住 |
 | ~~服务端 filter 未广告~~ | **已实现**（§4）：`blob:none`/`tree:0` + `allow-reachable-sha1-in-want` 惰性取回 | T14 钉住（partial clone 全链路） |
 | ~~浅克隆（deepen）~~ | **已实现**（§3a：deepen N / 加深 / unshallow / 客户端边界上报裁剪，对照 git 2.50 http-backend 参考流字节级实现） | T15/T16 钉住 |
 | `deepen-since` / `deepen-not` | 未广告未实现（`--shallow-since`/`--shallow-exclude`） | 需要时按 §3a 同框架扩展 |

@@ -95,10 +95,11 @@ CommitPush 单事务未做（保持 PutPack+CASHead 两步，崩溃窗口=无害
       实测数字 docs/12 §3）、**增量 fetch 字节效率**（serve 路径 delta 化 +
       filter/allow-reachable 广告，T14/T29）、**protocol v2**（ls-refs/fetch
       命令面，T30；push 按语义恒 v0）
-- [ ] perf-3（P2）：网关磁盘 pack cache、子树投影包缓存（治子树 clone 恒
-      在线编码）、push 后预热织入、写路径扇出下沉（与 HA-2 合并）、
-      真 thin pack（对 haves 出 REF_DELTA；bench 实测缺口 = 增量 fetch
-      1.6–1.8x 字节，docs/12 §3）
+- [x] perf-3（P2）主体（2026-10-25）：网关磁盘 pack cache（cache.pack_dir +
+      读放大翻转，T36）、闭包响应包缓存（T35）、push 后预热织入（T34）、
+      **真 thin pack**（自研 diff-delta + thin 写出器 + 同路径基选择，T37；
+      bench 增量 fetch 1.66x → **0.87x** 反超 git，docs/12 §3）
+- [ ] 残余：写路径扇出下沉（P2-4，归 HA-2）、同目录写队列（P2-5，归 M4）
 - 同目录写队列（P2-5）并入 M4（参照 tekeburak land worker 投机流水线）
 
 ## M5 · 平台集成（企业代码托管兼容）

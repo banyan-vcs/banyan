@@ -79,6 +79,7 @@ directory timelines align both boundaries at the same granularity.
 | Root + subtree `git clone/fetch/push` (Smart HTTP v1 + v2) | ✅ verified against real git clients |
 | Partial clone (`--filter=blob:none`/`tree:0` + lazy fetch) | ✅ |
 | Serve-path delta packs (OFS/REF-delta past 64KiB) | ✅ |
+| Thin packs on incremental fetch (REF_DELTA vs client-held bases) | ✅ (0.87x git's bytes, docs/12 sec.3) |
 | Subtree virtual repos (`/tree/<path>`), full-history projection | ✅ |
 | Per-directory timelines, linear woven root view (v5) | ✅ |
 | Shallow clone (depth / deepen / unshallow) | ✅ |

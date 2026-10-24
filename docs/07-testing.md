@@ -57,6 +57,10 @@ testify，文件按测试目标拆分）：
 | T29 | `TestServePathDelta` | **serve 路径 delta 化**（docs/12 P1-4）：跨包闭包在线编码过阈值后 OFS_DELTA 化（字节显著收缩）、真实客户端解包 delta 包（clone+fsck） |
 | T30 | `TestV2*`（5 用例） | **protocol v2 命令面**（docs/03 §9b）：广告格式（无 service 前导）、ls-refs（ref-prefix/peel/symrefs/unborn、空格分隔属性）、fetch 段组帧（done 省 acks 段、sideband pack 帧、ready 终态轮）、真实 git clone/fetch/ls-remote/浅化/unshallow/partial/子树/push 恒 v0；两处被真实客户端钉住的 wire 细节（TAB 分隔符、done 省 acks）记录于 docs/03 §9b |
 | T31 | `TestSynthBatchSinglePack` + storage `TestSynthBatchPacksOnce`/`TestLocationCacheHitsAndInvalidation` | **P0 落地**（docs/12）：B3 一次织入物化=一个合成 pack（含 pre-CAS flush 持久化点）；B1 定位 LRU（重复读零定位、Prefetch 批量、Known 批量存在性、repack 失效+重定位） |
+| T34 | `TestPushWarmView` | **push 后预热织入**（docs/12 P2-3）：无需任何读请求 /.woven 推进到新头（根推送=原样链头；子树推送=根织入推进） |
+| T35 | `TestClosureResponseCache` | **闭包响应包缓存**（docs/12 P2-2）：clone 形态纯函数缓存（首存/复用命中/tips 换键/ExactPackHit 不污染/haves 不入缓存） |
+| T36 | `TestHAGatewayDiskCache` | **网关磁盘 pack cache**（docs/12 P2-1）：节点请求计数器下，缓存填充后整网关重启、克隆零节点请求（读放大翻转 + CheapPack 路径） |
+| T37 | `TestThinPackFetch` + storage delta/thin 单测 | **真 thin pack**（docs/12 P2-6）：REF_DELTA 条目 + 字节收缩 + 未请求不发；真实客户端 v0/v2 双协议消费；delta 往返（增/删/中改/块拷贝/不可压）与 thin 写出器对 fix-thin 式解码器往返 |
 | T33 | `TestFetchTreesBinary` | **fetch-trees 二进制帧**（docs/10 §3.3、docs/12 P1-2）：bin/JSON 语义全等（树与 blob 集合逐字节一致）、二进制小于 JSON、真实 CLI clone 走 bin 路径物化 |
 | T32 | storage `TestExtractObjectRoundTrip`/`TestLocalGetObjectViaDisk` + T23-T26 回归 | **P1-1 单对象解压**（docs/12）：idx 偏移 + delta 基链递归解压（含 ofs/ref 两型）；集群 wire 从整包降为单对象（/internal/object 端点）；修复 idx oid→offset 在 delta pack 上的按位配对错位（Parser Observer 为权威源），idx crc 段补真值 |
 | T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |

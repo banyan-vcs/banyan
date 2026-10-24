@@ -42,9 +42,9 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 
 ## 2. 优化项清单
 
-> 治理状态（2026-10-25，perf-1 全部 + perf-2 主体已落地；基线数字见 §3）：
-> P0-1/P0-2/P1-1/P1-2/P1-3/P1-5 ✅；P1-4 部分落地（serve 路径 delta 化 ✅ +
-> filter 广告 ✅，真 thin pack 仍为 P2-6）；B6/B7/B9 仍开放（P2）。
+> 治理状态（2026-10-25，perf-1/perf-2/perf-3 主体全部落地；基线数字见 §3）：
+> P0-1/P0-2/P1-1/P1-2/P1-3/P1-5/P2-1/P2-2/P2-3/P2-6 ✅；P1-4 ✅（含真
+> thin pack）；B7（同目录队列）归 M4、P2-4（扇出下沉）归 HA-2。
 
 ### P0（perf-1：集群读写主路径，预期一个数量级）✅ 已落地
 
@@ -85,24 +85,42 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
   陷阱——repack 此前实际未产出 delta）；T29/T20 钉住；
 - `filter` 广告 ✅：blob:none / tree:0 + allow-reachable-sha1-in-want
   惰性取回全链路（T14）；v2 `fetch=filter` 同批（T30）；
-- 真 thin pack（对客户端 haves 出 REF_DELTA）仍列 P2-6——§3 实测此缺口
-  为增量 fetch 的 1.6–1.8x 字节。
 
 **P1-5 protocol v2（fetch 侧命令面）✅**
 - ls-refs（ref-prefix/peel/symrefs/unborn）+ fetch（acknowledgments/
   shallow-info/packfile 段、sideband pack 帧、done 省 acks 段——两处
   wire 细节由真实 git 客户端钉住）；receive-pack 恒 v0；T30。
 
-### P2（perf-3 及以后）
+### P2（perf-3：2026-10-25 主体落地，P2-4/P2-5 分别归 HA-2/M4）
 
-| 项 | 治 | 方案 |
+**P2-1 网关磁盘 pack cache（治 B6）✅**
+- `cache.pack_dir`（gateway 角色）：内容寻址磁盘 LRU（docs/02 三层缓存
+  第一层），重启重扫重建索引；对象读走"廉价整包"路径（磁盘命中 → 一次
+  解码全包 memoize），单对象读同一 pack 连续 8 次后自动翻转为整包取回
+  ——冷网关克隆从 N 次单对象 RPC 降为 8+1；T36（缓存命中后节点请求冻结）。
+
+**P2-2 闭包响应包缓存（治 B9）✅**
+- clone 形态（无 haves/无浅化/无 filter）的响应包是 wants 的纯函数 →
+  按 wants 键缓存 verbatim（128MiB LRU），子树/织入根视图的重复克隆
+  免在线编码；tips 变化 → 新 wants → 新键，永不失效；带 haves 的请求
+  （thin 领域）天然不进缓存；T35。
+
+**P2-3 push 后预热织入（治 B6）✅**
+- receive-pack 头 CAS 成功后异步 fold 视图（根推送暖根织入；子树推送
+  暖作用域视图+根织入），首个广告不再冷；幂等 + CAS 安全，push 响应
+  从不等待；T34（无需任何读请求 /.woven 即推进）。
+
+**P2-6 真 thin pack（治 B8）✅**
+- 自研 diff-delta 编码器 + thin pack 写出器（REF_DELTA 对客户端持有
+  基对象）+ 同路径基选择（新提交 vs 客户端持有的父提交的路径感知树
+  diff）；thin 优先于整包直传（存储包自包含，增量的大对象在包内是全量）；
+  v1 广告 thin-pack / v2 接受 thin-pack arg；§3 实测增量 fetch
+  1.66x → **0.87x**；T37。
+
+| 项 | 治 | 状态 |
 |---|---|---|
-| P2-1 网关磁盘 pack cache | B6 | 内容寻址磁盘 LRU（docs/02 三层缓存的第一层落地），重启不冷 |
-| P2-2 子树投影包缓存 | B9 | 投影闭包按 (repo, sub, tips 代次) 缓存服务端合成包，跨请求复用；tips 变化才重算 |
-| P2-3 push 后预热织入 | B6 | receive-pack 成功后异步触发 RootTip（写路径派生急算，docs/04 既有分类），首个广告不再冷 |
-| P2-4 写路径扇出下沉 | docs/11 HA-2 已列 | 主节点写+节点间扇出，砍网关出带宽 R×；W=quorum 同步 + 其余异步由 reconciler 补 |
-| P2-5 同目录写队列 | B7 | M4：tekeburak 形态的 change request 状态机 + 投机流水线（FIFO 公平 + p99 稳定 + 重启恰好一次） |
-| P2-6 真 thin pack | B8 | 对客户端 haves 出 REF_DELTA（依赖编码器对缺席基对象的支持），P1-4 之后视残余收益评估 |
+| P2-4 写路径扇出下沉 | docs/11 HA-2 | 归 HA-2（主节点写+节点间扇出，砍网关出带宽 R×） |
+| P2-5 同目录写队列 | B7 | 归 M4（tekeburak 形态 change request 状态机 + 投机流水线） |
 
 ## 3. 基准设计与实测（P1-3 已落地：`cmd/banyan-bench`）
 
@@ -120,32 +138,34 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 - **门**：`--save` 存基线（机器本地 JSON），`--check` 任一指标回归
   >20% 退出码 1（夜间跑，不进 go test 热路径）。
 
-本机示例（Windows 开发机，small/medium 各 3 轮；数字随机器浮动，回归
-判断以 `--check` 门为准）：
+本机示例（Windows 开发机，small/medium 各 3 轮；perf-3 落地后数字，随
+机器浮动，回归判断以 `--check` 门为准）：
 
 | 场景 | banyan | git http-backend | 字节比 | 耗时比 |
 |---|---|---|---|---|
-| clone 全量 cold（small/medium） | 37.1KB / 260.4KB | 34.4KB / 242.2KB | 1.07–1.08x | 0.51x |
-| clone 全量 warm | 37.1KB / 260.4KB | 34.4KB / 242.3KB | 1.07x | 0.52x |
-| clone 子树 | 10.1KB / 37.9KB | —（git 无子树克隆） | — | — |
-| fetch 增量（1 提交） | 1.5–1.6KB | 0.9KB | 1.63–1.76x | 0.52x |
-| push 1 提交 | 0.3KB | 0.3KB | 0.92x | 0.40x |
-| ls-remote | 0.2KB | 0.3KB | 0.85x | 0.44x |
+| clone 全量 cold（small/medium） | 37.2KB / 260.0KB | 34.4KB / 242.5KB | 1.07–1.08x | 0.46–0.49x |
+| clone 全量 warm | 37.2KB / 260.0KB | 34.4KB / 242.5KB | 1.07x | 0.47–0.48x |
+| clone 子树 | 9.1KB / 34.0KB | —（git 无子树克隆） | — | — |
+| fetch 增量（1 提交） | 0.8KB | 0.9KB | **0.87x** | 0.51x |
+| push 1 提交 | 0.3KB | 0.3KB | 0.92x | 0.38–0.43x |
+| ls-remote | 0.2KB | 0.3KB | 0.85x | 0.40–0.46x |
 
 读数（诚实标注）：
 
 1. **克隆字节持平**（ExactPackHit 整包直传）。耗时 2x 差主要来自 git 侧
    CGI 每请求冷启动（进程 spawn），常驻服务形态下会收敛——所以字节才是
    结构性指标；
-2. **子树克隆是结构性优势**：下载量 = 子树闭包（全量的 15–27%），git
-   基线无对应能力，这是 banyan 的存在理由之一；
-3. **fetch 增量的 1.6–1.8x 字节差就是 B8 的量化**：git 对客户端 haves
-   出 delta（准 thin pack），我们发全量新对象——P2-6 真 thin pack 的
-   预期收益上限；
-4. cold==warm 字节（视图与定位缓存生效），cold 耗时 ≈ warm（此规模
-   织入亚毫秒）。
+2. **子树克隆是结构性优势**：下载量 = 子树闭包（全量的 13–24%），git
+   基线无对应能力，这是 banyan 的存在理由之一；重复克隆走闭包响应缓存
+   （P2-2），字节逐次一致；
+3. **fetch 增量 0.87x——B8 缺口关闭并小幅反超**：真 thin pack（P2-6，
+   对客户端 haves 出 REF_DELTA）+ ACK 祖先剪枝（镜像 git THEY_HAVE 语义，
+   此前每个已知 have 白付 ~45B 响应）前为 1.66x；
+4. cold==warm 字节（视图/定位/闭包缓存生效），cold 耗时 ≈ warm（此规模
+   织入亚毫秒）；网关重启路径由磁盘 pack cache 兜底（P2-1，T36：缓存
+   命中后节点请求数冻结）。
 
-与集成测试的关系：集成用例（T1–T33）锁正确性；bench 门锁性能——两者
+与集成测试的关系：集成用例（T1–T37）锁正确性；bench 门锁性能——两者
 都不豁免。扩展位（后续）：集群口径的 RPC 计数（refs RPC/对象数比）与
 scion 复刻对等基线（需 Rust 工具链；tekeburak 自己的对等基准数字也
 注明了要打折读）。
@@ -156,15 +176,17 @@ scion 复刻对等基线（需 Rust 工具链；tekeburak 自己的对等基准�
 perf-1（P0）✅：定位批量+缓存、织入批量化（2026-10-25 落地）
 perf-2（P1）✅ 主体：idx 单对象解压、fetch-trees 二进制、SLO 基准门、
               serve 路径 delta + filter 广告、protocol v2
-perf-3（P2）：磁盘 cache、子树投影包缓存、预热、扇出下沉（部分与 HA-2 合并）、
-              真 thin pack（§3 实测缺口 = 增量 fetch 的 1.6–1.8x 字节）
-M4（既定）  ：同目录写队列（P2-5，参照 land worker）
+perf-3（P2）✅ 主体（2026-10-25 落地）：磁盘 pack cache（P2-1）、闭包
+              响应缓存（P2-2）、push 后预热织入（P2-3）、真 thin pack
+              （P2-6，§3 增量 fetch 1.66x→0.87x）
+P2-4 扇出下沉：归 HA-2（主节点写+节点间扇出）；P2-5 同目录队列：归 M4
 ```
 
 依赖关系（落地后复核）：P0-1/P0-2 已落地；P1-1 落地时一并修复 idx 配对
 错位并补齐 crc（原注记的"依赖 idx 写盘质量"即此）；P1-3 基线已建
 （本机数字见 §3，各部署用 --save 自建）；P1-5 与 P1-4 的 filter 广告
-确已同批。
+确已同批。P2-6 落地时被真实客户端钉住两处：REF_DELTA 头部 size 字段
+= delta 流长（非目标对象长）；v2 ACK 须按 THEY_HAVE 祖先剪枝。
 
 ## 5. 架构判据记录：pack 磁盘存储 vs per-object 对象存储（2026-10-24 review 定稿）
 
