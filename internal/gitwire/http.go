@@ -200,6 +200,7 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 			"shallow",   // deepen N / --unshallow (v0 core shallowing; deepen-since/not not advertised)
 			"filter",    // partial clone: blob:none / tree:0 served (docs/03 §4); unsupported specs answered with ERR
 			"ofs-delta", // serve-path delta packs use OFS_DELTA (docs/12 P1-4); REF_DELTA otherwise
+			"thin-pack", // have-subtracted fetches delta against client-held bases (docs/12 P2-6)
 			// Unadvertised wants (partial-clone lazy fetches name missing blobs by
 			// OID) pass a reachability check from the advertised tips — the exact
 			// semantic this capability promises (protocol-capabilities.txt).

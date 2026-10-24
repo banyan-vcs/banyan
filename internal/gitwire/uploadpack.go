@@ -46,6 +46,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	var clientShallow []model.OID // client's current shallow boundary (reported by deepen/unshallow requests)
 	var filter *FilterSpec        // active partial-clone filter (blob:none / tree:0, docs/03 §4)
 	clientOfsDelta := false       // client accepted OFS_DELTA (v1 want-line capability)
+	clientThin := false           // client asked for a thin pack (v1 cap / v2 arg)
 	depth := 0                    // deepen N; 0 = no deepen
 	done := false
 	// Stateless HTTP negotiation (mirrors remote-curl.c / upload-pack.c get_common_commits):
@@ -92,9 +93,13 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 			}
 			wants = append(wants, model.OID(strings.SplitN(fields[0], "\x00", 2)[0]))
 			// Capabilities trail the first want (gitprotocol-pack); OFS_DELTA
-			// packs may only go to clients that asked for it.
+			// packs may only go to clients that asked for it, thin packs only
+			// to clients that promised to --fix-thin.
 			if strings.Contains(line, " ofs-delta") {
 				clientOfsDelta = true
+			}
+			if strings.Contains(line, " thin-pack") {
+				clientThin = true
 			}
 		case strings.HasPrefix(line, "have "):
 			haves = append(haves, model.OID(strings.TrimPrefix(line, "have ")))
@@ -155,7 +160,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	}
 
 	closureStart := time.Now()
-	blobs, trees, commits, tags, excluded, err := s.closure(r.Context(), vr, wants, depth, clientShallow, haves, filter)
+	blobs, trees, commits, tags, exclude, err := s.closure(r.Context(), vr, wants, depth, clientShallow, haves, filter)
 	closureDur := time.Since(closureStart)
 	if err != nil {
 		log.Printf("upload-pack %s%s: closure: %v", vr.Repo, vr.Sub, err)
@@ -163,14 +168,23 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		_ = out.Flush()
 		return
 	}
+	// Thin pack (docs/12 P2-6): with haves and a thin-pack client, delta the
+	// served objects against same-path predecessors the client holds.
+	var plan *thinPackPlan
+	if clientThin && len(haves) > 0 {
+		plan = &thinPackPlan{
+			bases:    s.thinBases(r.Context(), vr, commits, exclude),
+			loadBase: func(oid model.OID) (model.ObjectType, []byte, error) { return s.Objects.Raw(r.Context(), vr.Repo, oid) },
+		}
+	}
 	encodeStart := time.Now()
 	// Hot-path serve ladder (docs/02 §5, docs/12 P2-2): stored-pack verbatim
 	// → clone-shaped response cache → online encoding (delta past threshold).
 	cacheable := len(haves) == 0 && depth == 0 && filter == nil
-	served := s.serveClosurePack(r.Context(), out, vr, wants, blobs, trees, commits, tags, cacheable, clientOfsDelta)
+	served := s.serveClosurePack(r.Context(), out, vr, wants, blobs, trees, commits, tags, cacheable, clientOfsDelta, plan)
 	_ = out.Flush()
 	log.Printf("upload-pack %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, filter %s, closure %s, serve %s/%s)",
-		vr.Repo, vr.Sub, len(wants), len(commits), len(trees), len(blobs), excluded, filterSpecName(filter),
+		vr.Repo, vr.Sub, len(wants), len(commits), len(trees), len(blobs), len(exclude), filterSpecName(filter),
 		closureDur.Round(time.Millisecond), served, time.Since(encodeStart).Round(time.Millisecond))
 }
 
@@ -206,15 +220,26 @@ func filterSpecName(f *FilterSpec) string {
 	return f.Spec()
 }
 
-// serveClosurePack writes the response pack for a computed closure, with the
-// whole-pack direct serve first and the clone-shaped response cache second
-// (docs/12 P2-2): when the request carries no haves, no shallowing and no
-// filter, the pack is a pure function of the wants — subtree and woven-root
-// closures (whose OIDs never match a stored pack) then cache verbatim and
-// repeat clones skip online encoding entirely. Returns the serve mode.
+// serveClosurePack writes the response pack for a computed closure:
+//
+//	thin (client-held bases, only when requested) → whole-pack verbatim →
+//	clone-shaped response cache (docs/12 P2-2) → online encoding.
+//
+// Thin outranks the verbatim serve deliberately: a stored pack is
+// self-contained (receive advertises no-thin), so its objects are whole —
+// an incremental fetch's changed file carries its full bytes even though
+// the client holds the previous version at the same path. The client asked
+// for minimal bytes and promised to --fix-thin; give it the delta.
 func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID,
-	blobs, trees, commits, tags map[model.OID][]byte, cacheable, ofsDelta bool) string {
+	blobs, trees, commits, tags map[model.OID][]byte, cacheable, ofsDelta bool, thin *thinPackPlan) string {
 
+	if thin != nil && len(thin.bases) > 0 {
+		if err := storage.EncodePackThin(out, s.Objects.Algo, blobs, trees, commits, tags, thin.bases, thin.loadBase); err != nil {
+			log.Printf("upload-pack %s%s: thin encode: %v", vr.Repo, vr.Sub, err)
+			return "thin-error"
+		}
+		return "thin"
+	}
 	wanted := make(map[model.OID]bool, len(commits)+len(trees)+len(blobs)+len(tags))
 	for oid := range commits {
 		wanted[oid] = true
@@ -341,12 +366,12 @@ func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included
 // traversal of the have side per fetch — the same trade git makes without
 // reachability bitmaps (docs/09 §3.3).
 func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID, depth int, clientShallow, haves []model.OID, filter *FilterSpec) (
-	blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, tags map[model.OID][]byte, excludedObjects int, err error) {
+	blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, tags map[model.OID][]byte, exclude map[model.OID]bool, err error) {
 	blobs = map[model.OID][]byte{}
 	trees = map[model.OID][]byte{}
 	commits = map[model.OID][]byte{}
 	tags = map[model.OID][]byte{}
-	exclude := s.haveClosure(ctx, vr.Repo, haves, clientShallow)
+	exclude = s.haveClosure(ctx, vr.Repo, haves, clientShallow)
 	wantSet := map[model.OID]bool{}
 	for _, w := range wants {
 		delete(exclude, w)
@@ -397,7 +422,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			// Debugging: dump the referrer context (type + first 256 bytes of raw content).
 			refType, refRaw, rerr := s.Objects.Raw(ctx, vr.Repo, referrer[oid])
 			refDump := fmt.Sprintf("type=%s rerr=%v raw=%.256x", refType, rerr, refRaw)
-			return nil, nil, nil, nil, 0, fmt.Errorf("closure: %w (object %s, referred by %s [%s])", err, oid, referrer[oid], refDump)
+			return nil, nil, nil, nil, nil, fmt.Errorf("closure: %w (object %s, referred by %s [%s])", err, oid, referrer[oid], refDump)
 		}
 		enq := func(child model.OID) {
 			if _, seen := referrer[child]; !seen {
@@ -411,7 +436,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			// Go through the commit-graph index: commits are no longer decoded one by one (docs/04).
 			ci, err := s.Objects.CommitInfo(vr.Repo, oid)
 			if err != nil {
-				return nil, nil, nil, nil, 0, err
+				return nil, nil, nil, nil, nil, err
 			}
 			enq(ci.Tree)
 			if !boundary[oid] {
@@ -427,7 +452,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			// Go through the tree-entry index: path/child expansion no longer re-parses tree bytes.
 			entries, err := s.Objects.TreeEntries(vr.Repo, oid)
 			if err != nil {
-				return nil, nil, nil, nil, 0, fmt.Errorf("closure: tree %s: %w", oid, err)
+				return nil, nil, nil, nil, nil, fmt.Errorf("closure: tree %s: %w", oid, err)
 			}
 			// Tree expansion is the natural batching point (docs/12 P0-1):
 			// all children locate in one Meta round trip, so cold-walk RPC
@@ -451,14 +476,14 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			tags[oid] = raw
 			tg, terr := model.DecodeTag(raw)
 			if terr != nil {
-				return nil, nil, nil, nil, 0, terr
+				return nil, nil, nil, nil, nil, terr
 			}
 			enq(tg.Object)
 		default:
-			return nil, nil, nil, nil, 0, fmt.Errorf("closure: unsupported object type %q for %s", t, oid)
+			return nil, nil, nil, nil, nil, fmt.Errorf("closure: unsupported object type %q for %s", t, oid)
 		}
 	}
-	return blobs, trees, commits, tags, len(exclude), nil
+	return blobs, trees, commits, tags, exclude, nil
 }
 
 // haveClosure computes the object set provably present on a client holding

@@ -185,6 +185,7 @@ type v2FetchArgs struct {
 	depth                       int
 	done                        bool
 	ofsDelta                    bool // client accepted OFS_DELTA (base v2 arg, not advertised)
+	thinPack                    bool // client asked for a thin pack (base v2 arg)
 	filter                      *FilterSpec
 }
 
@@ -233,7 +234,9 @@ func parseFetchV2(args []string) (*v2FetchArgs, error) {
 			// Counted from the client's shallow boundary; banyan computes
 			// depth from the wants (v1 semantics) — deepen-relative is only
 			// sent together with deepen-since/not, which are not advertised.
-		case a == "thin-pack", a == "no-progress", a == "include-tag",
+		case a == "thin-pack":
+			fa.thinPack = true
+		case a == "no-progress", a == "include-tag",
 			strings.HasPrefix(a, "agent="), strings.HasPrefix(a, "object-format="):
 			// Accepted and ignored: thin deltas against haves are not served
 			// (bases must be in-pack); include-tag is best-effort (tags are
@@ -277,9 +280,31 @@ func (s *Server) fetchV2(out *bufWriter, r *http.Request, vr VirtualRepo, args [
 	// touches object bytes (docs/12 P0-1).
 	knownHaves := s.Objects.Known(ctx, vr.Repo, fa.haves)
 	var acks []model.OID
+	covered := map[model.OID]bool{}
 	for _, h := range fa.haves {
-		if knownHaves[h] {
-			acks = append(acks, h)
+		if !knownHaves[h] || covered[h] {
+			continue
+		}
+		acks = append(acks, h)
+		covered[h] = true
+		// Ancestry pruning, mirroring got_oid's THEY_HAVE flag propagation:
+		// an ACKed have covers every later have reachable from it. Clients
+		// send haves newest-first, so a linear history ACKs exactly once —
+		// ACKing every known have costs ~45 bytes each and nothing needs
+		// them (the client proceeds on any single common base + ready).
+		if ci, err := s.Objects.CommitInfo(vr.Repo, h); err == nil {
+			queue := append([]model.OID(nil), ci.Parents...)
+			for len(queue) > 0 {
+				p := queue[0]
+				queue = queue[1:]
+				if covered[p] {
+					continue
+				}
+				covered[p] = true
+				if pci, err := s.Objects.CommitInfo(vr.Repo, p); err == nil {
+					queue = append(queue, pci.Parents...)
+				}
+			}
 		}
 	}
 	// Section plan (mirrors upload-pack.c v2):
@@ -321,19 +346,12 @@ func (s *Server) fetchV2(out *bufWriter, r *http.Request, vr VirtualRepo, args [
 		log.Printf("v2 fetch %s%s: closure: %v", vr.Repo, vr.Sub, cerr)
 		blobs, trees, commits, tags = nil, nil, nil, nil
 	}
-
-	wanted := make(map[model.OID]bool, len(commits)+len(trees)+len(blobs)+len(tags))
-	for oid := range commits {
-		wanted[oid] = true
-	}
-	for oid := range trees {
-		wanted[oid] = true
-	}
-	for oid := range blobs {
-		wanted[oid] = true
-	}
-	for oid := range tags {
-		wanted[oid] = true
+	var plan *thinPackPlan
+	if fa.thinPack && len(fa.haves) > 0 {
+		plan = &thinPackPlan{
+			bases:    s.thinBases(ctx, vr, commits, excluded),
+			loadBase: func(oid model.OID) (model.ObjectType, []byte, error) { return s.Objects.Raw(ctx, vr.Repo, oid) },
+		}
 	}
 	encodeStart := time.Now()
 	served := "encode"
@@ -346,10 +364,10 @@ func (s *Server) fetchV2(out *bufWriter, r *http.Request, vr VirtualRepo, args [
 	// clone-shaped response cache → online encoding. Thin packs (haves
 	// present) are client-specific and never cached.
 	cacheable := len(fa.haves) == 0 && fa.depth == 0 && fa.filter == nil
-	served = s.serveClosurePack(ctx, sb, vr, fa.wants, blobs, trees, commits, tags, cacheable, fa.ofsDelta)
+	served = s.serveClosurePack(ctx, sb, vr, fa.wants, blobs, trees, commits, tags, cacheable, fa.ofsDelta, plan)
 	_ = WriteFlush(out)
 	log.Printf("v2 fetch %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, filter %s, closure %s, serve %s/%s)",
-		vr.Repo, vr.Sub, len(fa.wants), len(commits), len(trees), len(blobs), excluded, filterSpecName(fa.filter),
+		vr.Repo, vr.Sub, len(fa.wants), len(commits), len(trees), len(blobs), len(excluded), filterSpecName(fa.filter),
 		time.Since(closureStart).Round(time.Millisecond), served, time.Since(encodeStart).Round(time.Millisecond))
 }
 

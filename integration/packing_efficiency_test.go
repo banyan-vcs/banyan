@@ -247,3 +247,87 @@ func TestClosureResponseCache(t *testing.T) {
 	_, stores, _ = objects.ResponseCacheStats()
 	assert.Equal(t, 2, stores, "带 haves 的增量 fetch 不应进缓存")
 }
+
+// --- T37 true thin pack (docs/12 P2-6, B8) ---
+// A have-subtracted fetch now deltas its objects against same-path
+// predecessors the client provably holds (its have closure), emitted as
+// REF_DELTA entries the client resolves with index-pack --fix-thin — the
+// 1.6-1.8x incremental-fetch byte gap measured in docs/12 §3.
+func TestThinPackFetch(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	src := seedRepo(t, s, "t37")
+
+	// Two realistic changes against a KB-scale file: first establish
+	// big.txt (the client's held version), then edit it (its previous
+	// version is the natural delta base) and add one brand-new file.
+	big := strings.Repeat("stable content line for delta compression testing\n", 100) // ~4.7KB
+	write(t, filepath.Join(src, "lib", "big.txt"), big)
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-qm", "t37: establish big")
+	git(t, src, "push", "-q", s.repoURL("t37"), "main")
+	oldTip := headOf(t, src)
+	// The client clones HERE: it holds oldTip, so the next fetch transfers
+	// the incremental change.
+	client := cloneRepo(t, s, s.repoURL("t37"))
+	assert.Equal(t, oldTip, headOf(t, client))
+	write(t, filepath.Join(src, "lib", "big.txt"), big+"one appended line\n")
+	write(t, filepath.Join(src, "lib", "new.txt"), "brand new file\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-qm", "t37: incremental change")
+	git(t, src, "push", "-q", s.repoURL("t37"), "main")
+	newTip := headOf(t, src)
+
+	// Raw protocol: the same fetch with and without the thin-pack
+	// capability — thin must carry REF_DELTA entries and fewer bytes.
+	fetchRaw := func(caps string) []byte {
+		body := pktLine("want "+string(newTip)+" agent=it ofs-delta"+caps+"\n") +
+			pktLine("have "+string(oldTip)+"\n") +
+			pktLine("done\n")
+		req, err := http.NewRequest("POST", s.repoURL("t37")+"/git-upload-pack", strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-git-upload-pack-request")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		// Skip the terminal ACK/NAK line; the rest is the pack.
+		require.GreaterOrEqual(t, len(raw), 12)
+		var n int
+		fmt.Sscanf(string(raw[:4]), "%04x", &n)
+		return raw[n:]
+	}
+	plain := fetchRaw("")
+	thin := fetchRaw(" thin-pack")
+	types, err := storage.ScanObjectTypes(thin)
+	require.NoError(t, err)
+	hasRefDelta := false
+	for _, ty := range types {
+		if ty == model.ObjectType("ref-delta") {
+			hasRefDelta = true
+		}
+	}
+	assert.True(t, hasRefDelta, "thin 包应含 REF_DELTA 条目; types=%v", types)
+	assert.Less(t, len(thin), len(plain), "thin 包应小于非 thin 包（%d vs %d）", len(thin), len(plain))
+	plainTypes, _ := storage.ScanObjectTypes(plain)
+	for _, ty := range plainTypes {
+		assert.NotEqual(t, model.ObjectType("ref-delta"), ty, "未请求 thin 时不得发 REF_DELTA")
+	}
+
+	// Real client end to end: a clone that still holds oldTip fetches the
+	// change — a small pack goes through the client's unpack-objects path,
+	// which resolves external REF_DELTA bases from its own object store
+	// (mirrors what git's own server sends: thin even for 3-object fetches).
+	// v2 first (the default), then a second change fetched over v1 to cover
+	// the advertised-capability path.
+	for _, ver := range []string{"2", "0"} {
+		git(t, client, "-c", "protocol.version="+ver, "fetch", "-q", "origin")
+		git(t, client, "merge", "-q", "--ff-only", "origin/main")
+	}
+	assert.Equal(t, newTip, headOf(t, client))
+	assert.Equal(t, big+"one appended line\n",
+		readFile(t, filepath.Join(client, "lib", "big.txt")))
+	assert.Equal(t, "brand new file\n", readFile(t, filepath.Join(client, "lib", "new.txt")))
+	fsckClean(t, client)
+}
