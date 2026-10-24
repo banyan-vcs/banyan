@@ -145,9 +145,9 @@ bash demo/cluster-demo.sh   # full walkthrough: push, kill a node, recover, resi
 
 Or drive it by hand: `docker compose -f docker-compose.cluster.yml up -d`,
 push to `http://localhost:8100/r/demo.git`, watch
-`GET /api/v1/cluster/nodes`, `docker stop banyan-s4`, push again, then
-`POST :8102/internal/reconcile`. The same flows are pinned in-process by
-integration tests T23–T26.
+`GET /api/v1/cluster/nodes`, `docker stop banyan-s4`, push again — the
+background reconciler restores the 3-replica target on its own (verified on
+Docker 29.x; the same flows are pinned in-process by integration tests T23–T26).
 
 ### From source
 

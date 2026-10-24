@@ -112,8 +112,8 @@ bash demo/cluster-demo.sh   # 完整走查：push → 杀节点 → 恢复 → �
 
 也可手动：`docker compose -f docker-compose.cluster.yml up -d`，推送到
 `http://localhost:8100/r/demo.git`，观察 `GET /api/v1/cluster/nodes`，
-`docker stop banyan-s4` 后继续 push，再 `POST :8102/internal/reconcile`。
-相同链路由集成测试 T23–T26 在进程内钉住。
+`docker stop banyan-s4` 后继续 push——后台 reconciler 会自动把副本补回
+3（已在 Docker 29.x 实测；相同链路由集成测试 T23–T26 进程内钉住）。
 
 ### 源码构建
 

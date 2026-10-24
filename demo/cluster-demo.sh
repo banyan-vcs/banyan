@@ -6,8 +6,9 @@
 # Requirements: docker (compose v2), git, curl. Run from the repo root:
 #   bash demo/cluster-demo.sh
 #
-# NOTE: not exercised on a machine without a docker daemon; the same flows
-# are pinned by integration tests T23-T26 (go test ./integration/ -run TestHA).
+# Verified end to end on Docker 29.x (push scatter → node kill → writes during
+# failure → automatic recovery → rejoin → dynamic R). The same flows are
+# pinned in-process by T23-T26.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
