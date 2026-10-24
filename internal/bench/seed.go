@@ -22,12 +22,12 @@ import (
 
 // SeedProfile parameterizes the deterministic seed repo.
 type SeedProfile struct {
-	Commits    int // history depth
-	Dirs       int // top-level directories
+	Commits     int // history depth
+	Dirs        int // top-level directories
 	FilesPerDir int
-	BlobMin    int // blob size range (bytes, line-based text)
-	BlobMax    int
-	ChurnFiles int // files touched per commit
+	BlobMin     int // blob size range (bytes, line-based text)
+	BlobMax     int
+	ChurnFiles  int // files touched per commit
 }
 
 var Profiles = map[string]SeedProfile{

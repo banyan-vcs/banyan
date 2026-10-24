@@ -37,6 +37,13 @@ type Config struct {
 	ReconSec      int    `yaml:"recon_interval_sec"`
 	ReconCurrency int    `yaml:"recon_concurrency"`
 	HeartbeatSec  int    `yaml:"heartbeat_sec"`
+
+	Cache struct {
+		// PackDir enables the gateway's on-disk pack cache (docs/12 P2-1):
+		// packs fetched from storage nodes persist across gateway restarts.
+		PackDir   string `yaml:"pack_dir"`
+		PackMaxMB int    `yaml:"pack_max_mb"` // default 1024
+	} `yaml:"cache"`
 }
 
 // Default returns the built-in defaults.
@@ -184,6 +191,11 @@ func (c *Config) normalize() error {
 		}
 	}
 	c.RefsAddr = withScheme(c.RefsAddr)
+	if c.Cache.PackDir != "" && c.Role != "gateway" {
+		// The cache serves the scattered-store read path; other roles either
+		// hold packs locally (all-in-one/storage) or never fetch them (refs).
+		return fmt.Errorf("config: cache.pack_dir is only meaningful for role gateway")
+	}
 	return nil
 }
 
@@ -203,6 +215,6 @@ func withScheme(addr string) string {
 
 // Describe renders the effective configuration for startup logging.
 func (c *Config) Describe() string {
-	return fmt.Sprintf("role=%s listen=%s root=%s meta=%s db=%q init_repo=%q refs_addr=%q node_id=%q advertise=%q default_replicas=%d write_acks=%s",
-		c.Role, c.Listen, c.Root, c.MetaBackend, c.DBPath, c.InitRepo, c.RefsAddr, c.NodeID, c.Advertise, c.DefaultR, c.WriteAcks)
+	return fmt.Sprintf("role=%s listen=%s root=%s meta=%s db=%q init_repo=%q refs_addr=%q node_id=%q advertise=%q default_replicas=%d write_acks=%s cache_pack_dir=%q",
+		c.Role, c.Listen, c.Root, c.MetaBackend, c.DBPath, c.InitRepo, c.RefsAddr, c.NodeID, c.Advertise, c.DefaultR, c.WriteAcks, c.Cache.PackDir)
 }

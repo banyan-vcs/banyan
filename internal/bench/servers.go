@@ -18,13 +18,13 @@ import (
 
 // counter accumulates bytes per direction across a scenario window.
 type counter struct {
-	mu       sync.Mutex
-	reqBytes int64 // client → server (pushes, requests)
+	mu        sync.Mutex
+	reqBytes  int64 // client → server (pushes, requests)
 	respBytes int64 // server → client (clone/fetch downloads)
 }
 
-func (c *counter) addReq(n int64)   { c.mu.Lock(); c.reqBytes += n; c.mu.Unlock() }
-func (c *counter) addResp(n int64)  { c.mu.Lock(); c.respBytes += n; c.mu.Unlock() }
+func (c *counter) addReq(n int64)  { c.mu.Lock(); c.reqBytes += n; c.mu.Unlock() }
+func (c *counter) addResp(n int64) { c.mu.Lock(); c.respBytes += n; c.mu.Unlock() }
 func (c *counter) take() (req, resp int64) {
 	c.mu.Lock()
 	req, resp = c.reqBytes, c.respBytes
@@ -60,9 +60,9 @@ func countingHandler(next http.Handler, c *counter) http.Handler {
 // counting proxy — a "cold" server is simply a fresh instance after the seed
 // push, exactly the state a restarted deployment boots into.
 type BanyanServer struct {
-	URL    string
-	ctr    *counter
-	srv    *httptest.Server
+	URL string
+	ctr *counter
+	srv *httptest.Server
 }
 
 func StartBanyan(shardRoot string) (*BanyanServer, error) {
@@ -78,7 +78,7 @@ func StartBanyan(shardRoot string) (*BanyanServer, error) {
 	return &BanyanServer{URL: srv.URL, ctr: ctr, srv: srv}, nil
 }
 
-func (b *BanyanServer) Stop()  { b.srv.Close() }
+func (b *BanyanServer) Stop() { b.srv.Close() }
 func (b *BanyanServer) take() (int64, int64) {
 	req, resp := b.ctr.take()
 	return req, resp
@@ -89,11 +89,11 @@ func (b *BanyanServer) take() (int64, int64) {
 // spawns the CGI process (stateless by design; "warm" for the baseline is OS
 // page cache, which is honest for what stock git hosting looks like here).
 type GitCGIServer struct {
-	URL       string
-	ctr       *counter
-	srv       *httptest.Server
+	URL         string
+	ctr         *counter
+	srv         *httptest.Server
 	projectRoot string
-	execPath  string
+	execPath    string
 }
 
 func StartGitCGI(projectRoot string) (*GitCGIServer, error) {
@@ -119,7 +119,7 @@ func (g *GitCGIServer) take() (int64, int64) {
 }
 
 func (g *GitCGIServer) serve(w http.ResponseWriter, r *http.Request) {
-	cmd := exec.Command(g.execPath+string(os.PathSeparator)+"git-http-backend")
+	cmd := exec.Command(g.execPath + string(os.PathSeparator) + "git-http-backend")
 	cmd.Env = append(os.Environ(),
 		"GIT_PROJECT_ROOT="+g.projectRoot,
 		"GIT_HTTP_EXPORT_ALL=1",
@@ -173,12 +173,12 @@ type serverIface interface {
 
 type banyanAdapter struct{ b *BanyanServer }
 
-func (a banyanAdapter) RepoURL() string        { return a.b.URL }
-func (a banyanAdapter) take() (int64, int64)   { return a.b.take() }
-func (a banyanAdapter) Stop()                  { a.b.Stop() }
+func (a banyanAdapter) RepoURL() string      { return a.b.URL }
+func (a banyanAdapter) take() (int64, int64) { return a.b.take() }
+func (a banyanAdapter) Stop()                { a.b.Stop() }
 
 type gitAdapter struct{ g *GitCGIServer }
 
-func (a gitAdapter) RepoURL() string    { return a.g.URL }
+func (a gitAdapter) RepoURL() string      { return a.g.URL }
 func (a gitAdapter) take() (int64, int64) { return a.g.take() }
-func (a gitAdapter) Stop()              { a.g.Stop() }
+func (a gitAdapter) Stop()                { a.g.Stop() }

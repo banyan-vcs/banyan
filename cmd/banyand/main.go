@@ -84,10 +84,22 @@ func runAllInOne(cfg *config.Config) {
 
 // runGateway is the stateless frontend: every store/metadata call crosses
 // the role boundary (docs/11 §2), so any gateway instance is expendable.
+// An optional on-disk pack cache (cache.pack_dir, docs/12 P2-1) carries the
+// fetched packs across restarts — the one piece of expendable local state
+// that meaningfully cuts cold-start traffic.
 func runGateway(cfg *config.Config) {
 	refsClient := storage.NewRefsClient(cfg.RefsAddr)
 	meta := &storage.RemoteMeta{Refs: refsClient}
 	backend := storage.NewScatteredStore(refsClient, cfg.DefaultR, cfg.WriteAcks)
+	if cfg.Cache.PackDir != "" {
+		cache, err := storage.NewDiskPackCache(cfg.Cache.PackDir, int64(cfg.Cache.PackMaxMB)<<20)
+		if err != nil {
+			log.Fatalf("pack cache: %v", err)
+		}
+		backend.DiskCache = cache
+		entries, bytes := cache.Stats()
+		log.Printf("gateway: pack cache %s (%d entries, %.1f MiB)", cfg.Cache.PackDir, entries, float64(bytes)/(1<<20))
+	}
 	objects := storage.NewObjectServiceWithBackend(meta, backend, model.SHA1)
 
 	if cfg.InitRepo != "" {

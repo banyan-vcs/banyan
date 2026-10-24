@@ -182,10 +182,10 @@ func (s *Server) lsRefsV2(out *bufWriter, r *http.Request, vr VirtualRepo, args 
 // v2FetchArgs is one parsed command=fetch request.
 type v2FetchArgs struct {
 	wants, haves, clientShallow []model.OID
-	depth     int
-	done      bool
-	ofsDelta  bool // client accepted OFS_DELTA (base v2 arg, not advertised)
-	filter    *FilterSpec
+	depth                       int
+	done                        bool
+	ofsDelta                    bool // client accepted OFS_DELTA (base v2 arg, not advertised)
+	filter                      *FilterSpec
 }
 
 func parseFetchV2(args []string) (*v2FetchArgs, error) {

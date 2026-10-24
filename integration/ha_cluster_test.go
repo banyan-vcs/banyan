@@ -45,6 +45,10 @@ type haCluster struct {
 	beats    map[string]context.CancelFunc // nodeID → heartbeat loop cancel
 	GW       *httptest.Server
 	cancel   context.CancelFunc
+
+	// Per-node internal request counters (T36: gateway disk-cache effect).
+	packGets atomic.Int32 // GET /internal/pack
+	objGets  atomic.Int32 // GET /internal/object
 }
 
 var haNodeSeq atomic.Int32
@@ -135,7 +139,18 @@ func (c *haCluster) startStorageNode(ctx context.Context) {
 	node := storenode.New(id, c.t.TempDir(), c.RefsURL, ln.Addr().String())
 	mux := http.NewServeMux()
 	node.Register(mux)
-	ts := &httptest.Server{Listener: ln, Config: &http.Server{Handler: mux}}
+	counting := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			switch r.URL.Path {
+			case "/internal/pack":
+				c.packGets.Add(1)
+			case "/internal/object":
+				c.objGets.Add(1)
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
+	ts := &httptest.Server{Listener: ln, Config: &http.Server{Handler: counting}}
 	ts.Start()
 	// The node's test lifetime is the HTTP server AND its heartbeat loop —
 	// killNode cancels both (a real deployment loses the whole process).
@@ -143,6 +158,29 @@ func (c *haCluster) startStorageNode(ctx context.Context) {
 	go node.HeartbeatLoop(nctx, 100*time.Millisecond)
 	c.Storage[id] = ts
 	c.beats[id] = ncancel
+}
+
+// restartGateway replaces the gateway process state (fresh ObjectService,
+// cold memory) — optionally carrying the on-disk pack cache across (T36:
+// the cache is the only state a gateway is allowed to keep, docs/12 P2-1).
+func (c *haCluster) restartGateway(cacheDir string) {
+	c.t.Helper()
+	if c.GW != nil {
+		c.GW.Close()
+	}
+	refsClient := storage.NewRefsClient(c.RefsURL)
+	rmeta := &storage.RemoteMeta{Refs: refsClient}
+	backend := storage.NewScatteredStore(refsClient, 3, "quorum")
+	if cacheDir != "" {
+		cache, err := storage.NewDiskPackCache(cacheDir, 1<<30)
+		require.NoError(c.t, err)
+		backend.DiskCache = cache
+	}
+	objects := storage.NewObjectServiceWithBackend(rmeta, backend, model.SHA1)
+	gmux := http.NewServeMux()
+	gitwire.NewServer(rmeta, objects, model.SHA1).Register(gmux)
+	rpc.NewServer(rmeta, objects, model.SHA1).Register(gmux)
+	c.GW = httptest.NewServer(gmux)
 }
 
 func (c *haCluster) shutdown() {
@@ -396,4 +434,47 @@ func dedup(in []string) []string {
 		}
 	}
 	return out
+}
+
+// --- T36 gateway disk pack cache (docs/12 P2-1, B6) ---
+// The gateway is stateless except for its caches — all memory. A restarted
+// gateway's first clone re-paid every pack transfer and (post-B2) every
+// object read as per-object RPCs. With cache.pack_dir, whole packs persist
+// on disk: after one warm-up clone, a full gateway restart serves the next
+// clone entirely from local state — the node request counters freeze.
+func TestHAGatewayDiskCache(t *testing.T) {
+	needGit(t)
+	c := startHACluster(t, 3)
+	s := c.asServer()
+	src := seedRepo(t, s, "t36")
+	git(t, src, "push", "-q", c.gwURL()+"/r/t36.git", "main")
+
+	// Warm-up: a clone through a cache-less gateway pulls pack(s) and object
+	// reads from the nodes (whatever the counters reach, they are non-zero).
+	fresh1 := cloneRepo(t, s, s.repoURL("t36"))
+	fsckClean(t, fresh1)
+	packAfterWarm := c.packGets.Load()
+	objAfterWarm := c.objGets.Load()
+	require.Greater(t, packAfterWarm+objAfterWarm, int32(0), "预热克隆应有节点请求")
+
+	// First restart WITH the cache: the clone fills it (pack transfer lands
+	// on disk; object reads may still cross).
+	cacheDir := filepath.Join(t.TempDir(), "gw-cache")
+	c.restartGateway(cacheDir)
+	fresh2 := cloneRepo(t, s, c.gwURL()+"/r/t36.git")
+	fsckClean(t, fresh2)
+	require.True(t, hasCommit(t, fresh2, headOf(t, src)))
+	packAfterFill := c.packGets.Load()
+	objAfterFill := c.objGets.Load()
+
+	// Second restart on the SAME cache directory: the clone must be served
+	// without a single node request — object reads come from the cheap
+	// whole-pack path (disk cache → decode → memoize), the response pack
+	// from the cache.
+	c.restartGateway(cacheDir)
+	fresh3 := cloneRepo(t, s, c.gwURL()+"/r/t36.git")
+	fsckClean(t, fresh3)
+	require.True(t, hasCommit(t, fresh3, headOf(t, src)))
+	assert.Equal(t, packAfterFill, c.packGets.Load(), "缓存命中后不应再有整包节点请求")
+	assert.Equal(t, objAfterFill, c.objGets.Load(), "缓存命中后不应再有单对象节点请求")
 }

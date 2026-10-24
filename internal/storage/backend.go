@@ -22,6 +22,13 @@ type ShardBackend interface {
 	// GetPack reads one pack, trying the given holders in order (docs/11 §3:
 	// any holder may serve — the OID trailer checksum proves integrity).
 	GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error)
+	// CheapPack reports whole-pack bytes available WITHOUT a network round
+	// trip — a gateway disk-cache hit (docs/12 P2-1). Object reads prefer
+	// this path: one decode memoizes the whole pack in memory, so a
+	// restarted gateway's first clone stops paying per-object RPCs for
+	// every pack it already holds on disk. (nil, false) keeps the
+	// single-object path.
+	CheapPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, bool)
 	// GetObject extracts one object from a pack (docs/12 P1-1): the holder
 	// resolves it via its local idx without transferring or decoding the
 	// whole pack — the wire carries one object, not megabytes. Errors fall
@@ -47,6 +54,14 @@ func (b *LocalBackend) PutPack(_ context.Context, repo string, packOID model.OID
 
 func (b *LocalBackend) GetPack(_ context.Context, repo string, packOID model.OID, _ []string) ([]byte, error) {
 	return b.Local.GetPackBytes(repo, packOID)
+}
+
+// CheapPack is false for the local backend: packs live on this machine, but
+// the single-object idx extraction (B2) is already network-free and cheaper
+// for sparse reads — only a gateway benefits from steering into whole-pack
+// decode + memoize.
+func (b *LocalBackend) CheapPack(_ context.Context, _ string, _ model.OID, _ []string) ([]byte, bool) {
+	return nil, false
 }
 
 func (b *LocalBackend) GetObject(_ context.Context, repo string, packOID, oid model.OID, _ []string, algo model.HashAlgo) (model.ObjectType, []byte, error) {

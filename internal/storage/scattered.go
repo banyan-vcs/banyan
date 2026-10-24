@@ -133,9 +133,14 @@ func (n *NodeClient) GetObject(ctx context.Context, repo string, packOID, oid mo
 // writes, and reads from any holder. Registration is the fact: PutPack
 // returns exactly the confirmed holder set for the caller to register.
 type ScatteredStore struct {
-	Refs       *RefsClient
-	DefaultR   int    // cluster default replica target
-	WriteAcks  string // "quorum" (default) | "all" | "one"
+	Refs      *RefsClient
+	DefaultR  int    // cluster default replica target
+	WriteAcks string // "quorum" (default) | "all" | "one"
+	// DiskCache persists whole packs on gateway disk (docs/12 P2-1): a
+	// restart serves its first clones from disk instead of re-transferring
+	// from storage nodes. Optional — nil disables.
+	DiskCache *DiskPackCache
+
 	healthyTTL time.Duration
 	healthyMu  sync.Mutex
 	healthy    []NodeInfo
@@ -259,6 +264,13 @@ func (s *ScatteredStore) PutPack(ctx context.Context, repo string, packOID model
 }
 
 func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error) {
+	// Disk cache first (docs/12 P2-1): content-addressed by pack OID, so a
+	// hit is the pack and no node round trip is needed.
+	if s.DiskCache != nil {
+		if raw, ok := s.DiskCache.Get(repo, packOID); ok {
+			return raw, nil
+		}
+	}
 	// Resolve holder IDs to addresses through the health view (dead holders
 	// may still be listed; their GET failing just falls through to the next).
 	byID := map[string]string{}
@@ -273,6 +285,9 @@ func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model
 		}
 		raw, err := s.client(addr).GetPack(ctx, repo, packOID)
 		if err == nil {
+			if s.DiskCache != nil {
+				_ = s.DiskCache.Put(repo, packOID, raw) // best-effort
+			}
 			return raw, nil
 		}
 		lastErr = err
@@ -281,6 +296,14 @@ func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model
 		return nil, lastErr
 	}
 	return nil, errNoHolder(packOID, holders)
+}
+
+// CheapPack: a disk-cache hit IS the pack (content-addressed, docs/12 P2-1).
+func (s *ScatteredStore) CheapPack(_ context.Context, repo string, packOID model.OID, _ []string) ([]byte, bool) {
+	if s.DiskCache == nil {
+		return nil, false
+	}
+	return s.DiskCache.Get(repo, packOID)
 }
 
 // GetObject single-object extraction with holder fallback (docs/12 P1-1):

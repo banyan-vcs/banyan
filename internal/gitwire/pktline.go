@@ -18,20 +18,20 @@ import (
 //	0002                    response-end (v2)
 
 const (
-	pktFlush  = 0
-	pktDelim  = 1
+	pktFlush   = 0
+	pktDelim   = 1
 	pktRespEnd = 2
-	maxPktLen = 65520
+	maxPktLen  = 65520
 )
 
 // PktKind classifies one pkt-line.
 type PktKind int
 
 const (
-	PktData PktKind = iota // data pkt (payload follows)
-	PktFlush               // flush-pkt 0000
-	PktDelim               // delim-pkt 0001 (v2 section separator)
-	PktRespEnd             // response-end 0002 (v2, stateful transports)
+	PktData    PktKind = iota // data pkt (payload follows)
+	PktFlush                  // flush-pkt 0000
+	PktDelim                  // delim-pkt 0001 (v2 section separator)
+	PktRespEnd                // response-end 0002 (v2, stateful transports)
 )
 
 // WritePacket writes one data pkt.

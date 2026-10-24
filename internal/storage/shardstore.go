@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"container/list"
 	"context"
-	"sort"
-	"strings"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/model"
@@ -67,7 +67,18 @@ type ObjectService struct {
 	respBytes  int64
 	respHits   int
 	respStores int
+
+	// Read-amplification watch (docs/12 P2-1): consecutive single-object
+	// reads of one pack (a cold gateway's closure walk) switch to ONE
+	// whole-pack fetch after packReadAmplify of them — memoized for the
+	// rest of the walk and persisted to the gateway disk cache.
+	readMu  sync.Mutex
+	readAmp map[string]int // "<repo>/<packOID>" → single-object reads so far
 }
+
+// packReadAmplify is the single-object-read threshold that flips a pack to
+// the whole-pack path.
+const packReadAmplify = 8
 
 // responsePackCacheMax bounds the clone-shaped response cache.
 const responsePackCacheMax = 128 << 20
@@ -119,6 +130,7 @@ func newObjectService(meta MetaStore, local *LocalShardStore, backend ShardBacke
 		batchBuf:  map[string]map[model.OID]synthObject{},
 		respCache: map[closureKey]*list.Element{},
 		respLRU:   list.New(),
+		readAmp:   map[string]int{},
 	}
 }
 
@@ -361,10 +373,17 @@ func (s *ObjectService) locPut(repo string, oid model.OID, loc ObjectLocation) {
 
 func (s *ObjectService) locInvalidate(repo string) {
 	s.locMu.Lock()
-	defer s.locMu.Unlock()
 	delete(s.loc, repo)
 	delete(s.locElem, repo)
 	delete(s.locLRU, repo)
+	s.locMu.Unlock()
+	s.readMu.Lock()
+	for k := range s.readAmp {
+		if r, _, ok := strings.Cut(k, "/"); ok && r == repo {
+			delete(s.readAmp, k)
+		}
+	}
+	s.readMu.Unlock()
 }
 
 // locate resolves one object's placement, LRU-first (docs/12 P0-1).
@@ -492,8 +511,10 @@ func objectFromDecoded(dp *DecodedPack, oid model.OID) (model.ObjectType, []byte
 }
 
 // objectFromPack reads one object out of its located pack: decoded-cache
-// fast path, single-object extraction (docs/12 P1-1), then whole-pack fetch
-// + decode as the fallback (idx-less packs, old nodes, extraction errors).
+// fast path, then the cheap whole-pack path (a gateway disk-cache hit — one
+// decode memoizes the pack, docs/12 P2-1), then single-object extraction
+// (docs/12 P1-1), then the whole-pack network fetch + decode as the final
+// fallback (idx-less packs, old nodes, extraction errors).
 func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid model.OID, loc ObjectLocation) (model.ObjectType, []byte, error) {
 	s.mu.Lock()
 	dp := s.cache[repo][loc.PackOID]
@@ -502,9 +523,19 @@ func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid mod
 		return objectFromDecoded(dp, oid)
 	}
 	holders := s.packHolders(ctx, repo, loc.PackOID, loc.NodeID)
-	if t, data, err := s.Backend.GetObject(ctx, repo, loc.PackOID, oid, holders, s.Algo); err == nil {
-		return t, data, nil
+	if raw, ok := s.Backend.CheapPack(ctx, repo, loc.PackOID, holders); ok {
+		if decoded, derr := DecodePack(raw); derr == nil {
+			s.memoizeDecoded(repo, loc.PackOID, decoded)
+			return objectFromDecoded(decoded, oid)
+		}
 	}
+	if !s.ampRead(repo, loc.PackOID) {
+		if t, data, err := s.Backend.GetObject(ctx, repo, loc.PackOID, oid, holders, s.Algo); err == nil {
+			return t, data, nil
+		}
+	}
+	// Amplified (a closure walk) or single-object failed: one whole-pack
+	// fetch memoizes everything and lands in the gateway disk cache.
 	raw, err := s.Backend.GetPack(ctx, repo, loc.PackOID, holders)
 	if err != nil {
 		return "", nil, err
@@ -513,17 +544,31 @@ func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid mod
 	if err != nil {
 		return "", nil, fmt.Errorf("%w: pack %s: %v", model.ErrObjectNotFound, loc.PackOID, err)
 	}
+	s.memoizeDecoded(repo, loc.PackOID, dp)
+	return objectFromDecoded(dp, oid)
+}
+
+// ampRead records one single-object read of a pack and reports whether the
+// whole-pack path should take over.
+func (s *ObjectService) ampRead(repo string, packOID model.OID) bool {
+	key := repo + "/" + string(packOID)
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	s.readAmp[key]++
+	return s.readAmp[key] >= packReadAmplify
+}
+
+func (s *ObjectService) memoizeDecoded(repo string, packOID model.OID, dp *DecodedPack) {
 	s.mu.Lock()
 	if s.cache[repo] == nil {
 		s.cache[repo] = map[model.OID]*DecodedPack{}
 	}
-	s.cache[repo][loc.PackOID] = dp
+	s.cache[repo][packOID] = dp
 	if s.packOrder[repo] == nil {
 		s.packOrder[repo] = map[model.OID][]model.OID{}
 	}
-	s.packOrder[repo][loc.PackOID] = dp.Order
+	s.packOrder[repo][packOID] = dp.Order
 	s.mu.Unlock()
-	return objectFromDecoded(dp, oid)
 }
 
 // IngestPack handles one pushed pack (docs/02 §4 write path, docs/11 §5):

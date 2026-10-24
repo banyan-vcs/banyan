@@ -51,3 +51,11 @@ meta: "mem"
 
 # storage 角色心跳间隔
 # heartbeat_sec: 3
+
+# --- 网关磁盘 pack 缓存（docs/12 P2-1；仅 gateway 角色生效） ---
+
+# 开启后，网关从存储节点拉取的整包会落盘缓存：网关重启后的首个克隆
+# 直接命中本地盘，不再跨节点重传（内容寻址，LRU 按总字节淘汰）
+# cache:
+#   pack_dir: "/var/lib/banyan/gateway-cache"
+#   pack_max_mb: 1024
