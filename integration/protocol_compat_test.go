@@ -50,31 +50,42 @@ func TestProtocolVersionMatrix(t *testing.T) {
 	fsckClean(t, sub)
 }
 
-// --- T14 partial clone: filter capability not advertised → client warns and falls back to full clone ---
-// Behavior contract (git 2.50): stderr contains "filtering not recognized by
-// server, ignoring"; the clone succeeds with an object set identical to a full
-// clone; git still records remote.origin.promisor (harmless — all objects
-// present) and later fetches keep sending a filter line (uploadpack ignores
-// filter lines explicitly), without breakage.
-func TestPartialCloneFilterFallback(t *testing.T) {
+// --- T14 partial clone: filter advertised and honored (docs/03 §4) ---
+// blob:none: the clone pack carries commits+trees only; the first working-tree
+// materialization lazy-fetches the missing blobs (promisor semantics — a lazy
+// fetch is a plain want of the missing OID, and wants are exempt from the
+// filter and from have-exclusion); later fetches keep sending a filter line,
+// which the serve path parses and honors every round. tree:0: commits only.
+func TestPartialCloneFilter(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	seedRepo(t, s, "t14")
 	full := cloneRepo(t, s, s.repoURL("t14"))
 	wantObjects := countInPack(t, full)
 
-	for _, filter := range []string{"blob:none", "tree:0"} {
-		dst := t.TempDir()
-		out, _ := gitTry("", "clone", "--filter="+filter, s.repoURL("t14"), dst)
-		require.Contains(t, out, "filtering not recognized by server, ignoring",
-			"filter=%s 应回退并警告", filter)
-		assert.Equal(t, wantObjects, countInPack(t, dst), "filter=%s 回退后对象不完整", filter)
-		assert.Equal(t, "readme-v1\n", readFile(t, filepath.Join(dst, "README.md")), "filter=%s 工作树内容", filter)
-		fsckClean(t, dst)
-		// Later fetches under promisor config (requests carry a filter line) stay intact.
-		git(t, dst, "fetch", "-q", "origin")
-	}
-}
+	// blob:none, no checkout: the initial pack stays blob-free.
+	dst := t.TempDir()
+	out, _ := gitTry("", "clone", "-q", "--no-checkout", "--filter=blob:none", s.repoURL("t14"), dst)
+	require.NotContains(t, out, "filtering not recognized by server", "filter 能力应已广告并被接受")
+	assert.Less(t, countInPack(t, dst), wantObjects, "blob:none 初始对象数应少于全量克隆")
+	// Working-tree materialization lazy-fetches the blobs on demand.
+	git(t, dst, "checkout", "main")
+	assert.Equal(t, "readme-v1\n", readFile(t, filepath.Join(dst, "README.md")), "惰性取回后的工作树内容")
+	fsckClean(t, dst)
+	// Later fetches under promisor config (requests carry a filter line) stay intact.
+	git(t, dst, "fetch", "-q", "origin")
+	assert.GreaterOrEqual(t, countInPack(t, dst), wantObjects, "惰性取回后应补齐 blob 对象")
+
+	// tree:0: commits only.
+	dst2 := t.TempDir()
+	gitTry("", "clone", "-q", "--no-checkout", "--filter=tree:0", s.repoURL("t14"), dst2)
+	assert.Less(t, countInPack(t, dst2), wantObjects, "tree:0 对象数应少于全量克隆")
+	git(t, dst2, "fetch", "-q", "origin")
+
+	// An unsupported filter is answered with ERR, mirroring upload-pack.c.
+	dst3 := t.TempDir()
+	out, _ = gitTry("", "clone", "-q", "--filter=blob:limit=1k", s.repoURL("t14"), dst3)
+	require.Contains(t, out, "unsupported spec", "不支持的 filter 应以 ERR 拒绝")}
 
 // --- T15 shallow clone (--depth): server-side shallowing (upload-pack deepen protocol) ---
 // Reference-traffic parity (git 2.50 http-backend, docs/03 §9): every response

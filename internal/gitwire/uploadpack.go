@@ -43,6 +43,8 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	var wants []model.OID
 	var haves []model.OID
 	var clientShallow []model.OID // client's current shallow boundary (reported by deepen/unshallow requests)
+	var filter *FilterSpec        // active partial-clone filter (blob:none / tree:0, docs/03 §4)
+	clientOfsDelta := false       // client accepted OFS_DELTA (v1 want-line capability)
 	depth := 0                    // deepen N; 0 = no deepen
 	done := false
 	// Stateless HTTP negotiation (mirrors remote-curl.c / upload-pack.c get_common_commits):
@@ -88,6 +90,11 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 				return
 			}
 			wants = append(wants, model.OID(strings.SplitN(fields[0], "\x00", 2)[0]))
+			// Capabilities trail the first want (gitprotocol-pack); OFS_DELTA
+			// packs may only go to clients that asked for it.
+			if strings.Contains(line, " ofs-delta") {
+				clientOfsDelta = true
+			}
 		case strings.HasPrefix(line, "have "):
 			haves = append(haves, model.OID(strings.TrimPrefix(line, "have ")))
 		case strings.HasPrefix(line, "shallow "):
@@ -97,7 +104,20 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 				depth = n // ultra-deep values like 2147483647 (--unshallow) naturally cover full history
 			}
 		case strings.HasPrefix(line, "filter "):
-			// The filter capability is not advertised, so a well-behaved client never sends it; ignore just in case.
+			spec := strings.TrimSpace(strings.TrimPrefix(line, "filter "))
+			fs, ferr := ParseFilterSpec(spec)
+			if ferr != nil || !fs.ServeSupported() {
+				// Mirrors upload-pack.c: an unsupported filter is answered with
+				// an ERR pkt the client surfaces as "remote error: ...".
+				why := ferr
+				if why == nil {
+					why = fmt.Errorf("unsupported filter %q", spec)
+				}
+				_ = WritePacket(out, []byte("ERR filter: "+why.Error()+"\n"))
+				_ = out.Flush()
+				return
+			}
+			filter = fs
 		case line == "done":
 			done = true
 		}
@@ -123,8 +143,18 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		return
 	}
 
+	// allow-reachable-sha1-in-want (advertised): wants that are not themselves
+	// advertised refs must be reachable from the advertised tips — partial-clone
+	// lazy fetches name missing blobs/trees by OID and rely on exactly this
+	// (upload-pack.c "not our ref" is the rejection git clients expect).
+	if bad := s.unadvertisedWant(r.Context(), vr, wants); !bad.IsZero() {
+		_ = WritePacket(out, []byte("ERR upload-pack: not our ref "+string(bad)+"\n"))
+		_ = out.Flush()
+		return
+	}
+
 	closureStart := time.Now()
-	blobs, trees, commits, tags, excluded, err := s.closure(r.Context(), vr, wants, depth, clientShallow, haves)
+	blobs, trees, commits, tags, excluded, err := s.closure(r.Context(), vr, wants, depth, clientShallow, haves, filter)
 	closureDur := time.Since(closureStart)
 	if err != nil {
 		log.Printf("upload-pack %s%s: closure: %v", vr.Repo, vr.Sub, err)
@@ -157,14 +187,46 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		}
 	}
 	if served == "encode" {
-		if err := storage.EncodePack(out, blobs, trees, commits, tags); err != nil {
+		if err := serveObjectPack(out, blobs, trees, commits, tags, clientOfsDelta); err != nil {
 			log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
 		}
 	}
 	_ = out.Flush()
-	log.Printf("upload-pack %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, closure %s, serve %s/%s)",
-		vr.Repo, vr.Sub, len(wants), len(commits), len(trees), len(blobs), excluded,
+	log.Printf("upload-pack %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, filter %s, closure %s, serve %s/%s)",
+		vr.Repo, vr.Sub, len(wants), len(commits), len(trees), len(blobs), excluded, filterSpecName(filter),
 		closureDur.Round(time.Millisecond), served, time.Since(encodeStart).Round(time.Millisecond))
+}
+
+// serveDeltaMinBytes is the raw-payload threshold at which the online serve
+// path switches from delta-free to delta encoding (docs/12 P1-4/B5): below
+// it the pack-objects window cost buys almost nothing, above it similar
+// blobs/trees compress 2-5×.
+const serveDeltaMinBytes = 64 << 10
+
+// serveObjectPack writes the response pack: delta-free below the threshold,
+// OFS_DELTA above it when the client accepted ofs-delta (v1 advertisement /
+// v2 arg), REF_DELTA otherwise.
+func serveObjectPack(w io.Writer, blobs, trees, commits, tags map[model.OID][]byte, ofsDelta bool) error {
+	total := 0
+	for _, m := range []map[model.OID][]byte{blobs, trees, commits, tags} {
+		for _, b := range m {
+			total += len(b)
+		}
+	}
+	if total < serveDeltaMinBytes {
+		return storage.EncodePack(w, blobs, trees, commits, tags)
+	}
+	if ofsDelta {
+		return storage.EncodePackDelta(w, blobs, trees, commits, tags)
+	}
+	return storage.EncodePackDeltaRef(w, blobs, trees, commits, tags)
+}
+
+func filterSpecName(f *FilterSpec) string {
+	if f == nil {
+		return "off"
+	}
+	return f.Spec()
 }
 
 // writeShallowSection writes the shallow section at the start of the response (deepen requests only):
@@ -250,6 +312,11 @@ func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included
 // shallow boundary (plain fetch from a shallow clone) the client boundary is the prune point — matching the
 // reference server's have-subtracted pack shape (objects below the graft layer stay out of the pack).
 //
+// Partial-clone filtering (docs/03 §4): blob:none drops blobs, tree:0 drops
+// trees and blobs; dropped trees are not expanded (their contents cannot
+// survive anyway). Explicit wants are exempt — lazy-fetch requests name the
+// missing object directly and must receive it.
+//
 // Have subtraction (git upload-pack.c mark-uninteresting semantics, docs/09 §3):
 // the client's haves bound the set of objects it provably already has (a git
 // repo holding commit X holds X's full closure); every object reachable from
@@ -261,15 +328,17 @@ func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included
 // something it also has must still receive it). Server cost: one extra
 // traversal of the have side per fetch — the same trade git makes without
 // reachability bitmaps (docs/09 §3.3).
-func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID, depth int, clientShallow, haves []model.OID) (
+func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID, depth int, clientShallow, haves []model.OID, filter *FilterSpec) (
 	blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, tags map[model.OID][]byte, excludedObjects int, err error) {
 	blobs = map[model.OID][]byte{}
 	trees = map[model.OID][]byte{}
 	commits = map[model.OID][]byte{}
 	tags = map[model.OID][]byte{}
 	exclude := s.haveClosure(ctx, vr.Repo, haves, clientShallow)
+	wantSet := map[model.OID]bool{}
 	for _, w := range wants {
 		delete(exclude, w)
+		wantSet[w] = true
 	}
 	visited := map[model.OID]bool{}
 	referrer := map[model.OID]model.OID{} // debugging: oid ← who enqueued it
@@ -336,6 +405,9 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 				}
 			}
 		case model.TreeType:
+			if filterDrop(filter, wantSet, oid, model.TreeType) {
+				continue // tree:0 — trees are dropped unexpanded
+			}
 			trees[oid] = raw
 			// Go through the tree-entry index: path/child expansion no longer re-parses tree bytes.
 			entries, err := s.Objects.TreeEntries(vr.Repo, oid)
@@ -346,6 +418,9 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 				enq(e.Target)
 			}
 		case model.BlobType:
+			if filterDrop(filter, wantSet, oid, model.BlobType) {
+				continue // blob:none — omitted objects are the promisor's to lazy-fetch
+			}
 			blobs[oid] = raw
 		case model.TagType:
 			// Annotated tag: serve the tag object and walk into its target
@@ -435,6 +510,43 @@ func (s *Server) firstKnown(ctx context.Context, repo string, haves []model.OID)
 	for _, oid := range haves {
 		if _, _, err := s.Objects.Raw(ctx, repo, oid); err == nil {
 			return oid
+		}
+	}
+	return ""
+}
+
+// unadvertisedWant validates wants against the advertised refs (the
+// allow-reachable-sha1-in-want contract): an oid that is neither an
+// advertised ref tip nor reachable from one is rejected. Reachability is the
+// full closure walk from the tips — the same trade git's upload-pack makes
+// without reachability bitmaps.
+func (s *Server) unadvertisedWant(ctx context.Context, vr VirtualRepo, wants []model.OID) model.OID {
+	refs, err := s.ResolveRefs(ctx, vr)
+	if err != nil {
+		return "" // cannot advertise → cannot judge; the closure will fail anyway
+	}
+	advertised := map[model.OID]bool{}
+	var tips []model.OID
+	for _, ref := range refs {
+		advertised[ref.OID] = true
+		tips = append(tips, ref.OID)
+		if peeled := s.peelToCommit(vr.Repo, ref.OID); !peeled.IsZero() && peeled != ref.OID {
+			tips = append(tips, peeled) // annotated tag: its target is reachable
+		}
+	}
+	var unknown []model.OID
+	for _, w := range wants {
+		if !advertised[w] {
+			unknown = append(unknown, w)
+		}
+	}
+	if len(unknown) == 0 {
+		return ""
+	}
+	reachable := s.haveClosure(ctx, vr.Repo, tips, nil)
+	for _, w := range unknown {
+		if !reachable[w] {
+			return w
 		}
 	}
 	return ""

@@ -71,37 +71,28 @@ func (f *FilterSpec) Spec() string {
 	}
 }
 
-// ApplyFilter applies filtering to the object closure of a (virtual) repo.
-// TODO(M1): wire in at the upload-pack closure computation:
-//   - blob:none / tree:0 / sparse:oid per git list-objects-filter semantics;
-//   - subtree:<path>: prune tree traversal by path prefix (only blobs/trees inside the subtree
-//   - all commits), paired with banyan fetch-objects fetching missing ones by OID afterwards.
-func ApplyFilter(objects []ObjectEntry, f *FilterSpec) []ObjectEntry {
-	if f == nil || f.Kind == FilterNone {
-		return objects
-	}
-	out := make([]ObjectEntry, 0, len(objects))
-	for _, o := range objects {
-		switch f.Kind {
-		case FilterBlobNone:
-			if o.Type != model.BlobType {
-				out = append(out, o)
-			}
-		case FilterTreeZero:
-			if o.Type == model.CommitType {
-				out = append(out, o)
-			}
-		default:
-			// TODO(M1): path-level filtering for sparse/subtree.
-			out = append(out, o)
-		}
-	}
-	return out
+// ServeSupported reports whether the serve path implements the spec
+// (docs/03 §4): blob:none and tree:0 follow git list-objects-filter
+// semantics; sparse:oid and the banyan subtree: extension are not served on
+// the wire and are rejected at request parsing.
+func (f *FilterSpec) ServeSupported() bool {
+	return f != nil && (f.Kind == FilterBlobNone || f.Kind == FilterTreeZero)
 }
 
-// ObjectEntry is one object entry of closure computation (M1: produced by projection + traversal).
-type ObjectEntry struct {
-	OID  model.OID
-	Type model.ObjectType
-	Path string
+// filterDrop reports whether the active partial-clone filter omits one
+// object of the fetch closure. Explicitly wanted objects always travel —
+// git semantics: a want exempts from filtering, which is exactly what
+// lazy-fetch requests rely on (they name the missing blob/tree directly).
+func filterDrop(f *FilterSpec, wants map[model.OID]bool, oid model.OID, t model.ObjectType) bool {
+	if f == nil || wants[oid] {
+		return false
+	}
+	switch f.Kind {
+	case FilterBlobNone:
+		return t == model.BlobType
+	case FilterTreeZero:
+		return t == model.BlobType || t == model.TreeType
+	default:
+		return false
+	}
 }

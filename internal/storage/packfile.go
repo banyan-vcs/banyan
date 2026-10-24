@@ -228,19 +228,37 @@ func scanOffsets(raw []byte) ([]int64, error) {
 }
 
 // EncodePack synthesizes a delta-free response pack from an object set
-// (docs/03 §3 step 5: correctness first; deltification is repack's job).
+// (docs/03 §3 step 5: small fetches stay delta-free — below the serve
+// threshold the encoder cost buys nothing).
 func EncodePack(w io.Writer, blobs, trees, commits, tags map[model.OID][]byte) error {
-	return encodePack(w, blobs, trees, commits, tags, false)
+	return encodePackOpts(w, blobs, trees, commits, tags, 0, false)
 }
 
-// EncodePackDelta synthesizes a delta-encoded pack (git pack-objects window
-// heuristics are the encoder library's; docs/09 §3.2: repack merges
-// fragments with deltification, the serve path stays delta-free).
+// packWindow is git's default pack window: how many previously sorted
+// objects each candidate is compared against for delta compression.
+const packWindow = 10
+
+// EncodePackDelta synthesizes a delta-encoded pack with OFS_DELTA entries
+// (git pack-objects window heuristics are the encoder library's; docs/09
+// §3.2: repack merges fragments with deltification, the serve path deltas
+// past a size threshold — docs/12 P1-4).
+//
+// Encoder subtlety (found while implementing P1-4): NewEncoder's third
+// parameter is useRefDeltas, NOT a delta switch — delta compression itself
+// is governed by the Encode window, and a window of 0 disables it entirely.
+// The previous call passed the delta flag as useRefDeltas with window 0, so
+// it silently produced non-delta packs while claiming otherwise.
 func EncodePackDelta(w io.Writer, blobs, trees, commits, tags map[model.OID][]byte) error {
-	return encodePack(w, blobs, trees, commits, tags, true)
+	return encodePackOpts(w, blobs, trees, commits, tags, packWindow, false)
 }
 
-func encodePack(w io.Writer, blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, tags map[model.OID][]byte, delta bool) error {
+// EncodePackDeltaRef is EncodePackDelta with REF_DELTA entries instead of
+// OFS_DELTA, for v2 fetch clients that did not send the ofs-delta arg.
+func EncodePackDeltaRef(w io.Writer, blobs, trees, commits, tags map[model.OID][]byte) error {
+	return encodePackOpts(w, blobs, trees, commits, tags, packWindow, true)
+}
+
+func encodePackOpts(w io.Writer, blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, tags map[model.OID][]byte, window uint, useRefDeltas bool) error {
 	st := newMemStorer()
 	want := make([]plumbing.Hash, 0, len(blobs)+len(trees)+len(commits)+len(tags))
 	for oid, content := range blobs {
@@ -271,11 +289,34 @@ func encodePack(w io.Writer, blobs map[model.OID][]byte, trees map[model.OID][]b
 		}
 		want = append(want, h)
 	}
-	enc := packfile.NewEncoder(w, st, delta)
-	if _, err := enc.Encode(want, 0); err != nil {
+	enc := packfile.NewEncoder(w, st, useRefDeltas)
+	if _, err := enc.Encode(want, window); err != nil {
 		return fmt.Errorf("encode pack: %w", err)
 	}
 	return nil
+}
+
+// ScanObjectTypes lists the on-wire entry types of a pack in pack order
+// (serve-path observability and tests: the presence of ofs-delta entries
+// proves the online encoder deltified).
+func ScanObjectTypes(raw []byte) ([]model.ObjectType, error) {
+	sc := packfile.NewScanner(bytes.NewReader(raw))
+	_, count, err := sc.Header()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.ObjectType, 0, count)
+	for i := uint32(0); i < count; i++ {
+		h, err := sc.NextObjectHeader()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, model.ObjectType(h.Type.String()))
+		if _, _, err := sc.NextObject(io.Discard); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func putObject(st *memStorer, t plumbing.ObjectType, oid model.OID, content []byte) (plumbing.Hash, error) {

@@ -171,8 +171,9 @@ func (s *Server) defaultBranch(ctx context.Context, repo string) string {
 }
 
 // capabilities returns the capability advertisement string (docs/03 §2 capability table).
-// The MVP advertises only fully implemented capabilities: no side-band-64k (response is a bare pack),
-// no filter (enable after M3 implements server-side filtering), no no-done.
+// Only fully implemented capabilities are advertised: no side-band-64k (response is a bare
+// pack), no no-done, no multi_ack (a single terminal ACK suffices), no thin-pack
+// (deltas only ever reference in-pack bases).
 func (s *Server) capabilities(service, defaultBranch string) string {
 	agent := "agent=banyan/0.1"
 	objFmt := "object-format=sha1"
@@ -182,7 +183,13 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 	if service == "git-upload-pack" {
 		return strings.Join([]string{
 			"symref=HEAD:refs/heads/" + defaultBranch,
-			"shallow", // deepen N / --unshallow (v0 core shallowing; deepen-since/not not advertised)
+			"shallow",   // deepen N / --unshallow (v0 core shallowing; deepen-since/not not advertised)
+			"filter",    // partial clone: blob:none / tree:0 served (docs/03 §4); unsupported specs answered with ERR
+			"ofs-delta", // serve-path delta packs use OFS_DELTA (docs/12 P1-4); REF_DELTA otherwise
+			// Unadvertised wants (partial-clone lazy fetches name missing blobs by
+			// OID) pass a reachability check from the advertised tips — the exact
+			// semantic this capability promises (protocol-capabilities.txt).
+			"allow-reachable-sha1-in-want",
 			agent, objFmt,
 		}, " ")
 	}

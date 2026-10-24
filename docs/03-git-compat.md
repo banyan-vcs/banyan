@@ -32,7 +32,9 @@ POST {base}/r/{repo}/git-receive-pack                       # push 数据
 | `report-status` / `report-status-v2` | push | ref 更新结果回执 |
 | `delete-refs` | push | 允许 ref 删除命令（实测必需：未广告时 git 静默丢弃删除） |
 | `shallow` | fetch | deepen N / 加深 / unshallow（§3a；deepen-since/not 未实现不广告） |
-| `filter` | fetch | 代码就绪（`gitwire/filter.go`）但**未广告未接线**（M3 开启）；当前客户端走全量回退（§9） |
+| `filter` | fetch | **已广告已接线**（§4）：`blob:none` / `tree:0`；不支持的 spec 以 ERR 拒绝（对照 upload-pack.c） |
+| `ofs-delta` | fetch | serve 路径 delta 包（docs/12 P1-4）：过阈值后在线 delta 化，OFS_DELTA 优先（客户端未接受时 REF_DELTA）；push 侧 go-git 解码器本就接受两种 |
+| `allow-reachable-sha1-in-want` | fetch | 非广告 want（partial clone 惰性取回按 OID 点名 blob/tree）须从广告 tips 可达——`haveClosure` 全闭包走查即为该契约的校验实现 |
 | `no-thin` | push | 拒绝 thin pack（存储侧 pack 必须自包含；M3 可放开） |
 
 ## 3. upload-pack（服务 fetch/clone）
@@ -84,9 +86,12 @@ v1 会话流程（对照 `upload-pack.c` 协商状态机）：
 - 广告 `shallow` 能力；`deepen-since`/`deepen-not`/`deepen-relative` 未实现不广告（对应 `--shallow-since`/`--shallow-exclude` 不支持）。
 - **浅仓 push 拒绝**（参考服务端默认 `receive.shallowUpdate=false` → 403；banyan 400，同为干净拒绝）。
 
-## 4. 服务端 filter（设计就绪，未启用）
+## 4. 服务端 filter（已广告已接线）
 
-> **当前状态**：`gitwire/filter.go` 已实现 spec 解析与闭包过滤（含 `subtree:<path>` 扩展），但 upload-pack **未广告 `filter` 能力、未接线**——不广告能力时标准客户端不会发送 filter 行。启用前的实测行为见 §9：客户端警告后回退全量克隆，无兼容性破坏。
+> **当前状态**（T14）：`filter` 能力已广告；`blob:none` 与 `tree:0` 在闭包遍历中生效
+> （被滤对象不进 pack，被滤树不再展开）；显式 want 豁免过滤——惰性取回正是按 OID
+> 点名缺失对象。`sparse:oid` 与 `subtree:` 扩展不在线上服务，请求即 ERR 拒绝
+> （对照 upload-pack.c 对未知 filter 的行为）。
 
 `filter` 能力对齐 git partial clone 语义（`Documentation/technical/partial-clone.adoc`）：服务端在 pack 构造时按 filter-spec 裁剪对象集，客户端本地标记 promisor remote，事后按需补取。
 
@@ -94,14 +99,14 @@ v1 会话流程（对照 `upload-pack.c` 协商状态机）：
 
 | spec | 语义 | 来源 |
 |---|---|---|
-| `blob:none` | 不含 blob，仅 commit/tree | git 标准 |
-| `tree:0` | 仅 commit + 显式 want 的树 | git 标准 |
-| `sparse:oid=<oid>` | 按稀疏模式 blob 过滤 | git 标准（对齐 `list-objects-filter`） |
-| **`subtree:<path>`** | **仅 path 子树内对象 + 全部 commit** | **banyan 扩展** |
+| `blob:none` | 不含 blob（显式 want 豁免），仅 commit/tree | git 标准 |
+| `tree:0` | 仅 commit + 显式 want 的对象 | git 标准 |
+| `sparse:oid=<oid>` | 按稀疏模式 blob 过滤 | git 标准（未实现，ERR 拒绝） |
+| **`subtree:<path>`** | **仅 path 子树内对象 + 全部 commit** | **banyan 扩展（未实现，ERR 拒绝）** |
 
-`subtree:<path>` 是虚拟仓库的下载优化：`git clone --filter=subtree:/src/lib` 等价于克隆子树仓库但 URL 仍在根仓库——供不想改变 URL 语义的 CI 场景使用。实现位于 `gitwire/filter.go`，对闭包内的 tree 遍历做路径前缀剪枝。
+`subtree:<path>` 的设计定位是虚拟仓库的下载优化（等价于克隆子树仓库但 URL 仍在根仓库），子树仓库 URL 本身已覆盖该场景，故暂不实现。
 
-**补取路径**：partial clone 客户端事后 `git fetch` 缺失对象时，git 会发起一次普通 fetch（want=缺失 OID）。此请求同样落在 `/git-upload-pack`，服务端按 OID 直取（全局索引 → 分片节点），无需可达性计算——这正是「客户端精确要什么就给什么」在 git 协议内的实现。`banyan` CLI 的懒回填 RPC（05）与之共享同一对象定位代码。
+**补取路径**：partial clone 客户端事后取缺失对象时，git 发起一次普通 fetch（want=缺失 OID，且要求服务端具备 `allow-reachable-sha1-in-want`，否则客户端直接拒绝请求）。此请求落在 `/git-upload-pack`：want 豁免过滤与 have 排除，经可达性校验后按 OID 直取（全局索引 → 分片节点）——这正是「客户端精确要什么就给什么」在 git 协议内的实现。`banyan` CLI 的懒回填 RPC（05）与之共享同一对象定位代码。
 
 ## 5. receive-pack（服务 push）
 
@@ -150,8 +155,9 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 | 无 protocol v2 | git 客户端自动回退 v1（§9 实测），无感 | **已立项 perf-2**（docs/12 P1-5）：ls-refs/fetch 命令面（按需 ref 广告 + 服务端驱动协商），push 按语义恒 v0 |
 | ~~v1 have 协商~~ | 已实现（终态 ACK 语义：有公共提交时 ACK 即终态、同响应内送包） | 组合测试实测过期客户端 pull 正常 |
 | push `no-thin` | 客户端 push 略增流量 | 服务端存储简单性优先 |
-| 增量 fetch 无 thin pack | 字节效率低于最优 git 服务器 2–5×（源码 delta 比） | **已立项 perf-2**（服务路径 delta 化吃大头；真 thin pack 远期，docs/12 B8/P2-6） |
-| go-git 服务端 filter 缺失 | 自研（本层 §4） | 代码就绪，**广告已立项 perf-2**（docs/12 B10） |
+| ~~serve 路径零 delta~~ | **已实现**（docs/12 P1-4）：原始负载过 64KiB 阈值后在线 delta 化（OFS_DELTA 优先/REF_DELTA 兜底），相似对象 2–5× 字节差 | T20 + storage 单测钉住 |
+| 增量 fetch 无真 thin pack | 对客户端已有对象出 REF_DELTA 的字节收益仍缺 | 依赖编码器对缺席基对象的支持，远期（docs/12 P2-6） |
+| ~~服务端 filter 未广告~~ | **已实现**（§4）：`blob:none`/`tree:0` + `allow-reachable-sha1-in-want` 惰性取回 | T14 钉住（partial clone 全链路） |
 | ~~浅克隆（deepen）~~ | **已实现**（§3a：deepen N / 加深 / unshallow / 客户端边界上报裁剪，对照 git 2.50 http-backend 参考流字节级实现） | T15/T16 钉住 |
 | `deepen-since` / `deepen-not` | 未广告未实现（`--shallow-since`/`--shallow-exclude`） | 需要时按 §3a 同框架扩展 |
 | 浅仓 push | 拒绝（HTTP 400）——对照参考服务端默认行为（`receive.shallowUpdate=false` → 403），同为干净拒绝 | 完整仓库 push 不受影响 |
@@ -165,9 +171,10 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 | 默认（git ≥2.26 fetch 默认 v2） | 同上降级路径——全部存量用例的 clone/fetch/pull 均已隐式覆盖 | ✅ |
 | v2 强制增量 fetch（有 haves） | 降级后单 POST `want + haves + done` → 服务端终态 ACK（公共提交=旧 tip）+ 增量包，零多余协商轮 | ✅ |
 | v2 强制子树 URL clone | `/tree/<path>` 路径解析不受协议版本影响 | ✅ |
-| `git clone --filter=blob:none` | 未广告 `filter` → 客户端两次警告 `filtering not recognized by server, ignoring` 后**回退全量克隆**；对象集与全量 clone 完全一致；git 仍写 `remote.origin.promisor=true` 配置（对象全在，无害） | ✅ |
-| `git clone --filter=tree:0` | 同上 | ✅ |
-| promisor 配置下的后续 fetch | 请求携带 `filter` 行（uploadpack 显式忽略）+ 警告，fetch 本身正常 | ✅ |
+| `git clone --filter=blob:none` | **已广告生效**：初始包仅 commit/tree；首次工作树物化触发惰性取回（want=缺失 blob OID，经 `allow-reachable-sha1-in-want` 校验） | ✅ |
+| `git clone --filter=tree:0` | 仅 commit 对象；树的惰性取回同上 | ✅ |
+| promisor 配置下的后续 fetch | 请求携带 `filter` 行，服务端解析并每轮生效 | ✅ |
+| 不支持的 filter spec（如 `blob:limit=1k`） | ERR 拒绝（对照 upload-pack.c） | ❌ 干净拒绝 |
 | `git clone --depth 1/2`（shallow） | §3a 浅化协议：shallow 段组帧 + 按边界裁剪 pack；`.git/shallow` = 边界提交 | ✅ |
 | `--depth` 超过历史深度 | 空边界 = 裸 flush 段，客户端接受为全量（非浅仓） | ✅ |
 | 浅仓普通 fetch（无 deepen） | 客户端上报浅边界，服务端不发 shallow 段、pack 裁剪至客户端边界（历史止于旧 tip） | ✅ |
@@ -176,11 +183,11 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 | 子树 URL 浅化 / 解浅 | 投影 OID 空间内同一套语义 | ✅ |
 | 浅仓 push | 拒绝（对照参考服务端 `receive.shallowUpdate=false` 默认 403） | ❌ 干净拒绝 |
 
-**推论**：v1-only 服务端对现代 git 客户端是零配置兼容的——v2、partial clone、shallow 三大特性全部可用或走规范降级；剩余边界只剩服务端 filter（回退全量，带宽问题）与浅仓 push（参考服务端同样默认拒绝）。
+**推论**：v1 服务端对现代 git 客户端是零配置兼容的——v2（自动降级）、partial clone（filter 已生效）、shallow 三大特性全部可用；剩余边界只有 v2 命令面未实现（效率项而非兼容项，P1-5）与浅仓 push（参考服务端同样默认拒绝）。
 
-## 10. 实现策略审计（2026-10-18，对照"git 兼容为设计目标"）
+## 10. 实现策略审计（2026-10-18，对照"git 兼容为设计目标"；2026-10-24 更新）
 
-**go-git 触点**：仅 `internal/storage/packfile.go`——pack 解码（Scanner+Parser）与编码（`packfile.Encoder`，无 delta）。协议层（gitwire 全部）自研、以 git 源码为基准；go-git 能力缺口（协议 v2、服务端 filter、delta）按 AGENTS.md 原则直接对照 git 源码实现，不受其边界约束。
+**go-git 触点**：仅 `internal/storage/packfile.go`——pack 解码（Scanner+Parser）与编码（`packfile.Encoder`，含 delta 窗口——P1-4 修正：NewEncoder 第三参是 useRefDeltas 而非 delta 开关，delta 压缩由 Encode 的 window 参数控制，0 即关闭）。协议层（gitwire 全部）自研、以 git 源码为基准；go-git 能力缺口（协议 v2、服务端 filter、delta 调用语义）按 AGENTS.md 原则直接对照 git 源码实现，不受其边界约束。
 
 **已对齐 git 行为**（参考流/集成测试实证）：v0 广告与 symref、终态 ACK 协商（upload-pack.c 基础模式）、report-status 行序与 ng 格式、delete-refs 广告、浅化全语义（§3a，对照 http-backend 字节级）、pkt-line 编解码（gitprotocol-common）、idx v2。
 

@@ -28,7 +28,7 @@ func rawFetch(t *testing.T, s *server, rawurl string, wants, haves []model.OID) 
 	for i, w := range wants {
 		line := "want " + string(w)
 		if i == 0 {
-			line += " agent=it"
+			line += " agent=it ofs-delta" // capability section trails the first want, as real clients send it
 		}
 		body.WriteString(pktLine(line + "\n"))
 	}
@@ -110,4 +110,44 @@ func TestIncrementalFetchHaveSubtraction(t *testing.T) {
 	git(t, sub, "pull", "-q", "origin", "main")
 	assert.NotEqual(t, subTip, headOf(t, sub))
 	fsckClean(t, sub)
+}
+
+// TestServePathDelta: online serve packs deltify past the raw-payload
+// threshold (docs/12 P1-4 / B5+B8). Two pushes carry near-identical 64KiB+
+// blobs; the full closure spans three stored packs so the whole-pack direct
+// serve cannot fire — the serve path encodes online, and the similar blobs
+// travel as one base + OFS_DELTA. A real git client consumes the delta pack.
+func TestServePathDelta(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	src := seedRepo(t, s, "t20")
+
+	big := strings.Repeat("banyan serve-path delta fixture\n", 2300) // ~66KiB, past the threshold
+	write(t, filepath.Join(src, "big.txt"), big)
+	git(t, src, "add", "big.txt")
+	git(t, src, "commit", "-qm", "t20: big blob")
+	git(t, src, "push", "-q", s.repoURL("t20"), "main")
+	big2 := big + "appended tail\n"
+	write(t, filepath.Join(src, "big.txt"), big2)
+	git(t, src, "commit", "-qam", "t20: big blob edit")
+	git(t, src, "push", "-q", s.repoURL("t20"), "main")
+	tip := headOf(t, src)
+
+	packBytes := rawFetch(t, s, s.repoURL("t20"), []model.OID{model.OID(tip)}, nil)
+	types, err := storage.ScanObjectTypes(packBytes)
+	require.NoError(t, err)
+	hasOfs := false
+	for _, ty := range types {
+		if ty == model.ObjectType("ofs-delta") {
+			hasOfs = true
+		}
+	}
+	assert.True(t, hasOfs, "serve pack 应含 OFS_DELTA；types=%v", types)
+	assert.Less(t, len(packBytes), (len(big)+len(big2))*3/4,
+		"delta 化后字节数应显著低于原始负载")
+
+	// End-to-end: a real client receives and unpacks the online delta pack.
+	dst := cloneRepo(t, s, s.repoURL("t20"))
+	fsckClean(t, dst)
+	assert.Equal(t, big2, readFile(t, filepath.Join(dst, "big.txt")), "真实客户端解包 delta 后的内容")
 }

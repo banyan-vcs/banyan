@@ -10,10 +10,10 @@ testify，文件按测试目标拆分）：
 | `transport_basic_test.go` | 基础传输：根/子树克隆往返、引用操作、增量推送拉取（T1–T4） |
 | `subtree_collaboration_test.go` | 子树协作语义：线性织入、连续推送、非干扰/路径内互斥、多用户同文件、多作用域稳定性（T5/T7/T8/T10/T18） |
 | `push_guards_test.go` | 服务端守卫与协商：v1 have 协商终态 ACK、竞态窗口 sameXView 兜底（T8b/T9） |
-| `protocol_compat_test.go` | git 协议兼容矩阵：版本降级、partial 回退、浅化 deepen/unshallow（T13–T16） |
+| `protocol_compat_test.go` | git 协议兼容矩阵：版本降级、partial clone、浅化 deepen/unshallow（T13–T16） |
 | `persistence_test.go` | SQLite 重启持久化（T17） |
 | `rpc_log_test.go` | /api/v1/log 路径过滤（T11） |
-| `packing_efficiency_test.go` | 索引与打包效率：have 减除增量包精确构成（T19） |
+| `packing_efficiency_test.go` | 索引与打包效率：have 减除增量包精确构成（T19）、serve 路径 delta 化（T29） |
 | `refs_and_repack_test.go` | tags/自定义命名空间端到端 + repack 碎片合并/delta/重启（T20/T21/T21b） |
 | `cli_workspace_test.go` | 薄工作区 CLI：最小化 clone/status/commit/pull/log/cat + 冲突恢复 + 子树工作区（T22/T22b） |
 | `ha_cluster_test.go` | HA 集群（docs/11）：进程内 refs+storage×4+gateway，散布放置/节点宕恢复/动态副本/refs 重启（T23-T26） |
@@ -47,12 +47,13 @@ testify，文件按测试目标拆分）：
 | T8b | `TestRaceWindowStalePushProtection` | rawPush 协议级竞态模拟：force 绕过客户端检查后服务端 sameXView 兜底；X 外变更不阻塞 |
 | T12 | `TestMergeModePullWithLocalCommits` | 合并模式 pull（投影链全 X 作用域，merge-base 天然正确） |
 | T13 | `TestProtocolVersionMatrix` | 协议版本矩阵：v0 显式 / v2 强制（降级走 v1）clone + 增量 fetch + 子树 URL（docs/03 §9） |
-| T14 | `TestPartialCloneFilterFallback` | 未广告 filter → 警告 + 全量回退（对象集=全量 clone）+ promisor 配置下后续 fetch 不破坏 |
+| T14 | `TestPartialCloneFilter` | **partial clone 全链路**（docs/03 §4）：`blob:none`/`tree:0` 初始包裁剪、promisor 惰性取回（want=缺失 OID，经 allow-reachable-sha1-in-want 可达性校验）、后续 fetch 带 filter 行不破坏、不支持的 spec ERR 拒绝 |
 | T15 | `TestShallowClone` | **浅化协议**：depth 1/2/超深（空边界=裸 flush）+ 子树投影空间浅化/unshallow（docs/03 §3a 参考流对照） |
 | T16 | `TestShallowFetchDeepen` | 浅仓增量：普通 fetch（上报边界裁剪、浅文件不变）/ 加深（边界下移+unshallow 回显）/ unshallow 清除 |
 | T17 | `TestSQLiteMetaRestartPersistence` | **M2 持久化**：整进程重启后仓库/pack/对象索引/时间线头全存活；冷启动 nil-index 崩溃回归；重启后可继续 push |
 | T18 | `TestSequentialMultiScopeStability` | 顺序多作用域到达：零重复折叠、tip 不漂移、X 外变更不阻塞；含冲突恢复后继续推送（投影守卫 TreeKnown） |
 | T19 | `TestIncrementalFetchHaveSubtraction` | **have 减除**（docs/09 §3.1）：增量包=精确 delta（1 提交/2 树/1 blob），未触碰对象不入包；子树 URL 同理；真实客户端端到端 |
+| T29 | `TestServePathDelta` | **serve 路径 delta 化**（docs/12 P1-4）：跨包闭包在线编码过阈值后 OFS_DELTA 化（字节显著收缩）、真实客户端解包 delta 包（clone+fsck） |
 | T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |
 | T21 | `TestRepackFragmentMerge` / `TestRepackRestartSurvival` | **repack**：碎片合并+delta（字节收缩、对象保全、ExactPackHit 恢复）、SQLite 重启后存活（UPSERT 重指向回归） |
 | T22 | `TestCLIThinWorkspace` / `TestCLISubtreeWorkspace` | **薄工作区 CLI**（docs/05/10）：最小化 clone（无 .git、无提交闭包）、离线 status、服务端 changeset commit 经**真 git 客户端交叉验证**（fresh clone + fsck + subject）、log/cat 零下载、pull=服务端 tree-diff、base-moved 冲突退出码 1→pull→重提、子树工作区 commit 织入根视图 |
