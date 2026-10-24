@@ -37,7 +37,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 ## M2 · 分布式与元数据落地
 
 - [x] MetaStore 持久化（SQLite：接口四角色分权 docs/02 §2.1、双后端一致性测试、重启持久化 T17；MySQL/PG 为生产接替路径）
-- [ ] ShardStore 远端实现（HTTP 节点间协议）+ rendezvous 放置 + R 副本
+- [ ] ShardStore 远端实现（HTTP 节点间协议）+ rendezvous 放置 + R 副本（→ 由 HA-1 吸收，见 [11-ha.md](11-ha.md)）
 - [ ] commit-graph + merge-base（generation number）
 - [x] log RPC（/api/v1/log，路径过滤 + hash 一致视图）
 - [x] 服务层抽取（internal/service，2026-10-23：rpc 全量薄化为适配层、fetch-trees/commit/refs/objects 扩展/resolve/repos 落地、log 下沉共享实现；gitwire 发布路径迁移至 CommitService 留待 Gitaly 前端，docs/10 §6）
@@ -68,6 +68,18 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 | 组装风暴（多目录高频 push） | 根时间线写热点 | M1 同步简单正确；M4 合并队列批量组装 |
 | go-git 协议边界 bug | wire 兼容性 | 协议层薄封装，可换自研解析（pkt-line 解析工作量可控） |
 | subtree split 历史膨胀 | 大仓库虚拟 clone 变慢 | split 缓存 + 深度截断 + 懒 split（按需展开历史窗口） |
+
+## HA · 高可用与集群部署（设计定稿 2026-10-24，[11-ha.md](11-ha.md)，未实施）
+
+- [ ] HA-1：RaftMetaStore（hashicorp/raft + SQLite FSM）+ 角色拆分
+      （all-in-one 默认 / gateway / node，同一二进制）+ 节点间数据 RPC +
+      仓库级动态副本 placement + reconciler 对账
+- [ ] HA-2：成员运维（learner 加入/提升/移除）、快照与备份、leader-lease 读
+- [ ] HA-3：机架/可用区感知放置、跨集群异步复制（容灾）
+
+核心决策：控制面（元数据）走 raft 日志，数据面（pack 字节）不走——网关直连
+目标节点并行流式写、先落盘后提交元数据；一体化部署 = 单成员 raft 组，无特例
+代码路径。
 
 ## M5 · 平台集成（企业代码托管兼容）
 
