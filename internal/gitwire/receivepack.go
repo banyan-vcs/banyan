@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
@@ -155,14 +156,15 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		}
 
 		if !vr.Sub.IsRoot() {
-			// Ã¢ÂÂ£ subtree-view push (docs/01 ÃÂ§13): the write path touches ONLY
-			// this directory's timeline Ã¢ÂÂ no root head CAS, no adoption merge.
+			// Ⓑ subtree-view push (docs/01 §13): the write path touches ONLY
+			// this directory's timeline — no root head CAS, no adoption merge.
 			// The root view is derived on read (view.RootTip weave).
 			if aerr := s.adoptSubtreePush(r.Context(), vr, name, u.Old, u.New); aerr != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+aerr.Error()+"\n"))
 				continue
 			}
 			_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
+			s.warmView(vr.Repo, vr.Sub, name)
 			continue
 		}
 
@@ -190,11 +192,34 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			continue
 		}
 		_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
+		s.warmView(vr.Repo, model.RootAnchor, name)
 		log.Printf("receive-pack %s: /%s → %s", vr.Repo, name, u.New)
 	}
 
 	_ = WriteFlush(out)
 	_ = out.Flush()
+}
+
+// warmView pre-materializes the views the next advertisement will resolve
+// after a successful push (docs/12 P2-3, B6): a push only CASes timeline
+// heads — the woven root/subtree views fold lazily on the FIRST subsequent
+// clone's ref discovery. Warming right after the CAS moves that fold off
+// the read path. Best-effort and asynchronous: the push response never
+// waits, and the view engine is idempotent + CAS-safe against concurrent
+// materialization, so a racing push is a benign lost update.
+func (s *Server) warmView(repo string, sub model.AnchorPath, branch string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if sub.IsRoot() {
+			_, _ = s.Views.RootTip(ctx, repo, branch)
+			return
+		}
+		// A subtree push lands in two views: its own subtree view and the
+		// root weave that folds descendant timelines in.
+		_, _, _ = s.Views.SubtreeHead(ctx, repo, sub, branch)
+		_, _ = s.Views.RootTip(ctx, repo, branch)
+	}()
 }
 
 // handleAuxRefUpdate stores refs/tags/* and any other non-heads namespace

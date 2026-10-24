@@ -1,16 +1,17 @@
-// Goal: retrieval and packing efficiency — generation-number indexes (unit:
-// storage TestGenerationDiamond) and have subtraction on incremental fetches:
-// the pack a client receives is exactly the delta, not the wants' full
-// closure (docs/09 §3, closes docs/03 §10 deviation #1).
+// Goal: retrieval and packing efficiency — have subtraction on incremental
+// fetches (docs/09 §3), serve-path delta encoding (docs/12 P1-4), post-push
+// view pre-warm and the clone-shaped response-pack cache (docs/12 P2-2/P2-3).
 package integration
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -150,4 +151,47 @@ func TestServePathDelta(t *testing.T) {
 	dst := cloneRepo(t, s, s.repoURL("t20"))
 	fsckClean(t, dst)
 	assert.Equal(t, big2, readFile(t, filepath.Join(dst, "big.txt")), "真实客户端解包 delta 后的内容")
+}
+
+// --- T34 post-push view pre-warm (docs/12 P2-3, B6) ---
+// A push only CASes timeline heads; the woven views fold lazily on the next
+// advertisement. The warm hook folds them right after a successful push, so
+// the /.woven root anchor exists WITHOUT any read request — observable via
+// the persisted woven timeline advancing to the pushed head.
+func TestPushWarmView(t *testing.T) {
+	needGit(t)
+	dir := t.TempDir()
+	s, objects := newStack(t, filepath.Join(dir, "shards"), "", false)
+	src := seedRepo(t, s, "t34")
+	ctx := context.Background()
+
+	// Root push: the root weave persists at /.woven/ and must equal the
+	// pushed head (plain chains fold identity — verbatim reuse).
+	require.Eventually(t, func() bool {
+		st, err := objects.Meta.Timeline(ctx, model.Timeline{Repo: "t34", Anchor: "/.woven/", Name: "main"})
+		return err == nil && st.Head == model.OID(headOf(t, src))
+	}, 5*time.Second, 50*time.Millisecond, "push 后 /.woven 应被预热到新头（无需任何读请求）")
+
+	// Subtree push: warm folds the descendant commit into the ROOT weave —
+	// observable as /.woven/ moving off the pre-push root head without any
+	// root-repo read request in between (the subtree clone only reads the
+	// subtree view). The scoped anchor itself needs no fold when the prefix
+	// already answers the view.
+	rootWovenBefore, err := objects.Meta.Timeline(ctx, model.Timeline{Repo: "t34", Anchor: "/.woven/", Name: "main"})
+	require.NoError(t, err)
+	sub := cloneRepo(t, s, s.treeURL("t34", "lib/nested"))
+	appendLine(t, filepath.Join(sub, "SHARED.txt"), "warm-me\n")
+	git(t, sub, "commit", "-qam", "t34: sub")
+	git(t, sub, "push", "-q", "origin", "main")
+	require.Eventually(t, func() bool {
+		st, err := objects.Meta.Timeline(ctx, model.Timeline{Repo: "t34", Anchor: "/.woven/", Name: "main"})
+		return err == nil && !st.Head.IsZero() && st.Head != rootWovenBefore.Head
+	}, 5*time.Second, 50*time.Millisecond, "子树 push 后根织入锚应被预热推进（折叠后代提交为重写 OID）")
+
+	// The warmed state serves a fresh clone correctly (the root view folds
+	// the subtree push as a rewrite — assert content, not the raw OID).
+	fresh := cloneRepo(t, s, s.repoURL("t34"))
+	fsckClean(t, fresh)
+	assert.Equal(t, "base\nwarm-me\n", readFile(t, filepath.Join(fresh, "lib", "nested", "SHARED.txt")),
+		"根视图应包含子树推送内容")
 }
