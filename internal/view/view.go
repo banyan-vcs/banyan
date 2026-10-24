@@ -473,7 +473,7 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 			// carries rewrites): already woven — refolding it would rebuild
 			// the OID (new parent) and duplicate the subject.
 			if !prevWoven.IsZero() && s.descends(repo, prevWoven, e.oid) {
-					unlock(e.oid)
+				unlock(e.oid)
 				continue
 			}
 		default:
@@ -491,7 +491,7 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 			// identical trees; timestamp ties can order the older copy after
 			// the newer, and its ReplaceSubtree would regress content).
 			if tree == cur || s.TreeKnown(repo, prevWoven, tree) || batchTrees[tree] {
-					unlock(e.oid)
+				unlock(e.oid)
 				continue
 			}
 			batchTrees[tree] = true

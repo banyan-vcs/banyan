@@ -39,8 +39,8 @@ type repoIndex struct {
 	// ancestor resolved; missing objects are never cached. Ancestors that
 	// could not be resolved taint the entry (genTainted) — the value is then
 	// a lower bound and must not drive ancestry pruning.
-	gen         map[model.OID]uint32
-	genTainted  map[model.OID]bool
+	gen        map[model.OID]uint32
+	genTainted map[model.OID]bool
 	// treeCommits is the reverse index tree → commits (one entry per commit;
 	// total memory O(commits)). Uncapped on purpose: a capped list can miss
 	// the one ancestor carrying the tree and flip TreeKnown to false.
