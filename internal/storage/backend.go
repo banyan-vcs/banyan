@@ -1,0 +1,55 @@
+package storage
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/banyan-vcs/banyan/internal/model"
+)
+
+// ShardBackend abstracts where pack bytes physically live (docs/11 §2-3):
+//
+//   - all-in-one: this process's local disk (LocalBackend);
+//   - gateway (cluster): the scattered storage fleet (ScatteredStore) —
+//     random multi-replica placement, quorum-confirmed writes, holder
+//     fallback reads.
+//
+// PutPack applies the placement policy and returns the CONFIRMED holder IDs —
+// the exact set the caller must register in metadata. Registration is the
+// fact: readers only ever trust the holder set recorded in MetaStore.
+type ShardBackend interface {
+	PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) ([]string, error)
+	// GetPack reads one pack, trying the given holders in order (docs/11 §3:
+	// any holder may serve — the OID trailer checksum proves integrity).
+	GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error)
+	// DeletePack removes the pack from the given holders (repack old-shard
+	// cleanup / replica trim). Missing files are tolerated.
+	DeletePack(ctx context.Context, repo string, packOID model.OID, holders []string)
+}
+
+// LocalBackend is the all-in-one shard backend: one local store, one node ID.
+type LocalBackend struct {
+	Local  *LocalShardStore
+	NodeID string
+}
+
+func (b *LocalBackend) PutPack(_ context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) ([]string, error) {
+	if err := b.Local.PutPack(repo, packOID, packBytes, idxBytes); err != nil {
+		return nil, err
+	}
+	return []string{b.NodeID}, nil
+}
+
+func (b *LocalBackend) GetPack(_ context.Context, repo string, packOID model.OID, _ []string) ([]byte, error) {
+	return b.Local.GetPackBytes(repo, packOID)
+}
+
+func (b *LocalBackend) DeletePack(_ context.Context, repo string, packOID model.OID, _ []string) {
+	b.Local.DeletePack(repo, packOID)
+}
+
+// nodeClientFor adapts a holder address to a NodeClient (ScatteredStore and
+// the reconciler both need this; the map lives with the cluster pieces).
+func errNoHolder(packOID model.OID, holders []string) error {
+	return fmt.Errorf("%w: pack %s on %v", model.ErrObjectNotFound, packOID, holders)
+}

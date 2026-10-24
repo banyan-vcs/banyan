@@ -150,7 +150,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	}
 	served := "encode"
 	if packOID, ok := s.Objects.ExactPackHit(vr.Repo, wanted); ok {
-		if raw, err := s.Objects.Local.GetPackBytes(vr.Repo, packOID); err == nil {
+		if raw, err := s.Objects.PackBytes(r.Context(), vr.Repo, packOID); err == nil {
 			if _, werr := out.Write(raw); werr == nil {
 				served = "exact-pack " + string(packOID)
 			}

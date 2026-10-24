@@ -58,18 +58,18 @@ func (p AnchorPath) JoinPath(rel string) AnchorPath {
 // The root timeline (anchor="/") is semantically a git branch; a directory
 // timeline is the history of "that subdirectory as an independent repo".
 type Timeline struct {
-	Repo   string
-	Anchor AnchorPath
-	Name   string // 类 branch 名，如 "main"
+	Repo   string     `json:"repo"`
+	Anchor AnchorPath `json:"anchor"`
+	Name   string     `json:"name"` // branch-like name, e.g. "main"
 }
 
 // TimelineState is the authoritative head record in MetaStore.
 type TimelineState struct {
-	Head OID
+	Head OID `json:"head"`
 	// Base records which root-timeline commit the directory timeline forked
 	// from (snapshot fork, explicit rebase semantics, docs/01 §5.2 / §7).
 	// The root timeline has a zero Base.
-	Base OID
+	Base OID `json:"base"`
 }
 
 // RefName renders the git-visible ref of this timeline inside the (virtual) repo.

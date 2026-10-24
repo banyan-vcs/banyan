@@ -17,9 +17,12 @@ import (
 // It also implements model.ObjectLookup for direct model-layer assembly/projection use.
 type ObjectService struct {
 	Meta  MetaStore
-	Local *LocalShardStore
-	Nodes []Node
+	Local *LocalShardStore // all-in-one shard store (nil in gateway mode; tests may use it directly)
 	Algo  model.HashAlgo
+
+	// Backend owns where pack bytes live (docs/11 §3): local disk in
+	// all-in-one, the scattered fleet in cluster mode.
+	Backend ShardBackend
 
 	mu        sync.Mutex
 	cache     map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result (LRU is M2's business)
@@ -39,10 +42,24 @@ type synthObject struct {
 }
 
 func NewObjectService(meta MetaStore, local *LocalShardStore, nodes []Node, algo model.HashAlgo) *ObjectService {
+	nodeID := "local-1"
+	if len(nodes) > 0 {
+		nodeID = nodes[0].ID
+	}
+	return newObjectService(meta, local, &LocalBackend{Local: local, NodeID: nodeID}, algo)
+}
+
+// NewObjectServiceWithBackend wires a cluster-mode service (gateway): the
+// backend is the scattered store, Local stays nil.
+func NewObjectServiceWithBackend(meta MetaStore, backend ShardBackend, algo model.HashAlgo) *ObjectService {
+	return newObjectService(meta, nil, backend, algo)
+}
+
+func newObjectService(meta MetaStore, local *LocalShardStore, backend ShardBackend, algo model.HashAlgo) *ObjectService {
 	return &ObjectService{
 		Meta:      meta,
 		Local:     local,
-		Nodes:     nodes,
+		Backend:   backend,
 		Algo:      algo,
 		cache:     map[string]map[model.OID]*DecodedPack{},
 		packOrder: map[string]map[model.OID][]model.OID{},
@@ -116,19 +133,14 @@ func (s *ObjectService) Raw(ctx context.Context, repo string, oid model.OID) (mo
 	return "", nil, fmt.Errorf("%w: %s", model.ErrObjectNotFound, oid)
 }
 
-// IngestPack handles one pushed pack (docs/02 §4 write path):
-// decode → persist the raw pack + idx v2 (shard CAS, never dissolved) → metadata
-// registration → build commit-graph / tree-entry in-memory indexes (docs/02 §1.3 dual-idx system).
+// IngestPack handles one pushed pack (docs/02 §4 write path, docs/11 §5):
+// decode → backend placement/persist (returns the CONFIRMED holder set C) →
+// metadata registration (registration is the fact) → build in-memory indexes.
 func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes []byte) (model.OID, error) {
 	dp, err := DecodePack(packBytes)
 	if err != nil {
 		return "", err
 	}
-	nodes, err := PickNodes(s.Nodes, string(dp.PackOID), 3)
-	if err != nil {
-		return "", err
-	}
-
 	// idx v2: written only when offsets pair up fully; crc section stays 0 for now (TODO(M2), see idx.go).
 	var idxBytes []byte
 	if len(dp.Offsets) == len(dp.Order) {
@@ -138,15 +150,11 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 			log.Printf("ingest %s: idx encode failed (skip): %v", repo, err)
 		}
 	}
-	if err := s.Local.PutPack(repo, dp.PackOID, packBytes, idxBytes); err != nil {
+	confirmed, err := s.Backend.PutPack(ctx, repo, dp.PackOID, packBytes, idxBytes)
+	if err != nil {
 		return "", err
 	}
-	ids := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		ids = append(ids, n.ID)
-	}
-	// TODO(M2): remote writes to non-Local nodes.
-	if err := s.Meta.PutPack(ctx, repo, dp.PackOID, dp.Order, ids); err != nil {
+	if err := s.Meta.PutPack(ctx, repo, dp.PackOID, dp.Order, confirmed); err != nil {
 		return "", err
 	}
 	s.buildIndex(repo, dp)
@@ -209,10 +217,14 @@ func (s *ObjectService) lookupPack(ctx context.Context, repo string, oid model.O
 	if dp != nil {
 		return dp, nil
 	}
-	dp, err = s.Local.GetDecoded(repo, loc.PackOID)
+	holders := s.packHolders(ctx, repo, loc.PackOID, loc.NodeID)
+	raw, err := s.Backend.GetPack(ctx, repo, loc.PackOID, holders)
 	if err != nil {
-		// TODO(M2): fetch the pack from the remote at loc.NodeID, then retry.
 		return nil, err
+	}
+	dp, err = DecodePack(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: pack %s: %v", model.ErrObjectNotFound, loc.PackOID, err)
 	}
 	s.mu.Lock()
 	if s.cache[repo] == nil {
@@ -225,6 +237,25 @@ func (s *ObjectService) lookupPack(ctx context.Context, repo string, oid model.O
 	s.packOrder[repo][loc.PackOID] = dp.Order
 	s.mu.Unlock()
 	return dp, nil
+}
+
+// packHolders resolves a pack's full holder set from the pack registry,
+// falling back to the single location hint when the pack is not registered
+// (should not happen — registration precedes visibility).
+func (s *ObjectService) packHolders(ctx context.Context, repo string, packOID model.OID, hint string) []string {
+	if info, err := s.Meta.GetPack(ctx, repo, packOID); err == nil {
+		return info.Nodes
+	}
+	if hint != "" {
+		return []string{hint}
+	}
+	return nil
+}
+
+// PackBytes fetches raw pack bytes (whole-pack direct serve, repack input),
+// routed through the backend with holder fallback.
+func (s *ObjectService) PackBytes(ctx context.Context, repo string, packOID model.OID) ([]byte, error) {
+	return s.Backend.GetPack(ctx, repo, packOID, s.packHolders(ctx, repo, packOID, ""))
 }
 
 func (s *ObjectService) BlobOrTreeOrCommit(ctx context.Context, repo string, oid model.OID) ([]byte, error) {

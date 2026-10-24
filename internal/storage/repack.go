@@ -74,15 +74,18 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 	var blobs, trees, commits, tags = map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}
 	var bytesBefore int64
 	for _, p := range packs {
-		dp, derr := s.Local.GetDecoded(repo, p.PackOID)
-		if derr != nil {
+		raw, rerr := s.PackBytes(ctx, repo, p.PackOID)
+		if rerr != nil {
 			// A vanished fragment (racing deletion) is skipped; its objects
 			// re-register to surviving packs on their next ingest.
-			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, derr)
+			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, rerr)
 			continue
 		}
-		if raw, rerr := s.Local.GetPackBytes(repo, p.PackOID); rerr == nil {
-			bytesBefore += int64(len(raw))
+		bytesBefore += int64(len(raw))
+		dp, derr := DecodePack(raw)
+		if derr != nil {
+			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, derr)
+			continue
 		}
 		for oid, b := range dp.Blobs {
 			blobs[oid] = b
@@ -126,7 +129,7 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 			log.Printf("repack %s: drop meta %s: %v", repo, p.PackOID, derr)
 			continue
 		}
-		s.Local.DeletePack(repo, p.PackOID)
+		s.Backend.DeletePack(ctx, repo, p.PackOID, p.Nodes)
 		s.mu.Lock()
 		delete(s.cache[repo], p.PackOID)
 		delete(s.packOrder[repo], p.PackOID)

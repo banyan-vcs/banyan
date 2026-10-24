@@ -18,6 +18,7 @@ type MetaStore interface {
 	PackRegistry
 	ObjectIndex
 	TimelineStore
+	PlacementStore
 }
 
 // RepoRegistry is the repo table.
@@ -43,6 +44,18 @@ type PackRegistry interface {
 	// registration and drop leaves duplicate locations — still correct, the
 	// next repack cleans up.
 	DropPack(ctx context.Context, repo string, packOID model.OID) error
+	// SetPackNodes atomically replaces a pack's holder set (reconciler
+	// holder swap after re-replication / trim — docs/11 §8.3). The pack must
+	// already be registered.
+	SetPackNodes(ctx context.Context, repo string, packOID model.OID, nodes []string) error
+}
+
+// PlacementStore is the per-repo replica target (docs/11 §3/§6): 0 or a
+// missing row means "use the cluster default". R is adjustable at any time;
+// the reconciler converges actual holders toward it.
+type PlacementStore interface {
+	SetPlacement(ctx context.Context, repo string, replicas int) error
+	GetPlacement(ctx context.Context, repo string) (int, error)
 }
 
 // ObjectIndex is the global object index (distributed lookup entry,
@@ -69,21 +82,21 @@ type TimelineStore interface {
 
 // ObjectLocation is one global-index location record.
 type ObjectLocation struct {
-	PackOID model.OID
-	NodeID  string
+	PackOID model.OID `json:"pack"`
+	NodeID  string    `json:"node"`
 }
 
 // PackInfo is one central-pack record.
 type PackInfo struct {
-	PackOID model.OID
-	Nodes   []string // replica nodes, sorted
+	PackOID model.OID `json:"pack_oid"`
+	Nodes   []string  `json:"nodes"` // holder node IDs, sorted
 }
 
 // RepoInfo is repo registration info.
 type RepoInfo struct {
-	ID            string
-	Algo          model.HashAlgo
-	DefaultBranch string
+	ID            string         `json:"id"`
+	Algo          model.HashAlgo `json:"algo"`
+	DefaultBranch string         `json:"default_branch"`
 }
 
 // ErrNonFastForward mirrors git push non-fast-forward (docs/01 §4.3).
@@ -99,21 +112,23 @@ var (
 // MemoryMetaStore is the single-node in-memory implementation (M1). WAL semantics
 // = atomic reads/writes under one mutex; object writes skip the WAL (CAS idempotent); only head/index commits enter it.
 type MemoryMetaStore struct {
-	mu        sync.Mutex
-	repos     map[string]RepoInfo
-	packs     map[string]map[model.OID][]string       // repo → packOID → nodes
-	packObjs  map[string]map[model.OID][]model.OID    // repo → packOID → objects
-	index     map[string]map[model.OID]ObjectLocation // repo → oid → location
-	timelines map[string]map[model.Timeline]model.TimelineState
+	mu         sync.Mutex
+	repos      map[string]RepoInfo
+	packs      map[string]map[model.OID][]string    // repo → packOID → nodes
+	packObjs   map[string]map[model.OID][]model.OID // repo → packOID → objects
+	index      map[string]map[model.OID]ObjectLocation
+	timelines  map[string]map[model.Timeline]model.TimelineState
+	placements map[string]int // repo → replica target (0 = cluster default)
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
 	return &MemoryMetaStore{
-		repos:     map[string]RepoInfo{},
-		packs:     map[string]map[model.OID][]string{},
-		packObjs:  map[string]map[model.OID][]model.OID{},
-		index:     map[string]map[model.OID]ObjectLocation{},
-		timelines: map[string]map[model.Timeline]model.TimelineState{},
+		repos:      map[string]RepoInfo{},
+		packs:      map[string]map[model.OID][]string{},
+		packObjs:   map[string]map[model.OID][]model.OID{},
+		index:      map[string]map[model.OID]ObjectLocation{},
+		timelines:  map[string]map[model.Timeline]model.TimelineState{},
+		placements: map[string]int{},
 	}
 }
 
@@ -229,6 +244,40 @@ func (m *MemoryMetaStore) DropPack(_ context.Context, repo string, packOID model
 		}
 	}
 	return nil
+}
+
+func (m *MemoryMetaStore) SetPackNodes(_ context.Context, repo string, packOID model.OID, nodes []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.packs[repo][packOID]; !ok {
+		return fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
+	}
+	m.packs[repo][packOID] = append([]string(nil), nodes...)
+	for oid, loc := range m.index[repo] {
+		if loc.PackOID == packOID && len(nodes) > 0 {
+			m.index[repo][oid] = ObjectLocation{PackOID: packOID, NodeID: nodes[0]}
+		}
+	}
+	return nil
+}
+
+func (m *MemoryMetaStore) SetPlacement(_ context.Context, repo string, replicas int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.repos[repo]; !ok {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	m.placements[repo] = replicas
+	return nil
+}
+
+func (m *MemoryMetaStore) GetPlacement(_ context.Context, repo string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.repos[repo]; !ok {
+		return 0, fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	return m.placements[repo], nil
 }
 
 func (m *MemoryMetaStore) Timeline(_ context.Context, tl model.Timeline) (model.TimelineState, error) {

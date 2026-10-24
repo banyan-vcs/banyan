@@ -1,0 +1,259 @@
+package storage
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
+	"net/url"
+	"sync"
+	"time"
+
+	"github.com/banyan-vcs/banyan/internal/model"
+)
+
+// NodeClient is the gateway's / reconciler's HTTP client to one storage node
+// (docs/11 §3): packs are raw bodies, content-addressed by query params.
+type NodeClient struct {
+	Addr string
+	HTTP *http.Client
+}
+
+func NewNodeClient(addr string) *NodeClient {
+	return &NodeClient{Addr: addr, HTTP: &http.Client{Timeout: 5 * time.Minute}}
+}
+
+func (n *NodeClient) packURL(repo string, packOID model.OID) string {
+	return n.Addr + "/internal/pack?repo=" + url.QueryEscape(repo) + "&oid=" + url.QueryEscape(string(packOID))
+}
+
+func (n *NodeClient) PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, n.packURL(repo, packOID), bytes.NewReader(packBytes))
+	if err != nil {
+		return err
+	}
+	if h := encodeIdxHeader(idxBytes); h != "" {
+		req.Header.Set("X-Banyan-Idx", h)
+	}
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("storage %s put %s: status %d", n.Addr, packOID, resp.StatusCode)
+	}
+	return nil
+}
+
+func (n *NodeClient) GetPack(ctx context.Context, repo string, packOID model.OID) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, n.packURL(repo, packOID), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: pack %s on %s", model.ErrObjectNotFound, packOID, n.Addr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("storage %s get %s: status %d", n.Addr, packOID, resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+func (n *NodeClient) DeletePack(ctx context.Context, repo string, packOID model.OID) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, n.packURL(repo, packOID), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return nil // 404 tolerated: CAS re-ingest may have skipped the write
+}
+
+// --- ScatteredStore: the gateway's shard backend (docs/11 §3/§5) ---
+
+// ScatteredStore places each pack on R random healthy nodes, confirms W
+// writes, and reads from any holder. Registration is the fact: PutPack
+// returns exactly the confirmed holder set for the caller to register.
+type ScatteredStore struct {
+	Refs       *RefsClient
+	DefaultR   int    // cluster default replica target
+	WriteAcks  string // "quorum" (default) | "all" | "one"
+	healthyTTL time.Duration
+	healthyMu  sync.Mutex
+	healthy    []NodeInfo
+	healthyAt  time.Time
+	clientsMu  sync.Mutex
+	clients    map[string]*NodeClient
+}
+
+func NewScatteredStore(refs *RefsClient, defaultR int, writeAcks string) *ScatteredStore {
+	if defaultR <= 0 {
+		defaultR = 3
+	}
+	if writeAcks == "" {
+		writeAcks = "quorum"
+	}
+	return &ScatteredStore{
+		Refs:       refs,
+		DefaultR:   defaultR,
+		WriteAcks:  writeAcks,
+		healthyTTL: 2 * time.Second,
+		clients:    map[string]*NodeClient{},
+	}
+}
+
+func (s *ScatteredStore) client(addr string) *NodeClient {
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	if c, ok := s.clients[addr]; ok {
+		return c
+	}
+	c := NewNodeClient("http://" + addr)
+	s.clients[addr] = c
+	return c
+}
+
+// healthyNodes caches the refs health view briefly: a stale view at worst
+// costs a failed PUT (that node just doesn't confirm).
+func (s *ScatteredStore) healthyNodes(ctx context.Context) []NodeInfo {
+	s.healthyMu.Lock()
+	if time.Since(s.healthyAt) < s.healthyTTL && s.healthy != nil {
+		out := s.healthy
+		s.healthyMu.Unlock()
+		return out
+	}
+	s.healthyMu.Unlock()
+	nodes, err := s.Refs.HealthyNodes(ctx)
+	if err != nil || len(nodes) == 0 {
+		s.healthyMu.Lock()
+		out := s.healthy // fall back to the last known view on RPC failure
+		s.healthyMu.Unlock()
+		return out
+	}
+	s.healthyMu.Lock()
+	s.healthy, s.healthyAt = nodes, time.Now()
+	out := nodes
+	s.healthyMu.Unlock()
+	return out
+}
+
+// pickRandom draws n distinct entries at random (placement, docs/11 §3).
+func pickRandom[T any](items []T, n int) []T {
+	if n >= len(items) {
+		return append([]T(nil), items...)
+	}
+	pool := append([]T(nil), items...)
+	rand.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
+	return pool[:n]
+}
+
+func acksFor(replicas int, mode string) int {
+	switch mode {
+	case "one":
+		return 1
+	case "all":
+		return replicas
+	default: // quorum
+		return replicas/2 + 1
+	}
+}
+
+func (s *ScatteredStore) PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) ([]string, error) {
+	healthy := s.healthyNodes(ctx)
+	if len(healthy) == 0 {
+		return nil, fmt.Errorf("scattered: no healthy storage nodes")
+	}
+	replicas := s.DefaultR
+	if r, err := s.Refs.GetPlacement(ctx, repo); err == nil && r > 0 {
+		replicas = r
+	}
+	if replicas > len(healthy) {
+		replicas = len(healthy) // degrade: fewer nodes than target
+	}
+	targets := pickRandom(healthy, replicas)
+
+	type result struct {
+		node NodeInfo
+		ok   bool
+	}
+	results := make([]result, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		wg.Add(1)
+		go func(i int, t NodeInfo) {
+			defer wg.Done()
+			results[i] = result{node: t, ok: s.client(t.Addr).PutPack(ctx, repo, packOID, packBytes, idxBytes) == nil}
+		}(i, t)
+	}
+	wg.Wait()
+
+	var confirmed []string
+	for _, r := range results {
+		if r.ok {
+			confirmed = append(confirmed, r.node.ID)
+		}
+	}
+	if need := acksFor(replicas, s.WriteAcks); len(confirmed) < need {
+		return nil, fmt.Errorf("scattered: pack %s confirmed on %d/%d nodes (need %d)",
+			packOID, len(confirmed), replicas, need)
+	}
+	return confirmed, nil
+}
+
+func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error) {
+	// Resolve holder IDs to addresses through the health view (dead holders
+	// may still be listed; their GET failing just falls through to the next).
+	byID := map[string]string{}
+	for _, n := range s.healthyNodes(ctx) {
+		byID[n.ID] = n.Addr
+	}
+	var lastErr error
+	for _, id := range holders {
+		addr, ok := byID[id]
+		if !ok {
+			continue
+		}
+		raw, err := s.client(addr).GetPack(ctx, repo, packOID)
+		if err == nil {
+			return raw, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errNoHolder(packOID, holders)
+}
+
+func (s *ScatteredStore) DeletePack(ctx context.Context, repo string, packOID model.OID, holders []string) {
+	byID := map[string]string{}
+	for _, n := range s.healthyNodes(ctx) {
+		byID[n.ID] = n.Addr
+	}
+	var wg sync.WaitGroup
+	for _, id := range holders {
+		addr, ok := byID[id]
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func(addr string) {
+			defer wg.Done()
+			_ = s.client(addr).DeletePack(ctx, repo, packOID)
+		}(addr)
+	}
+	wg.Wait()
+}

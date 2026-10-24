@@ -50,14 +50,18 @@ CREATE TABLE IF NOT EXISTS pack_nodes(
 	PRIMARY KEY(repo, pack_oid, node_id)
 );
 CREATE TABLE IF NOT EXISTS objects(
-	repo     TEXT NOT NULL,
-	oid      TEXT NOT NULL,
+	repo   TEXT NOT NULL,
+	oid    TEXT NOT NULL,
 	pack_oid TEXT NOT NULL,
 	node_id  TEXT NOT NULL,
 	offset   INTEGER NOT NULL DEFAULT 0, -- reserved: M3 fill, saves one idx roundtrip
 	PRIMARY KEY(repo, oid)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_objects_pack ON objects(repo, pack_oid);
+CREATE TABLE IF NOT EXISTS placement(
+	repo     TEXT PRIMARY KEY,
+	replicas INTEGER NOT NULL DEFAULT 0    -- 0 = cluster default (docs/11 §3)
+);
 `
 
 // sqliteDSN builds the connection string. Pragmas must ride the DSN:
@@ -321,6 +325,75 @@ func (s *SQLiteMetaStore) DropPack(ctx context.Context, repo string, packOID mod
 	}
 	_, err = conn.ExecContext(ctx, "COMMIT")
 	return err
+}
+
+// SetPackNodes atomically replaces the holder set (reconciler swap, docs/11 §8.3).
+func (s *SQLiteMetaStore) SetPackNodes(ctx context.Context, repo string, packOID model.OID, nodes []string) error {
+	var one string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT 1 FROM packs WHERE repo=? AND pack_oid=?", repo, string(packOID)).Scan(&one)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
+	}
+	if err != nil {
+		return err
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	fail := func(err error) error {
+		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		return err
+	}
+	if _, err := conn.ExecContext(ctx,
+		"DELETE FROM pack_nodes WHERE repo=? AND pack_oid=?", repo, string(packOID)); err != nil {
+		return fail(err)
+	}
+	for _, n := range nodes {
+		if _, err := conn.ExecContext(ctx,
+			"INSERT INTO pack_nodes(repo, pack_oid, node_id) VALUES(?,?,?)", repo, string(packOID), n); err != nil {
+			return fail(err)
+		}
+	}
+	if len(nodes) > 0 {
+		if _, err := conn.ExecContext(ctx,
+			"UPDATE objects SET node_id=? WHERE repo=? AND pack_oid=?", nodes[0], repo, string(packOID)); err != nil {
+			return fail(err)
+		}
+	}
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	return err
+}
+
+func (s *SQLiteMetaStore) SetPlacement(ctx context.Context, repo string, replicas int) error {
+	if _, err := s.GetRepo(ctx, repo); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		"INSERT INTO placement(repo, replicas) VALUES(?,?) ON CONFLICT(repo) DO UPDATE SET replicas=excluded.replicas",
+		repo, replicas)
+	return err
+}
+
+func (s *SQLiteMetaStore) GetPlacement(ctx context.Context, repo string) (int, error) {
+	if _, err := s.GetRepo(ctx, repo); err != nil {
+		return 0, err
+	}
+	var replicas int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT replicas FROM placement WHERE repo=?", repo).Scan(&replicas)
+	if err == sql.ErrNoRows {
+		return 0, nil // no row = cluster default
+	}
+	if err != nil {
+		return 0, err
+	}
+	return replicas, nil
 }
 
 func (s *SQLiteMetaStore) LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]ObjectLocation, error) {

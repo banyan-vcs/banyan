@@ -2,6 +2,8 @@ package storage
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"sync"
@@ -291,6 +293,18 @@ func putObject(st *memStorer, t plumbing.ObjectType, oid model.OID, content []by
 		return plumbing.ZeroHash, err
 	}
 	return got, nil
+}
+
+// VerifyPackChecksum checks the SHA-1 pack trailer: the last 20 bytes must
+// equal SHA-1 over everything before them, and match the pack OID. Identity
+// equals integrity (docs/11 §3) — a cheap full-content check with no decode.
+func VerifyPackChecksum(packOID model.OID, raw []byte) bool {
+	if len(raw) < 20 {
+		return false
+	}
+	body, trailer := raw[:len(raw)-20], raw[len(raw)-20:]
+	sum := sha1.Sum(body)
+	return string(sum[:]) == string(trailer) && hex.EncodeToString(trailer) == string(packOID)
 }
 
 func syntheticPackOID(dp *DecodedPack) model.OID {
