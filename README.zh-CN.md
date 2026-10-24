@@ -78,6 +78,29 @@ internal/config/    三层配置（默认 < YAML < 显式标志）
 
 ## 快速开始
 
+### Docker 一键启动
+
+```bash
+docker compose up -d          # 构建并启动；数据持久化在 banyan-data 卷
+
+# 推任意 git 仓库上来（首次 push 自动建仓）
+git remote add banyan http://localhost:8100/r/demo.git
+git push banyan main
+
+git clone http://localhost:8100/r/demo.git                      # 根仓库
+git clone http://localhost:8100/r/demo.git/tree/plumbing        # 任意子目录即仓库
+
+# 薄工作区：最小化下载、无 .git、历史在服务端
+go run ./cmd/banyan clone http://localhost:8100/r/demo
+# ...或主机无 Go 时：
+docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
+```
+
+受限网络可走镜像构建：
+`docker compose build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/`。
+
+### 源码构建
+
 ```bash
 go build ./... && go vet ./... && go test ./...   # ~65s（集成测试需 PATH 中有 git）
 

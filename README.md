@@ -110,6 +110,29 @@ internal/config/    layered config (defaults < YAML < flags)
 
 ## Quick start
 
+### One command with Docker
+
+```bash
+docker compose up -d          # build + run; data persists in the banyan-data volume
+
+# push any git repo (first push auto-creates it)
+git remote add banyan http://localhost:8100/r/demo.git
+git push banyan main
+
+git clone http://localhost:8100/r/demo.git                      # root repo
+git clone http://localhost:8100/r/demo.git/tree/plumbing        # any subtree is a repo
+
+# thin workspace: minimal download, no .git, server-side history
+go run ./cmd/banyan clone http://localhost:8100/r/demo
+# ...or without Go on the host:
+docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
+```
+
+Constrained networks can build through a mirror:
+`docker compose build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/`.
+
+### From source
+
 ```bash
 go build ./... && go vet ./... && go test ./...   # ~65s (integration needs git on PATH)
 

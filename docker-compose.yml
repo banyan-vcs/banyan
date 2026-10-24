@@ -1,0 +1,19 @@
+# One-command local demo: docker compose up -d
+#
+#   git        http://localhost:8100/r/<repo>.git     (push auto-creates)
+#   thin CLI   go run ./cmd/banyan clone http://localhost:8100/r/<repo>
+#   in-container CLI (no host Go needed):
+#              docker compose exec banyan banyan clone http://127.0.0.1:8080/r/<repo>
+services:
+  banyan:
+    build: .
+    image: banyan:dev
+    container_name: banyan
+    ports:
+      - "8100:8080" # host 8100 -> container 8080
+    volumes:
+      - banyan-data:/var/lib/banyan # SQLite metadata + pack shards persist
+    restart: unless-stopped
+
+volumes:
+  banyan-data:

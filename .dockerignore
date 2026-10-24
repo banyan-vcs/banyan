@@ -1,0 +1,7 @@
+.git
+bin
+data
+banyan.yaml
+*.db
+*.db-wal
+*.db-shm
