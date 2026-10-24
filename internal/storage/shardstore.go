@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"sort"
+	"strings"
 	"fmt"
 	"log"
 	"os"
@@ -51,6 +53,30 @@ type ObjectService struct {
 	batchMu  sync.Mutex
 	batchDep map[string]int
 	batchBuf map[string]map[model.OID]synthObject
+
+	// Clone-shaped response pack cache (docs/12 P2-2, B9): a subtree (or
+	// woven-root) clone's closure never equals a stored pack — projection and
+	// weave OIDs are synthetic — so ExactPackHit cannot fire and every clone
+	// re-encodes online. With no haves, no shallowing and no filter the
+	// response pack is a pure function of the wants, so it caches verbatim:
+	// tips change → new wants → new key; object graphs are immutable, so
+	// entries never invalidate (LRU by bytes only).
+	respMu     sync.Mutex
+	respCache  map[closureKey]*list.Element
+	respLRU    *list.List
+	respBytes  int64
+	respHits   int
+	respStores int
+}
+
+// responsePackCacheMax bounds the clone-shaped response cache.
+const responsePackCacheMax = 128 << 20
+
+type closureKey struct {
+	repo  string
+	sub   string
+	wants string // sorted, joined — the pack's complete input
+	ofs   bool   // OFS_DELTA vs REF_DELTA encoding
 }
 
 // locCacheMax bounds one repo's location cache (LRU eviction).
@@ -78,20 +104,87 @@ func NewObjectServiceWithBackend(meta MetaStore, backend ShardBackend, algo mode
 
 func newObjectService(meta MetaStore, local *LocalShardStore, backend ShardBackend, algo model.HashAlgo) *ObjectService {
 	return &ObjectService{
-		Meta:     meta,
-		Local:    local,
-		Backend:  backend,
-		Algo:     algo,
-		cache:    map[string]map[model.OID]*DecodedPack{},
+		Meta:      meta,
+		Local:     local,
+		Backend:   backend,
+		Algo:      algo,
+		cache:     map[string]map[model.OID]*DecodedPack{},
 		packOrder: map[string]map[model.OID][]model.OID{},
-		synth:    map[string]map[model.OID]synthObject{},
-		idx:      map[string]*repoIndex{},
-		loc:      map[string]map[model.OID]ObjectLocation{},
-		locLRU:   map[string]*list.List{},
-		locElem:  map[string]map[model.OID]*list.Element{},
-		batchDep: map[string]int{},
-		batchBuf: map[string]map[model.OID]synthObject{},
+		synth:     map[string]map[model.OID]synthObject{},
+		idx:       map[string]*repoIndex{},
+		loc:       map[string]map[model.OID]ObjectLocation{},
+		locLRU:    map[string]*list.List{},
+		locElem:   map[string]map[model.OID]*list.Element{},
+		batchDep:  map[string]int{},
+		batchBuf:  map[string]map[model.OID]synthObject{},
+		respCache: map[closureKey]*list.Element{},
+		respLRU:   list.New(),
 	}
+}
+
+// closureKeyOf builds the response-cache key: the wants fully determine the
+// pack for the clone shape (sorted so key order is canonical).
+func closureKeyOf(repo string, sub model.AnchorPath, wants []model.OID, ofsDelta bool) closureKey {
+	sorted := append([]model.OID(nil), wants...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return closureKey{repo: repo, sub: string(sub), ofs: ofsDelta,
+		wants: strings.Join(func() []string {
+			out := make([]string, len(sorted))
+			for i, oid := range sorted {
+				out[i] = string(oid)
+			}
+			return out
+		}(), ",")}
+}
+
+// CachedResponsePack returns the cached pack for a clone-shaped closure.
+func (s *ObjectService) CachedResponsePack(repo string, sub model.AnchorPath, wants []model.OID, ofsDelta bool) ([]byte, bool) {
+	key := closureKeyOf(repo, sub, wants, ofsDelta)
+	s.respMu.Lock()
+	defer s.respMu.Unlock()
+	el, ok := s.respCache[key]
+	if !ok {
+		return nil, false
+	}
+	s.respLRU.MoveToFront(el)
+	s.respHits++
+	return el.Value.(closureEntry).raw, true
+}
+
+type closureEntry struct {
+	key closureKey
+	raw []byte
+}
+
+// StoreResponsePack caches a clone-shaped response pack (LRU by bytes).
+func (s *ObjectService) StoreResponsePack(repo string, sub model.AnchorPath, wants []model.OID, ofsDelta bool, raw []byte) {
+	key := closureKeyOf(repo, sub, wants, ofsDelta)
+	s.respMu.Lock()
+	defer s.respMu.Unlock()
+	if el, ok := s.respCache[key]; ok {
+		s.respLRU.MoveToFront(el)
+		return
+	}
+	s.respCache[key] = s.respLRU.PushFront(closureEntry{key: key, raw: raw})
+	s.respBytes += int64(len(raw))
+	s.respStores++
+	for s.respBytes > responsePackCacheMax && s.respLRU.Len() > 1 {
+		oldest := s.respLRU.Back()
+		if oldest == nil {
+			break
+		}
+		evicted := oldest.Value.(closureEntry)
+		s.respLRU.Remove(oldest)
+		delete(s.respCache, evicted.key)
+		s.respBytes -= int64(len(evicted.raw))
+	}
+}
+
+// ResponseCacheStats reports (hits, stores, entries) — observability + tests.
+func (s *ObjectService) ResponseCacheStats() (hits, stores, entries int) {
+	s.respMu.Lock()
+	defer s.respMu.Unlock()
+	return s.respHits, s.respStores, s.respLRU.Len()
 }
 
 // PutSynthetic materializes a server-synthesized object (idempotent:

@@ -195,3 +195,55 @@ func TestPushWarmView(t *testing.T) {
 	assert.Equal(t, "base\nwarm-me\n", readFile(t, filepath.Join(fresh, "lib", "nested", "SHARED.txt")),
 		"根视图应包含子树推送内容")
 }
+
+// --- T35 clone-shaped response pack cache (docs/12 P2-2, B9) ---
+// A subtree clone's closure never equals a stored pack (projection/weave
+// OIDs are synthetic), so every clone re-encoded online. Clone-shaped
+// requests (no haves/depth/filter — the pack is a pure function of the
+// wants) now cache verbatim: repeat clones skip encoding, tips changes
+// produce a new key, and plain root clones keep hitting ExactPackHit
+// without polluting the cache.
+func TestClosureResponseCache(t *testing.T) {
+	needGit(t)
+	dir := t.TempDir()
+	s, objects := newStack(t, filepath.Join(dir, "shards"), "", false)
+	src := seedRepo(t, s, "t35")
+
+	// First subtree clone: online encode, cached.
+	sub1 := cloneRepo(t, s, s.treeURL("t35", "lib/nested"))
+	hits, stores, _ := objects.ResponseCacheStats()
+	assert.Equal(t, 1, stores, "首次子树克隆应缓存其闭包包")
+	assert.Equal(t, 0, hits)
+
+	// Repeat clone: served from the cache, byte-identical result.
+	sub2 := cloneRepo(t, s, s.treeURL("t35", "lib/nested"))
+	hits, stores, _ = objects.ResponseCacheStats()
+	assert.Equal(t, 1, hits, "第二次子树克隆应命中缓存")
+	assert.Equal(t, 1, stores, "命中不应新增缓存")
+	assert.Equal(t, headOf(t, sub1), headOf(t, sub2))
+	fsckClean(t, sub2)
+
+	// Plain root clone: ExactPackHit serves the pushed pack — no new cache entry.
+	_ = cloneRepo(t, s, s.repoURL("t35"))
+	_, stores, _ = objects.ResponseCacheStats()
+	assert.Equal(t, 1, stores, "根克隆走 ExactPackHit，不应污染闭包缓存")
+
+	// Tips move → new key → re-encode and cache again.
+	appendLine(t, filepath.Join(src, "lib", "nested", "SHARED.txt"), "t35: moved\n")
+	git(t, src, "commit", "-qam", "t35: nested change")
+	git(t, src, "push", "-q", s.repoURL("t35"), "main")
+	sub3 := cloneRepo(t, s, s.treeURL("t35", "lib/nested"))
+	hits, stores, _ = objects.ResponseCacheStats()
+	assert.Equal(t, 2, stores, "tips 变化应产生新缓存键")
+	assert.Equal(t, "base\nt35: moved\n", readFile(t, filepath.Join(sub3, "SHARED.txt")))
+	fsckClean(t, sub3)
+
+	// Incremental (haves present) fetches are client-specific: never cached.
+	client := cloneRepo(t, s, s.treeURL("t35", "lib/nested"))
+	appendLine(t, filepath.Join(src, "lib", "nested", "SHARED.txt"), "t35: again\n")
+	git(t, src, "commit", "-qam", "t35: nested change 2")
+	git(t, src, "push", "-q", s.repoURL("t35"), "main")
+	git(t, client, "pull", "-q", "origin", "main")
+	_, stores, _ = objects.ResponseCacheStats()
+	assert.Equal(t, 2, stores, "带 haves 的增量 fetch 不应进缓存")
+}

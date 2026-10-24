@@ -342,18 +342,11 @@ func (s *Server) fetchV2(out *bufWriter, r *http.Request, vr VirtualRepo, args [
 	// *%x00-ff)): each chunk carries band 1 (pack data) — this framing is
 	// unconditional in v2, independent of the sideband-all capability.
 	sb := sidebandWriter{w: out}
-	if packOID, ok := s.Objects.ExactPackHit(vr.Repo, wanted); ok {
-		if raw, perr := s.Objects.PackBytes(ctx, vr.Repo, packOID); perr == nil {
-			if _, werr := sb.Write(raw); werr == nil {
-				served = "exact-pack " + string(packOID)
-			}
-		}
-	}
-	if served == "encode" {
-		if err := serveObjectPack(sb, blobs, trees, commits, tags, fa.ofsDelta); err != nil {
-			log.Printf("v2 fetch %s%s: encode: %v", vr.Repo, vr.Sub, err)
-		}
-	}
+	// Serve ladder shared with v1 (docs/12 P2-2): stored-pack verbatim →
+	// clone-shaped response cache → online encoding. Thin packs (haves
+	// present) are client-specific and never cached.
+	cacheable := len(fa.haves) == 0 && fa.depth == 0 && fa.filter == nil
+	served = s.serveClosurePack(ctx, sb, vr, fa.wants, blobs, trees, commits, tags, cacheable, fa.ofsDelta)
 	_ = WriteFlush(out)
 	log.Printf("v2 fetch %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, filter %s, closure %s, serve %s/%s)",
 		vr.Repo, vr.Sub, len(fa.wants), len(commits), len(trees), len(blobs), excluded, filterSpecName(fa.filter),

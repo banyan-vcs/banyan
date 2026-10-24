@@ -2,6 +2,7 @@ package gitwire
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -163,34 +164,10 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		return
 	}
 	encodeStart := time.Now()
-	// Hot-path whole-pack direct serve (docs/02 §5): when the closure exactly equals a stored pack,
-	// stream the pack's raw bytes back, skipping re-hash + re-compression.
-	wanted := make(map[model.OID]bool, len(commits)+len(trees)+len(blobs)+len(tags))
-	for oid := range commits {
-		wanted[oid] = true
-	}
-	for oid := range trees {
-		wanted[oid] = true
-	}
-	for oid := range blobs {
-		wanted[oid] = true
-	}
-	for oid := range tags {
-		wanted[oid] = true
-	}
-	served := "encode"
-	if packOID, ok := s.Objects.ExactPackHit(vr.Repo, wanted); ok {
-		if raw, err := s.Objects.PackBytes(r.Context(), vr.Repo, packOID); err == nil {
-			if _, werr := out.Write(raw); werr == nil {
-				served = "exact-pack " + string(packOID)
-			}
-		}
-	}
-	if served == "encode" {
-		if err := serveObjectPack(out, blobs, trees, commits, tags, clientOfsDelta); err != nil {
-			log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
-		}
-	}
+	// Hot-path serve ladder (docs/02 §5, docs/12 P2-2): stored-pack verbatim
+	// → clone-shaped response cache → online encoding (delta past threshold).
+	cacheable := len(haves) == 0 && depth == 0 && filter == nil
+	served := s.serveClosurePack(r.Context(), out, vr, wants, blobs, trees, commits, tags, cacheable, clientOfsDelta)
 	_ = out.Flush()
 	log.Printf("upload-pack %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, filter %s, closure %s, serve %s/%s)",
 		vr.Repo, vr.Sub, len(wants), len(commits), len(trees), len(blobs), excluded, filterSpecName(filter),
@@ -227,6 +204,55 @@ func filterSpecName(f *FilterSpec) string {
 		return "off"
 	}
 	return f.Spec()
+}
+
+// serveClosurePack writes the response pack for a computed closure, with the
+// whole-pack direct serve first and the clone-shaped response cache second
+// (docs/12 P2-2): when the request carries no haves, no shallowing and no
+// filter, the pack is a pure function of the wants — subtree and woven-root
+// closures (whose OIDs never match a stored pack) then cache verbatim and
+// repeat clones skip online encoding entirely. Returns the serve mode.
+func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID,
+	blobs, trees, commits, tags map[model.OID][]byte, cacheable, ofsDelta bool) string {
+
+	wanted := make(map[model.OID]bool, len(commits)+len(trees)+len(blobs)+len(tags))
+	for oid := range commits {
+		wanted[oid] = true
+	}
+	for oid := range trees {
+		wanted[oid] = true
+	}
+	for oid := range blobs {
+		wanted[oid] = true
+	}
+	for oid := range tags {
+		wanted[oid] = true
+	}
+	if packOID, ok := s.Objects.ExactPackHit(vr.Repo, wanted); ok {
+		if raw, err := s.Objects.PackBytes(ctx, vr.Repo, packOID); err == nil {
+			if _, werr := out.Write(raw); werr == nil {
+				return "exact-pack " + string(packOID)
+			}
+		}
+	}
+	if cacheable {
+		if raw, ok := s.Objects.CachedResponsePack(vr.Repo, vr.Sub, wants, ofsDelta); ok {
+			if _, werr := out.Write(raw); werr == nil {
+				return "closure-cache"
+			}
+		}
+		var buf bytes.Buffer
+		if err := serveObjectPack(&buf, blobs, trees, commits, tags, ofsDelta); err != nil {
+			log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
+		}
+		s.Objects.StoreResponsePack(vr.Repo, vr.Sub, wants, ofsDelta, buf.Bytes())
+		_, _ = out.Write(buf.Bytes())
+		return "encode+cache"
+	}
+	if err := serveObjectPack(out, blobs, trees, commits, tags, ofsDelta); err != nil {
+		log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
+	}
+	return "encode"
 }
 
 // writeShallowSection writes the shallow section at the start of the response (deepen requests only):
