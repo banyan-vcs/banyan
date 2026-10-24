@@ -1,5 +1,5 @@
-// Goal: git protocol compatibility matrix — protocol version downgrade,
-// partial clone fallback, and shallow clone semantics against reference
+// Goal: git protocol compatibility matrix — protocol version matrix,
+// partial clone, and shallow clone semantics against reference
 // traffic from git http-backend (T13–T16, docs/03 §9).
 package integration
 
@@ -13,11 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- T13 protocol matrix: explicit v0 / forced v2 (server is v1-only, client downgrades per spec) ---
-// git ≥2.26 defaults fetch to v2 — every other case's clone/fetch/pull already
-// covers the "client tries v2 → server replies v0 advertisement → downgrade"
-// path implicitly; this case pins the explicit behavior contract for both
-// versions across clone / incremental negotiation / subtree URLs (git 2.50).
+// --- T13 protocol matrix: explicit v0 / forced v2 (v2 is native since the
+// protocol v2 command set landed — this case now pins that BOTH version
+// paths produce identical results; the v2 wire format itself is pinned in
+// protocol_v2_test.go) ---
+// git ≥2.26 defaults fetch to v2; every other case's clone/fetch/pull
+// exercises v2 by default. This case pins the explicit v0/v2 behavior
+// contract across clone / incremental negotiation / subtree URLs (git 2.50).
 func TestProtocolVersionMatrix(t *testing.T) {
 	needGit(t)
 	s := newServer(t)

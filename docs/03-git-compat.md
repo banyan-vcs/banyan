@@ -152,7 +152,7 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 
 | 限制 | 影响 | 缓解 |
 |---|---|---|
-| 无 protocol v2 | git 客户端自动回退 v1（§9 实测），无感 | **已立项 perf-2**（docs/12 P1-5）：ls-refs/fetch 命令面（按需 ref 广告 + 服务端驱动协商），push 按语义恒 v0 |
+| ~~无 protocol v2~~ | **已实现**（§9b）：ls-refs（ref-prefix/peel/symrefs/unborn）+ fetch（acknowledgments/shallow-info/packfile 段、sideband 帧封装、delta+filter 同 v1）；receive-pack 恒 v0（git 语义本身如此） | T30 钉住（真实 git + GIT_TRACE_PACKET 证明 v2 生效） |
 | ~~v1 have 协商~~ | 已实现（终态 ACK 语义：有公共提交时 ACK 即终态、同响应内送包） | 组合测试实测过期客户端 pull 正常 |
 | push `no-thin` | 客户端 push 略增流量 | 服务端存储简单性优先 |
 | ~~serve 路径零 delta~~ | **已实现**（docs/12 P1-4）：原始负载过 64KiB 阈值后在线 delta 化（OFS_DELTA 优先/REF_DELTA 兜底），相似对象 2–5× 字节差 | T20 + storage 单测钉住 |
@@ -167,10 +167,10 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 | 场景 | 行为 | 结果 |
 |---|---|---|
 | 显式 `protocol.version=0` clone/fetch | v1 会话，裸 pack | ✅ fsck 干净 |
-| 强制 `protocol.version=2` clone | 客户端带 `Git-Protocol: version=2` 发现，服务端回 v0 广告（`# service=git-upload-pack`），客户端按规范**优雅降级**走 v1 | ✅ |
-| 默认（git ≥2.26 fetch 默认 v2） | 同上降级路径——全部存量用例的 clone/fetch/pull 均已隐式覆盖 | ✅ |
-| v2 强制增量 fetch（有 haves） | 降级后单 POST `want + haves + done` → 服务端终态 ACK（公共提交=旧 tip）+ 增量包，零多余协商轮 | ✅ |
-| v2 强制子树 URL clone | `/tree/<path>` 路径解析不受协议版本影响 | ✅ |
+| 强制 `protocol.version=2` clone | v2 原生会话（§9b）：capability 广告 → ls-refs → fetch，与 v0 结果一致 | ✅ |
+| 默认（git ≥2.26 fetch 默认 v2） | 全部存量用例的 clone/fetch/pull 均已隐式运行在 v2 命令面 | ✅ |
+| v2 增量 fetch（有 haves） | 终态轮：已知 have → ACK+ready 同响应送包；或 done 轮直接 packfile 段（upload-pack v2 对 done 请求省略 acks 段） | ✅ |
+| v2 子树 URL clone | `/tree/<path>` 路径解析不受协议版本影响 | ✅ |
 | `git clone --filter=blob:none` | **已广告生效**：初始包仅 commit/tree；首次工作树物化触发惰性取回（want=缺失 blob OID，经 `allow-reachable-sha1-in-want` 校验） | ✅ |
 | `git clone --filter=tree:0` | 仅 commit 对象；树的惰性取回同上 | ✅ |
 | promisor 配置下的后续 fetch | 请求携带 `filter` 行，服务端解析并每轮生效 | ✅ |
@@ -183,7 +183,30 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 | 子树 URL 浅化 / 解浅 | 投影 OID 空间内同一套语义 | ✅ |
 | 浅仓 push | 拒绝（对照参考服务端 `receive.shallowUpdate=false` 默认 403） | ❌ 干净拒绝 |
 
-**推论**：v1 服务端对现代 git 客户端是零配置兼容的——v2（自动降级）、partial clone（filter 已生效）、shallow 三大特性全部可用；剩余边界只有 v2 命令面未实现（效率项而非兼容项，P1-5）与浅仓 push（参考服务端同样默认拒绝）。
+**推论**：v1+v2 双命令面下现代 git 客户端零配置全兼容——v2（原生）、partial clone（filter 生效）、shallow 三大特性全部可用；剩余边界只有浅仓 push（参考服务端同样默认拒绝）。
+
+## 9b. protocol v2 命令面（ls-refs / fetch）
+
+对照 `protocol-v2.txt` 与 upload-pack.c/serve.c 实现（`gitwire/protocolv2.go`）：
+
+```
+发现：GET info/refs?service=git-upload-pack + Git-Protocol: version=2
+  → pkt-lines：version 2 / agent / ls-refs=unborn / fetch=shallow filter /
+    object-format → flush（无 "# service" 前导；receive-pack 发现忽略
+    version=2 头，恒回 v1——与 http-backend.c 一致）
+命令：POST git-upload-pack，body = command=<name> [caps] delim <args> flush
+  ls-refs：peel / symrefs / unborn / ref-prefix（前缀过滤含 HEAD）；
+    属性以空格分隔（spec：obj-id SP refname *(SP ref-attribute) LF——
+    曾误用 TAB 被真实 git 客户端击落，T30 记录）
+  fetch：want/have/shallow/deepen/filter/ofs-delta/done（thin-pack 等
+    接受但忽略：不服务对 haves 的 REF_DELTA）
+响应：acknowledgments（无 done 且无公共提交 → NAK+flush 结束协商轮；
+    无 done 但有公共提交 → ACKs+ready+delim 同响应送包；done → 整段
+    省略，直接进入后续段——upload-pack v2 对 done 的处理）→
+    [shallow-info] → packfile（段内容恒为 sideband pkt 帧：每 chunk
+    前置 band 1 字节，段尾 flush——与 sideband-all 能力无关）
+复用：v1 的可达性校验/闭包过滤/浅化裁剪/delta 阈值编码全部同路径。
+```
 
 ## 10. 实现策略审计（2026-10-18，对照"git 兼容为设计目标"；2026-10-24 更新）
 

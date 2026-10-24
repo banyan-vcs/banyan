@@ -85,14 +85,21 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			switch ep {
-			case "/info/refs":
-				s.handleInfoRefs(w, r, vr)
-			case "/git-upload-pack":
-				s.handleUploadPack(w, r, vr)
-			case "/git-receive-pack":
-				s.handleReceivePack(w, r, vr)
-			}
+	switch ep {
+	case "/info/refs":
+		s.handleInfoRefs(w, r, vr)
+	case "/git-upload-pack":
+		// v2 carries the command in the POST body; remote-curl also sends the
+		// Git-Protocol header on the POST (http-backend.c checks the header
+		// there too — a v1 body never starts with "command=").
+		if wantsV2(r) {
+			s.serveUploadPackV2(w, r, vr)
+		} else {
+			s.serveUploadPack(w, r, vr)
+		}
+	case "/git-receive-pack":
+		s.serveReceivePack(w, r, vr) // receive-pack has no v2 — v0 forever
+	}
 			return
 		}
 	}
@@ -122,6 +129,13 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr Virtu
 	}
 	w.Header().Set("Content-Type", "application/x-"+service+"-advertisement")
 	w.Header().Set("Cache-Control", "no-cache")
+
+	// v2 is upload-pack only (receive-pack has no v2; mirroring http-backend.c
+	// the header on a receive-pack discovery is ignored and v1 is served).
+	if service == "git-upload-pack" && wantsV2(r) {
+		s.advertiseV2(w)
+		return
+	}
 
 	refs, err := s.ResolveRefs(r.Context(), vr)
 	if err != nil {
@@ -201,10 +215,5 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 	}, " ")
 }
 
-func (s *Server) handleUploadPack(w http.ResponseWriter, r *http.Request, vr VirtualRepo) {
-	s.serveUploadPack(w, r, vr)
-}
-
-func (s *Server) handleReceivePack(w http.ResponseWriter, r *http.Request, vr VirtualRepo) {
-	s.serveReceivePack(w, r, vr)
-}
+// handleUploadPack / handleReceivePack dispatch happens in handleRepo
+// (v2 negotiation check inline).

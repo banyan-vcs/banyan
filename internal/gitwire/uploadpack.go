@@ -230,25 +230,11 @@ func filterSpecName(f *FilterSpec) string {
 }
 
 // writeShallowSection writes the shallow section at the start of the response (deepen requests only):
-//   - shallow lines: the new boundary computed from this depth (commits included whose parents are not fully included);
-//   - unshallow lines: client-reported boundaries whose parent chain is completed this round (--unshallow /
-//     deepen: the client clears the matching .git/shallow entries accordingly);
-//   - flush-pkt terminator (empty boundary = bare flush, per reference traffic d99).
-//
-// Output order is fixed (lexicographic) for testability; lines carry no newline, matching reference traffic bytes.
+// the shallowSectionLines content as no-LF pkt lines (v1 reference-traffic
+// bytes) + flush-pkt terminator (empty boundary = bare flush, per reference traffic d99).
 func (s *Server) writeShallowSection(out io.Writer, repo string, wants, clientShallow []model.OID, depth int) {
-	included, boundary := s.shallowCut(repo, wants, depth)
-	for _, oid := range sortedOIDs(boundary) {
-		_ = WritePacket(out, []byte("shallow "+string(oid)))
-	}
-	cs := map[model.OID]bool{}
-	for _, oid := range clientShallow {
-		cs[oid] = true
-	}
-	for _, oid := range sortedOIDs(cs) {
-		if included[oid] && !boundary[oid] {
-			_ = WritePacket(out, []byte("unshallow "+string(oid)))
-		}
+	for _, line := range s.shallowSectionLines(repo, wants, clientShallow, depth) {
+		_ = WritePacket(out, []byte(line))
 	}
 	_ = WriteFlush(out)
 }
