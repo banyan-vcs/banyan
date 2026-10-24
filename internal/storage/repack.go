@@ -135,6 +135,10 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 		delete(s.packOrder[repo], p.PackOID)
 		s.mu.Unlock()
 	}
+	// Every merged-away pack invalidates cached placements: locations only
+	// ever change at repack (docs/12 P0-1). Other gateways' caches self-heal
+	// through Raw's stale-placement retry.
+	s.locInvalidate(repo)
 	packsAfter, err := s.Meta.ListPacks(ctx, repo)
 	if err == nil {
 		res.PacksAfter = len(packsAfter)

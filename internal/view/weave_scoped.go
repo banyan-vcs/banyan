@@ -336,6 +336,9 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 		unlock(e.oid)
 	}
 	if !last.IsZero() && last != prevWoven {
+		// Durability before visibility (same as the root weave): flush the
+		// batched synthetics before the woven-tip CAS commits them.
+		s.Objects.FlushSynthBatch(repo)
 		wovTL := model.Timeline{Repo: repo, Anchor: wovenAnchorFor(scope), Name: branch}
 		_ = s.Meta.EnsureTimeline(ctx, wovTL, prevWoven, model.OID(""))
 		_ = s.Meta.CASHead(ctx, wovTL, prevWoven, last) // benign race: CAS winner stands

@@ -98,6 +98,11 @@ type rootKey struct {
 // to X: root-local projections and X's own locals fold as full X-scoped
 // trees, descendant locals graft at their relative paths.
 func (s *Service) SubtreeHead(ctx context.Context, repo string, sub model.AnchorPath, branch string) (head, rootLocal model.OID, err error) {
+	// One weave materialization = one synth batch: every synthetic the
+	// projection + fold produce persists as a single pack (docs/12 P0-2);
+	// the pre-CAS flush keeps "registration is the fact" intact.
+	s.Objects.BeginSynthBatch(repo)
+	defer s.Objects.EndSynthBatch(repo)
 	state, err := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: branch})
 	if errors.Is(err, storage.ErrTimelineUnknown) {
 		return "", "", nil
@@ -255,6 +260,8 @@ func (h *entryHeap) Pop() any {
 
 // RootTip materializes the root view head: weave over scope "" (docs/01 §13).
 func (s *Service) RootTip(ctx context.Context, repo, branch string) (model.OID, error) {
+	s.Objects.BeginSynthBatch(repo)
+	defer s.Objects.EndSynthBatch(repo)
 	return s.weave(ctx, repo, branch, model.RootAnchor)
 }
 
@@ -519,6 +526,10 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 	}
 
 	if !last.IsZero() && last != prevWoven {
+		// Durability before visibility: the woven tip's synthetics must be
+		// registered before the head CAS commits them (docs/11 registration
+		// is the fact; docs/12 P0-2 batching flush point).
+		s.Objects.FlushSynthBatch(repo)
 		wovenTL := model.Timeline{Repo: repo, Anchor: wovenAnchorFor(scope), Name: branch}
 		_ = s.Meta.EnsureTimeline(ctx, wovenTL, prevWoven, model.OID(""))
 		if err := s.Meta.CASHead(ctx, wovenTL, prevWoven, last); err != nil {
@@ -621,6 +632,8 @@ func (s *Service) ProjectionTip(repo string, sub model.AnchorPath, rootLocal mod
 	if rootLocal.IsZero() {
 		return "", nil
 	}
+	s.Objects.BeginSynthBatch(repo)
+	defer s.Objects.EndSynthBatch(repo)
 	res, err := model.SplitHistory(s.Objects.Lookup(repo), s.Algo, rootLocal, sub)
 	if err != nil {
 		return "", err

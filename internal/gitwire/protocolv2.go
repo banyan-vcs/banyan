@@ -273,9 +273,12 @@ func (s *Server) fetchV2(out *bufWriter, r *http.Request, vr VirtualRepo, args [
 		return
 	}
 
+	// One batched locate for the whole have list — the ACK check never
+	// touches object bytes (docs/12 P0-1).
+	knownHaves := s.Objects.Known(ctx, vr.Repo, fa.haves)
 	var acks []model.OID
 	for _, h := range fa.haves {
-		if _, _, err := s.Objects.Raw(ctx, vr.Repo, h); err == nil {
+		if knownHaves[h] {
 			acks = append(acks, h)
 		}
 	}

@@ -326,6 +326,9 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 		delete(exclude, w)
 		wantSet[w] = true
 	}
+	// Batch-locate the walk's known inputs up front (docs/12 P0-1): wants +
+	// haves in one Meta round trip instead of one per object.
+	s.Objects.Prefetch(ctx, vr.Repo, append(append([]model.OID{}, wants...), haves...))
 	visited := map[model.OID]bool{}
 	referrer := map[model.OID]model.OID{} // debugging: oid ← who enqueued it
 	var boundary map[model.OID]bool
@@ -400,6 +403,14 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			if err != nil {
 				return nil, nil, nil, nil, 0, fmt.Errorf("closure: tree %s: %w", oid, err)
 			}
+			// Tree expansion is the natural batching point (docs/12 P0-1):
+			// all children locate in one Meta round trip, so cold-walk RPC
+			// count falls from O(objects) to O(trees).
+			children := make([]model.OID, 0, len(entries))
+			for _, e := range entries {
+				children = append(children, e.Target)
+			}
+			s.Objects.Prefetch(ctx, vr.Repo, children)
 			for _, e := range entries {
 				enq(e.Target)
 			}
@@ -439,6 +450,7 @@ func (s *Server) haveClosure(ctx context.Context, repo string, haves, clientShal
 	if len(haves) == 0 {
 		return exclude
 	}
+	s.Objects.Prefetch(ctx, repo, haves) // one batched locate for the whole have list
 	shallowStop := map[model.OID]bool{}
 	for _, oid := range clientShallow {
 		shallowStop[oid] = true
@@ -491,10 +503,11 @@ func (s *Server) haveClosure(ctx context.Context, repo string, haves, clientShal
 
 // firstKnown returns the first object in haves that the server already has (the v1 negotiation
 // common-commit check; a single basic ACK suffices — multi_ack not advertised). Returns the
-// zero value when every have in the batch is unknown.
+// zero value when every have in the batch is unknown. One batched locate, no object bytes.
 func (s *Server) firstKnown(ctx context.Context, repo string, haves []model.OID) model.OID {
+	known := s.Objects.Known(ctx, repo, haves)
 	for _, oid := range haves {
-		if _, _, err := s.Objects.Raw(ctx, repo, oid); err == nil {
+		if known[oid] {
 			return oid
 		}
 	}

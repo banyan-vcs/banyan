@@ -113,6 +113,15 @@ func (s *Service) FetchTrees(ctx context.Context, req FetchRequest) (*FetchResul
 		if err != nil {
 			return
 		}
+		// Tree expansion is the batching point (docs/12 P0-1): children
+		// locate in one Meta round trip.
+		children := make([]model.OID, 0, len(t.Entries))
+		for _, e := range t.Entries {
+			if included(e.Name, e.IsDir) {
+				children = append(children, e.Target)
+			}
+		}
+		s.Objects.Prefetch(ctx, req.Repo, children)
 		for _, e := range t.Entries {
 			if !included(e.Name, e.IsDir) {
 				continue

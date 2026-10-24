@@ -207,3 +207,39 @@ func TestRepackRestartSurvival(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(packs), "重启后 pack 数应保持 1")
 }
+
+// --- T31 synth batching: one weave materialization = one pack (docs/12 P0-2) ---
+// Before batching, every synthetic (projection commits, fold rewrites) landed
+// as its own single-object pack — one weave of N objects meant N packs, and in
+// cluster mode N×(R+1) network operations. The view entries now run inside a
+// synth batch whose pre-CAS flush persists everything as ONE pack (the
+// durability point that keeps "registration is the fact" intact).
+func TestSynthBatchSinglePack(t *testing.T) {
+	needGit(t)
+	dir := t.TempDir()
+	s, objects := newStack(t, filepath.Join(dir, "shards"), "", false)
+	src := seedRepo(t, s, "t31")
+	// A second commit grows the projection chain the subtree view materializes.
+	appendLine(t, filepath.Join(src, "README.md"), "t31: more\n")
+	git(t, src, "commit", "-qam", "t31: second")
+	git(t, src, "push", "-q", s.repoURL("t31"), "main")
+
+	ctx := context.Background()
+	before, err := objects.Meta.ListPacks(ctx, "t31")
+	require.NoError(t, err)
+
+	// First advertisement of the subtree view materializes projection + fold
+	// synthetics — all inside one batch.
+	sub := cloneRepo(t, s, s.treeURL("t31", "lib/nested"))
+	after, err := objects.Meta.ListPacks(ctx, "t31")
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(after)-len(before),
+		"一次子树物化应只产生一个合成 pack（实际 %d → %d）", len(before), len(after))
+
+	assert.Equal(t, "base\n", readFile(t, filepath.Join(sub, "SHARED.txt")))
+	fsckClean(t, sub)
+	// The root view stays consistent with the materialized objects.
+	fresh := cloneRepo(t, s, s.repoURL("t31"))
+	fsckClean(t, fresh)
+	require.True(t, hasCommit(t, fresh, headOf(t, src)))
+}

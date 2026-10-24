@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"fmt"
 	"log"
@@ -33,7 +34,27 @@ type ObjectService struct {
 
 	idxMu sync.Mutex
 	idx   map[string]*repoIndex // repo → in-memory derived index (docs/02 §1.3 / docs/04)
+
+	// Location cache (docs/12 P0-1, B1): oid → pack placement, LRU per repo.
+	// Entries are valid until a repack moves the object: repack invalidates
+	// the repo set, and a failed read triggers one invalidate + re-locate to
+	// cover repacks initiated by another gateway.
+	locMu   sync.Mutex
+	loc     map[string]map[model.OID]ObjectLocation
+	locLRU  map[string]*list.List
+	locElem map[string]map[model.OID]*list.Element
+
+	// Synthetic-object batching (docs/12 P0-2, B3): a weave materialization
+	// buffers its synthetics and persists them as ONE pack at flush.
+	// Refcounted per repo (nested view entries compose); reads stay correct —
+	// the in-memory synth table updates immediately, only persistence defers.
+	batchMu  sync.Mutex
+	batchDep map[string]int
+	batchBuf map[string]map[model.OID]synthObject
 }
+
+// locCacheMax bounds one repo's location cache (LRU eviction).
+const locCacheMax = 65536
 
 // synthObject is a server-synthesized object (not from push), e.g. a subtree projection commit.
 type synthObject struct {
@@ -57,23 +78,32 @@ func NewObjectServiceWithBackend(meta MetaStore, backend ShardBackend, algo mode
 
 func newObjectService(meta MetaStore, local *LocalShardStore, backend ShardBackend, algo model.HashAlgo) *ObjectService {
 	return &ObjectService{
-		Meta:      meta,
-		Local:     local,
-		Backend:   backend,
-		Algo:      algo,
-		cache:     map[string]map[model.OID]*DecodedPack{},
+		Meta:     meta,
+		Local:    local,
+		Backend:  backend,
+		Algo:     algo,
+		cache:    map[string]map[model.OID]*DecodedPack{},
 		packOrder: map[string]map[model.OID][]model.OID{},
-		synth:     map[string]map[model.OID]synthObject{},
-		idx:       map[string]*repoIndex{},
+		synth:    map[string]map[model.OID]synthObject{},
+		idx:      map[string]*repoIndex{},
+		loc:      map[string]map[model.OID]ObjectLocation{},
+		locLRU:   map[string]*list.List{},
+		locElem:  map[string]map[model.OID]*list.Element{},
+		batchDep: map[string]int{},
+		batchBuf: map[string]map[model.OID]synthObject{},
 	}
 }
 
 // PutSynthetic materializes a server-synthesized object (idempotent:
-// content-addressed). Write-through: the first write also persists the object
-// as a single-object pack, so timeline heads referencing synthetics (adoption
-// merges, thin commits, projections) survive a restart. Re-materialization
-// dedups via the in-memory table; pack CAS keeps re-ingest idempotent. The
-// per-object fragments are repack's consolidation job (docs/02 §5, M3).
+// content-addressed). Write-through persists the object so timeline heads
+// referencing synthetics (adoption merges, thin commits, projections)
+// survive a restart — inside a synth batch (BeginSynthBatch) the
+// persistence defers and the whole batch lands as one pack at flush
+// (docs/12 P0-2); the in-memory table always updates immediately, so
+// same-process reads (the fold's own ReplaceSubtree) see the object at
+// once. Re-materialization dedups via the in-memory table; pack CAS keeps
+// re-ingest idempotent. Per-object fragments are repack's consolidation job
+// (docs/02 §5, M3).
 func (s *ObjectService) PutSynthetic(repo string, oid model.OID, t model.ObjectType, data []byte) {
 	s.synthMu.Lock()
 	if s.synth[repo] == nil {
@@ -85,6 +115,100 @@ func (s *ObjectService) PutSynthetic(repo string, oid model.OID, t model.ObjectT
 	if exists {
 		return
 	}
+	s.batchMu.Lock()
+	deferred := s.batchDep[repo] > 0
+	if deferred {
+		if s.batchBuf[repo] == nil {
+			s.batchBuf[repo] = map[model.OID]synthObject{}
+		}
+		s.batchBuf[repo][oid] = synthObject{Type: t, Data: data}
+	}
+	s.batchMu.Unlock()
+	if deferred {
+		return
+	}
+	s.persistSynthOne(repo, oid, t, data)
+}
+
+// BeginSynthBatch defers synthetic persistence for this repo (refcounted:
+// nested view materializations compose into one batch).
+func (s *ObjectService) BeginSynthBatch(repo string) {
+	s.batchMu.Lock()
+	s.batchDep[repo]++
+	s.batchMu.Unlock()
+}
+
+// EndSynthBatch closes one BeginSynthBatch level; the final close flushes
+// the remaining buffer as one pack.
+func (s *ObjectService) EndSynthBatch(repo string) {
+	s.batchMu.Lock()
+	if s.batchDep[repo] <= 0 {
+		s.batchMu.Unlock()
+		return
+	}
+	s.batchDep[repo]--
+	flush := s.batchDep[repo] == 0
+	s.batchMu.Unlock()
+	if flush {
+		s.flushSynthBatch(repo)
+	}
+}
+
+// FlushSynthBatch persists buffered synthetics now without changing the
+// batch depth: the durability point before a timeline head CAS —
+// registration is the fact, so a committed head must never reference
+// objects that only exist in this process's memory (cluster: other
+// gateways would miss them).
+func (s *ObjectService) FlushSynthBatch(repo string) {
+	s.flushSynthBatch(repo)
+}
+
+func (s *ObjectService) flushSynthBatch(repo string) {
+	s.batchMu.Lock()
+	buf := s.batchBuf[repo]
+	delete(s.batchBuf, repo)
+	s.batchMu.Unlock()
+	if len(buf) == 0 {
+		return
+	}
+	var blobs, trees, commits map[model.OID][]byte
+	ensure := func() {
+		if blobs == nil {
+			blobs = map[model.OID][]byte{}
+			trees = map[model.OID][]byte{}
+			commits = map[model.OID][]byte{}
+		}
+	}
+	for oid, so := range buf {
+		ensure()
+		switch so.Type {
+		case model.BlobType:
+			blobs[oid] = so.Data
+		case model.TreeType:
+			trees[oid] = so.Data
+		default:
+			commits[oid] = so.Data
+		}
+	}
+	var pack bytes.Buffer
+	if err := EncodePack(&pack, blobs, trees, commits, nil); err != nil {
+		log.Printf("synth batch %s: encode: %v (per-object fallback)", repo, err)
+		s.persistSynthEach(repo, buf)
+		return
+	}
+	if _, err := s.IngestPack(context.Background(), repo, pack.Bytes()); err != nil {
+		log.Printf("synth batch %s: persist: %v (per-object fallback)", repo, err)
+		s.persistSynthEach(repo, buf)
+	}
+}
+
+func (s *ObjectService) persistSynthEach(repo string, buf map[model.OID]synthObject) {
+	for oid, so := range buf {
+		s.persistSynthOne(repo, oid, so.Type, so.Data)
+	}
+}
+
+func (s *ObjectService) persistSynthOne(repo string, oid model.OID, t model.ObjectType, data []byte) {
 	var blobs, trees, commits map[model.OID][]byte
 	switch t {
 	case model.BlobType:
@@ -104,6 +228,131 @@ func (s *ObjectService) PutSynthetic(repo string, oid model.OID, t model.ObjectT
 	}
 }
 
+// --- location cache (docs/12 P0-1) ---
+
+func (s *ObjectService) locHit(repo string, oid model.OID) (ObjectLocation, bool) {
+	s.locMu.Lock()
+	defer s.locMu.Unlock()
+	if m := s.loc[repo]; m != nil {
+		if loc, ok := m[oid]; ok {
+			if el := s.locElem[repo][oid]; el != nil {
+				s.locLRU[repo].MoveToFront(el)
+			}
+			return loc, true
+		}
+	}
+	return ObjectLocation{}, false
+}
+
+func (s *ObjectService) locPut(repo string, oid model.OID, loc ObjectLocation) {
+	s.locMu.Lock()
+	defer s.locMu.Unlock()
+	if s.loc[repo] == nil {
+		s.loc[repo] = map[model.OID]ObjectLocation{}
+		s.locElem[repo] = map[model.OID]*list.Element{}
+		s.locLRU[repo] = list.New()
+	}
+	if _, exists := s.loc[repo][oid]; !exists {
+		s.locElem[repo][oid] = s.locLRU[repo].PushFront(oid)
+		if s.locLRU[repo].Len() > locCacheMax {
+			if oldest := s.locLRU[repo].Back(); oldest != nil {
+				evict := oldest.Value.(model.OID)
+				s.locLRU[repo].Remove(oldest)
+				delete(s.loc[repo], evict)
+				delete(s.locElem[repo], evict)
+			}
+		}
+	}
+	s.loc[repo][oid] = loc
+}
+
+func (s *ObjectService) locInvalidate(repo string) {
+	s.locMu.Lock()
+	defer s.locMu.Unlock()
+	delete(s.loc, repo)
+	delete(s.locElem, repo)
+	delete(s.locLRU, repo)
+}
+
+// locate resolves one object's placement, LRU-first (docs/12 P0-1).
+func (s *ObjectService) locate(ctx context.Context, repo string, oid model.OID) (ObjectLocation, error) {
+	if loc, ok := s.locHit(repo, oid); ok {
+		return loc, nil
+	}
+	locs, err := s.Meta.LocateObjects(ctx, repo, []model.OID{oid})
+	if err != nil {
+		return ObjectLocation{}, err
+	}
+	loc, ok := locs[oid]
+	if !ok {
+		return ObjectLocation{}, fmt.Errorf("%w: %s in repo %s", model.ErrObjectNotFound, oid, repo)
+	}
+	s.locPut(repo, oid, loc)
+	return loc, nil
+}
+
+// Prefetch batch-locates every not-yet-cached oid in ONE Meta round trip
+// (docs/12 P0-1): tree-expansion points feed their children here, cutting
+// the cluster's refs RPC count from O(objects) to O(trees).
+func (s *ObjectService) Prefetch(ctx context.Context, repo string, oids []model.OID) {
+	var missing []model.OID
+	for _, oid := range oids {
+		if _, ok := s.locHit(repo, oid); !ok {
+			missing = append(missing, oid)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	locs, err := s.Meta.LocateObjects(ctx, repo, missing)
+	if err != nil {
+		return // best-effort: individual locates will surface real errors
+	}
+	for _, oid := range missing {
+		if loc, ok := locs[oid]; ok {
+			s.locPut(repo, oid, loc)
+		}
+	}
+}
+
+// Known reports which of the oids the repo holds — one batched locate plus
+// the in-memory synth table (the same-process view Raw would see). Used by
+// the fetch negotiation paths (have-ACK checks): no object bytes fetched.
+func (s *ObjectService) Known(ctx context.Context, repo string, oids []model.OID) map[model.OID]bool {
+	out := map[model.OID]bool{}
+	s.synthMu.Lock()
+	synth := s.synth[repo]
+	s.synthMu.Unlock()
+	var missing []model.OID
+	for _, oid := range oids {
+		if synth != nil {
+			if _, ok := synth[oid]; ok {
+				out[oid] = true
+				continue
+			}
+		}
+		if _, ok := s.locHit(repo, oid); ok {
+			out[oid] = true
+			continue
+		}
+		missing = append(missing, oid)
+	}
+	if len(missing) == 0 {
+		return out
+	}
+	locs, err := s.Meta.LocateObjects(ctx, repo, missing)
+	if err != nil {
+		return out
+	}
+	for _, oid := range missing {
+		if loc, ok := locs[oid]; ok {
+			out[oid] = true
+			s.locPut(repo, oid, loc)
+		}
+	}
+	return out
+}
+
 // Raw is the unified read: synthetic objects first, then pack location via
 // the global index. Returns the object type and raw encoded bytes.
 func (s *ObjectService) Raw(ctx context.Context, repo string, oid model.OID) (model.ObjectType, []byte, error) {
@@ -114,10 +363,26 @@ func (s *ObjectService) Raw(ctx context.Context, repo string, oid model.OID) (mo
 	}
 	s.synthMu.Unlock()
 
-	dp, err := s.lookupPack(ctx, repo, oid)
+	loc, err := s.locate(ctx, repo, oid)
 	if err != nil {
 		return "", nil, err
 	}
+	t, data, err := s.objectFromPack(ctx, repo, oid, loc)
+	if err == nil {
+		return t, data, nil
+	}
+	// Stale placement (a repack — possibly on another gateway — moved the
+	// object, or the pack's decoded cache held a moved-away oid): drop the
+	// repo's location cache and retry exactly once with fresh placements.
+	s.locInvalidate(repo)
+	loc, err = s.locate(ctx, repo, oid)
+	if err != nil {
+		return "", nil, err
+	}
+	return s.objectFromPack(ctx, repo, oid, loc)
+}
+
+func objectFromDecoded(dp *DecodedPack, oid model.OID) (model.ObjectType, []byte, error) {
 	if b, ok := dp.Blobs[oid]; ok {
 		return model.BlobType, b, nil
 	}
@@ -131,6 +396,38 @@ func (s *ObjectService) Raw(ctx context.Context, repo string, oid model.OID) (mo
 		return model.TagType, tg, nil
 	}
 	return "", nil, fmt.Errorf("%w: %s", model.ErrObjectNotFound, oid)
+}
+
+// objectFromPack reads one object out of its located pack: decoded-cache
+// fast path, then whole-pack fetch + decode (the miss path; docs/12 P1-1
+// replaces the fetch with single-object extraction).
+func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid model.OID, loc ObjectLocation) (model.ObjectType, []byte, error) {
+	s.mu.Lock()
+	dp := s.cache[repo][loc.PackOID]
+	s.mu.Unlock()
+	if dp != nil {
+		return objectFromDecoded(dp, oid)
+	}
+	holders := s.packHolders(ctx, repo, loc.PackOID, loc.NodeID)
+	raw, err := s.Backend.GetPack(ctx, repo, loc.PackOID, holders)
+	if err != nil {
+		return "", nil, err
+	}
+	dp, err = DecodePack(raw)
+	if err != nil {
+		return "", nil, fmt.Errorf("%w: pack %s: %v", model.ErrObjectNotFound, loc.PackOID, err)
+	}
+	s.mu.Lock()
+	if s.cache[repo] == nil {
+		s.cache[repo] = map[model.OID]*DecodedPack{}
+	}
+	s.cache[repo][loc.PackOID] = dp
+	if s.packOrder[repo] == nil {
+		s.packOrder[repo] = map[model.OID][]model.OID{}
+	}
+	s.packOrder[repo][loc.PackOID] = dp.Order
+	s.mu.Unlock()
+	return objectFromDecoded(dp, oid)
 }
 
 // IngestPack handles one pushed pack (docs/02 §4 write path, docs/11 §5):
@@ -201,43 +498,6 @@ func (s *ObjectService) ExactPackHit(repo string, oids map[model.OID]bool) (mode
 }
 
 // --- model.ObjectLookup implementation (the model layer reads objects through this) ---
-
-func (s *ObjectService) lookupPack(ctx context.Context, repo string, oid model.OID) (*DecodedPack, error) {
-	locs, err := s.Meta.LocateObjects(ctx, repo, []model.OID{oid})
-	if err != nil {
-		return nil, err
-	}
-	loc, ok := locs[oid]
-	if !ok {
-		return nil, fmt.Errorf("%w: %s in repo %s", model.ErrObjectNotFound, oid, repo)
-	}
-	s.mu.Lock()
-	dp := s.cache[repo][loc.PackOID]
-	s.mu.Unlock()
-	if dp != nil {
-		return dp, nil
-	}
-	holders := s.packHolders(ctx, repo, loc.PackOID, loc.NodeID)
-	raw, err := s.Backend.GetPack(ctx, repo, loc.PackOID, holders)
-	if err != nil {
-		return nil, err
-	}
-	dp, err = DecodePack(raw)
-	if err != nil {
-		return nil, fmt.Errorf("%w: pack %s: %v", model.ErrObjectNotFound, loc.PackOID, err)
-	}
-	s.mu.Lock()
-	if s.cache[repo] == nil {
-		s.cache[repo] = map[model.OID]*DecodedPack{}
-	}
-	s.cache[repo][loc.PackOID] = dp
-	if s.packOrder[repo] == nil {
-		s.packOrder[repo] = map[model.OID][]model.OID{}
-	}
-	s.packOrder[repo][loc.PackOID] = dp.Order
-	s.mu.Unlock()
-	return dp, nil
-}
 
 // packHolders resolves a pack's full holder set from the pack registry,
 // falling back to the single location hint when the pack is not registered
