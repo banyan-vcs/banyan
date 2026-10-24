@@ -290,6 +290,36 @@ func (s *Service) Resolve(ctx context.Context, req ResolveRequest) (*ResolveResu
 	return &ResolveResult{Type: "tree", OID: cur}, nil
 }
 
+// --- placement + cluster status (docs/11 §3/§6; no-ops semantics in all-in-one) ---
+
+// SetPlacement records a repo's replica target (0 restores the cluster default).
+func (s *Service) SetPlacement(ctx context.Context, repo string, replicas int) error {
+	if replicas < 0 {
+		return invalid("replicas must be >= 0")
+	}
+	return s.Meta.SetPlacement(ctx, repo, replicas)
+}
+
+func (s *Service) GetPlacement(ctx context.Context, repo string) (int, error) {
+	return s.Meta.GetPlacement(ctx, repo)
+}
+
+// healthSource is implemented by the cluster MetaStore (RemoteMeta); in
+// all-in-one mode Meta does not implement it and cluster status is empty.
+type healthSource interface {
+	HealthyNodes(ctx context.Context) ([]storage.NodeInfo, error)
+}
+
+// ClusterNodes reports the storage-node health view (cluster mode only).
+func (s *Service) ClusterNodes(ctx context.Context) ([]storage.NodeInfo, error, bool) {
+	hs, ok := s.Meta.(healthSource)
+	if !ok {
+		return nil, nil, false
+	}
+	nodes, err := hs.HealthyNodes(ctx)
+	return nodes, err, true
+}
+
 // --- timelines / repack (diagnostics and admin passthrough) ---
 
 type TimelineSummary struct {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
@@ -39,6 +40,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/commit", s.handleCommit)
 	mux.HandleFunc("/api/v1/refs", s.handleRefs)
 	mux.HandleFunc("/api/v1/repos", s.handleRepos)
+	mux.HandleFunc("/api/v1/repos/", s.handleRepoSub) // /api/v1/repos/<repo>/placement
+	mux.HandleFunc("/api/v1/cluster/nodes", s.handleClusterNodes)
 	mux.HandleFunc("/api/v1/resolve", s.handleResolve)
 	// TODO(M2): /api/v1/diff  /api/v1/file-history
 	// TODO(M3): /api/v1/blame
@@ -298,6 +301,59 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
+}
+
+// --- GET/PUT /api/v1/repos/<repo>/placement: per-repo replica target (docs/11 §6) ---
+
+func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")
+	parts := strings.Split(strings.Trim(rest, "/"), "/")
+	if len(parts) != 2 || parts[1] != "placement" {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/placement"}})
+		return
+	}
+	repo := parts[0]
+	switch r.Method {
+	case http.MethodGet:
+		replicas, err := s.Svc.GetPlacement(r.Context(), repo)
+		if err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "replicas": replicas})
+	case http.MethodPut:
+		var req struct {
+			Replicas int `json:"replicas"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if err := s.Svc.SetPlacement(r.Context(), repo, req.Replicas); err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET or PUT"}})
+	}
+}
+
+// --- GET /api/v1/cluster/nodes: storage-node health view (cluster mode) ---
+
+func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
+	nodes, err, cluster := s.Svc.ClusterNodes(r.Context())
+	if !cluster {
+		writeJSON(w, http.StatusOK, map[string]any{"cluster": false, "nodes": []any{}})
+		return
+	}
+	if err != nil {
+		writeServiceErr(w, err)
+		return
+	}
+	if nodes == nil {
+		nodes = []storage.NodeInfo{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cluster": true, "nodes": nodes})
 }
 
 // --- POST /api/v1/resolve: rev:path → object pointer (CLI cat) ---
