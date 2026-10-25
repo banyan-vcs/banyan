@@ -118,21 +118,49 @@ type MetaStore      interface { 上述全部 }                              // c
 - CAS：`BEGIN IMMEDIATE` 内 SELECT-比-UPDATE/DELETE，失败回滚映射 `ErrNonFastForward`（与 git push 语义一致，docs/02 §4.3）。
 - 幂等：packs/objects 一律 `INSERT OR IGNORE`（首写者胜；pack 不可变 ⇒ 无冲突语义）。
 
-## 3. 读路径（服务一次 fetch）
+## 3. 读路径（服务一次 fetch，2026-10-25 起窗口化）
 
 ```
 wants = 客户端协商所得对象集合
-  ① 全局索引批量定位：oid → (pack_oid, node_id)
+  ⓪ clone 形态快路径（无 haves/depth/filter/shallow）：
+       枚举闭包——只收集 OID（commit/tree 走元数据索引，瞬态读取；
+       blob 仅定位取类型，字节不驻留）
+       → ExactPackHit：对象集 == 某存储 pack 的对象集时
+         该 pack 流式直传（节点盘 → 网络 → 响应，256KiB 窗口；
+         网关磁盘缓存命中则盘 → 响应，未命中边流边写穿缓存）
+       ——闭包（对象字节驻留）完全跳过
+  ① 快路径未命中 → 全局索引批量定位：oid → (pack_oid, node_id)
   ② 本地 pack cache（LRU，按 pack_oid 键）命中检查
-  ③ 未命中的 pack：从 node_id 拉取
-       M1/M2：整 pack 拉取 + 入 cache（简单，冷启动友好）
-       M3  ：idx 协商区段拉取（pack 巨大且只要少量对象时）
-  ④ 从 pack/idx 中解码所需对象
-  ⑤ 在线合成响应 pack（go-git Encoder，无 delta，正确性优先）
-  ⑥ side-band-64k 流式回写
+  ③ 未命中的对象：单对象区间读取（idx 偏移 + 文件窗口解压，
+     O(对象) 内存；delta 链递归同样窗口化）
+  ④ 整包拉取 + 解码 memoize 仅接管 ≤32MiB 的 pack
+     （PackSize 探测：网关缓存索引 / 节点 HEAD；大小不可变故缓存）
+     ——大包永不整包驻留网关内存
+  ⑤ 在线合成响应 pack（含响应缓存 / thin；走 closure，小仓主路径）
+  ⑥ side-band 流式回写
 ```
 
 缓存三层同构：同一套「定位 → 拉取 → 编码」逻辑运行在 banyand 进程内 cache、独立的 cache 层、存储节点上——pack 不可变 ⇒ 缓存键即 pack_oid ⇒ 无失效问题。
+
+### 3.1 全链路内存预算（T46 钉住）
+
+小内存可用性是设计约束而非副产物：`integration/memory_chain_test.go`
+以 64MiB 软内存限制（GOMEMLIMIT 语义）+ 堆峰值采样，验证 150MiB
+不可压缩仓库经 git → 网关 → 3 存储节点的 push/clone（v2+v0）全链路：
+
+| 方向 | 修复前峰值 | 现峰值 |
+|---|---|---|
+| push（150MiB 包 ×3 副本） | 783 MiB | **13.5 MiB** |
+| clone v2 | 611 MiB | **12.4 MiB**（11.3s → 2.4s） |
+| clone v0 | 512 MiB | **9.9 MiB** |
+
+修复前的三层整包驻留：节点 PUT `io.ReadAll`（×3 副本并发）、
+节点 GET 整包读出 + 单对象提取整包 ReadFile（每次对象读都整包！
+alloc profile 占 93.8%）、网关 `GetPack` 整包拉取 + closure 全图驻留。
+窗口化后各环节内存 ∝ 窗口（64KiB~256KiB）+ 对象数元数据，与包大小无关。
+
+仍为 O(闭包/段) 的已知路径（开放项）：非 clone 形态 fetch 的在线编码
+（closure 全图）、repack 组内合并、reconciler 整包校验读。
 
 ## 4. 写路径（服务一次 push，2026-10-25 起流式化）
 
@@ -145,7 +173,9 @@ receive-pack 收到 (ref 命令行, pack 流)
      大偏移走 8 字节表——单 pack 无 4GiB 限制）
   ③ 校验：head 对象存在性（全局索引）、锚点合法性
   ④ pack 流式写入分片：每副本独立打开 spool 文件（io.Copy，
-     不解算不驻内存；rendezvous × R 副本）              ← 不解散！
+     不解算不驻内存；rendezvous × R 副本）；节点侧同样窗口化——
+     PUT 请求体直接流式落盘（临时文件 + 滑动窗口哈希校验 trailer
+     + OID 同一性 + Content-Length 核对，原子 rename）   ← 不解散！
   ⑤ 元数据事务（WAL 单写者）：
        ObjectIndex 批量 upsert（oids → 新 pack）
        Timelines head CAS 前进
