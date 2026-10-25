@@ -96,6 +96,10 @@ func NewSQLiteMetaStore(path string) (*SQLiteMetaStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("sqlite meta: storage-id migration: %w", err)
 	}
+	if err := migrateRepoForcePush(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("sqlite meta: force-push migration: %w", err)
+	}
 	return &SQLiteMetaStore{db: db}, nil
 }
 
@@ -135,6 +139,21 @@ func migrateRepoStorageID(db *sql.DB) error {
 	return nil
 }
 
+// migrateRepoForcePush adds repos.force_push for databases predating the
+// column (docs/04 §6a repo-level switch; default off = guard active).
+func migrateRepoForcePush(db *sql.DB) error {
+	var hasCol int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('repos') WHERE name='force_push'`).Scan(&hasCol); err != nil {
+		return err
+	}
+	if hasCol == 1 {
+		return nil
+	}
+	_, err := db.Exec("ALTER TABLE repos ADD COLUMN force_push INTEGER NOT NULL DEFAULT 0")
+	return err
+}
+
 func (s *SQLiteMetaStore) Close() error { return s.db.Close() }
 
 func isUniqueViolation(err error) bool {
@@ -154,9 +173,10 @@ func (s *SQLiteMetaStore) CreateRepo(ctx context.Context, repo string, algo mode
 func (s *SQLiteMetaStore) GetRepo(ctx context.Context, repo string) (RepoInfo, error) {
 	var info RepoInfo
 	var algo int
+	var force int
 	err := s.db.QueryRowContext(ctx,
-		"SELECT name, algo, default_branch, storage_id FROM repos WHERE name=?", repo).
-		Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID)
+		"SELECT name, algo, default_branch, storage_id, force_push FROM repos WHERE name=?", repo).
+		Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID, &force)
 	if err == sql.ErrNoRows {
 		return RepoInfo{}, fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
@@ -164,11 +184,30 @@ func (s *SQLiteMetaStore) GetRepo(ctx context.Context, repo string) (RepoInfo, e
 		return RepoInfo{}, err
 	}
 	info.Algo = model.HashAlgo(algo)
+	info.ForcePush = force != 0
 	return info, nil
 }
 
+func (s *SQLiteMetaStore) SetForcePush(ctx context.Context, repo string, enabled bool) error {
+	res, err := s.db.ExecContext(ctx, "UPDATE repos SET force_push=? WHERE name=?", boolInt(enabled), repo)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	return nil
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func (s *SQLiteMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT name, algo, default_branch, storage_id FROM repos ORDER BY name")
+	rows, err := s.db.QueryContext(ctx, "SELECT name, algo, default_branch, storage_id, force_push FROM repos ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -177,10 +216,12 @@ func (s *SQLiteMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	for rows.Next() {
 		var info RepoInfo
 		var algo int
-		if err := rows.Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID); err != nil {
+		var force int
+		if err := rows.Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID, &force); err != nil {
 			return nil, err
 		}
 		info.Algo = model.HashAlgo(algo)
+		info.ForcePush = force != 0
 		out = append(out, info)
 	}
 	return out, rows.Err()

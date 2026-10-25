@@ -177,6 +177,12 @@ func (m *RemoteMeta) RenameRepo(ctx context.Context, from, to string) error {
 		map[string]string{"from": from, "to": to}, nil)
 }
 
+// SetForcePush toggles the repo-level force-push switch (docs/04 §6a).
+func (m *RemoteMeta) SetForcePush(ctx context.Context, repo string, enabled bool) error {
+	return m.Refs.call(ctx, "/internal/meta/set-force-push",
+		map[string]any{"repo": repo, "enabled": enabled}, nil)
+}
+
 func (m *RemoteMeta) PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {
 	oids := make([]string, len(objects))
 	for i, o := range objects {

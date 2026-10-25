@@ -304,6 +304,23 @@ func (s *Service) GetPlacement(ctx context.Context, repo string) (int, error) {
 	return s.Meta.GetPlacement(ctx, repo)
 }
 
+// SetForcePush toggles the repo-level force-push switch (docs/04 §6a): off
+// (default) keeps the subtree rollback guard; on, rewind-shaped subtree
+// updates land and rebuild the woven views.
+func (s *Service) SetForcePush(ctx context.Context, repo string, enabled bool) error {
+	return s.Meta.SetForcePush(ctx, repo, enabled)
+}
+
+// GetForcePush reads the switch (RepoInfo carries it; this wrapper keeps the
+// RPC surface uniform).
+func (s *Service) GetForcePush(ctx context.Context, repo string) (bool, error) {
+	info, err := s.Meta.GetRepo(ctx, repo)
+	if err != nil {
+		return false, err
+	}
+	return info.ForcePush, nil
+}
+
 // healthSource is implemented by the cluster MetaStore (RemoteMeta); in
 // all-in-one mode Meta does not implement it and cluster status is empty.
 type healthSource interface {

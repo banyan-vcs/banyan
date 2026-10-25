@@ -86,6 +86,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/get-repo", s.hGetRepo)
 	meta.HandleFunc("/internal/meta/list-repos", s.hListRepos)
 	meta.HandleFunc("/internal/meta/rename-repo", s.hRenameRepo)
+	meta.HandleFunc("/internal/meta/set-force-push", s.hSetForcePush)
 	meta.HandleFunc("/internal/meta/timeline", s.hTimeline)
 	meta.HandleFunc("/internal/meta/cas-head", s.hCASHead)
 	meta.HandleFunc("/internal/meta/ensure-timeline", s.hEnsureTimeline)
@@ -358,6 +359,22 @@ func (s *Server) hGetRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"repo": info})
+}
+
+// hSetForcePush toggles the repo-level force-push switch (docs/04 §6a).
+func (s *Server) hSetForcePush(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Repo    string `json:"repo"`
+		Enabled bool   `json:"enabled"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.SetForcePush(r.Context(), req.Repo, req.Enabled); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) hListRepos(w http.ResponseWriter, r *http.Request) {

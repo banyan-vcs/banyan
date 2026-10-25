@@ -32,6 +32,10 @@ type RepoRegistry interface {
 	// rides along untouched. Storage-layer moves (named addressing) happen
 	// BEFORE this call — see ObjectService.RenameRepo.
 	RenameRepo(ctx context.Context, from, to string) error
+	// SetForcePush toggles the repo-level force-push switch (docs/04 §6a):
+	// off (default) keeps the rollback guard; on, a rewind-shaped subtree
+	// update lands and rebuilds the woven views from the new source chains.
+	SetForcePush(ctx context.Context, repo string, enabled bool) error
 }
 
 // PackRegistry is the central pack table: pack → replica nodes. Packs are
@@ -106,6 +110,10 @@ type RepoInfo struct {
 	// hashed addressing derives its opaque on-disk key from it, so renames
 	// never move data. Empty only for rows predating the column.
 	StorageID string `json:"storage_id,omitempty"`
+	// ForcePush is the repo-level force-push switch (docs/04 §6a): off
+	// (default) keeps the subtree rollback guard; on, rewind-shaped subtree
+	// updates land and rebuild the woven views.
+	ForcePush bool `json:"force_push,omitempty"`
 }
 
 // ErrNonFastForward mirrors git push non-fast-forward (docs/02 §4.3).
@@ -197,6 +205,18 @@ func (m *MemoryMetaStore) ListRepos(_ context.Context) ([]RepoInfo, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+func (m *MemoryMetaStore) SetForcePush(_ context.Context, repo string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	info, ok := m.repos[repo]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	info.ForcePush = enabled
+	m.repos[repo] = info
+	return nil
 }
 
 func (m *MemoryMetaStore) PutPack(_ context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {

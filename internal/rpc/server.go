@@ -386,8 +386,8 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
-	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename") {
-		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename)"}})
+	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push") {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push)"}})
 		return
 	}
 	repo := parts[0]
@@ -415,6 +415,36 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"from": repo, "to": req.To})
+		return
+	}
+	if parts[1] == "force-push" {
+		// Repo-level force-push switch (docs/04 §6a): the subtree rollback
+		// guard is default-on; enabling this switch is an explicit
+		// administrative opt-in to history-rewriting subtree pushes. Same
+		// authentication gate as repo creation.
+		switch r.Method {
+		case http.MethodGet:
+			enabled, err := s.Svc.GetForcePush(r.Context(), repo)
+			if err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "enabled": enabled})
+		case http.MethodPut:
+			var req struct {
+				Enabled bool `json:"enabled"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if err := s.Svc.SetForcePush(r.Context(), repo, req.Enabled); err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET or PUT"}})
+		}
 		return
 	}
 	switch r.Method {
