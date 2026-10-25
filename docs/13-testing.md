@@ -65,6 +65,8 @@ testify，文件按测试目标拆分）：
 | T38b | `TestAuthorizationRPC` | **RPC 认证面**（docs/07 §5）：匿名 401/认证 200、login 对错密码、建仓端点 + admin 播种 + 开发者克隆 |
 | T39 | `TestGitSSH` | **git-over-SSH 传输**（docs/04 §7b，docs/07 §7）：公钥认证（IdentifyKey）→ 同一授权矩阵（个人分支可见性/跨命名空间拒/保护分支/受限目录/未授权密钥拒）；v0 克隆 + 51 提交增量 fetch（**多轮 have 协商**：客户端第二批 have 后阻塞读，服务端必须逐 flush 应答——终态 ACK 模型）；v2 命令会话（ls-refs/clone）；push + 自动建仓 |
 | T40 | `TestStorageModes` | **存储寻址双模式**（docs/03 §6）：named——磁盘有可读仓库名目录、rename 移动全部持有节点目录且持有集不变、旧名消失新名可克隆；hashed——任何节点磁盘无仓库名、键=storageID 的 @hashed fanout、rename 前后各节点文件树逐项相同（零存储动作）、rename 后 push 落同一键、新旧名克隆均正确 |
+| T41 | `TestWorkflowBurst` | **并发突发全落地**（docs/15）：8 真实 git 客户端并发 push 同目录（各加新文件），merge train 下零拒绝全落地、内容齐备、既有内容不回退——无收敛时 7 个会收 non-FF |
+| T42 | `TestWorkflowConvergence` + internal/merge 单测（含 **git merge-file oracle 逐字节**） | **收敛语义**（docs/15 §2.2，rawPush 直钉 wire——真 git 客户端顺序性非 FF 在发送前自拒，收敛面=并发窗口）：不同文件分歧自动合并（两改俱在线性视图）；同文件同行冲突 → ng conflict 且票隔离（后续票继续）；冲突客户端 pull --rebase 停于真冲突、人工解决后续推（T18 路径在收敛链上成立）；blob diff3 与 git merge-file 语义含"同点双插=冲突"逐字节一致 |
 | T33 | `TestFetchTreesBinary` | **fetch-trees 二进制帧**（docs/05 §3.3、docs/11 P1-2）：bin/JSON 语义全等（树与 blob 集合逐字节一致）、二进制小于 JSON、真实 CLI clone 走 bin 路径物化 |
 | T32 | storage `TestExtractObjectRoundTrip`/`TestLocalGetObjectViaDisk` + T23-T26 回归 | **P1-1 单对象解压**（docs/11）：idx 偏移 + delta 基链递归解压（含 ofs/ref 两型）；集群 wire 从整包降为单对象（/internal/object 端点）；修复 idx oid→offset 在 delta pack 上的按位配对错位（Parser Observer 为权威源），idx crc 段补真值 |
 | T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |

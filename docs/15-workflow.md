@@ -96,6 +96,16 @@ bench 场景 **agent-burst**：8/32/128 并发同目录，单网关与多网关�
 
 ## 3. 实施分片（修订，refs 零改动）
 
+> **落地状态（2026-10-25，db2af27/3c4ea8c）**：M4.1（internal/merge 纯 Go
+> 三方合并，git merge-file oracle 逐字节钉住）+ M4.2/M4.3 主体（队列 +
+> 收敛 + 冲突隔离 + OCC）已交付，T41/T42 全绿；config
+> `workflow.convergence: auto(默认)|reject`。**实证补充的语义事实**：真
+> git 客户端对顺序性非 FF push 在发送前就自行拒绝（"fetch first"），
+> 到不了服务端——收敛的真实作用面是**并发竞争窗口**（广告已取、他人
+> 落地在即），T41 的 8 并发突发正是该形态；顺序分歧语义用 rawPush 直
+> 钉 wire。未完：M4.4（指标 + agent-burst bench 场景 + 一次 CAS 批追加
+> 优化）、treeKnown 树→提交索引。
+
 ```
 M4.1  重放原语抽取（diff/applyPaths/合成，纯函数）+ treeKnown 树→提交索引
       （撤 10 万上限）——无行为变化

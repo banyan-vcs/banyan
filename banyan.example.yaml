@@ -83,3 +83,10 @@ meta: "mem"
 #         gateway 与 refs 角色必须一致。
 #storage:
 #  mode: hashed
+
+# --- M4 工作流（docs/15；缺省 auto） ---
+# auto:   同目录 push 排队串行化，分歧链服务端收敛（纯 Go merge-ort 子集），
+#         冲突=拒绝该票且隔离；并发突发零拒绝零重试
+# reject: M4 前语义——非 FF 拒绝，客户端 pull --rebase
+#workflow:
+#  convergence: auto

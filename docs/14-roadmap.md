@@ -58,10 +58,10 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 设计 v2 定稿见 [15-workflow.md](15-workflow.md)（2026-10-25：网关本地
 批队列 + 一次 CAS 批追加 + 收敛 merge train + OCC 环；refs 零改动）。
 
-- [ ] M4.1 重放原语抽取（diff/applyPaths/提交合成）+ treeKnown 索引（纯重构）
-- [ ] M4.2 网关批队列 + 一次 CAS 批追加（只串行化，收敛默认关）
-- [ ] M4.3 收敛 merge train：路径级合并 + 冲突隔离 + OCC 环（默认开，repo 级可关）
-- [ ] M4.4 指标 + agent-burst bench 场景 + SLO 门
+- [x] M4.1 重放原语（internal/merge 纯 Go 三方合并，git merge-file oracle；2026-10-25）；treeKnown 索引仍未做
+- [x] M4.2 网关 per-timeline 队列 + merge train（2026-10-25；一次 CAS 批追加留 M4.4）
+- [x] M4.3 收敛：路径级合并 + 同文件 diff3 + 冲突隔离 + OCC 环（2026-10-25；workflow.convergence auto 默认/reject 可关）
+- [ ] M4.4 指标 + agent-burst bench 场景 + SLO 门 + 一次 CAS 批追加 + treeKnown 索引
 - [ ] 快照式本地状态（banyan snapshot / status）
 - [ ] 栈式变更（banyan stack）
 - [ ] `banyan sync`（子目录显式 rebase 对齐根）
