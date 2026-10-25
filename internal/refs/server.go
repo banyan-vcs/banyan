@@ -13,7 +13,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// Options configures the refs service (docs/11 §8.1 thresholds).
+// Options configures the refs service (docs/10 §8.1 thresholds).
 type Options struct {
 	DefaultReplicas  int
 	WriteAcks        string // advisory (gateway enforces); kept for Describe
@@ -49,7 +49,7 @@ type Server struct {
 	Opt    Options
 	Health *HealthTable
 	Recon  *Reconciler
-	// Policy is the cluster authorization source of truth (docs/13 §4):
+	// Policy is the cluster authorization source of truth (docs/07 §4):
 	// gateways sync their snapshot from /internal/authz/policy. Nil = the
 	// cluster runs open (the pre-M5 behavior).
 	Policy *auth.StaticPolicy
@@ -95,7 +95,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 }
 
 // hAuthzPolicy serves the cluster's policy snapshot for gateways
-// (docs/13 §4): the refs role is the source of truth, RemotePolicy caches
+// (docs/07 §4): the refs role is the source of truth, RemotePolicy caches
 // this briefly. Cluster-internal surface, like the meta RPC beside it.
 func (s *Server) hAuthzPolicy(w http.ResponseWriter, _ *http.Request) {
 	if s.Policy == nil {

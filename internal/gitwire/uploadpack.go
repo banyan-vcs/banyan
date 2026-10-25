@@ -24,7 +24,7 @@ type fetchReq struct {
 	wants          []model.OID
 	haves          []model.OID
 	clientShallow  []model.OID // client's current shallow boundary (reported by deepen/unshallow requests)
-	filter         *FilterSpec // active partial-clone filter (blob:none / tree:0, docs/03 §4)
+	filter         *FilterSpec // active partial-clone filter (blob:none / tree:0, docs/04 §4)
 	clientOfsDelta bool        // client accepted OFS_DELTA (v1 want-line capability)
 	clientThin     bool        // client asked for a thin pack (v1 cap / v2 arg)
 	depth          int         // deepen N; 0 = no deepen
@@ -33,7 +33,7 @@ type fetchReq struct {
 
 // applyFetchLine folds one request pkt-line into st. Returns a wire error
 // message ("" = ok) and whether the transport should surface it as an ERR
-// pkt (true — the filter contract, docs/03 §4) or as a protocol error
+// pkt (true — the filter contract, docs/04 §4) or as a protocol error
 // (HTTP 400 / session failure).
 func applyFetchLine(st *fetchReq, line string) (string, bool) {
 	switch {
@@ -79,7 +79,7 @@ func applyFetchLine(st *fetchReq, line string) (string, bool) {
 	return "", false
 }
 
-// serveUploadPack serves the fetch/clone data phase (docs/03 §3).
+// serveUploadPack serves the fetch/clone data phase (docs/04 §3).
 //
 // v1 session (mirrors the upload-pack.c state machine):
 //
@@ -177,10 +177,10 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 }
 
 // finishFetch serves the pack for an accumulated request: authorization
-// gates, closure, thin-pack plan and the serve ladder (docs/12 P2-2).
+// gates, closure, thin-pack plan and the serve ladder (docs/11 P2-2).
 // Shared by the HTTP and SSH transports.
 func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo, id auth.Identity, st *fetchReq) {
-	// Authorization gates (docs/13): identity + repository/directory fetch
+	// Authorization gates (docs/07): identity + repository/directory fetch
 	// permission, then the want-coverage check against the identity's
 	// VISIBLE tips — with auth on this replaces (and strengthens) the
 	// reachability gate: an oid reachable only through someone else's
@@ -215,7 +215,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 		_ = out.Flush()
 		return
 	}
-	// Thin pack (docs/12 P2-6): with haves and a thin-pack client, delta the
+	// Thin pack (docs/11 P2-6): with haves and a thin-pack client, delta the
 	// served objects against same-path predecessors the client holds.
 	var plan *thinPackPlan
 	if st.clientThin && len(st.haves) > 0 {
@@ -225,7 +225,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 		}
 	}
 	encodeStart := time.Now()
-	// Hot-path serve ladder (docs/02 §5, docs/12 P2-2): stored-pack verbatim
+	// Hot-path serve ladder (docs/03 §5, docs/11 P2-2): stored-pack verbatim
 	// → clone-shaped response cache → online encoding (delta past threshold).
 	cacheable := len(st.haves) == 0 && st.depth == 0 && st.filter == nil
 	served := s.serveClosurePack(ctx, out, vr, st.wants, blobs, trees, commits, tags, cacheable, st.clientOfsDelta, plan)
@@ -236,7 +236,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 }
 
 // serveDeltaMinBytes is the raw-payload threshold at which the online serve
-// path switches from delta-free to delta encoding (docs/12 P1-4/B5): below
+// path switches from delta-free to delta encoding (docs/11 P1-4/B5): below
 // it the pack-objects window cost buys almost nothing, above it similar
 // blobs/trees compress 2-5×.
 const serveDeltaMinBytes = 64 << 10
@@ -270,7 +270,7 @@ func filterSpecName(f *FilterSpec) string {
 // serveClosurePack writes the response pack for a computed closure:
 //
 //	thin (client-held bases, only when requested) → whole-pack verbatim →
-//	clone-shaped response cache (docs/12 P2-2) → online encoding.
+//	clone-shaped response cache (docs/11 P2-2) → online encoding.
 //
 // Thin outranks the verbatim serve deliberately: a stored pack is
 // self-contained (receive advertises no-thin), so its objects are whole —
@@ -390,13 +390,13 @@ func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included
 }
 
 // closure collects the object closure from wants: commits expand along all parents, trees
-// expand along all entries, blobs are just collected (docs/01 §5 — root repo and subtree repo share one
+// expand along all entries, blobs are just collected (docs/02 §5 — root repo and subtree repo share one
 // traversal path: a projection commit's tree is the subtree, parents already rewritten at projection time).
 // Pruning: depth > 0 prunes parent chains at the shallowing boundary; with no deepen but a client-reported
 // shallow boundary (plain fetch from a shallow clone) the client boundary is the prune point — matching the
 // reference server's have-subtracted pack shape (objects below the graft layer stay out of the pack).
 //
-// Partial-clone filtering (docs/03 §4): blob:none drops blobs, tree:0 drops
+// Partial-clone filtering (docs/04 §4): blob:none drops blobs, tree:0 drops
 // trees and blobs; dropped trees are not expanded (their contents cannot
 // survive anyway). Explicit wants are exempt — lazy-fetch requests name the
 // missing object directly and must receive it.
@@ -424,7 +424,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 		delete(exclude, w)
 		wantSet[w] = true
 	}
-	// Batch-locate the walk's known inputs up front (docs/12 P0-1): wants +
+	// Batch-locate the walk's known inputs up front (docs/11 P0-1): wants +
 	// haves in one Meta round trip instead of one per object.
 	s.Objects.Prefetch(ctx, vr.Repo, append(append([]model.OID{}, wants...), haves...))
 	visited := map[model.OID]bool{}
@@ -480,7 +480,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 		switch t {
 		case model.CommitType:
 			commits[oid] = raw
-			// Go through the commit-graph index: commits are no longer decoded one by one (docs/04).
+			// Go through the commit-graph index: commits are no longer decoded one by one (docs/08).
 			ci, err := s.Objects.CommitInfo(vr.Repo, oid)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
@@ -501,7 +501,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			if err != nil {
 				return nil, nil, nil, nil, nil, fmt.Errorf("closure: tree %s: %w", oid, err)
 			}
-			// Tree expansion is the natural batching point (docs/12 P0-1):
+			// Tree expansion is the natural batching point (docs/11 P0-1):
 			// all children locate in one Meta round trip, so cold-walk RPC
 			// count falls from O(objects) to O(trees).
 			children := make([]model.OID, 0, len(entries))
@@ -623,7 +623,7 @@ func (s *Server) unadvertisedWant(ctx context.Context, vr VirtualRepo, wants []m
 }
 
 // wantsBeyondTips validates wants against the identity's VISIBLE view of the
-// advertised refs (docs/13): an oid that is neither a visible tip nor
+// advertised refs (docs/07): an oid that is neither a visible tip nor
 // reachable from one is rejected — the allow-reachable-sha1-in-want walk,
 // scoped to what the caller may actually see. With auth off the filter is a
 // no-op and this is the plain reachability contract; with auth on it makes

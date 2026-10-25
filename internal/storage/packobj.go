@@ -1,4 +1,4 @@
-// Single-object extraction from pack bytes via idx offsets (docs/12 P1-1,
+// Single-object extraction from pack bytes via idx offsets (docs/11 P1-1,
 // B2): parse the object header at the located offset, inflate just that
 // entry, and resolve OFS/REF delta chains recursively — instead of
 // transferring and decoding the whole pack for one object. Format reference:

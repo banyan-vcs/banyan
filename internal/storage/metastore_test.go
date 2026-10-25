@@ -14,7 +14,7 @@ import (
 
 // The conformance suite runs identically against every MetaStore backend:
 // behavioral parity is the contract that makes the backend swappable
-// (docs/02 §2.1). The concurrent-CAS case doubles as the SQLite
+// (docs/03 §2.1). The concurrent-CAS case doubles as the SQLite
 // busy/WAL serialization exercise.
 func TestMetaStoreConformance(t *testing.T) {
 	open := map[string]func(*testing.T) (MetaStore, func()){

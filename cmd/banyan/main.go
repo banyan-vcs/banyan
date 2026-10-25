@@ -1,4 +1,4 @@
-// banyan is the thin-workspace CLI (docs/05): smart remote control over the
+// banyan is the thin-workspace CLI (docs/06): smart remote control over the
 // JSON API — minimal download, server-side history, a content-addressed
 // cache instead of a local .git. The dispatch table and exit-code contract
 // live in internal/cli (usable in-process by the integration tests).

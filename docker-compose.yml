@@ -9,7 +9,7 @@
 #
 # Authorization is ON in this demo (demo/auth-demo.yaml): main is
 # admin-push-only, /secret is admin-read-only, and refs/heads/<user>/*
-# personal branches are visible to their owner alone (docs/13).
+# personal branches are visible to their owner alone (docs/07).
 services:
   banyan:
     build: .

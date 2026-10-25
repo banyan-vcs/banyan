@@ -10,7 +10,7 @@
 | 磁盘 | 每 pack idx v2（oid→offset），IngestPack 时写入 | `storage/idx.go` |
 | 内存 | CommitGraph（oid→tree/parents/when）+ TreeMemo（tree→entries） | `storage/index.go` |
 | 全局 | oid→(pack,node) 表 = MIDX 形态（跨 pack 定位） | MetaStore objects |
-| 轻量 | bmsg 提交索引（docs/01 §11，消息内容寻址去重） | `storage/index.go` |
+| 轻量 | bmsg 提交索引（docs/02 §11，消息内容寻址去重） | `storage/index.go` |
 
 ## 2. 本轮新增：代数 + 树反向索引（2026-10-18 落地）
 
@@ -35,7 +35,7 @@ commit-graph 语义。记忆化惰性计算（`Generation`），遍历顺带回�
 
 ## 3. 打包优化
 
-### 3.1 have 减除（已实现，docs/03 §10 偏离 #1 关闭）
+### 3.1 have 减除（已实现，docs/04 §10 偏离 #1 关闭）
 
 语义对齐 `upload-pack.c` mark-uninteresting：客户端 have X ⇒ 其持有 X 的
 完整闭包（git 仓库不变量），故 **haves 已知提交可达的对象全部排除**，主遍
@@ -82,9 +82,9 @@ git 对照（`pack-objects.c`）：对象按（类型→目录路径→name-hash
 
 | 指标 | 值 | 来源 |
 |---|---|---|
-| 28,649 对象闭包（go-git 仓） | 88ms | docs/02 §1.3 |
-| ExactPackHit 整包直传 | serve 2.77s → 24ms | docs/02 §1.3 |
-| 子树 clone 对象比 | 1547 vs 30203（19.5×） | docs/07 |
+| 28,649 对象闭包（go-git 仓） | 88ms | docs/03 §1.3 |
+| ExactPackHit 整包直传 | serve 2.77s → 24ms | docs/03 §1.3 |
+| 子树 clone 对象比 | 1547 vs 30203（19.5×） | docs/13 |
 | 增量 fetch（have 减除后） | 11 → 4 对象 | T19 |
 | descends/TreeKnown | BFS/线性扫描 → 代数剪枝/候选查表 | 本篇 §2 |
 
@@ -92,4 +92,4 @@ git 对照（`pack-objects.c`）：对象按（类型→目录路径→name-hash
 
 `integration/packing_efficiency_test.go`（T19：rawFetch 协议级断言增量包
 精确构成 + 真实客户端端到端）+ `storage.TestGenerationDiamond`（代数精确/
-污染语义）。登记于 docs/07。
+污染语义）。登记于 docs/13。

@@ -6,7 +6,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Thin-pack base selection (docs/12 P2-6, B8): a have-subtracted fetch's
+// Thin-pack base selection (docs/11 P2-6, B8): a have-subtracted fetch's
 // new objects relate to objects the client already holds — the previous
 // version at the same path. For every served commit whose parent the client
 // holds, a path-aware tree diff between the commit and that parent yields

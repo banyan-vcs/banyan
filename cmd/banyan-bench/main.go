@@ -1,4 +1,4 @@
-// banyan-bench runs the performance comparison harness (docs/12 §3):
+// banyan-bench runs the performance comparison harness (docs/11 §3):
 // banyan vs a genuine git http-backend on the same machine and transport,
 // deterministic seed repos, cold/warm/incremental lanes, and a >20%
 // regression gate against a saved baseline.

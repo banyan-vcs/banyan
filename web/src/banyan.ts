@@ -1,5 +1,5 @@
 // banyan.ts — the server-side client for banyan's RPC and git-wire surfaces
-// (docs/10, docs/13 §5). Every call carries the logged-in user's Basic
+// (docs/05, docs/07 §5). Every call carries the logged-in user's Basic
 // credentials, so the SAME authorization rules apply to the web pages as to
 // git clients: branch visibility, directory access, everything — the web
 // tier never re-implements policy, it forwards identity.

@@ -7,7 +7,7 @@ import (
 )
 
 // TreeService.Fetch: the thin client's one-shot materialization primitive
-// (docs/05 §4.1, docs/10 §3.3). Unlike git's have/want pack negotiation the
+// (docs/06 §4.1, docs/05 §3.3). Unlike git's have/want pack negotiation the
 // client requests immutable content-addressed trees directly:
 //
 //   - no haveTree   → full recursive walk (clone);
@@ -27,7 +27,7 @@ type FetchRequest struct {
 	Rev      string    `json:"rev,omitempty"`      // branch; "" = repo default
 	HaveTree model.OID `json:"haveTree,omitempty"` // client's cached view tree (pull)
 	Paths    []string  `json:"paths,omitempty"`    // sparse: top-level names to include
-	Format   string    `json:"format,omitempty"`   // "bin": binary framing response (docs/10 §3.3)
+	Format   string    `json:"format,omitempty"`   // "bin": binary framing response (docs/05 §3.3)
 }
 
 type FetchResult struct {
@@ -94,7 +94,7 @@ func (s *Service) FetchTrees(ctx context.Context, req FetchRequest) (*FetchResul
 		return true
 	}
 
-	// included: sparse filter at the view root's top level (docs/05 clone --sparse).
+	// included: sparse filter at the view root's top level (docs/06 clone --sparse).
 	included := func(name string, isDir bool) bool {
 		if len(sparse) == 0 {
 			return true
@@ -114,7 +114,7 @@ func (s *Service) FetchTrees(ctx context.Context, req FetchRequest) (*FetchResul
 		if err != nil {
 			return
 		}
-		// Tree expansion is the batching point (docs/12 P0-1): children
+		// Tree expansion is the batching point (docs/11 P0-1): children
 		// locate in one Meta round trip.
 		children := make([]model.OID, 0, len(t.Entries))
 		for _, e := range t.Entries {

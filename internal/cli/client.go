@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// client is the thin workspace's transport (docs/05 §4): plain JSON RPC to
-// the httpd frontend. Error envelopes (docs/10 §3.2) become *apiError so
+// client is the thin workspace's transport (docs/06 §4): plain JSON RPC to
+// the httpd frontend. Error envelopes (docs/05 §3.2) become *apiError so
 // Run can map codes to exit codes (1 conflict / 2 server / 3 network).
 type client struct {
 	base string
@@ -163,7 +163,7 @@ type fetchTreesResponse struct {
 }
 
 func (c *client) fetchTrees(repo, sub, rev, haveTree string, paths []string) (*fetchTreesResponse, error) {
-	req := map[string]any{"repo": repo, "format": "bin"} // binary framing (docs/10 §3.3)
+	req := map[string]any{"repo": repo, "format": "bin"} // binary framing (docs/05 §3.3)
 	if sub != "" {
 		req["sub"] = sub
 	}

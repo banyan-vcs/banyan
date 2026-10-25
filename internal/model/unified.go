@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Unified DAG commit history (design v2, docs/01 §10).
+// Unified DAG commit history (design v2, docs/02 §10).
 //
 // Fundamental constraint: a git commit hash binds (root tree, parents,
 // signature, message), so "same change, same hash across views" ⇔ "both views

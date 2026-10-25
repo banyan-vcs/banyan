@@ -10,8 +10,8 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// DiskPackCache is the gateway's on-disk pack cache (docs/02's first cache
-// tier, docs/12 P2-1/B6): whole packs fetched from storage nodes persist
+// DiskPackCache is the gateway's on-disk pack cache (docs/03's first cache
+// tier, docs/11 P2-1/B6): whole packs fetched from storage nodes persist
 // across gateway restarts, so the first clone after a restart serves from
 // local disk instead of re-transferring megabytes per pack.
 //

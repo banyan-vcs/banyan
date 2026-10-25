@@ -1,4 +1,4 @@
-# 05 · banyan CLI 命令设计
+# 06 · banyan CLI 命令设计
 
 > 参考 git 常用命令面梳理。本文只做命令设计，不含实现。核心立场（用户决策）：**不默认 clone 全仓，最小化下载；
 > 读操作（log/blame 等）经常性走 API，由服务端完成**。
@@ -109,7 +109,7 @@ banyan commit:
 2. POST /api/v1/objects（带 payload）上传新 blob     # 只传新内容
 3. POST /api/v1/commit {repo, sub?, base, message, changes[], author?}
    服务端：载 base 树 → 仅沿变更路径重建子树 → 新 commit 锚入目录时间线
-→ {head, root_view}    # root_view = 织入后根视图 OID（CI/webhook 定位用，docs/08 §3.2）
+→ {head, root_view}    # root_view = 织入后根视图 OID（CI/webhook 定位用，docs/01 §3.2）
 ```
 
 changeset 语义（"相对首父的变更清单 + 内容寻址指针"）直接落地为标准 git
@@ -129,7 +129,7 @@ changeset 语义（"相对首父的变更清单 + 内容寻址指针"）直接�
 选 JSON 而非 gRPC：联调成本低；M3 blame 大文件若需流式再升级。所有读响应带
 `ETag: <视图 head OID>`——不可变 ⇒ 浏览器/CDN/Agent 工具链可缓存。
 端点 schema 与服务层归属（httpd / Gitaly 双前端共核心）详见
-[10-service-api.md](10-service-api.md)。
+[05-service-api.md](05-service-api.md)。
 
 ## 5. 输出约定（Agent 友好）
 

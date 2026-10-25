@@ -7,7 +7,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Server-side filter (docs/03 §4): aligned with git partial clone semantics
+// Server-side filter (docs/04 §4): aligned with git partial clone semantics
 // (git sources Documentation/technical/partial-clone.adoc and
 // list-objects-filter spec), plus the banyan extension subtree:<path>.
 //
@@ -72,7 +72,7 @@ func (f *FilterSpec) Spec() string {
 }
 
 // ServeSupported reports whether the serve path implements the spec
-// (docs/03 §4): blob:none and tree:0 follow git list-objects-filter
+// (docs/04 §4): blob:none and tree:0 follow git list-objects-filter
 // semantics; sparse:oid and the banyan subtree: extension are not served on
 // the wire and are rejected at request parsing.
 func (f *FilterSpec) ServeSupported() bool {

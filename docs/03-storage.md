@@ -1,4 +1,4 @@
-# 02 · 分布式 pack 存储
+# 03 · 分布式 pack 存储
 
 ## 设计约束（用户原话锚定）
 
@@ -115,7 +115,7 @@ type MetaStore      interface { 上述全部 }                              // c
 - 驱动 `modernc.org/sqlite`（纯 Go、无 cgo——OS 无关，见 AGENTS.md）。
 - PRAGMA：`journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=5000`。
 - `objects` 表 `WITHOUT ROWID`（主键聚簇，点查即索引扫描）；插入按 500 行/事务分块。
-- CAS：`BEGIN IMMEDIATE` 内 SELECT-比-UPDATE/DELETE，失败回滚映射 `ErrNonFastForward`（与 git push 语义一致，docs/01 §4.3）。
+- CAS：`BEGIN IMMEDIATE` 内 SELECT-比-UPDATE/DELETE，失败回滚映射 `ErrNonFastForward`（与 git push 语义一致，docs/02 §4.3）。
 - 幂等：packs/objects 一律 `INSERT OR IGNORE`（首写者胜；pack 不可变 ⇒ 无冲突语义）。
 
 ## 3. 读路径（服务一次 fetch）
@@ -175,7 +175,7 @@ push pack 通常小而碎（一次 push 一个 pack），长期累积会拖垮�
 
 | 组件 | 选型 | 说明 |
 |---|---|---|
-| 元数据服务 | 独立 ref 服务承载前序判断（[11-ha.md](11-ha.md) §0 v0.3 定稿：与 pack 存储分离；后端 MySQL/PG 或内嵌 raft） | WAL 与 CAS 需要线性化；pack 大流量不经串行点 |
+| 元数据服务 | 独立 ref 服务承载前序判断（[10-ha.md](10-ha.md) §0 v0.3 定稿：与 pack 存储分离；后端 MySQL/PG 或内嵌 raft） | WAL 与 CAS 需要线性化；pack 大流量不经串行点 |
 | 存储节点 | 无状态 HTTP 服务，底层对象存储（S3 类）或本地盘 | pack 不可变，S3 语义天然契合 |
 | 副本策略 | rendezvous × R，或对象存储自带 EC | pack 大且不可变，纠删码收益高 |
 | 缓存层 | 独立 cache 进程（LRU by pack_oid） | 三层同构，见 §3 |

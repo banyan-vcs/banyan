@@ -1,4 +1,4 @@
-// Goal: the git-over-SSH transport (docs/03 §8) end to end with real git
+// Goal: the git-over-SSH transport (docs/04 §8) end to end with real git
 // clients — public-key identity at the auth seam, receive-pack push with
 // auto-create, v0 clones with the stateful negotiation rounds (the >48-have
 // case forces a mid-negotiation ACK the client blocks on), protocol v2

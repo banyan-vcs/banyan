@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1120" viewBox="0 0 1440 1120" font-family="'Microsoft YaHei','Noto Sans CJK SC','PingFang SC',sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16351f"/>
+    </marker>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#68758a"/>
+    </marker>
+  </defs>
+
+  <rect width="1440" height="1120" fill="#ffffff"/>
+  <text x="60" y="52" font-size="27" font-weight="700" fill="#16351f">banyan 总体架构</text>
+  <text x="60" y="80" font-size="15" fill="#68758a">git 兼容的分布式代码存储服务端 —— 目录锚定时间线 · 分片 pack CAS · 中心元数据（编号对应 docs/00–14）</text>
+
+  <!-- ===================== 客户端层 ===================== -->
+  <rect x="40" y="100" width="1360" height="104" rx="10" fill="#f6f7f9"/>
+  <text x="56" y="120" font-size="13" fill="#68758a">客户端生态（不要求任何人离开 git）</text>
+  <g>
+    <rect x="60" y="128" width="420" height="62" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="76" y="153" font-size="16" font-weight="600" fill="#1c2430">标准 git CLI</text>
+    <text x="76" y="176" font-size="13" fill="#4a5568">clone / fetch / push · partial clone · 子树即仓库</text>
+    <rect x="510" y="128" width="420" height="62" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="526" y="153" font-size="16" font-weight="600" fill="#1c2430">banyan CLI（薄工作区）</text>
+    <text x="526" y="176" font-size="13" fill="#4a5568">无 .git · 最小下载 · log/blame/diff 走服务端</text>
+    <rect x="960" y="128" width="420" height="62" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="976" y="153" font-size="16" font-weight="600" fill="#1c2430">Web 管理面（web/）</text>
+    <text x="976" y="176" font-size="13" fill="#4a5568">登录 · 仓库 · 分支可见性 · 文件浏览（TS 零依赖）</text>
+  </g>
+
+  <!-- 客户端 → 接入层 箭头 -->
+  <line x1="270" y1="204" x2="270" y2="252" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="282" y="234" font-size="13" fill="#16351f">Smart HTTP v1/v2（:8100）+ git-over-SSH（:8102）</text>
+  <line x1="720" y1="204" x2="720" y2="252" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="732" y="234" font-size="13" fill="#16351f">JSON RPC /api/v1（fetch-trees / commit / log …）</text>
+  <line x1="1170" y1="204" x2="1170" y2="252" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="1182" y="234" font-size="13" fill="#16351f">内网调用（凭证单源校验）</text>
+
+  <!-- ===================== 接入层 ===================== -->
+  <rect x="40" y="252" width="1360" height="150" rx="10" fill="#f2f6f3"/>
+  <text x="56" y="272" font-size="13" fill="#68758a">接入层（协议端点，无业务逻辑）</text>
+  <g>
+    <rect x="60" y="280" width="640" height="106" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+    <text x="76" y="305" font-size="16" font-weight="600" fill="#16351f">gitwire · git 协议服务核心（docs/04）</text>
+    <text x="76" y="329" font-size="13" fill="#4a5568">upload-pack：v0 有状态协商 / v2 命令面 · have 减除 · 真 thin pack</text>
+    <text x="76" y="351" font-size="13" fill="#4a5568">receive-pack：逐 ref 门禁 · 自动建仓（需 push 权）· push 后预热</text>
+    <text x="76" y="373" font-size="13" fill="#4a5568">服务阶梯：整包 verbatim → 闭包缓存 → 在线 delta 编码</text>
+    <rect x="740" y="280" width="640" height="106" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+    <text x="756" y="305" font-size="16" font-weight="600" fill="#16351f">rpc · /api/v1 薄层（docs/05）</text>
+    <text x="756" y="329" font-size="13" fill="#4a5568">服务层三前端之一：fetch-trees 二进制帧 · commit（changeset 组装）</text>
+    <text x="756" y="351" font-size="13" fill="#4a5568">resolve / log / refs / repos · 统一错误信封 code→HTTP→退出码</text>
+    <text x="756" y="373" font-size="13" fill="#4a5568">（Gitaly gRPC 前端规划中 → GitLab 直连存储节点）</text>
+  </g>
+
+  <!-- 授权切面（横贯条） -->
+  <rect x="40" y="420" width="1360" height="70" rx="10" fill="#e8f0ea" stroke="#2c5e3d" stroke-width="1.2" stroke-dasharray="none"/>
+  <text x="60" y="447" font-size="15" font-weight="700" fill="#16351f">授权切面 auth.Service（docs/07）</text>
+  <text x="60" y="472" font-size="13" fill="#33424f">Identify（Basic）/ IdentifyKey（SSH 公钥）→ Identity · VisibleRefs / CanFetch / CanPush</text>
+  <text x="740" y="447" font-size="13" fill="#33424f">三粒度：仓库 / 目录 / 分支（个人命名空间 refs/heads/&lt;user&gt;/*）</text>
+  <text x="740" y="472" font-size="13" fill="#33424f">nil = 关闭（存量兼容）· 集群网关 = RemotePolicy 快照（fail-closed）</text>
+  <line x1="270" y1="402" x2="270" y2="420" stroke="#68758a" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <line x1="1060" y1="402" x2="1060" y2="420" stroke="#68758a" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="282" y="415" font-size="12" fill="#68758a">身份解析（每端点）</text>
+
+  <line x1="720" y1="490" x2="720" y2="516" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+
+  <!-- ===================== 服务与视图引擎 ===================== -->
+  <rect x="40" y="516" width="1360" height="164" rx="10" fill="#f6f7f9"/>
+  <text x="56" y="536" font-size="13" fill="#68758a">服务与视图引擎（协议无关核心，读写计算都在服务端）</text>
+  <g>
+    <rect x="60" y="546" width="656" height="58" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="76" y="569" font-size="15" font-weight="600" fill="#1c2430">view 织入引擎（读时组装，docs/02 §13）</text>
+    <text x="76" y="591" font-size="13" fill="#4a5568">根视图线性织入 · 作用域视图前缀+追加 · 投影 ↔ git 对象互转</text>
+    <rect x="744" y="546" width="656" height="58" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="760" y="569" font-size="15" font-weight="600" fill="#1c2430">service 层（docs/05）</text>
+    <text x="760" y="591" font-size="13" fill="#4a5568">FetchTrees（树 diff + 内联阈值）· CreateCommit · Log · Repack</text>
+    <rect x="60" y="614" width="656" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="76" y="636" font-size="15" font-weight="600" fill="#1c2430">ObjectService（docs/03/09/11）</text>
+    <text x="76" y="658" font-size="13" fill="#4a5568">idx 单对象解压 · 定位 LRU + 批量预取 · 代数索引剪枝 · repack</text>
+    <rect x="744" y="614" width="656" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="760" y="636" font-size="15" font-weight="600" fill="#1c2430">缓存体系（docs/11 P2）</text>
+    <text x="760" y="658" font-size="13" fill="#4a5568">clone 形态闭包响应缓存（纯函数，永不失效）· 网关磁盘 pack cache（重启保留）</text>
+  </g>
+
+  <!-- 分叉箭头 -->
+  <line x1="380" y1="680" x2="380" y2="726" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="120" y="710" font-size="13" fill="#16351f">ref RPC · 小事务（CAS 前序判断 / 广告 / 对象索引）</text>
+  <line x1="1060" y1="680" x2="1060" y2="726" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="940" y="710" font-size="13" fill="#16351f">pack 数据 RPC · 大流量（任一持有者，OID 自证）</text>
+
+  <!-- ===================== refs 服务 + 散布存储 ===================== -->
+  <rect x="40" y="726" width="664" height="238" rx="10" fill="#f2f6f3"/>
+  <text x="56" y="746" font-size="13" fill="#68758a">refs 服务 · 唯一串行点（docs/10）</text>
+  <g>
+    <rect x="60" y="756" width="624" height="194" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+    <text x="76" y="781" font-size="15" font-weight="600" fill="#16351f">timelines head CAS —— push 的 old/new 前序判断</text>
+    <text x="76" y="806" font-size="13" fill="#4a5568">对象索引 oid → (packOID, 持有节点集)：登记即事实，读不依赖放置函数</text>
+    <text x="76" y="830" font-size="13" fill="#4a5568">集群策略源 /internal/authz/policy（网关 RemotePolicy 同步）</text>
+    <text x="76" y="854" font-size="13" fill="#4a5568">节点健康表（healthy/suspect/dead/maintenance）+ reconciler</text>
+    <text x="76" y="878" font-size="13" fill="#4a5568">欠副本补齐顺序纪律：先复制 → 后登记 → 最后删源（中断最多超副本）</text>
+    <rect x="76" y="894" width="592" height="42" rx="6" fill="#f6f7f9"/>
+    <text x="92" y="920" font-size="13" fill="#33424f">后端：SQLite（一体化 / demo）· MySQL / PG（集群默认，HA 交给数据库体系）</text>
+  </g>
+
+  <rect x="736" y="726" width="664" height="238" rx="10" fill="#f6f7f9"/>
+  <text x="752" y="746" font-size="13" fill="#68758a">散布 pack 存储 ×N（docs/03/10）</text>
+  <g>
+    <rect x="756" y="756" width="624" height="194" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+    <text x="772" y="781" font-size="15" font-weight="600" fill="#16351f">内容寻址分片（pack + idx，OID = 校验和，写一次永不改）</text>
+    <text x="772" y="806" font-size="13" fill="#4a5568">随机 R 副本 · W = quorum 确认 · 无仓库-服务器亲和（天然均衡）</text>
+    <text x="772" y="830" font-size="13" fill="#4a5568">节点故障：R≥2 读照常（任一持有者）· reconciler 自动补齐副本目标</text>
+    <text x="772" y="854" font-size="13" fill="#4a5568">字节面零共识：不可变 + 内容寻址 ⇒ 散布 + 登记即事实</text>
+    <rect x="772" y="870" width="592" height="66" rx="6" fill="#f6f7f9"/>
+    <text x="788" y="896" font-size="13" fill="#33424f">存储节点 = pack 仓库（PUT/GET/DELETE + 心跳）；一体化 = 单节点本地分片，</text>
+    <text x="788" y="920" font-size="13" fill="#33424f">同一 ObjectService 接口，无特例代码路径</text>
+  </g>
+
+  <!-- ===================== 部署形态 ===================== -->
+  <rect x="40" y="986" width="1360" height="112" rx="10" fill="#ffffff" stroke="#68758a" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <text x="56" y="1010" font-size="13" fill="#68758a">部署形态（同一套角色代码，docs/10 §2；banyand -role …）</text>
+  <text x="70" y="1042" font-size="15" font-weight="600" fill="#16351f">all-in-one（默认）</text>
+  <text x="70" y="1068" font-size="13" fill="#4a5568">gitwire + rpc + view + refs + storage 同进程（SQLite + 本地分片）——开发 / demo / 小团队</text>
+  <text x="740" y="1042" font-size="15" font-weight="600" fill="#16351f">gateway ×N + refs + storage ×N</text>
+  <text x="740" y="1068" font-size="13" fill="#4a5568">网关无状态可任意增删（v1 每请求自包含）· 自带磁盘 pack cache · 前置 LB 自备——横向扩展</text>
+</svg>

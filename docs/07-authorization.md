@@ -1,4 +1,4 @@
-# 13 · 授权设计与个人分支可见性（M5 切片）
+# 07 · 授权设计与个人分支可见性（M5 切片）
 
 > 2026-10-25 落地。定位：**抽象层 + demo 策略 + 集群控制层 + Web 演示**。
 > 能力广告诚实：认证是 demo 级 HTTP Basic（静态用户表），策略是静态
@@ -73,7 +73,7 @@ HttpOnly cookie）→ 仓库列表/建仓 → 仓库页**分支列表 = 登录�
 过滤广告）。所有请求携带会话用户凭证 → 服务端规则与 git 客户端
 完全一致。`docker compose up -d`：Web 8101 / git 8100（compose 内
 挂载 demo/auth-demo.yaml：alice/bob/admin，密码 demo）。
-端到端走查手册（命令即脚本）见 [14-docker-demo.md](14-docker-demo.md)。
+端到端走查手册（命令即脚本）见 [12-docker-demo.md](12-docker-demo.md)。
 
 测试：T38（wire 全矩阵，真实 git 客户端 v0+v2）+ TestAuthorizationRPC
 （认证门/login/建仓）；Web 端到端为实测验证（见提交记录）。
@@ -85,5 +85,5 @@ HttpOnly cookie）→ 仓库列表/建仓 → 仓库页**分支列表 = 登录�
 此后**走完全相同的四决策**：广告过滤、CanFetch、CanPush 对 ssh:// 会话
 与 HTTP 会话逐字节同义。demo 策略 `auth.keys` 按用户配置公钥行；集群
 网关经 refs 策略快照解析（快照携带 keys，fail-closed 语义不变）。传输
-细节（会话形态/协商轮次）见 docs/03 §7b，T39 钉住。边界：SSH 传输要求
+细节（会话形态/协商轮次）见 docs/04 §7b，T39 钉住。边界：SSH 传输要求
 auth 必须开启（无钥匙表可认证任何人——拒绝启动而非裸监听）。

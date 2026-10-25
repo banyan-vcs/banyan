@@ -1,4 +1,4 @@
-// cli_workspace_test.go — T22: the thin-workspace CLI end to end (docs/05):
+// cli_workspace_test.go — T22: the thin-workspace CLI end to end (docs/06):
 // minimal clone (no .git, no history), offline status, server-side commit
 // assembly, cross-verified by a REAL git client (fresh clone + fsck), pull
 // as a server-side tree-diff, remote log/cat, and the base-moved conflict.
@@ -115,7 +115,7 @@ func TestCLIThinWorkspace(t *testing.T) {
 	assert.Equal(t, 1, code, "过期 base 必须退出码 1（stdout:%s stderr:%s）", out, errOut)
 	assert.Contains(t, errOut, "conflict")
 	// The failed commit left a local modification: restore to the committed
-	// state (thin pull refuses dirty trees, docs/05 §3.1), then pull.
+	// state (thin pull refuses dirty trees, docs/06 §3.1), then pull.
 	write(t, filepath.Join(ws, "README.md"), "readme-v2\n")
 	out, errOut, code = runCLI(t, "-C", ws, "pull")
 	require.Equal(t, 0, code, "冲突后 pull 应成功\nstdout:%s\nstderr:%s", out, errOut)
@@ -183,7 +183,7 @@ func TestCLISubtreeWorkspace(t *testing.T) {
 	assert.Equal(t, "root-peer\n", readFile(t, filepath.Join(ws, "nested", "SHARED.txt")))
 }
 
-// --- T33 fetch-trees binary framing (docs/10 §3.3; docs/12 P1-2) ---
+// --- T33 fetch-trees binary framing (docs/05 §3.3; docs/11 P1-2) ---
 // The thin CLI negotiates "format":"bin" — tree/blob bytes travel as binary
 // records instead of JSON base64 (a flat +33%). The JSON response stays for
 // compatibility. Both framings must be semantically identical, and the

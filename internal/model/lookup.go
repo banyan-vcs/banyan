@@ -5,7 +5,7 @@ import (
 )
 
 // ObjectLookup abstracts object access for the model layer, implemented by the
-// storage layer (global object index → shard node → pack/idx decode, docs/02 §3).
+// storage layer (global object index → shard node → pack/idx decode, docs/03 §3).
 type ObjectLookup interface {
 	Blob(oid OID) ([]byte, error)
 	Tree(oid OID) (*Tree, error)

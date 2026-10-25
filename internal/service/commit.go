@@ -10,7 +10,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// CreateCommit: server-side changeset assembly (docs/05 §4.2, docs/10 §2).
+// CreateCommit: server-side changeset assembly (docs/06 §4.2, docs/05 §2).
 // The client uploads only NEW blobs (PutObjects) plus a change list relative
 // to its base; the server rebuilds trees along the touched paths, creates a
 // standard git commit and publishes it with the single directory-timeline
@@ -43,7 +43,7 @@ type CommitRequest struct {
 
 type CommitResult struct {
 	Head     model.OID `json:"head"`     // new timeline head (the created commit)
-	RootView model.OID `json:"rootView"` // woven root view (CI/webhook anchor, docs/08 §3.2)
+	RootView model.OID `json:"rootView"` // woven root view (CI/webhook anchor, docs/01 §3.2)
 	Tree     model.OID `json:"tree"`     // new view tree (client manifest anchor)
 }
 

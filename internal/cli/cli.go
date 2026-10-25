@@ -1,4 +1,4 @@
-// Package cli implements the banyan thin client (docs/05): a smart remote
+// Package cli implements the banyan thin client (docs/06): a smart remote
 // control over the JSON API — minimal download (view tree + checkout blobs,
 // never the commit closure), history questions answered server-side, a
 // content-addressed local cache instead of a .git directory.
@@ -12,7 +12,7 @@ import (
 	"io"
 )
 
-const usageText = `banyan — thin client for a banyan server (docs/05)
+const usageText = `banyan — thin client for a banyan server (docs/06)
 
 usage: banyan [-C <dir>] <command> [args]
 

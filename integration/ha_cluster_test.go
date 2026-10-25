@@ -1,4 +1,4 @@
-// ha_cluster_test.go — T23-T26: the cluster deployment (docs/11) end to end
+// ha_cluster_test.go — T23-T26: the cluster deployment (docs/10) end to end
 // with the real git CLI as the client. The harness starts the actual role
 // servers in-process: a refs service (SQLite meta, tight health thresholds),
 // four storage nodes (storenode over LocalShardStore) and one gateway
@@ -162,7 +162,7 @@ func (c *haCluster) startStorageNode(ctx context.Context) {
 
 // restartGateway replaces the gateway process state (fresh ObjectService,
 // cold memory) — optionally carrying the on-disk pack cache across (T36:
-// the cache is the only state a gateway is allowed to keep, docs/12 P2-1).
+// the cache is the only state a gateway is allowed to keep, docs/11 P2-1).
 func (c *haCluster) restartGateway(cacheDir string) {
 	c.t.Helper()
 	if c.GW != nil {
@@ -436,7 +436,7 @@ func dedup(in []string) []string {
 	return out
 }
 
-// --- T36 gateway disk pack cache (docs/12 P2-1, B6) ---
+// --- T36 gateway disk pack cache (docs/11 P2-1, B6) ---
 // The gateway is stateless except for its caches — all memory. A restarted
 // gateway's first clone re-paid every pack transfer and (post-B2) every
 // object read as per-object RPCs. With cache.pack_dir, whole packs persist

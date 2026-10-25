@@ -14,7 +14,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// fetch-trees binary framing (docs/10 §3.3; docs/12 P1-2, B4): the JSON
+// fetch-trees binary framing (docs/05 §3.3; docs/11 P1-2, B4): the JSON
 // response carried tree/blob bytes as base64 inside a map — a flat +33% on
 // the thin client's dominant transfer. The thin CLI is our own consumer, so
 // the wire switches to binary frames negotiated per request ("format":"bin");

@@ -1,13 +1,13 @@
-# 10 · 服务层抽象与 API 服务层（httpd / Gitaly 双前端）
+# 05 · 服务层抽象与 API 服务层（httpd / Gitaly 双前端）
 
 > 背景（用户决策）：banyand 抽象中间层，前端可插拔——**httpd** 为本地 demo 服务
 > （git smart HTTP + `/api/v1` JSON，也是 **CLI 的一等契约**）；另规划 **Gitaly gRPC
 > 兼容前端**，使 GitLab 可直接把 banyand 当作底层存储节点。本文设计 CLI 所需的
-> API 服务层，命令面见 [05-cli.md](05-cli.md)。
+> API 服务层，命令面见 [06-cli.md](06-cli.md)。
 
 ## 0. 决策变更记录
 
-docs/08 初版把 Gitaly RPC 列为非目标（私有契约跟随者风险）。本篇改为**可选、
+docs/01 初版把 Gitaly RPC 列为非目标（私有契约跟随者风险）。本篇改为**可选、
 分阶段兼容**：私有契约的差异与版本漂移被隔离在 gitaly 适配层内，核心服务与
 CLI 契约不受影响。协议原生（标准 git 远端）仍是第一优先路线，Gitaly 兼容是
 加深 GitLab 集成的第二路线（比 08 §3.2 镜像拓扑更深一层：无需镜像，单真相源）。
@@ -94,7 +94,7 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 
 ### 3.1 端点总表（命令 → 端点 → service 方法）
 
-| 命令（docs/05） | 端点 | service 方法 | 状态 |
+| 命令（docs/06） | 端点 | service 方法 | 状态 |
 |---|---|---|---|
 | clone / fetch / pull | `POST /api/v1/fetch-trees` | Tree.Fetch | **已落地** |
 | fetch-objects / cat / restore 回填 | `POST /api/v1/objects`（批量定位）/ `GET /api/v1/objects?repo&oid` | Object.BatchMeta / Get | 批量**已有**，GET **已落地** |
@@ -141,12 +141,12 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 ← { "trees": {"<oid>": "<raw>"}, "blobs": {"<oid>": "<raw，≤256KiB 内联>"},
     "pending": ["<大 blob oid，走 GET /api/v1/objects>"] }
 // format:"bin"（薄 CLI 默认）→ Content-Type: application/x-banyan-fetch-trees，
-// 二进制帧（docs/12 P1-2，JSON base64 的 +33% 消失）：
+// 二进制帧（docs/11 P1-2，JSON base64 的 +33% 消失）：
 //   "banyan-fetch-1
 " + JSON 头行（branch/head/tree/full/pending/algo）
 //   + *记录：kind('t'|'b') + 原始 oid（20/32B）+ uvarint 长度 + 内容；省略 format 走 JSON（兼容）
 
-// POST /api/v1/commit —— changeset 语义，服务端组装（docs/05 §4.2）
+// POST /api/v1/commit —— changeset 语义，服务端组装（docs/06 §4.2）
 → { "repo": "demo", "sub": "/src/lib", "base": "sha…", "message": "…",
     "author": {"name": "…", "email": "…"},
     "changes": [{"path": "core/x.go", "blob": "sha…"}, {"path": "old.go", "delete": true}] }
@@ -196,7 +196,7 @@ internal API（PreReceive/PostReceive）完成。banyand 不跑 git hook——gi
 ### 4.4 明确不承诺
 
 praefect 复制/事务协议（RefTransaction/Replication，直连单节点模式先行）、
-ObjectPool、Wiki、Conflicts（远期评估）。多副本走 banyan 自身路线（docs/02
+ObjectPool、Wiki、Conflicts（远期评估）。多副本走 banyan 自身路线（docs/03
 分布式规划），不借 praefect。
 
 ## 5. banyand 装配与配置

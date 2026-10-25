@@ -9,7 +9,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// TestDiskPackCacheLifecycle pins docs/12 P2-1: put/get round-trip, LRU
+// TestDiskPackCacheLifecycle pins docs/11 P2-1: put/get round-trip, LRU
 // eviction past the byte cap, and the restart rescan that rebuilds the
 // index from the directory contents.
 func TestDiskPackCacheLifecycle(t *testing.T) {

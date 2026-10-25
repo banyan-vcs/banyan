@@ -2,7 +2,7 @@
 
 Banyan: a git-compatible version-control **server** built for large-scale
 subtree-parallel iteration in monorepos (design doc `docs/`, current model:
-v4 timeline-first, see `docs/01`).
+v4 timeline-first, see `docs/02`).
 
 ## Design Goal (top constraint)
 
@@ -22,7 +22,7 @@ v4 timeline-first, see `docs/01`).
    Acceptance for any replacement: byte-level behavioral parity with git.
 4. Advertise only fully implemented capabilities (not advertising a
    capability makes git clients disable or downgrade it). Track accepted
-   divergences in `docs/03` §8–§10; register new ones there.
+   divergences in `docs/04` §8–§10; register new ones there.
 
 ## Conventions
 
@@ -32,6 +32,6 @@ v4 timeline-first, see `docs/01`).
   buildable on its own; the message explains *why* and cites the git-source
   or reference-trace basis.
 - Tests: every new capability gets an integration case, registered in the
-  matrix in `docs/07`. Prefer blob-hash assertions over worktree diffs
+  matrix in `docs/13`. Prefer blob-hash assertions over worktree diffs
   (line-ending noise). Protocol bugs surface only under the real git CLI.
 - Comments: English first, stating constraints the code cannot show.

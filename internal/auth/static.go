@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// StaticPolicy is the demo authorization implementation (docs/13 §2):
+// StaticPolicy is the demo authorization implementation (docs/07 §2):
 // a static user table with HTTP Basic, admin/protected-branch rules, a
 // personal-branch namespace, and optional per-directory fetch restrictions.
 // It is deliberately in-process and readable — production replaces it at

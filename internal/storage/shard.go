@@ -1,4 +1,4 @@
-// Package storage implements distributed pack storage (docs/02-storage.md):
+// Package storage implements distributed pack storage (docs/03-storage.md):
 // the pack is the immutable shard unit, placed by rendezvous hashing, with a
 // dual-idx system (pack-local idx + central global object index) and
 // background repack.
@@ -19,7 +19,7 @@ type Node struct {
 }
 
 // PickNodes uses rendezvous (highest random weight) hashing to pick the
-// replica node sequence for a pack (docs/02 §1.2). Takes the top replicas by score:
+// replica node sequence for a pack (docs/03 §1.2). Takes the top replicas by score:
 //
 //	score(node) = H64(packOID || 0x00 || nodeID)
 //

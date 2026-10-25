@@ -15,7 +15,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/view"
 )
 
-// VirtualRepo is the (virtual) repo location parsed from the URL (docs/03 §1):
+// VirtualRepo is the (virtual) repo location parsed from the URL (docs/04 §1):
 //
 //	/r/demo                 → {Repo: demo, Sub: "/"}          root repo
 //	/r/demo/tree/src/lib    → {Repo: demo, Sub: "/src/lib"}   subtree repo
@@ -66,13 +66,13 @@ type Server struct {
 	Meta    storage.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
-	Views   *view.Service // derived-view engine (docs/01 §13 assembly-on-read)
-	// Auth is the optional authorization service (docs/13, M5): nil keeps
+	Views   *view.Service // derived-view engine (docs/02 §13 assembly-on-read)
+	// Auth is the optional authorization service (docs/07, M5): nil keeps
 	// the pre-M5 open behavior; set, every advertisement, fetch and push
 	// passes through it. Wired by cmd/banyand per role.
 	Auth auth.Service
 	// SSHHostKey signs the git-over-SSH transport's server key exchange
-	// (docs/03 §8); wired by cmd/banyand (generated/persisted host key).
+	// (docs/04 §8); wired by cmd/banyand (generated/persisted host key).
 	SSHHostKey ssh.Signer
 }
 
@@ -114,7 +114,7 @@ func (s *Server) visibleRefs(id auth.Identity, repo string, refs []Ref) []Ref {
 	return back
 }
 
-// Register registers routes (docs/03 §1 endpoint table).
+// Register registers routes (docs/04 §1 endpoint table).
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/r/", s.handleRepo)
 }
@@ -153,7 +153,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 // handleInfoRefs serves ref discovery (mirrors the smart protocol branch of http-backend.c).
 // v1: pkt-line sequence "<oid> <refname>\0<caps>\n", terminated by a flush.
 // With Auth set the advertisement is the identity's VISIBLE view: personal
-// branches of other users never leave the server (docs/13 §3).
+// branches of other users never leave the server (docs/07 §3).
 func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr VirtualRepo) {
 	service := r.URL.Query().Get("service")
 	if service != "git-upload-pack" && service != "git-receive-pack" {
@@ -201,7 +201,7 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr Virtu
 }
 
 // writeRefAdvertisement writes the v0 ref advertisement shared by smart HTTP
-// and the SSH transport (docs/03 §2): "<oid> <ref>" lines with the
+// and the SSH transport (docs/04 §2): "<oid> <ref>" lines with the
 // capability block trailing the first, terminated by a flush; an empty repo
 // advertises the virtual capabilities^{} header (mirrors upload-pack.c
 // empty-repo handling). The advertisement is the identity's VISIBLE view.
@@ -246,7 +246,7 @@ func (s *Server) defaultBranch(ctx context.Context, repo string) string {
 	return "main"
 }
 
-// capabilities returns the capability advertisement string (docs/03 §2 capability table).
+// capabilities returns the capability advertisement string (docs/04 §2 capability table).
 // Only fully implemented capabilities are advertised: no side-band-64k (response is a bare
 // pack), no no-done, no multi_ack (a single terminal ACK suffices), no thin-pack
 // (deltas only ever reference in-pack bases).
@@ -260,9 +260,9 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 		return strings.Join([]string{
 			"symref=HEAD:refs/heads/" + defaultBranch,
 			"shallow",   // deepen N / --unshallow (v0 core shallowing; deepen-since/not not advertised)
-			"filter",    // partial clone: blob:none / tree:0 served (docs/03 §4); unsupported specs answered with ERR
-			"ofs-delta", // serve-path delta packs use OFS_DELTA (docs/12 P1-4); REF_DELTA otherwise
-			"thin-pack", // have-subtracted fetches delta against client-held bases (docs/12 P2-6)
+			"filter",    // partial clone: blob:none / tree:0 served (docs/04 §4); unsupported specs answered with ERR
+			"ofs-delta", // serve-path delta packs use OFS_DELTA (docs/11 P1-4); REF_DELTA otherwise
+			"thin-pack", // have-subtracted fetches delta against client-held bases (docs/11 P2-6)
 			// Unadvertised wants (partial-clone lazy fetches name missing blobs by
 			// OID) pass a reachability check from the advertised tips — the exact
 			// semantic this capability promises (protocol-capabilities.txt).
@@ -274,7 +274,7 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 		agent, objFmt,
 		"report-status",
 		"delete-refs", // clients silently drop delete commands when this capability is absent (gitprotocol-pack)
-		"no-thin",     // storage-side packs are self-contained (docs/03 §2)
+		"no-thin",     // storage-side packs are self-contained (docs/04 §2)
 	}, " ")
 }
 

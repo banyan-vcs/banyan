@@ -1,4 +1,4 @@
-// server.ts — the banyan demo web service (docs/13 §5): lightweight
+// server.ts — the banyan demo web service (docs/07 §5): lightweight
 // repository management and file browsing over banyan's RPC + git-wire
 // surfaces, with server-side sessions. Zero runtime dependencies.
 //

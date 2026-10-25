@@ -8,7 +8,7 @@ import (
 )
 
 // Byte-level lossless invariant: real git commits (gpgsig multiline headers,
-// two-parent merges, parentless roots) must decompose→render byte-identically ⇒ hash identity (docs/01 §11).
+// two-parent merges, parentless roots) must decompose→render byte-identically ⇒ hash identity (docs/02 §11).
 func TestDecomposeRenderRoundtripRealFixtures(t *testing.T) {
 	fixtures, err := filepath.Glob("testdata/commit-*.txt")
 	if err != nil || len(fixtures) == 0 {

@@ -3,7 +3,7 @@
 // Strict YAML decoding (unknown keys are errors) plus cross-field validation
 // keep the effective configuration consistent and observable.
 //
-// Roles (docs/11 §2): all-in-one (default) runs everything in one process;
+// Roles (docs/10 §2): all-in-one (default) runs everything in one process;
 // cluster deployments split into gateway / refs / storage processes.
 package config
 
@@ -41,9 +41,9 @@ type Config struct {
 	Auth struct {
 		// Remote selects cluster mode on the gateway role: decisions run
 		// against the policy snapshot synced from the refs service
-		// (docs/13 §4).
+		// (docs/07 §4).
 		Remote bool
-		// Users enables the demo authorization policy (docs/13): HTTP Basic
+		// Users enables the demo authorization policy (docs/07): HTTP Basic
 		// against this static table; absent = authorization off.
 		Users  map[string]string `yaml:"users"`
 		Admins []string          `yaml:"admins"`
@@ -53,11 +53,11 @@ type Config struct {
 		// users (directory granularity).
 		SubtreeAccess map[string][]string `yaml:"subtree_access"`
 		// Keys are per-user SSH authorized keys (authorized_keys-style lines)
-		// for the git-over-SSH transport (docs/13 §7).
+		// for the git-over-SSH transport (docs/07 §7).
 		Keys map[string][]string `yaml:"keys"`
 	} `yaml:"auth"`
 
-	// SSH configures the git-over-SSH transport (docs/03 §8): absent listen
+	// SSH configures the git-over-SSH transport (docs/04 §8): absent listen
 	// keeps the transport off.
 	SSH struct {
 		Listen  string `yaml:"listen"`   // e.g. "0.0.0.0:8022"
@@ -65,7 +65,7 @@ type Config struct {
 	} `yaml:"ssh"`
 
 	Cache struct {
-		// PackDir enables the gateway's on-disk pack cache (docs/12 P2-1):
+		// PackDir enables the gateway's on-disk pack cache (docs/11 P2-1):
 		// packs fetched from storage nodes persist across gateway restarts.
 		PackDir   string `yaml:"pack_dir"`
 		PackMaxMB int    `yaml:"pack_max_mb"` // default 1024
@@ -103,13 +103,13 @@ func Load(args []string) (*Config, error) {
 	initRepo := fs.String("init-repo", defaults.InitRepo, "repo name to create at startup (optional)")
 	metaBackend := fs.String("meta", defaults.MetaBackend, `metadata backend: "mem" (in-memory) or "sqlite" (persistent)`)
 	dbPath := fs.String("db", defaults.DBPath, "sqlite database path for -meta sqlite (default <root>/banyan.db)")
-	role := fs.String("role", defaults.Role, `deployment role: all-in-one (default) | gateway | refs | storage (docs/11)`)
+	role := fs.String("role", defaults.Role, `deployment role: all-in-one (default) | gateway | refs | storage (docs/10)`)
 	nodeID := fs.String("node-id", defaults.NodeID, "storage role: cluster node identity")
 	advertise := fs.String("advertise", defaults.Advertise, "storage role: address other roles dial (host:port; default 127.0.0.1:<listen port>)")
 	refsAddr := fs.String("refs-addr", defaults.RefsAddr, "refs service address (gateway/storage roles)")
 	defaultR := fs.Int("default-replicas", defaults.DefaultR, "cluster default replica target per repo")
 	writeAcks := fs.String("write-acks", defaults.WriteAcks, `write acknowledgements: quorum (default) | all | one`)
-	suspect := fs.Int("health-suspect-sec", defaults.SuspectSec, "node suspect threshold in seconds (docs/11 §8.1)")
+	suspect := fs.Int("health-suspect-sec", defaults.SuspectSec, "node suspect threshold in seconds (docs/10 §8.1)")
 	dead := fs.Int("health-dead-sec", defaults.DeadSec, "node dead threshold in seconds")
 	reconSec := fs.Int("recon-interval-sec", defaults.ReconSec, "reconciler interval in seconds")
 	reconCur := fs.Int("recon-concurrency", defaults.ReconCurrency, "reconciler parallel pack copies")

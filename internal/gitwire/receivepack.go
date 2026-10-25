@@ -15,7 +15,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// serveReceivePack serves push (docs/03 ÃÂ§5, write path docs/02 ÃÂ§4).
+// serveReceivePack serves push (docs/04 ÃÂ§5, write path docs/03 ÃÂ§4).
 //
 // v1 session (mirrors receive-pack.c):
 //
@@ -61,7 +61,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 }
 
 // finishPush serves the receive-pack data phase shared by smart HTTP and the
-// SSH transport (docs/03 §5, write path docs/02 §4): read the ref commands
+// SSH transport (docs/04 §5, write path docs/03 §4): read the ref commands
 // and pack, then per-ref validation + head CAS with a report-status receipt.
 // A non-nil error is a pre-report protocol failure.
 func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Reader, out *bufWriter, vr VirtualRepo) error {
@@ -127,7 +127,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	for _, u := range updates {
 		// Ref namespaces: refs/heads/* are branch timelines (weave on read);
 		// any other refs/<ns>/<name> (tags, notes, custom) is an auxiliary
-		// ref — root repo only, stored verbatim, plain CAS (docs/03 §6).
+		// ref — root repo only, stored verbatim, plain CAS (docs/04 §6).
 		if !strings.HasPrefix(u.Name, "refs/") || !strings.Contains(strings.TrimPrefix(u.Name, "refs/"), "/") {
 			_ = WritePacket(out, []byte("ng "+u.Name+" unsupported ref namespace\n"))
 			continue
@@ -182,7 +182,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		}
 
 		if !vr.Sub.IsRoot() {
-			// Ⓑ subtree-view push (docs/01 §13): the write path touches ONLY
+			// Ⓑ subtree-view push (docs/02 §13): the write path touches ONLY
 			// this directory's timeline — no root head CAS, no adoption merge.
 			// The root view is derived on read (view.RootTip weave).
 			if aerr := s.adoptSubtreePush(ctx, vr, name, u.Old, u.New); aerr != nil {
@@ -195,7 +195,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		}
 
 		// Root repo: the client chain lands VERBATIM as root-local history
-		// (docs/01 §13) — its boundary parent is the advertised woven tip,
+		// (docs/02 §13) — its boundary parent is the advertised woven tip,
 		// which the weave persists via the /.woven timeline, so the chain is
 		// self-consistent root-local state; the incremental weave then
 		// identity-reuses those commits (same tree, same parents).
@@ -227,7 +227,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 }
 
 // warmView pre-materializes the views the next advertisement will resolve
-// after a successful push (docs/12 P2-3, B6): a push only CASes timeline
+// after a successful push (docs/11 P2-3, B6): a push only CASes timeline
 // heads — the woven root/subtree views fold lazily on the FIRST subsequent
 // clone's ref discovery. Warming right after the CAS moves that fold off
 // the read path. Best-effort and asynchronous: the push response never
@@ -249,7 +249,7 @@ func (s *Server) warmView(repo string, sub model.AnchorPath, branch string) {
 }
 
 // handleAuxRefUpdate stores refs/tags/* and any other non-heads namespace
-// (docs/03 §6): a fixed pointer to an existing server-side object —
+// (docs/04 §6): a fixed pointer to an existing server-side object —
 // annotated tags point at tag objects, lightweight tags at commits. The
 // timeline name IS the full ref name; the head is the raw OID with no
 // derived-view semantics; deletion mirrors the branch path's expected
@@ -283,7 +283,7 @@ func (s *Server) handleAuxRefUpdate(ctx context.Context, out *bufWriter, vr Virt
 	log.Printf("receive-pack %s: %s → %s", vr.Repo, refName, newHead)
 }
 
-// adoptSubtreePush is the v5 write path for subtree pushes (docs/01 ÃÂ§13):
+// adoptSubtreePush is the v5 write path for subtree pushes (docs/02 ÃÂ§13):
 //
 //	Ã¢ÂÂ  content-level check (race-window guard, unchanged): admit only when old's X-view tree == the current merged
 //	  head's X-view tree Ã¢ÂÂ consecutive pushes admitted / stale cross-view rejected (prevents silent rollback) /
@@ -301,7 +301,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	if curTip.IsZero() {
 		return fmt.Errorf("subtree view %s unavailable (root has no commits)", vr.Sub)
 	}
-	// Content-level staleness guard, both sides (docs/01 §13):
+	// Content-level staleness guard, both sides (docs/02 §13):
 	//   local side — old must match the combined view tip X-content
 	//     (consecutive pushes pass; a divergent peer local push rejects —
 	//     the v4 race-window rule);
@@ -369,7 +369,7 @@ func (s *Server) sameXView(vr VirtualRepo, a, b model.OID) bool {
 	return !ta.IsZero() && ta == tb
 }
 
-// xviewTree normalizes a tree to the X view (docs/01 ÃÂ§10 mixed scope).
+// xviewTree normalizes a tree to the X view (docs/02 ÃÂ§10 mixed scope).
 func (s *Server) xviewTree(vr VirtualRepo, tree model.OID) model.OID {
 	lookup := s.Objects.Lookup(vr.Repo)
 	segs := vr.Sub.Segments()

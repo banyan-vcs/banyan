@@ -10,13 +10,13 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Ref is one externally exposed ref view (docs/03 §6).
+// Ref is one externally exposed ref view (docs/04 §6).
 type Ref struct {
 	Name string // git-visible name, e.g. refs/heads/main
 	OID  model.OID
 }
 
-// ResolveRefs generates the ref list for a (virtual) repo (docs/03 §6, docs/01 §13):
+// ResolveRefs generates the ref list for a (virtual) repo (docs/04 §6, docs/02 §13):
 //
 //	Root repo: the woven root view per branch — a pure function of the
 //	timeline tips (root-local + all subtree timelines), materialized on read.
@@ -73,7 +73,7 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 		return refs, nil
 	}
 
-	// Subtree repo: subtree timeline view (docs/01 §12, design v4 timeline-first).
+	// Subtree repo: subtree timeline view (docs/02 §12, design v4 timeline-first).
 	head, _, err := s.Views.SubtreeHead(ctx, vr.Repo, vr.Sub, defaultBranch)
 	if err != nil {
 		if errors.Is(err, model.ErrObjectNotFound) {

@@ -7,7 +7,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// In-memory derived indexes (complement to the docs/02 §1.3 global index + docs/04 commit-graph):
+// In-memory derived indexes (complement to the docs/03 §1.3 global index + docs/08 commit-graph):
 //
 //   - CommitGraph: oid → (tree, parents, when); closure computation and
 //     projection traversal no longer decode raw commit bytes per object; built
@@ -45,7 +45,7 @@ type repoIndex struct {
 	// total memory O(commits)). Uncapped on purpose: a capped list can miss
 	// the one ancestor carrying the tree and flip TreeKnown to false.
 	treeCommits map[model.OID][]model.OID
-	// Lightweight commit index (docs/01 §11, design v3): git oid → (tree edge, bmsg ref).
+	// Lightweight commit index (docs/02 §11, design v3): git oid → (tree edge, bmsg ref).
 	// Envelopes dedupe by content addressing; built at push with per-commit byte-level render verification (renderFails should stay 0).
 	records     map[model.OID]*model.CommitRecord
 	msgs        map[model.OID][]byte

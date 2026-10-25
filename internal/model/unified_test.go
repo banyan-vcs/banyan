@@ -2,7 +2,7 @@ package model
 
 import "testing"
 
-// Unified DAG primitive tests (docs/01 §10): view tip determinism; adoption-based assembly preserves the child commit.
+// Unified DAG primitive tests (docs/02 §10): view tip determinism; adoption-based assembly preserves the child commit.
 func TestSubtreeTipDeterministic(t *testing.T) {
 	lookup := NewMemoryLookup(SHA1)
 	lib := mkTree(t, lookup, file(t, lookup, "a.go", "v1"))
@@ -112,7 +112,7 @@ func indexOf(s, sub string) int {
 	return -1
 }
 
-// v4 identity mapping (docs/01 §12): the split projection of an adoption merge
+// v4 identity mapping (docs/02 §12): the split projection of an adoption merge
 // M=[rootPrev, C] (C scoped to X, tree-equivalent) = C itself — no new commit.
 func TestSplitHistoryIdentityMappingForAdoption(t *testing.T) {
 	lookup := NewMemoryLookup(SHA1)

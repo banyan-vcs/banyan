@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// RemotePolicy serves the gateway role (docs/13 §4): decisions run against
+// RemotePolicy serves the gateway role (docs/07 §4): decisions run against
 // a policy snapshot synced from the refs service — the cluster's policy
 // source of truth — and cached briefly. The gateway never hand-rolls rules;
 // it runs the same abstraction with synced state, so demo and cluster

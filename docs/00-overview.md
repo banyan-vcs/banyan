@@ -21,7 +21,7 @@
 
 ## 远景
 
-让代码存储成为像数据库一样**独立的基础设施层**：任何平台（GitLab / Gitea / 自建）、任何客户端（git CLI / IDE / CI / AI Agent）、任何规模（个人项目到企业 monorepo），都以标准协议访问同一个存储层。banyan 管"代码住在哪里、怎么高效取用"；协作流程归平台，组织与权限归企业——目录时间线把两者的边界对齐在同一粒度上。（定位展开见 [08-big-picture.md](08-big-picture.md)。）
+让代码存储成为像数据库一样**独立的基础设施层**：任何平台（GitLab / Gitea / 自建）、任何客户端（git CLI / IDE / CI / AI Agent）、任何规模（个人项目到企业 monorepo），都以标准协议访问同一个存储层。banyan 管"代码住在哪里、怎么高效取用"；协作流程归平台，组织与权限归企业——目录时间线把两者的边界对齐在同一粒度上。（定位展开见 [01-big-picture.md](01-big-picture.md)。）
 
 ## 一句话
 
@@ -45,45 +45,42 @@ git wire 协议语义，服务端内部自由重构。
 
 ## 总体架构
 
-```
-                    ┌──────────────────────────────────────────────┐
-                    │                客户端生态                       │
-                    │  标准 git CLI      banyan CLI（薄工作区）      │
-                    │  clone/fetch/push  log/blame/diff/懒取对象      │
-                    └───────┬─────────────────────┬────────────────┘
-                            │ Smart HTTP v1        │ JSON RPC (HTTPS)
-                    ┌───────▼─────────────────────▼────────────────┐
-                    │              banyand 服务进程                    │
-                    │  ┌──────────────┐  ┌──────────────────────┐   │
-                    │  │ gitwire 层    │  │ rpc 层                │   │
-                    │  │ upload-pack  │  │ 逐对象批量获取          │   │
-                    │  │ receive-pack │  │ log/blame/diff/file-h │   │
-                    │  │ 虚拟子树仓库   │  │ （派生数据引擎支撑）     │   │
-                    │  │ server filter│  └──────────┬───────────┘   │
-                    │  └──────┬───────┘             │               │
-                    │  ┌──────▼─────────────────────▼───────────┐   │
-                    │  │        model 层（核心数据模型）            │   │
-                    │  │  anchored commit / timeline / assembly  │   │
-                    │  │  projection（timeline ↔ git 对象互转）     │   │
-                    │  └──────┬────────────────────────────────-┘   │
-                    │  ┌──────▼─────────────────────────────────-┐  │
-                    │  │        storage 层（分布式 pack 存储）       │  │
-                    │  │  ShardStore（本地/远端节点）  MetaStore    │  │
-                    │  │  pack+idx 读写   对象→pack→node 全局索引    │  │
-                    │  │  后台 repack（碎片合并 + delta 化）         │  │
-                    │  └────────────────────────────────────────┘  │
-                    └──────────────────────────────────────────────┘
-                                        │
-              ┌─────────────────────────┼─────────────────────────┐
-              ▼                         ▼                         ▼
-        ┌──────────┐             ┌──────────┐              ┌──────────┐
-        │ 存储节点 A │   ......    │ 存储节点 N │              │ 中心元数据  │
-        │ pack 分片  │  (rendezvous │ pack 分片  │              │ 线性化 WAL │
-        │ + idx     │   hashing)   │ + idx     │              │ (DB)     │
-        └──────────┘             └──────────┘              └──────────┘
-```
+![banyan 总体架构](architecture.png)
 
-部署形态：单机模式（所有角色单进程，用于开发/演示）与分布式模式（存储节点独立部署、元数据服务独立部署、banyand 无状态多副本 + LRU pack cache）。
+（矢量源文件 [architecture.svg](architecture.svg)，改图后用
+`rsvg-convert -w 2160 -o architecture.png architecture.svg` 重导出。）
+
+五层自上而下，读写计算集中在服务端：
+
+1. **客户端生态**——标准 git CLI（Smart HTTP v1/v2 + git-over-SSH 双传输，
+   子树即仓库）、banyan CLI 薄工作区（无 .git，历史在服务端）、Web 管理面；
+2. **接入层**——gitwire（git 协议服务核心：有状态 v0 协商 / v2 命令面 /
+   thin pack / 服务阶梯）与 rpc `/api/v1` 薄层（三前端之一，Gitaly 规划中）；
+   两类端点都只做协议编解码，无业务逻辑；
+3. **授权切面**——`auth.Service` 贯穿所有端点：Basic / SSH 公钥同源解析
+   身份，VisibleRefs / CanFetch / CanPush 三粒度决策（nil = 关闭；
+   集群网关走 refs 策略快照，fail-closed）；
+4. **服务与视图引擎**——view 织入引擎（读时组装：根视图 / 作用域视图 /
+   投影）、协议无关 service 层、ObjectService（idx 单对象解压、定位 LRU、
+   批量预取）、两层缓存（clone 形态闭包响应缓存、网关磁盘 pack cache）；
+5. **元数据与字节**——refs 服务是**唯一串行点**（timelines head CAS 前序
+   判断 + 对象索引"登记即事实" + 策略源 + 健康表/reconciler）；pack 字节
+   散布在无状态存储节点 ×N（内容寻址分片、随机 R 副本 W=quorum、零共识）。
+
+部署形态二选一，同一套角色代码（`banyand -role`）：**all-in-one**（全部
+同进程，SQLite + 本地分片——开发/demo）与**集群**（无状态网关 ×N + refs +
+存储 ×N——横向扩展，docs/10）。
+
+## 文档地图（总分序）
+
+阅读顺序即设计展开的顺序：
+
+| 段 | 文档 | 一句话 |
+|---|---|---|
+| **总** | [00-overview](00-overview.md) · [01-big-picture](01-big-picture.md) | banyan 是什么；站在哪里（通用代码存储层 + 平台集成拓扑） |
+| **核心设计**（自底向上） | [02-data-model](02-data-model.md) · [03-storage](03-storage.md) · [04-git-compat](04-git-compat.md) · [05-service-api](05-service-api.md) · [06-cli](06-cli.md) | 目录锚定时间线 → 分片 pack 存储 → git 兼容层（HTTP+SSH）→ 服务层与前端 → 薄客户端 |
+| **横切能力** | [07-authorization](07-authorization.md) · [08-derived-data](08-derived-data.md) · [09-indexing-packing](09-indexing-packing.md) | 授权与个人分支可见性；派生数据；索引与打包 |
+| **运行与演进** | [10-ha](10-ha.md) · [11-performance](11-performance.md) · [12-docker-demo](12-docker-demo.md) · [13-testing](13-testing.md) · [14-roadmap](14-roadmap.md) | 高可用集群；性能与基准门；demo 走查；测试矩阵；里程碑 |
 
 ## 基座选型：go-git
 
@@ -94,7 +91,7 @@ git wire 协议语义，服务端内部自由重构。
 | packfile/idx decode/encode | ✅ | 存储层与 wire 层的编解码底座 |
 | 对象模型（blob/tree/commit/tag，SHA-256） | ✅ | model 层的 git 投影直接复用 |
 | 协议 v0/v1 客户端 + `transport/server` 服务端 | ✅ | wire 层参考/复用其协商代码 |
-| protocol v2 | ✅（2026-10-25，docs/03 §9b/T30） | ls-refs（ref-prefix/peel/symrefs/unborn）+ fetch（段式响应、sideband pack 帧、shallow/filter/ofs-delta）；receive-pack 按语义恒 v0（git 本身如此） |
+| protocol v2 | ✅（2026-10-25，docs/04 §9b/T30） | ls-refs（ref-prefix/peel/symrefs/unborn）+ fetch（段式响应、sideband pack 帧、shallow/filter/ofs-delta）；receive-pack 按语义恒 v0（git 本身如此） |
 | 服务端 filter（"Not offered when serving"） | ❌ | **自研**（子目录 clone 的关键） |
 | 客户端 `--filter` 懒回填缺失对象 | ❌（可发 filter 请求、记录 promisor 状态，不能按需取回） | `banyan` CLI 自研逐对象批量 RPC 补齐 |
 | multi-pack-index / cruft packs | ❌ | 分布式 idx 布局自行定义 |
@@ -117,4 +114,4 @@ git wire 协议语义，服务端内部自由重构。
 
 ## 阅读顺序
 
-先读 [01-data-model.md](01-data-model.md)（理解模型分歧点），再读 [02-storage.md](02-storage.md) 与 [03-git-compat.md](03-git-compat.md)（两个承诺：分布式与兼容性），最后 [04](04-derived-data.md)、[05](05-cli.md)、[06](06-roadmap.md)；定位与平台集成看 [08-big-picture.md](08-big-picture.md)。
+先读 [02-data-model.md](02-data-model.md)（理解模型分歧点），再读 [03-storage.md](03-storage.md) 与 [04-git-compat.md](04-git-compat.md)（两个承诺：分布式与兼容性），最后 [04](08-derived-data.md)、[05](06-cli.md)、[06](14-roadmap.md)；定位与平台集成看 [01-big-picture.md](01-big-picture.md)。

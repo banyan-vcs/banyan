@@ -14,7 +14,7 @@ import (
 )
 
 // --- T5 subtree push: linear-weave root view / parent view sees it / file placement ---
-// v5 (docs/01 §13): the subtree push advances ONLY its own timeline; the root
+// v5 (docs/02 §13): the subtree push advances ONLY its own timeline; the root
 // view weaves the commit in linearly (same subject, different SHA — allowed),
 // no merge scaffolding; the parent view (lib) also sees the change via its
 // scoped weave.
@@ -67,7 +67,7 @@ func TestConsecutiveSubtreePushes(t *testing.T) {
 	require.Contains(t, git(t, sub, "pull"), "Already up to date", "自身 pull 应为 up to date")
 }
 
-// --- T8 non-interference parallelism + in-path mutual exclusion (two sides of the docs/01 §12 core goal) ---
+// --- T8 non-interference parallelism + in-path mutual exclusion (two sides of the docs/02 §12 core goal) ---
 //
 //	v4 semantics: a subtree view tip moves only with [this path's content] —
 //	root-side edits outside X leave the tip unmoved, so a stale subtree push
@@ -106,7 +106,7 @@ func TestCrossViewNonInterference(t *testing.T) {
 	out, err := gitTry(sub2, "push", "origin", "main")
 	require.Error(t, err, "X 内陈旧 push 未被拒:\n%s", out)
 	require.Contains(t, out, "rejected", "X 内陈旧 push 未被拒")
-	// Real conflict resolved explicitly (docs/01 §12: the server does no content merge).
+	// Real conflict resolved explicitly (docs/02 §12: the server does no content merge).
 	out, err = gitTry(sub2, "pull", "--rebase")
 	if err != nil {
 		require.Contains(t, out, "CONFLICT", "rebase 失败但非冲突: %v", err)
@@ -168,7 +168,7 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 	assert.Equal(t, bS, bP, "三视图 blob 不一致 (S/P)")
 	assert.Equal(t, bS, bR, "三视图 blob 不一致 (S/R)")
 	require.Contains(t, readFile(t, filepath.Join(S, "SHARED.txt")), "line-E by bob", "最终内容缺最后一行")
-	// v5 consistency (docs/01 §13): the root view is a linear weave — every
+	// v5 consistency (docs/02 §13): the root view is a linear weave — every
 	// collaboration commit appears exactly once by SUBJECT; subtree-scope
 	// commits enter as rewrites (SHA allowed to differ, T5 semantics), root
 	// pushes land verbatim; content consistency is guaranteed by the
@@ -189,7 +189,7 @@ func TestMultiUserSameFileCollaboration(t *testing.T) {
 }
 
 // --- T18 sequential multi-scope arrivals: each commit folds exactly once ---
-// Demo-shaped flow (docs/01 §13): alternating arrivals across scopes must
+// Demo-shaped flow (docs/02 §13): alternating arrivals across scopes must
 // not duplicate subjects nor churn advertised tips. The rewrite-space
 // exclusion (prevWoven ancestry) could never see graft sources — their
 // originals never enter it, only their rewrites do — so every
@@ -260,7 +260,7 @@ func TestSequentialMultiScopeStability(t *testing.T) {
 	// Rebase recovery, then continue pushing: after resolving an in-X
 	// divergence the client's chain holds a cross-view rewrite of the
 	// projection PLUS newer local content — ahead of, not stale against,
-	// the root side. The projection-side guard must admit it (docs/01 §13).
+	// the root side. The projection-side guard must admit it (docs/02 §13).
 	root2 := cloneRepo(t, s, s.repoURL("t18"))
 	appendLine(t, filepath.Join(root2, "lib", "nested", "SHARED.txt"), "root-in-X\n")
 	git(t, root2, "commit", "-qam", "root-in-X")
@@ -272,7 +272,7 @@ func TestSequentialMultiScopeStability(t *testing.T) {
 	require.Error(t, err, "X 内陈旧 push 未被拒:\n%s", out)
 	require.Contains(t, out, "rejected", "X 内陈旧 push 未被拒")
 	// Same-file divergence: the rebase conflicts; resolve explicitly (the
-	// server does no content merge, docs/01 §12).
+	// server does no content merge, docs/02 §12).
 	out, err = gitTry(nested, "pull", "-q", "--rebase", "origin", "main")
 	if err != nil {
 		require.Contains(t, out, "CONFLICT", "rebase 失败但非冲突: %v", err)

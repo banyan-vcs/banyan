@@ -15,7 +15,7 @@ import (
 )
 
 // SQLiteMetaStore persists all MetaStore state in one SQLite database file
-// (docs/02 §2.3). WAL mode + busy_timeout keeps readers running during the
+// (docs/03 §2.3). WAL mode + busy_timeout keeps readers running during the
 // single-writer head CAS (BEGIN IMMEDIATE on a dedicated connection). The
 // immutable tables (packs, objects) are INSERT OR IGNORE — first writer wins.
 type SQLiteMetaStore struct {
@@ -60,14 +60,14 @@ CREATE TABLE IF NOT EXISTS objects(
 CREATE INDEX IF NOT EXISTS idx_objects_pack ON objects(repo, pack_oid);
 CREATE TABLE IF NOT EXISTS placement(
 	repo     TEXT PRIMARY KEY,
-	replicas INTEGER NOT NULL DEFAULT 0    -- 0 = cluster default (docs/11 §3)
+	replicas INTEGER NOT NULL DEFAULT 0    -- 0 = cluster default (docs/10 §3)
 );
 `
 
 // sqliteDSN builds the connection string. Pragmas must ride the DSN:
 // database/sql pools plain connections, and a PRAGMA issued via Exec applies
 // to one pooled connection only. WAL keeps readers running while the
-// single-writer CAS holds the write lock (docs/02 §2); busy_timeout bounds
+// single-writer CAS holds the write lock (docs/03 §2); busy_timeout bounds
 // lock contention between pool connections.
 func sqliteDSN(path string) string {
 	return "file:" + filepath.ToSlash(path) +
@@ -327,7 +327,7 @@ func (s *SQLiteMetaStore) DropPack(ctx context.Context, repo string, packOID mod
 	return err
 }
 
-// SetPackNodes atomically replaces the holder set (reconciler swap, docs/11 §8.3).
+// SetPackNodes atomically replaces the holder set (reconciler swap, docs/10 §8.3).
 func (s *SQLiteMetaStore) SetPackNodes(ctx context.Context, repo string, packOID model.OID, nodes []string) error {
 	var one string
 	err := s.db.QueryRowContext(ctx,

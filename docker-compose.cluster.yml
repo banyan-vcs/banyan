@@ -1,4 +1,4 @@
-# Cluster demo (docs/11): one refs service, four storage nodes, one gateway.
+# Cluster demo (docs/10): one refs service, four storage nodes, one gateway.
 #   docker compose -f docker-compose.cluster.yml up -d --build
 #   git push → http://localhost:8100/r/<repo>.git
 # Walkthrough script: demo/cluster-demo.sh

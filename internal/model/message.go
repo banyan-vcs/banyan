@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Message objects and lightweight commits (design v3, docs/01 §11).
+// Message objects and lightweight commits (design v3, docs/02 §11).
 //
 // A commit's source information is split in two:
 //

@@ -1,7 +1,7 @@
-// Package refs implements the refs service (docs/11 §4): the serialization
+// Package refs implements the refs service (docs/10 §4): the serialization
 // point of the cluster — refs/timelines CAS (the git "precedence judgment"),
 // the object index, placement records, the storage-node health table and the
-// replica reconciler. One process, one writer; HA story per docs/11 §4.
+// replica reconciler. One process, one writer; HA story per docs/10 §4.
 package refs
 
 import (
@@ -11,7 +11,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// Node states (docs/11 §8.1): two thresholds plus a planned mode.
+// Node states (docs/10 §8.1): two thresholds plus a planned mode.
 const (
 	StateHealthy     = "healthy"
 	StateSuspect     = "suspect"     // missed heartbeats: excluded from placement, no copying
@@ -19,7 +19,7 @@ const (
 	StateMaintenance = "maintenance" // planned: excluded from placement, no re-replication
 )
 
-// HealthTable tracks storage nodes by heartbeat age (docs/11 §8.1).
+// HealthTable tracks storage nodes by heartbeat age (docs/10 §8.1).
 type HealthTable struct {
 	mu           sync.Mutex
 	nodes        map[string]*nodeRecord

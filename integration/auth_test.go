@@ -1,4 +1,4 @@
-// Goal: the authorization surface (docs/13, M5) end to end with real git
+// Goal: the authorization surface (docs/07, M5) end to end with real git
 // clients — authentication on every wire endpoint, branch visibility
 // (personal namespaces) on both protocol versions, push guards per
 // granularity, and directory-level fetch control on subtree virtual repos
@@ -23,7 +23,7 @@ import (
 )
 
 // newAuthServer boots the stack with the demo static policy wired into the
-// git wire layer (docs/13 §2): alice/bob are developers, admin owns the
+// git wire layer (docs/07 §2): alice/bob are developers, admin owns the
 // protected main, /secret is an admin-only subtree.
 func newAuthServer(t *testing.T) (*server, *auth.StaticPolicy) {
 	t.Helper()
@@ -41,7 +41,7 @@ func newAuthServer(t *testing.T) (*server, *auth.StaticPolicy) {
 	gw.Auth = policy
 	gw.Register(mux)
 	api := rpc.NewServer(meta, objects, model.SHA1)
-	api.Auth = policy // same wiring as the banyand demo (docs/13 §5)
+	api.Auth = policy // same wiring as the banyand demo (docs/07 §5)
 	api.Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -135,7 +135,7 @@ func TestAuthorizationWire(t *testing.T) {
 	fsckClean(t, fresh)
 }
 
-// TestAuthorizationRPC drives the JSON-surface policy (docs/13 §5):
+// TestAuthorizationRPC drives the JSON-surface policy (docs/07 §5):
 // authentication-gated /api/v1, the login endpoint as the web tier's
 // single-source credential check, and repository creation for the
 // management page.

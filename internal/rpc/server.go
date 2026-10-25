@@ -1,5 +1,5 @@
-// Package rpc provides the server-side RPC for the banyan CLI (docs/05,
-// docs/10): HTTPS + JSON over the protocol-agnostic service layer; read
+// Package rpc provides the server-side RPC for the banyan CLI (docs/06,
+// docs/05): HTTPS + JSON over the protocol-agnostic service layer; read
 // responses carry an ETag (projection head OID) for immutable caching.
 // Handlers stay thin — parse, delegate to internal/service, serialize.
 package rpc
@@ -19,15 +19,15 @@ import (
 	"github.com/banyan-vcs/banyan/internal/view"
 )
 
-// Server mounts the /api/v1/* endpoints (the httpd frontend of docs/10 §1).
+// Server mounts the /api/v1/* endpoints (the httpd frontend of docs/05 §1).
 type Server struct {
 	Meta    storage.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
-	Views   *view.Service // derived-view engine (docs/01 sec.13)
+	Views   *view.Service // derived-view engine (docs/02 sec.13)
 	Svc     *service.Service
 	// Auth, when set, requires an authenticated identity on every /api/v1
-	// request (docs/13 §5): the JSON surface is authentication-gated; the
+	// request (docs/07 §5): the JSON surface is authentication-gated; the
 	// fine-grained repo/dir/branch rules live on the git wire — the web
 	// service enforces page-level visibility through it.
 	Auth auth.Service
@@ -69,7 +69,7 @@ func (s *Server) authn(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// handleLogin verifies credentials for the web service (docs/13 §5): the
+// handleLogin verifies credentials for the web service (docs/07 §5): the
 // single-source check against the wired policy — the session layer lives in
 // the web tier, the password table never leaves the server.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +100,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// --- error envelope (docs/10 §3.2): code → HTTP status here, CLI exit code client-side ---
+// --- error envelope (docs/05 §3.2): code → HTTP status here, CLI exit code client-side ---
 
 type errBody struct {
 	Code    string `json:"code"`
@@ -138,7 +138,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-// --- POST /api/v1/objects: batch per-object locate (lazy backfill, docs/03 §4) ---
+// --- POST /api/v1/objects: batch per-object locate (lazy backfill, docs/04 §4) ---
 
 type objectsRequest struct {
 	Repo string      `json:"repo"`
@@ -255,7 +255,7 @@ func (s *Server) handleTimelines(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "timelines": tls})
 }
 
-// --- POST /api/v1/repack: merge a repo's pack fragments (docs/02 §5, docs/09 §3.2) ---
+// --- POST /api/v1/repack: merge a repo's pack fragments (docs/03 §5, docs/09 §3.2) ---
 
 type repackRequest struct {
 	Repo      string `json:"repo"`
@@ -275,7 +275,7 @@ func (s *Server) handleRepack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// --- POST /api/v1/fetch-trees: thin-client materialization (docs/05 §4.1) ---
+// --- POST /api/v1/fetch-trees: thin-client materialization (docs/06 §4.1) ---
 
 func (s *Server) handleFetchTrees(w http.ResponseWriter, r *http.Request) {
 	var req service.FetchRequest
@@ -291,7 +291,7 @@ func (s *Server) handleFetchTrees(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", "\""+string(res.Head)+"\"")
 	}
 	// Binary framing on request ("format":"bin") — the thin CLI's dominant
-	// transfer drops JSON's base64 +33% (docs/12 P1-2). JSON stays default.
+	// transfer drops JSON's base64 +33% (docs/11 P1-2). JSON stays default.
 	if req.Format == "bin" {
 		w.Header().Set("Content-Type", "application/x-banyan-fetch-trees")
 		w.WriteHeader(http.StatusOK)
@@ -303,7 +303,7 @@ func (s *Server) handleFetchTrees(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// --- POST /api/v1/commit: server-side changeset assembly (docs/05 §4.2) ---
+// --- POST /api/v1/commit: server-side changeset assembly (docs/06 §4.2) ---
 
 func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	var req service.CommitRequest
@@ -318,7 +318,7 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// --- GET/POST /api/v1/refs: ref listing and CAS (docs/10 §3.3) ---
+// --- GET/POST /api/v1/refs: ref listing and CAS (docs/05 §3.3) ---
 
 func (s *Server) handleRefs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -354,7 +354,7 @@ func (s *Server) handleRefs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
-		// Repository creation for the management surface (docs/13 sec.5, the
+		// Repository creation for the management surface (docs/07 sec.5, the
 		// web tier): the same registry the git-surface auto-create uses.
 		var req struct {
 			Name string `json:"name"`
@@ -381,7 +381,7 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// --- GET/PUT /api/v1/repos/<repo>/placement: per-repo replica target (docs/11 §6) ---
+// --- GET/PUT /api/v1/repos/<repo>/placement: per-repo replica target (docs/10 §6) ---
 
 func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")

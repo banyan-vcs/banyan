@@ -1,4 +1,4 @@
-# 12 · 性能优化改进方案
+# 11 · 性能优化改进方案
 
 > 依据：三方对比分析（两个 Scion 复刻 vs banyan，2026-10-24）中与性能直接
 > 相关的三条硬教训 + banyan 代码现状逐条审计。方案只规划不实施；每项标注
@@ -21,10 +21,10 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 | B4 | **fetch-trees base64 膨胀**：树/blob 字节走 JSON []byte = +33% 传输 | fetch.go:37（map[string][]byte） | 薄 CLI clone/pull 全程 |
 | B5 | **应答零 delta**：serve 路径 EncodePack 固定 delta=false | uploadpack.go:160 | 非 ExactPackHit 命中的大 fetch |
 | B6 | **网关冷启动**：pack/解码/视图缓存全内存，重启即冷 | ObjectService.cache/packOrder 内存态 | 重启后首个 clone 全量重算+重传 |
-| B7 | **同目录写竞争**：last-writer-wins，无队列/退避 | docs/01 §13 开放项 | Agent 同目录高频提交 |
+| B7 | **同目录写竞争**：last-writer-wins，无队列/退避 | docs/02 §13 开放项 | Agent 同目录高频提交 |
 | B8 | **无 thin pack / delta-against-haves**：增量 fetch 对象集已最优（have 减除），但每个对象全量发送——git 服务器对照客户端已有对象出 REF_DELTA（客户端 --fix-thin 修补），源码 delta 比 2–5× | uploadpack 在线 EncodePack 零 delta（同 B5 的根因，但 thin pack 是独立缺口） | git 协议增量 fetch 字节效率 |
-| B9 | **子树 clone 恒在线编码**：投影/织入对象 OID ≠ 任何存储包，ExactPackHit 永不命中 | 投影链合成提交（docs/01 §12） | 子树虚拟仓库 clone；跨请求无缓存复用 |
-| B10 | **服务端 filter 未广告**：partial clone 客户端（--filter=blob:none）退化为全量拉取 | filter.go 就绪未广告（docs/03 §8） | 大仓 clone 带宽 |
+| B9 | **子树 clone 恒在线编码**：投影/织入对象 OID ≠ 任何存储包，ExactPackHit 永不命中 | 投影链合成提交（docs/02 §12） | 子树虚拟仓库 clone；跨请求无缓存复用 |
+| B10 | **服务端 filter 未广告**：partial clone 客户端（--filter=blob:none）退化为全量拉取 | filter.go 就绪未广告（docs/04 §8） | 大仓 clone 带宽 |
 
 ## 1. 参照系的三条硬教训（三方对比报告直接命中）
 
@@ -94,7 +94,7 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 ### P2（perf-3：2026-10-25 主体落地，P2-4/P2-5 分别归 HA-2/M4）
 
 **P2-1 网关磁盘 pack cache（治 B6）✅**
-- `cache.pack_dir`（gateway 角色）：内容寻址磁盘 LRU（docs/02 三层缓存
+- `cache.pack_dir`（gateway 角色）：内容寻址磁盘 LRU（docs/03 三层缓存
   第一层），重启重扫重建索引；对象读走"廉价整包"路径（磁盘命中 → 一次
   解码全包 memoize），单对象读同一 pack 连续 8 次后自动翻转为整包取回
   ——冷网关克隆从 N 次单对象 RPC 降为 8+1；T36（缓存命中后节点请求冻结）。
@@ -119,7 +119,7 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 
 | 项 | 治 | 状态 |
 |---|---|---|
-| P2-4 写路径扇出下沉 | docs/11 HA-2 | 归 HA-2（主节点写+节点间扇出，砍网关出带宽 R×） |
+| P2-4 写路径扇出下沉 | docs/10 HA-2 | 归 HA-2（主节点写+节点间扇出，砍网关出带宽 R×） |
 | P2-5 同目录写队列 | B7 | 归 M4（tekeburak 形态 change request 状态机 + 投机流水线） |
 
 ## 3. 基准设计与实测（P1-3 已落地：`cmd/banyan-bench`）

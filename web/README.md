@@ -1,7 +1,7 @@
 # banyan-web
 
 Lightweight repository management and file browsing for the banyan demo
-(docs/13 §5). TypeScript, zero runtime dependencies — Node's
+(docs/07 §5). TypeScript, zero runtime dependencies — Node's
 `http`/`fetch`/`crypto` only; `typescript` + `@types/node` are dev-only.
 
 ```bash

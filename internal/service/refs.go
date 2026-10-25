@@ -9,7 +9,7 @@ import (
 
 // isAuxRefName: any refs/<ns>/<name> outside refs/heads is an auxiliary ref
 // (tags, notes, custom namespaces) stored verbatim under the full ref name
-// (docs/03 §6).
+// (docs/04 §6).
 func isAuxRefName(name string) bool {
 	return strings.HasPrefix(name, "refs/")
 }
@@ -20,7 +20,7 @@ type Ref struct {
 	Head model.OID `json:"head"`
 }
 
-// ListRefs mirrors gitwire's advertisement (docs/03 §6) over the JSON API:
+// ListRefs mirrors gitwire's advertisement (docs/04 §6) over the JSON API:
 // root repo → woven view per branch + verbatim aux refs; subtree repo → the
 // subtree view head (heads-only, views are derived).
 func (s *Service) ListRefs(ctx context.Context, repo string, sub string) ([]Ref, error) {
@@ -80,7 +80,7 @@ func (s *Service) ListRefs(ctx context.Context, repo string, sub string) ([]Ref,
 	return refs, nil
 }
 
-// RefUpdate is one CAS on a root-repo ref (docs/10 §3.3): old zero = create,
+// RefUpdate is one CAS on a root-repo ref (docs/05 §3.3): old zero = create,
 // new zero = delete. Branches map to root timelines; auxiliary refs (tags
 // etc.) to their full-name timelines — the same storage as gitwire's
 // receive-pack path, so both frontends stay interchangeable.

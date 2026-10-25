@@ -1,4 +1,4 @@
-// Goal: git protocol v2 command set (docs/03 §9b; normative reference
+// Goal: git protocol v2 command set (docs/04 §9b; normative reference
 // protocol-v2.txt, behavioral baseline upload-pack.c/serve.c). Two layers:
 // raw pkt-line requests pin the wire format (advertisement, ls-refs
 // ref-prefix/peel/symrefs, fetch section framing, negotiation rounds);

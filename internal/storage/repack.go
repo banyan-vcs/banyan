@@ -10,7 +10,7 @@ import (
 )
 
 // Repack merges a repo's pack fragments into one delta-encoded pack
-// (docs/02 §5, docs/09 §3.2 — git repack -a + pack-objects window deltas).
+// (docs/03 §5, docs/09 §3.2 — git repack -a + pack-objects window deltas).
 //
 // Fragment source: every server-side synthesis (projection commits, woven
 // rewrites) persists as a single-object pack (PutSynthetic write-through), so
@@ -136,7 +136,7 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 		s.mu.Unlock()
 	}
 	// Every merged-away pack invalidates cached placements: locations only
-	// ever change at repack (docs/12 P0-1). Other gateways' caches self-heal
+	// ever change at repack (docs/11 P0-1). Other gateways' caches self-heal
 	// through Raw's stale-placement retry.
 	s.locInvalidate(repo)
 	packsAfter, err := s.Meta.ListPacks(ctx, repo)

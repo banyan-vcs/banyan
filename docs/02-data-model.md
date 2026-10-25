@@ -1,4 +1,4 @@
-# 01 · 核心数据模型：目录锚定时间线（Anchored Timeline）
+# 02 · 核心数据模型：目录锚定时间线（Anchored Timeline）
 
 ## 设计意图（用户原话锚定）
 
@@ -18,7 +18,7 @@ Tree  ::= [(name, mode, target_oid)]        oid = H("tree <size>\0" || entries)
 ```
 
 - 哈希与编码规则与 git 完全一致（默认 SHA-1，可选 SHA-256 `object-format`）。
-- 不可变、内容寻址、可全局去重——这是分片 CAS 存储的地基（见 [02-storage.md](02-storage.md)）。
+- 不可变、内容寻址、可全局去重——这是分片 CAS 存储的地基（见 [03-storage.md](03-storage.md)）。
 - **树不要求出现在任何根树下**：`/src/foo` 处的 tree 是一等公民，独立存在、独立被 commit 引用。
 
 ## 2. 提交层：AnchoredCommit
@@ -61,7 +61,7 @@ type AnchoredCommit struct {
         └─────────────────────────────────────────────┘
 ```
 
-两个方向都以**已存在的不可变对象**为输入，因此无环、可缓存、可增量计算（派生数据引擎的活，见 [04-derived-data.md](04-derived-data.md)）。
+两个方向都以**已存在的不可变对象**为输入，因此无环、可缓存、可增量计算（派生数据引擎的活，见 [08-derived-data.md](08-derived-data.md)）。
 
 ## 4. 组装算法（Assembly，上行）
 
@@ -100,7 +100,7 @@ CurrentTree(D) = base(D) ⊕ replace-children(D)
 ### 4.3 并发与冲突
 
 - 对象写入（blob/tree/commit 进 CAS）**无锁**：内容寻址，天然幂等。
-- 唯一串行点：**timeline head 的 CAS 更新**（元数据服务内每 repo 一条线性化日志，见 [02-storage.md](02-storage.md#元数据服务)）。
+- 唯一串行点：**timeline head 的 CAS 更新**（元数据服务内每 repo 一条线性化日志，见 [03-storage.md](03-storage.md#元数据服务)）。
 - 同锚点并发提交：后到者在 CAS 上失败，走标准 git 语义——非 fast-forward 拒绝，客户端 rebase/merge 后重推。
 - **跨锚点无冲突**：`/src/foo` 与 `/docs` 的提交互不阻塞（这是相对 git 单根历史的核心并发收益）；只有当两者的组装都指向同一个根 head 时，第二次组装基于第一次的结果重算（CAS 重试一次即可，ReplaceSubtree 幂等）。
 
@@ -193,7 +193,7 @@ git 客户端永远只看到 `refs/heads/*`；目录时间线的内部命名不�
 
 ## 9. 模型收益汇总
 
-1. **子目录即仓库**是数据模型的一等能力，不是客户端技巧（partial clone/sparse 只是下载优化，见 [03-git-compat.md](03-git-compat.md#服务端-filter)）。
+1. **子目录即仓库**是数据模型的一等能力，不是客户端技巧（partial clone/sparse 只是下载优化，见 [04-git-compat.md](04-git-compat.md#服务端-filter)）。
 2. **提交并发域按目录分片**：不同目录的提交互不阻塞，天然适配"无锁合并"方向。
 3. **O(变更大小) 的提交成本**：子目录 push 只处理子树 + 路径上的 tree 改写，不遍历整仓库。
 4. **git 兼容零成本路径**：根投影逐字节兼容；子树投影是纯函数派生数据，可缓存可增量。

@@ -11,7 +11,7 @@ import (
 )
 
 // Reconciler converges actual pack holders toward each repo's replica target
-// (docs/11 §8.3). Ordering discipline is the whole correctness argument:
+// (docs/10 §8.3). Ordering discipline is the whole correctness argument:
 // COPY first, REGISTER the new holder set, DELETE last — any interruption
 // leaves at worst an over-replicated pack, never a registered holder without
 // data, never a delete below the target.

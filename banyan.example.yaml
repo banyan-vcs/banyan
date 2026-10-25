@@ -3,7 +3,7 @@
 # 严格模式：未知键直接报错（防拼写错误/过期配置静默失效）。
 # 注意：相对路径（root/db）按 banyand 进程工作目录解析，建议部署时用绝对路径。
 
-# 部署角色（docs/11 §2）：
+# 部署角色（docs/10 §2）：
 #   all-in-one（默认）单进程跑全部能力——零额外配置
 #   gateway          无状态前端（需 refs_addr）：git smart HTTP + JSON API
 #   refs             前序判断点：元数据服务 + 节点健康表 + reconciler
@@ -16,8 +16,8 @@ listen: ":8080"
 # 本地分片存储根目录（pack + idx 落盘位置；storage/all-in-one 使用）
 root: "./data"
 
-# 元数据后端：mem（内存态，重启即失）| sqlite（持久化，docs/02 §2）
-# 集群 refs 角色应使用 sqlite（refs 重启状态零丢失，docs/11 §8/T26）
+# 元数据后端：mem（内存态，重启即失）| sqlite（持久化，docs/03 §2）
+# 集群 refs 角色应使用 sqlite（refs 重启状态零丢失，docs/10 §8/T26）
 meta: "mem"
 
 # SQLite 数据库路径（meta: sqlite 时生效；默认 <root>/banyan.db）
@@ -26,7 +26,7 @@ meta: "mem"
 # 启动时创建的仓库名（可选）
 # init_repo: "demo"
 
-# --- 以下为集群角色键（docs/11 §2/§8；all-in-one 忽略） ---
+# --- 以下为集群角色键（docs/10 §2/§8；all-in-one 忽略） ---
 
 # refs 服务地址（gateway/storage 角色必填）
 # refs_addr: "refs:8102"
@@ -38,21 +38,21 @@ meta: "mem"
 # 集群默认副本数（可按仓库覆盖：PUT /api/v1/repos/<repo>/placement）
 # default_replicas: 3
 
-# 写确认：quorum（默认）| all | one（R=2 时的可用性旋钮，docs/11 §7）
+# 写确认：quorum（默认）| all | one（R=2 时的可用性旋钮，docs/10 §7）
 # write_acks: "quorum"
 
-# 节点健康状态机阈值（docs/11 §8.1：suspect 只摘放置，dead 触发补副本）
+# 节点健康状态机阈值（docs/10 §8.1：suspect 只摘放置，dead 触发补副本）
 # health_suspect_sec: 30
 # health_dead_sec: 600
 
-# reconciler 轮询间隔与并行复制数（docs/11 §8.3）
+# reconciler 轮询间隔与并行复制数（docs/10 §8.3）
 # recon_interval_sec: 15
 # recon_concurrency: 4
 
 # storage 角色心跳间隔
 # heartbeat_sec: 3
 
-# --- 网关磁盘 pack 缓存（docs/12 P2-1；仅 gateway 角色生效） ---
+# --- 网关磁盘 pack 缓存（docs/11 P2-1；仅 gateway 角色生效） ---
 
 # 开启后，网关从存储节点拉取的整包会落盘缓存：网关重启后的首个克隆
 # 直接命中本地盘，不再跨节点重传（内容寻址，LRU 按总字节淘汰）
@@ -60,7 +60,7 @@ meta: "mem"
 #   pack_dir: "/var/lib/banyan/gateway-cache"
 #   pack_max_mb: 1024
 
-# --- 授权（docs/13；缺省=关闭） ---
+# --- 授权（docs/07；缺省=关闭） ---
 
 # 一体化 demo 的静态策略：HTTP Basic 用户表 + 管理员 + 保护分支 + 目录访问
 #auth:

@@ -1,4 +1,4 @@
-# 08 · Big Picture：通用代码存储层与企业平台集成
+# 01 · Big Picture：通用代码存储层与企业平台集成
 
 ## 1. 定位：存储层，不是平台
 
@@ -19,7 +19,7 @@ DevOps 平台——MR/issue/CI/权限体系/审计报表不在边界内。
 类比：Gitaly 之于 GitLab——默认走**协议原生**路线（对任何平台都是标准 git 远端，
 git wire 协议是二十年稳定的公共契约）；另提供**可选的** Gitaly gRPC 兼容前端，
 让 GitLab 直连 banyand 作为底层存储节点（决策更新 2026-10-22：原"不实现私有
-API"改为分阶段兼容，私有契约差异隔离在适配层内，见 [10-service-api.md](10-service-api.md)）。
+API"改为分阶段兼容，私有契约差异隔离在适配层内，见 [05-service-api.md](05-service-api.md)）。
 
 **差异化价值**（为什么平台自带存储之外还需要 banyan）：
 
@@ -39,7 +39,7 @@ API"改为分阶段兼容，私有契约差异隔离在适配层内，见 [10-se
 │   git CLI    IDE/编辑器    CI Runner    AI Agent/编码工具    banyan CLI │
 └─────┬────────────┬────────────┬────────────┬────────────┬──────┘
       │        git smart HTTP v1（含浅化/partial 回退）       │ JSON RPC
-      │        任何 git 客户端零配置可用（docs/03 §9 实测矩阵） │
+      │        任何 git 客户端零配置可用（docs/04 §9 实测矩阵） │
 ┌─────▼────────────▼────────────▼────────────▼────────────▼──────┐
 │                        banyand 服务进程                          │
 │                                                                 │
@@ -65,7 +65,7 @@ API"改为分阶段兼容，私有契约差异隔离在适配层内，见 [10-se
 ```
 
 部署形态：单机（单进程 + SQLite，开发/小团队/边缘节点）→ 分布式
-（banyand 无状态多副本 + 存储节点分片 + 中心元数据，docs/02）。
+（banyand 无状态多副本 + 存储节点分片 + 中心元数据，docs/03）。
 
 代码现实映射：`cmd/banyand` / `internal/{gitwire, view, model, storage, rpc,
 config, derived}`——图中每一格都有对应包；**平台适配格当前为空**，是下节主题。
@@ -101,7 +101,7 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
 - **banyan → GitLab**（pull mirror）：根视图是纯线性、无 merge 脚手架的标准
   git 历史，对 GitLab 是普通仓库；
 - **唯一注意点**：子树视图里的提交 SHA ≠ 根视图 SHA（织入重写，blob 恒等，
-  docs/01 §13）。CI 若按 SHA 触发/校验，用根视图 OID（webhook 事件即根视图
+  docs/02 §13）。CI 若按 SHA 触发/校验，用根视图 OID（webhook 事件即根视图
   OID）；开发者在子树视图看到的 SHA 不用于跨系统定位。
 
 拓扑 C（双向双写网关：push 同时 fan-out 两侧）一致性弱、冲突面大，
@@ -116,16 +116,16 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
 | webhook | receive-pack 成功后派发 push event（根视图 OID + ref）→ GitLab trigger API 触发流水线 | 无，gitwire 尾部挂钩即可 |
 | 权限 | 仓库级 token 起步；目录时间线天然提供**路径级写隔离**原语（同目录 CAS 才互斥）——平台 ACL 映射到 banyan 凭证 scope | 设计点，未实现 |
 | CI 取码 | Runner 直连 banyan（协议兼容，可用 `--depth` 减量）或镜像后走 GitLab | 协议侧就绪，无额外开发 |
-| 存储后端直连 | Gitaly gRPC 兼容前端（P1 读+git 传输 → P2 网页写路径）：GitLab 把 banyand 当 Gitaly 存储节点，免镜像、单真相源 | 规划（[10-service-api.md](10-service-api.md) §4） |
+| 存储后端直连 | Gitaly gRPC 兼容前端（P1 读+git 传输 → P2 网页写路径）：GitLab 把 banyand 当 Gitaly 存储节点，免镜像、单真相源 | 规划（[05-service-api.md](05-service-api.md) §4） |
 
 ### 3.4 明确的非目标
 
-- praefect 复制/事务协议不承诺（直连单节点 Gitaly 模式先行，多副本走 docs/02 自身路线）；
-  Gitaly 兼容为可选分阶段前端，私有契约随 GitLab 版本的漂移在适配层吸收（docs/10）；
+- praefect 复制/事务协议不承诺（直连单节点 Gitaly 模式先行，多副本走 docs/03 自身路线）；
+  Gitaly 兼容为可选分阶段前端，私有契约随 GitLab 版本的漂移在适配层吸收（docs/05）；
 - 不做平台 UI、MR 流水线、组织权限树；
 - 不做双向强一致多主存储（真相源唯一原则）。
 
-## 4. 演进视角（与 docs/06 对应）
+## 4. 演进视角（与 docs/14 对应）
 
 ```
 M1 单机端到端 ──▶ M2 持久化/分布式 ──▶ M3 派生数据/传输优化 ──▶ M4 高并发工作流

@@ -14,7 +14,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Thin pack writer (docs/12 P2-6, B8): a have-subtracted fetch packs its
+// Thin pack writer (docs/11 P2-6, B8): a have-subtracted fetch packs its
 // objects as REF_DELTA against bases the CLIENT provably holds but that are
 // NOT in the pack — git's thin pack; the client's index-pack --fix-thin
 // resolves the bases locally. go-git's encoder cannot reference absent

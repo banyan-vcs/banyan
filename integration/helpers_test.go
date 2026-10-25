@@ -1,6 +1,6 @@
 // Package integration codifies six rounds of manual testing (MVP → unified DAG
 // → negotiation → cross-view stress → multi-user collaboration) into automated
-// regression integration tests (docs/07-testing.md), split by test goal:
+// regression integration tests (docs/13-testing.md), split by test goal:
 //
 //	transport_basic_test.go       root/subtree clone, refs, incremental sync
 //	subtree_collaboration_test.go weave semantics, non-interference, multi-user

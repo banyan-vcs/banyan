@@ -1,6 +1,6 @@
 package main
 
-// Host key management for the git-over-SSH transport (docs/03 §8): the key
+// Host key management for the git-over-SSH transport (docs/04 §8): the key
 // signs the server side of the SSH handshake, so it must persist across
 // restarts (a new key every boot would break every client's known_hosts).
 // Missing key files are generated on first boot and left on disk.

@@ -1,4 +1,4 @@
-// Package gitwire implements the git compatibility layer (docs/03-git-compat.md):
+// Package gitwire implements the git compatibility layer (docs/04-git-compat.md):
 // Smart HTTP v1 endpoints, upload-pack/receive-pack sessions, virtual (subtree) repo routing,
 // server-side filter. Protocol behavior baseline: git sources upload-pack.c / receive-pack.c /
 // http-backend.c and the protocol docs under Documentation/technical/.

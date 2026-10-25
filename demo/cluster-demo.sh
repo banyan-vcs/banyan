@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# banyan cluster demo (docs/11) — one command walkthrough:
+# banyan cluster demo (docs/10) — one command walkthrough:
 # scattered multi-replica placement, node failure with continuous reads and
 # writes, automatic replica recovery, dynamic per-repo replica adjustment.
 #

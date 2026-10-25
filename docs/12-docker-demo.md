@@ -1,15 +1,15 @@
-# 14 · Docker demo 走查
+# 12 · Docker demo 走查
 
-> 定位：一条命令起栈，把 docs/13 的授权模型**用真实 git 客户端走一遍**。
+> 定位：一条命令起栈，把 docs/07 的授权模型**用真实 git 客户端走一遍**。
 > 本文命令全部 copy-paste 可用，即测试脚本（2026-10-25 Docker 29.x 实测；
-> 协议矩阵另有 T38/T38b 进程内钉住，见 docs/07）。
+> 协议矩阵另有 T38/T38b 进程内钉住，见 docs/13）。
 
 ## 0. 两套 demo 栈
 
 | 栈 | compose 文件 | 演示 | 端口 |
 |---|---|---|---|
 | 授权 + Web（本文） | `docker-compose.yml` | 权限三粒度、个人分支可见性、Web 管理页 | 8100 / 8101 |
-| HA 集群 | `docker-compose.cluster.yml` | 散布多副本、杀节点恢复、动态 R（docs/11，`bash demo/cluster-demo.sh`） | 8100 + 内部 |
+| HA 集群 | `docker-compose.cluster.yml` | 散布多副本、杀节点恢复、动态 R（docs/10，`bash demo/cluster-demo.sh`） | 8100 + 内部 |
 
 两栈都占 8100，**不能同时跑**——切换前先 `docker compose down -v`。
 
@@ -38,7 +38,7 @@ docker compose up -d        # 首次构建约 1-2 分钟
 | 匿名一律拒绝 | — | git 面 401 + Basic challenge；RPC 面 401 |
 | `main` 仅 admin 可推 | `protected_branches` | 其他人 push 收 `ng permission denied` |
 | `/secret` 子树仅 admin 可取 | `subtree_access` | 其他人 clone/fetch 被拒（upload-pack permission denied） |
-| `refs/heads/<user>/*` 个人分支 | 约定（docs/13 §3） | 仅本人 + admin 可见/可推 |
+| `refs/heads/<user>/*` 个人分支 | 约定（docs/07 §3） | 仅本人 + admin 可见/可推 |
 | 其余 | — | 认证用户可读可推；首次 push 自动建仓（门禁 = push 权） |
 
 ## 3. 走查：git 面（8100）
@@ -71,7 +71,7 @@ git checkout -b alice/evil && git commit --allow-empty -m x
 git push http://bob:demo@$U alice/evil                 # → 冒名推他人命名空间被拒
 cd ../demo
 
-# ④ 目录粒度 + 子树即仓库（docs/03）
+# ④ 目录粒度 + 子树即仓库（docs/04）
 git checkout main && mkdir secret && echo key > secret/key
 git add . && git commit -m secret && git push http://admin:demo@$U main
 cd .. && git clone http://admin:demo@$U/tree/secret && cd secret
@@ -118,7 +118,7 @@ git -c core.sshCommand="ssh -i /tmp/stray -o IdentitiesOnly=yes -o StrictHostKey
 
 首次连接会提示未知 host key（`accept-new` 自动接受；指纹在
 `docker logs banyan | grep "host key"`）。协议语义与 HTTP 的差异仅在
-v0 协商应答轮次（docs/03 §7b）。
+v0 协商应答轮次（docs/04 §7b）。
 
 ## 4. 走查：Web（8101）
 
@@ -128,7 +128,7 @@ v0 协商应答轮次（docs/03 §7b）。
 - 仓库页**分支列表 = 登录者视角**：alice 登录见 `alice/feat`，bob 登录不见
   ——与 git 客户端拿到的是同一份过滤广告（个人分支可见性最直观的演示）；
 - 路径面包屑文件浏览 + blob 预览，`?ref=` 切分支；
-- 边界（诚实清单，docs/13 §5）：**分支**可见性在 Web 上是强制的（分支
+- 边界（诚实清单，docs/07 §5）：**分支**可见性在 Web 上是强制的（分支
   列表来自过滤广告）；**目录**级限制只在 git wire（clone `/tree/secret`
   → 403）——Web 文件浏览走 RPC 读面（仅认证门），demo 里 alice 页面上
   仍能看到 `/secret` 列表，这正是已登记的 M5 后续项；

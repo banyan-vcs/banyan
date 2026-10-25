@@ -1,4 +1,4 @@
-# 07 · 集成测试
+# 13 · 集成测试
 
 六轮手工测试（MVP → 统一 DAG → 轮询协商 → 交叉压测 → 多人协作）的
 全部验证点已固化为**可自动回归的集成测试**（`integration/`，断言用
@@ -16,8 +16,8 @@ testify，文件按测试目标拆分）：
 | `packing_efficiency_test.go` | 索引与打包效率：have 减除增量包精确构成（T19）、serve 路径 delta 化（T29） |
 | `refs_and_repack_test.go` | tags/自定义命名空间端到端 + repack 碎片合并/delta/重启（T20/T21/T21b） |
 | `cli_workspace_test.go` | 薄工作区 CLI：最小化 clone/status/commit/pull/log/cat + 冲突恢复 + 子树工作区（T22/T22b） |
-| `ha_cluster_test.go` | HA 集群（docs/11）：进程内 refs+storage×4+gateway，散布放置/节点宕恢复/动态副本/refs 重启（T23-T26） |
-| `protocol_v2_test.go` | protocol v2 命令面（docs/03 §9b）：裸 pkt 断言（广告/ls-refs/fetch 段组帧/协商轮/可达性门）+ 真实 git 全链路（clone/fetch/浅化/partial/子树，GIT_TRACE_PACKET 证明 v2 生效） |
+| `ha_cluster_test.go` | HA 集群（docs/10）：进程内 refs+storage×4+gateway，散布放置/节点宕恢复/动态副本/refs 重启（T23-T26） |
+| `protocol_v2_test.go` | protocol v2 命令面（docs/04 §9b）：裸 pkt 断言（广告/ls-refs/fetch 段组帧/协商轮/可达性门）+ 真实 git 全链路（clone/fetch/浅化/partial/子树，GIT_TRACE_PACKET 证明 v2 生效） |
 
 ## 形态
 
@@ -47,32 +47,32 @@ testify，文件按测试目标拆分）：
 | T11 | `TestFilteredLogRPC` | /api/v1/log 路径过滤（X 视角归一：树不含路径首段⇒整树即 X 视角） |
 | T8b | `TestRaceWindowStalePushProtection` | rawPush 协议级竞态模拟：force 绕过客户端检查后服务端 sameXView 兜底；X 外变更不阻塞 |
 | T12 | `TestMergeModePullWithLocalCommits` | 合并模式 pull（投影链全 X 作用域，merge-base 天然正确） |
-| T13 | `TestProtocolVersionMatrix` | 协议版本矩阵：v0 显式 / v2 强制（降级走 v1）clone + 增量 fetch + 子树 URL（docs/03 §9） |
-| T14 | `TestPartialCloneFilter` | **partial clone 全链路**（docs/03 §4）：`blob:none`/`tree:0` 初始包裁剪、promisor 惰性取回（want=缺失 OID，经 allow-reachable-sha1-in-want 可达性校验）、后续 fetch 带 filter 行不破坏、不支持的 spec ERR 拒绝 |
-| T15 | `TestShallowClone` | **浅化协议**：depth 1/2/超深（空边界=裸 flush）+ 子树投影空间浅化/unshallow（docs/03 §3a 参考流对照） |
+| T13 | `TestProtocolVersionMatrix` | 协议版本矩阵：v0 显式 / v2 强制（降级走 v1）clone + 增量 fetch + 子树 URL（docs/04 §9） |
+| T14 | `TestPartialCloneFilter` | **partial clone 全链路**（docs/04 §4）：`blob:none`/`tree:0` 初始包裁剪、promisor 惰性取回（want=缺失 OID，经 allow-reachable-sha1-in-want 可达性校验）、后续 fetch 带 filter 行不破坏、不支持的 spec ERR 拒绝 |
+| T15 | `TestShallowClone` | **浅化协议**：depth 1/2/超深（空边界=裸 flush）+ 子树投影空间浅化/unshallow（docs/04 §3a 参考流对照） |
 | T16 | `TestShallowFetchDeepen` | 浅仓增量：普通 fetch（上报边界裁剪、浅文件不变）/ 加深（边界下移+unshallow 回显）/ unshallow 清除 |
 | T17 | `TestSQLiteMetaRestartPersistence` | **M2 持久化**：整进程重启后仓库/pack/对象索引/时间线头全存活；冷启动 nil-index 崩溃回归；重启后可继续 push |
 | T18 | `TestSequentialMultiScopeStability` | 顺序多作用域到达：零重复折叠、tip 不漂移、X 外变更不阻塞；含冲突恢复后继续推送（投影守卫 TreeKnown） |
 | T19 | `TestIncrementalFetchHaveSubtraction` | **have 减除**（docs/09 §3.1）：增量包=精确 delta（1 提交/2 树/1 blob），未触碰对象不入包；子树 URL 同理；真实客户端端到端 |
-| T29 | `TestServePathDelta` | **serve 路径 delta 化**（docs/12 P1-4）：跨包闭包在线编码过阈值后 OFS_DELTA 化（字节显著收缩）、真实客户端解包 delta 包（clone+fsck） |
-| T30 | `TestV2*`（5 用例） | **protocol v2 命令面**（docs/03 §9b）：广告格式（无 service 前导）、ls-refs（ref-prefix/peel/symrefs/unborn、空格分隔属性）、fetch 段组帧（done 省 acks 段、sideband pack 帧、ready 终态轮）、真实 git clone/fetch/ls-remote/浅化/unshallow/partial/子树/push 恒 v0；两处被真实客户端钉住的 wire 细节（TAB 分隔符、done 省 acks）记录于 docs/03 §9b |
-| T31 | `TestSynthBatchSinglePack` + storage `TestSynthBatchPacksOnce`/`TestLocationCacheHitsAndInvalidation` | **P0 落地**（docs/12）：B3 一次织入物化=一个合成 pack（含 pre-CAS flush 持久化点）；B1 定位 LRU（重复读零定位、Prefetch 批量、Known 批量存在性、repack 失效+重定位） |
-| T34 | `TestPushWarmView` | **push 后预热织入**（docs/12 P2-3）：无需任何读请求 /.woven 推进到新头（根推送=原样链头；子树推送=根织入推进） |
-| T35 | `TestClosureResponseCache` | **闭包响应包缓存**（docs/12 P2-2）：clone 形态纯函数缓存（首存/复用命中/tips 换键/ExactPackHit 不污染/haves 不入缓存） |
-| T36 | `TestHAGatewayDiskCache` | **网关磁盘 pack cache**（docs/12 P2-1）：节点请求计数器下，缓存填充后整网关重启、克隆零节点请求（读放大翻转 + CheapPack 路径） |
-| T37 | `TestThinPackFetch` + storage delta/thin 单测 | **真 thin pack**（docs/12 P2-6）：REF_DELTA 条目 + 字节收缩 + 未请求不发；真实客户端 v0/v2 双协议消费；delta 往返（增/删/中改/块拷贝/不可压）与 thin 写出器对 fix-thin 式解码器往返 |
-| T38 | `TestAuthorizationWire` | **授权 wire 全矩阵**（docs/13）：匿名 401/错密匿名、个人分支推/看归属（本人+admin）、跨命名空间 push 拒绝、保护 main 开发者拒/admin 过、裸 OID 取隐藏分支拒（可见 tips 覆盖）、受限目录 403、v2 ls-refs 同过滤；含 credential.helper 复位（否则开发机管理器会替匿名请求补凭证） |
-| T38b | `TestAuthorizationRPC` | **RPC 认证面**（docs/13 §5）：匿名 401/认证 200、login 对错密码、建仓端点 + admin 播种 + 开发者克隆 |
-| T39 | `TestGitSSH` | **git-over-SSH 传输**（docs/03 §7b，docs/13 §7）：公钥认证（IdentifyKey）→ 同一授权矩阵（个人分支可见性/跨命名空间拒/保护分支/受限目录/未授权密钥拒）；v0 克隆 + 51 提交增量 fetch（**多轮 have 协商**：客户端第二批 have 后阻塞读，服务端必须逐 flush 应答——终态 ACK 模型）；v2 命令会话（ls-refs/clone）；push + 自动建仓 |
-| T33 | `TestFetchTreesBinary` | **fetch-trees 二进制帧**（docs/10 §3.3、docs/12 P1-2）：bin/JSON 语义全等（树与 blob 集合逐字节一致）、二进制小于 JSON、真实 CLI clone 走 bin 路径物化 |
-| T32 | storage `TestExtractObjectRoundTrip`/`TestLocalGetObjectViaDisk` + T23-T26 回归 | **P1-1 单对象解压**（docs/12）：idx 偏移 + delta 基链递归解压（含 ofs/ref 两型）；集群 wire 从整包降为单对象（/internal/object 端点）；修复 idx oid→offset 在 delta pack 上的按位配对错位（Parser Observer 为权威源），idx crc 段补真值 |
+| T29 | `TestServePathDelta` | **serve 路径 delta 化**（docs/11 P1-4）：跨包闭包在线编码过阈值后 OFS_DELTA 化（字节显著收缩）、真实客户端解包 delta 包（clone+fsck） |
+| T30 | `TestV2*`（5 用例） | **protocol v2 命令面**（docs/04 §9b）：广告格式（无 service 前导）、ls-refs（ref-prefix/peel/symrefs/unborn、空格分隔属性）、fetch 段组帧（done 省 acks 段、sideband pack 帧、ready 终态轮）、真实 git clone/fetch/ls-remote/浅化/unshallow/partial/子树/push 恒 v0；两处被真实客户端钉住的 wire 细节（TAB 分隔符、done 省 acks）记录于 docs/04 §9b |
+| T31 | `TestSynthBatchSinglePack` + storage `TestSynthBatchPacksOnce`/`TestLocationCacheHitsAndInvalidation` | **P0 落地**（docs/11）：B3 一次织入物化=一个合成 pack（含 pre-CAS flush 持久化点）；B1 定位 LRU（重复读零定位、Prefetch 批量、Known 批量存在性、repack 失效+重定位） |
+| T34 | `TestPushWarmView` | **push 后预热织入**（docs/11 P2-3）：无需任何读请求 /.woven 推进到新头（根推送=原样链头；子树推送=根织入推进） |
+| T35 | `TestClosureResponseCache` | **闭包响应包缓存**（docs/11 P2-2）：clone 形态纯函数缓存（首存/复用命中/tips 换键/ExactPackHit 不污染/haves 不入缓存） |
+| T36 | `TestHAGatewayDiskCache` | **网关磁盘 pack cache**（docs/11 P2-1）：节点请求计数器下，缓存填充后整网关重启、克隆零节点请求（读放大翻转 + CheapPack 路径） |
+| T37 | `TestThinPackFetch` + storage delta/thin 单测 | **真 thin pack**（docs/11 P2-6）：REF_DELTA 条目 + 字节收缩 + 未请求不发；真实客户端 v0/v2 双协议消费；delta 往返（增/删/中改/块拷贝/不可压）与 thin 写出器对 fix-thin 式解码器往返 |
+| T38 | `TestAuthorizationWire` | **授权 wire 全矩阵**（docs/07）：匿名 401/错密匿名、个人分支推/看归属（本人+admin）、跨命名空间 push 拒绝、保护 main 开发者拒/admin 过、裸 OID 取隐藏分支拒（可见 tips 覆盖）、受限目录 403、v2 ls-refs 同过滤；含 credential.helper 复位（否则开发机管理器会替匿名请求补凭证） |
+| T38b | `TestAuthorizationRPC` | **RPC 认证面**（docs/07 §5）：匿名 401/认证 200、login 对错密码、建仓端点 + admin 播种 + 开发者克隆 |
+| T39 | `TestGitSSH` | **git-over-SSH 传输**（docs/04 §7b，docs/07 §7）：公钥认证（IdentifyKey）→ 同一授权矩阵（个人分支可见性/跨命名空间拒/保护分支/受限目录/未授权密钥拒）；v0 克隆 + 51 提交增量 fetch（**多轮 have 协商**：客户端第二批 have 后阻塞读，服务端必须逐 flush 应答——终态 ACK 模型）；v2 命令会话（ls-refs/clone）；push + 自动建仓 |
+| T33 | `TestFetchTreesBinary` | **fetch-trees 二进制帧**（docs/05 §3.3、docs/11 P1-2）：bin/JSON 语义全等（树与 blob 集合逐字节一致）、二进制小于 JSON、真实 CLI clone 走 bin 路径物化 |
+| T32 | storage `TestExtractObjectRoundTrip`/`TestLocalGetObjectViaDisk` + T23-T26 回归 | **P1-1 单对象解压**（docs/11）：idx 偏移 + delta 基链递归解压（含 ofs/ref 两型）；集群 wire 从整包降为单对象（/internal/object 端点）；修复 idx oid→offset 在 delta pack 上的按位配对错位（Parser Observer 为权威源），idx crc 段补真值 |
 | T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |
 | T21 | `TestRepackFragmentMerge` / `TestRepackRestartSurvival` | **repack**：碎片合并+delta（字节收缩、对象保全、ExactPackHit 恢复）、SQLite 重启后存活（UPSERT 重指向回归） |
-| T22 | `TestCLIThinWorkspace` / `TestCLISubtreeWorkspace` | **薄工作区 CLI**（docs/05/10）：最小化 clone（无 .git、无提交闭包）、离线 status、服务端 changeset commit 经**真 git 客户端交叉验证**（fresh clone + fsck + subject）、log/cat 零下载、pull=服务端 tree-diff、base-moved 冲突退出码 1→pull→重提、子树工作区 commit 织入根视图 |
-| T23 | `TestHAClusterScatteredPlacement` | **散布放置**（docs/11 §3）：每 pack 持有集=3 个不同节点、任一持有者可服务且校验和通过、登记即事实（读不依赖放置函数）、增量 push 新随机放置、cluster/nodes 端点 |
-| T24 | `TestHANodeFailureAndRecovery` | **节点宕故障转移与恢复**（docs/11 §8）：kill 后新写/克隆照常（W=2 掩蔽死节点）、健康表 dead 判定、reconciler 补齐回 3 副本且 dead 节点移出持有集、恢复后克隆仍正确 |
-| T25 | `TestHAPlacementDynamic` | **动态副本**（docs/11 §6）：R 3→2 触发剪枝（先登记后删除）、2→3 触发补齐；剪枝后读正常 |
-| T26 | `TestHARefsRestart` | **refs 重启 RPO=0**（docs/11 §4）：SQLite 句柄释放+同址重启、心跳重新注册、重启前提交零丢失、重启后继续 push/clone |
+| T22 | `TestCLIThinWorkspace` / `TestCLISubtreeWorkspace` | **薄工作区 CLI**（docs/06/10）：最小化 clone（无 .git、无提交闭包）、离线 status、服务端 changeset commit 经**真 git 客户端交叉验证**（fresh clone + fsck + subject）、log/cat 零下载、pull=服务端 tree-diff、base-moved 冲突退出码 1→pull→重提、子树工作区 commit 织入根视图 |
+| T23 | `TestHAClusterScatteredPlacement` | **散布放置**（docs/10 §3）：每 pack 持有集=3 个不同节点、任一持有者可服务且校验和通过、登记即事实（读不依赖放置函数）、增量 push 新随机放置、cluster/nodes 端点 |
+| T24 | `TestHANodeFailureAndRecovery` | **节点宕故障转移与恢复**（docs/10 §8）：kill 后新写/克隆照常（W=2 掩蔽死节点）、健康表 dead 判定、reconciler 补齐回 3 副本且 dead 节点移出持有集、恢复后克隆仍正确 |
+| T25 | `TestHAPlacementDynamic` | **动态副本**（docs/10 §6）：R 3→2 触发剪枝（先登记后删除）、2→3 触发补齐；剪枝后读正常 |
+| T26 | `TestHARefsRestart` | **refs 重启 RPO=0**（docs/10 §4）：SQLite 句柄释放+同址重启、心跳重新注册、重启前提交零丢失、重启后继续 push/clone |
 
 ## 运行
 

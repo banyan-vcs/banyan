@@ -1,7 +1,7 @@
-# Authorization-enabled demo config (docs/13 §2), mounted by
+# Authorization-enabled demo config (docs/07 §2), mounted by
 # docker-compose.yml. Users: alice/bob are developers, admin owns main
 # and the /secret subtree. Log in on the web UI with the same accounts.
-# auth.keys authorize the demo SSH keys in demo/ssh/ (docs/03 §8).
+# auth.keys authorize the demo SSH keys in demo/ssh/ (docs/04 §8).
 listen: "0.0.0.0:8080"
 root: "/var/lib/banyan"
 meta: sqlite

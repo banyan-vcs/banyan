@@ -1,4 +1,4 @@
-// banyand is banyan's server daemon (docs/11 §2): one binary, four roles.
+// banyand is banyan's server daemon (docs/10 §2): one binary, four roles.
 //
 //	all-in-one (default)  git smart HTTP + JSON API + local shards + local meta
 //	gateway               the stateless frontend: gitwire + rpc over the
@@ -94,7 +94,7 @@ func runAllInOne(cfg *config.Config) {
 	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
 }
 
-// staticPolicy builds the demo authorization policy from config (docs/13
+// staticPolicy builds the demo authorization policy from config (docs/07
 // §2): nil when the auth section is absent — authorization off.
 func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
 	if len(cfg.Auth.Users) == 0 {
@@ -110,8 +110,8 @@ func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
 }
 
 // runGateway is the stateless frontend: every store/metadata call crosses
-// the role boundary (docs/11 §2), so any gateway instance is expendable.
-// An optional on-disk pack cache (cache.pack_dir, docs/12 P2-1) carries the
+// the role boundary (docs/10 §2), so any gateway instance is expendable.
+// An optional on-disk pack cache (cache.pack_dir, docs/11 P2-1) carries the
 // fetched packs across restarts — the one piece of expendable local state
 // that meaningfully cuts cold-start traffic.
 func runGateway(cfg *config.Config) {
@@ -140,7 +140,7 @@ func runGateway(cfg *config.Config) {
 	api := rpc.NewServer(meta, objects, model.SHA1)
 	if cfg.Auth.Remote {
 		// The gateway decides against a policy snapshot synced from the
-		// refs service (docs/13 §4) — same abstraction, synced state; the
+		// refs service (docs/07 §4) — same abstraction, synced state; the
 		// concrete rules live on refs, never duplicated here.
 		policy := auth.NewRemotePolicy(cfg.RefsAddr)
 		gw.Auth = policy
@@ -151,7 +151,7 @@ func runGateway(cfg *config.Config) {
 	api.Register(mux)
 	root(mux)
 	// Same transport wiring as all-in-one: the gateway decides access
-	// against the synced policy snapshot (keys ride along, docs/13 §4/§7).
+	// against the synced policy snapshot (keys ride along, docs/07 §4/§7).
 	if err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw); err != nil {
 		log.Fatalf("ssh: %v", err)
 	}
@@ -159,7 +159,7 @@ func runGateway(cfg *config.Config) {
 }
 
 // runRefs serves the serialization point: meta RPC, the health table and
-// the reconciler (single writer; HA story in docs/11 §4).
+// the reconciler (single writer; HA story in docs/10 §4).
 func runRefs(cfg *config.Config) {
 	meta := openMeta(cfg)
 	if cfg.MetaBackend != "sqlite" {

@@ -9,7 +9,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// MetaStore is the central metadata service interface (docs/02 §2.1): a
+// MetaStore is the central metadata service interface (docs/03 §2.1): a
 // composite of four role interfaces, each with its own data shape and access
 // pattern, so a backend can swap per block later without gitwire noticing.
 // M1 in-memory / M2 SQLite implementations are swappable; callers can't tell.
@@ -45,12 +45,12 @@ type PackRegistry interface {
 	// next repack cleans up.
 	DropPack(ctx context.Context, repo string, packOID model.OID) error
 	// SetPackNodes atomically replaces a pack's holder set (reconciler
-	// holder swap after re-replication / trim — docs/11 §8.3). The pack must
+	// holder swap after re-replication / trim — docs/10 §8.3). The pack must
 	// already be registered.
 	SetPackNodes(ctx context.Context, repo string, packOID model.OID, nodes []string) error
 }
 
-// PlacementStore is the per-repo replica target (docs/11 §3/§6): 0 or a
+// PlacementStore is the per-repo replica target (docs/10 §3/§6): 0 or a
 // missing row means "use the cluster default". R is adjustable at any time;
 // the reconciler converges actual holders toward it.
 type PlacementStore interface {
@@ -59,7 +59,7 @@ type PlacementStore interface {
 }
 
 // ObjectIndex is the global object index (distributed lookup entry,
-// docs/02 §1.3): batch point lookup oid → (pack, node).
+// docs/03 §1.3): batch point lookup oid → (pack, node).
 type ObjectIndex interface {
 	LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]ObjectLocation, error)
 }
@@ -76,7 +76,7 @@ type TimelineStore interface {
 	EnsureTimeline(ctx context.Context, tl model.Timeline, head, base model.OID) error
 	ListTimelines(ctx context.Context, repo string, anchor model.AnchorPath) ([]model.Timeline, error)
 	// ListAllTimelines enumerates every timeline of the repo across anchors
-	// (root view materialization input, docs/01 §13).
+	// (root view materialization input, docs/02 §13).
 	ListAllTimelines(ctx context.Context, repo string) ([]model.Timeline, error)
 }
 
@@ -99,7 +99,7 @@ type RepoInfo struct {
 	DefaultBranch string         `json:"default_branch"`
 }
 
-// ErrNonFastForward mirrors git push non-fast-forward (docs/01 §4.3).
+// ErrNonFastForward mirrors git push non-fast-forward (docs/02 §4.3).
 var ErrNonFastForward = fmt.Errorf("non-fast-forward: timeline head moved")
 
 // ErrRepoNotFound / ErrTimelineUnknown / ErrPackNotFound.

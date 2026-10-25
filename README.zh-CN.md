@@ -30,7 +30,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 ## 设计目标
 
 1. **完全兼容 git 命令行**：标准 `git clone / fetch / push` 直接可用（Smart HTTP
-   v1；v2 已规划——fetch 侧命令面（docs/12），当前 v2 客户端自动回退）。
+   v1；v2 已规划——fetch 侧命令面（docs/11），当前 v2 客户端自动回退）。
 2. **任意子目录可 clone 为独立仓库**：不是 partial clone 的"稀疏检出"，而是每个
    目录拥有自己的 commit timeline，`/r/{repo}/tree/{subdir}` 即一个语义完整、
    带完整投影历史的仓库。
@@ -46,11 +46,11 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 能力 | 状态 |
 |---|---|
 | 根/子树 `git clone/fetch/push`（Smart HTTP v1 + v2） | ✅ 真实 git 客户端实测 |
-| git-over-SSH 传输（`ssh://` + 公钥认证，v0 有状态协商 + v2） | ✅ 同一服务核心与授权（docs/03 §7b） |
+| git-over-SSH 传输（`ssh://` + 公钥认证，v0 有状态协商 + v2） | ✅ 同一服务核心与授权（docs/04 §7b） |
 | partial clone（`--filter=blob:none`/`tree:0` + 惰性取回） | ✅ |
 | serve 路径 delta 包（过 64KiB 阈值 OFS/REF-delta） | ✅ |
-| 增量 fetch 真 thin pack（对客户端持有基对象出 REF_DELTA） | ✅（字节 0.87× git，docs/12 §3） |
-| 授权：仓库/目录/分支粒度的下载与提交控制（docs/13） | ✅ demo 策略，opt-in |
+| 增量 fetch 真 thin pack（对客户端持有基对象出 REF_DELTA） | ✅（字节 0.87× git，docs/11 §3） |
+| 授权：仓库/目录/分支粒度的下载与提交控制（docs/07） | ✅ demo 策略，opt-in |
 | 个人分支命名空间（refs/heads/<user>/*）仅本人可见 | ✅ monorepo 分支过多解法 |
 | Web 界面：仓库管理 + 文件浏览（TypeScript 零运行时依赖） | ✅ web/ |
 | 子树虚拟仓库（`/tree/<path>`，完整历史投影） | ✅ |
@@ -64,9 +64,9 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 薄工作区 CLI（`clone/status/commit/pull/log/cat/...`） | ✅ |
 | HA 集群：网关 + ref 服务 + 散布多副本 pack 存储、节点故障恢复、仓库级动态副本 | ✅ 核心（本地盘集群，T23-T26；MySQL/raft refs 后端 → HA-2） |
 | token 认证 + 建仓收紧、diff/blame RPC | 🚧 下一步（M5 / M2–M3） |
-| Gitaly gRPC 前端（作为 GitLab 底层存储节点） | 🚧 规划中（docs/10 §4） |
+| Gitaly gRPC 前端（作为 GitLab 底层存储节点） | 🚧 规划中（docs/05 §4） |
 
-23 个集成用例以**真实 git CLI** 作客户端钉住行为（[docs/07](docs/07-testing.md)）；
+23 个集成用例以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证。
 
 ## 代码结构
@@ -78,7 +78,7 @@ internal/model/     核心数据模型（anchored commit / timeline / assembly /
 internal/storage/   分布式 pack 存储（shard / metastore / packfile / index / repack）
 internal/view/      读时视图引擎（v5 织入、子树视图）
 internal/gitwire/   git wire 协议（smart HTTP v1 / upload-pack / receive-pack）
-internal/service/   协议无关服务层（三前端共核心，docs/10）
+internal/service/   协议无关服务层（三前端共核心，docs/05）
 internal/rpc/       httpd JSON 前端（/api/v1）
 internal/cli/       薄工作区客户端实现
 internal/config/    三层配置（默认 < YAML < 显式标志）
@@ -90,7 +90,7 @@ internal/config/    三层配置（默认 < YAML < 显式标志）
 
 ```bash
 docker compose up -d          # 构建并启动；数据持久化在 banyan-data 卷
-                              # demo 默认开启授权（docs/13）：
+                              # demo 默认开启授权（docs/07）：
                               #   Web 界面 http://localhost:8101（alice / bob / admin，密码 demo）
                               #   git      http://alice:demo@localhost:8100/r/demo.git
                               #   git ssh  ssh://alice@localhost:8102/r/demo.git（demo/ssh/ 密钥）
@@ -99,7 +99,7 @@ docker compose up -d          # 构建并启动；数据持久化在 banyan-data
 git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
 
-# git-over-SSH 同样可用（一次性 demo 密钥在 demo/ssh/，docs/14 §3b）
+# git-over-SSH 同样可用（一次性 demo 密钥在 demo/ssh/，docs/12 §3b）
 git clone ssh://alice@localhost:8102/r/demo.git \
   -c core.sshCommand="ssh -i demo/ssh/alice -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
@@ -117,7 +117,7 @@ docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
 
 ### HA 集群 demo
 
-一条命令启动拆分部署（docs/11）：refs 服务 + 4 个存储节点 + 无状态网关——
+一条命令启动拆分部署（docs/10）：refs 服务 + 4 个存储节点 + 无状态网关——
 pack 散布在存储节点上各 3 副本；杀掉一个存储节点，读写继续，reconciler
 自动恢复副本目标。
 
@@ -161,36 +161,56 @@ go run ../cmd/banyan log           # 远端历史，零下载
 
 ## 非目标（当前阶段）
 
-- push 恒走 v0（git 本身从未为 receive-pack 定义 v2）；fetch 侧原生 v2（ls-refs + fetch 命令面，docs/03 §9b）。
+- push 恒走 v0（git 本身从未为 receive-pack 定义 v2）；fetch 侧原生 v2（ls-refs + fetch 命令面，docs/04 §9b）。
 - 不做 DevOps 平台能力（MR/CI/权限界面）——banyan 是**存储层**，协作留在已有
-  平台（docs/08）。
-- 不做 praefect 复制协议；多副本走 banyan 自身分片路线（docs/02）。
+  平台（docs/01）。
+- 不做 praefect 复制协议；多副本走 banyan 自身分片路线（docs/03）。
 
 ## 文档索引
 
+阅读顺序即设计展开的顺序：先总览与定位，再按层拆解核心架构，然后是横切
+能力，最后是运行与演进。
+
+**总——banyan 是什么、站在哪里**：
+
 | 文档 | 内容 |
 |---|---|
-| [docs/00-overview.md](docs/00-overview.md) | 愿景、设计原则、总体架构 |
-| [docs/01-data-model.md](docs/01-data-model.md) | **核心**：目录锚定时间线模型、组装算法、git 投影 |
-| [docs/02-storage.md](docs/02-storage.md) | 分布式 pack 存储：分片 CAS、双 idx 体系、repack |
-| [docs/03-git-compat.md](docs/03-git-compat.md) | git 兼容层：Smart HTTP、虚拟子树仓库 |
-| [docs/04-derived-data.md](docs/04-derived-data.md) | 派生数据：commit-graph、路径历史、blame |
-| [docs/05-cli.md](docs/05-cli.md) | 薄客户端 CLI 命令设计 |
-| [docs/06-roadmap.md](docs/06-roadmap.md) | 里程碑与演进路径 |
-| [docs/07-testing.md](docs/07-testing.md) | 集成测试矩阵 |
-| [docs/08-big-picture.md](docs/08-big-picture.md) | 定位：通用代码存储层 + GitLab 等平台集成拓扑 |
+| [docs/00-overview.md](docs/00-overview.md) | 愿景、设计原则、总体架构图 |
+| [docs/01-big-picture.md](docs/01-big-picture.md) | 定位：通用代码存储层 + 平台集成拓扑 |
+
+**核心设计——按层自底向上（模型 → 存储 → 协议 → 服务 → 客户端）**：
+
+| 文档 | 内容 |
+|---|---|
+| [docs/02-data-model.md](docs/02-data-model.md) | **核心**：目录锚定时间线模型、组装算法、git 投影 |
+| [docs/03-storage.md](docs/03-storage.md) | 分布式 pack 存储：分片 CAS、双 idx 体系、repack |
+| [docs/04-git-compat.md](docs/04-git-compat.md) | git 兼容层：Smart HTTP、SSH 传输、虚拟子树仓库 |
+| [docs/05-service-api.md](docs/05-service-api.md) | 服务层抽象 + httpd/Gitaly 前端与 API 契约 |
+| [docs/06-cli.md](docs/06-cli.md) | 薄客户端 CLI 命令设计 |
+
+**横切能力**：
+
+| 文档 | 内容 |
+|---|---|
+| [docs/07-authorization.md](docs/07-authorization.md) | 授权模型、个人分支可见性、Web 演示 |
+| [docs/08-derived-data.md](docs/08-derived-data.md) | 派生数据：commit-graph、路径历史、blame |
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | 索引（代数）与打包（have 减除/delta/repack）设计 |
-| [docs/10-service-api.md](docs/10-service-api.md) | 服务层抽象 + httpd/Gitaly 双前端与 API 契约 |
-| [docs/11-ha.md](docs/11-ha.md) | 高可用：一体化 vs 网关 + Raft 集群、仓库级副本 |
-| [docs/13-authorization.md](docs/13-authorization.md) | 授权模型、个人分支可见性、Web 演示 |
-| [docs/14-docker-demo.md](docs/14-docker-demo.md) | Docker demo 走查：授权、Web、集群栈指引 |
-| [docs/12-performance.md](docs/12-performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门 |
+
+**运行与演进**：
+
+| 文档 | 内容 |
+|---|---|
+| [docs/10-ha.md](docs/10-ha.md) | 高可用：一体化 vs 网关 + 集群、仓库级副本 |
+| [docs/11-performance.md](docs/11-performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门 |
+| [docs/12-docker-demo.md](docs/12-docker-demo.md) | Docker demo 走查：授权、SSH、Web、集群栈指引 |
+| [docs/13-testing.md](docs/13-testing.md) | 集成测试矩阵 |
+| [docs/14-roadmap.md](docs/14-roadmap.md) | 里程碑与演进路径 |
 
 ## 开发与提交约定
 
 - **按层拆分提交**（自底向上）：`docs → model → storage → gitwire → service →
   cli`，每个代码提交**独立可构建、测试通过**；
-- **新能力必配集成用例**并登记 [docs/07](docs/07-testing.md)；断言用 testify
+- **新能力必配集成用例**并登记 [docs/13](docs/13-testing.md)；断言用 testify
   （require=场景门，assert=独立检查组）；
 - **git 是行为基准**（git 源码为唯一 oracle）；go-git 只是编解码库，边界收敛在
   `internal/storage/packfile.go`。

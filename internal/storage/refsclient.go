@@ -14,7 +14,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Internal wire protocol between cluster roles (docs/11 §2). All JSON over
+// Internal wire protocol between cluster roles (docs/10 §2). All JSON over
 // HTTP; pack bytes are raw bodies on the storage path. Error convention: a
 // non-200 response carries {"error":{"code","message"}} and the client maps
 // codes back onto the package's sentinel errors so callers keep using
@@ -129,7 +129,7 @@ func (c *RefsClient) GetPlacement(ctx context.Context, repo string) (int, error)
 
 // --- RemoteMeta: MetaStore over the refs RPC ---
 
-// RemoteMeta is the gateway's MetaStore (docs/11 §4): writes and strong
+// RemoteMeta is the gateway's MetaStore (docs/10 §4): writes and strong
 // reads go to the refs service; the interface is unchanged so gitwire, the
 // service layer and the view engine never learn about the split.
 type RemoteMeta struct {

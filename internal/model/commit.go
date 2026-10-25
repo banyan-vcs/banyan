@@ -25,10 +25,10 @@ func (id Identity) Format() string {
 		id.Name, id.Email, id.When.Unix(), sign, offset/3600, (offset%3600)/60)
 }
 
-// RootAnchor is the root anchor; the root timeline is semantically a git branch (docs/01 §2).
+// RootAnchor is the root anchor; the root timeline is semantically a git branch (docs/02 §2).
 const RootAnchor AnchorPath = "/"
 
-// AnchoredCommit is banyan's commit record (docs/01 §2):
+// AnchoredCommit is banyan's commit record (docs/02 §2):
 // tree_oid is the tree at anchor_path — any tree, not just the repo root.
 //
 // Encoding rules (git compatibility guaranteed):

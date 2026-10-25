@@ -1,4 +1,4 @@
-// Thin-workspace state (docs/05 §2): .banyan/{config,manifest}.json plus a
+// Thin-workspace state (docs/06 §2): .banyan/{config,manifest}.json plus a
 // content-addressed object cache. No .git, no local history — every history
 // question goes to the server; the manifest tree is the only local anchor.
 package cli
@@ -231,7 +231,7 @@ func (t *treeSource) blob(oid string) ([]byte, error) {
 // collectFiles walks a tree and builds the tracked-file map for a scope —
 // no disk writes, no blob fetches (pull diffs the maps first; blob bytes
 // are only fetched for files actually written). scope semantics: root-level
-// files always, directories only when listed (cone, docs/05 clone --sparse).
+// files always, directories only when listed (cone, docs/06 clone --sparse).
 func (w *workspace) collectFiles(t *treeSource, treeOID string, sparse []string) (map[string]fileState, error) {
 	files := map[string]fileState{}
 	inScope := func(name string, isDir bool) bool {

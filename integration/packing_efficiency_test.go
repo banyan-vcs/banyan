@@ -1,6 +1,6 @@
 // Goal: retrieval and packing efficiency — have subtraction on incremental
-// fetches (docs/09 §3), serve-path delta encoding (docs/12 P1-4), post-push
-// view pre-warm and the clone-shaped response-pack cache (docs/12 P2-2/P2-3).
+// fetches (docs/09 §3), serve-path delta encoding (docs/11 P1-4), post-push
+// view pre-warm and the clone-shaped response-pack cache (docs/11 P2-2/P2-3).
 package integration
 
 import (
@@ -114,7 +114,7 @@ func TestIncrementalFetchHaveSubtraction(t *testing.T) {
 }
 
 // TestServePathDelta: online serve packs deltify past the raw-payload
-// threshold (docs/12 P1-4 / B5+B8). Two pushes carry near-identical 64KiB+
+// threshold (docs/11 P1-4 / B5+B8). Two pushes carry near-identical 64KiB+
 // blobs; the full closure spans three stored packs so the whole-pack direct
 // serve cannot fire — the serve path encodes online, and the similar blobs
 // travel as one base + OFS_DELTA. A real git client consumes the delta pack.
@@ -153,7 +153,7 @@ func TestServePathDelta(t *testing.T) {
 	assert.Equal(t, big2, readFile(t, filepath.Join(dst, "big.txt")), "真实客户端解包 delta 后的内容")
 }
 
-// --- T34 post-push view pre-warm (docs/12 P2-3, B6) ---
+// --- T34 post-push view pre-warm (docs/11 P2-3, B6) ---
 // A push only CASes timeline heads; the woven views fold lazily on the next
 // advertisement. The warm hook folds them right after a successful push, so
 // the /.woven root anchor exists WITHOUT any read request — observable via
@@ -196,7 +196,7 @@ func TestPushWarmView(t *testing.T) {
 		"根视图应包含子树推送内容")
 }
 
-// --- T35 clone-shaped response pack cache (docs/12 P2-2, B9) ---
+// --- T35 clone-shaped response pack cache (docs/11 P2-2, B9) ---
 // A subtree clone's closure never equals a stored pack (projection/weave
 // OIDs are synthetic), so every clone re-encoded online. Clone-shaped
 // requests (no haves/depth/filter — the pack is a pure function of the
@@ -248,11 +248,11 @@ func TestClosureResponseCache(t *testing.T) {
 	assert.Equal(t, 2, stores, "带 haves 的增量 fetch 不应进缓存")
 }
 
-// --- T37 true thin pack (docs/12 P2-6, B8) ---
+// --- T37 true thin pack (docs/11 P2-6, B8) ---
 // A have-subtracted fetch now deltas its objects against same-path
 // predecessors the client provably holds (its have closure), emitted as
 // REF_DELTA entries the client resolves with index-pack --fix-thin — the
-// 1.6-1.8x incremental-fetch byte gap measured in docs/12 §3.
+// 1.6-1.8x incremental-fetch byte gap measured in docs/11 §3.
 func TestThinPackFetch(t *testing.T) {
 	needGit(t)
 	s := newServer(t)

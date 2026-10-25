@@ -1,6 +1,6 @@
 // Goal: git protocol compatibility matrix — protocol version matrix,
 // partial clone, and shallow clone semantics against reference
-// traffic from git http-backend (T13–T16, docs/03 §9).
+// traffic from git http-backend (T13–T16, docs/04 §9).
 package integration
 
 import (
@@ -52,7 +52,7 @@ func TestProtocolVersionMatrix(t *testing.T) {
 	fsckClean(t, sub)
 }
 
-// --- T14 partial clone: filter advertised and honored (docs/03 §4) ---
+// --- T14 partial clone: filter advertised and honored (docs/04 §4) ---
 // blob:none: the clone pack carries commits+trees only; the first working-tree
 // materialization lazy-fetches the missing blobs (promisor semantics — a lazy
 // fetch is a plain want of the missing OID, and wants are exempt from the
@@ -90,7 +90,7 @@ func TestPartialCloneFilter(t *testing.T) {
 	require.Contains(t, out, "unsupported spec", "不支持的 filter 应以 ERR 拒绝")}
 
 // --- T15 shallow clone (--depth): server-side shallowing (upload-pack deepen protocol) ---
-// Reference-traffic parity (git 2.50 http-backend, docs/03 §9): every response
+// Reference-traffic parity (git 2.50 http-backend, docs/04 §9): every response
 // to a deepen request starts with a shallow section (shallow lines for the new
 // boundary + unshallow lines for client boundaries now completed + flush; an
 // empty boundary is a bare flush); the negotiation round carries only the

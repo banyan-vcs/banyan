@@ -7,7 +7,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// ShardBackend abstracts where pack bytes physically live (docs/11 §2-3):
+// ShardBackend abstracts where pack bytes physically live (docs/10 §2-3):
 //
 //   - all-in-one: this process's local disk (LocalBackend);
 //   - gateway (cluster): the scattered storage fleet (ScatteredStore) —
@@ -19,17 +19,17 @@ import (
 // fact: readers only ever trust the holder set recorded in MetaStore.
 type ShardBackend interface {
 	PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) ([]string, error)
-	// GetPack reads one pack, trying the given holders in order (docs/11 §3:
+	// GetPack reads one pack, trying the given holders in order (docs/10 §3:
 	// any holder may serve — the OID trailer checksum proves integrity).
 	GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error)
 	// CheapPack reports whole-pack bytes available WITHOUT a network round
-	// trip — a gateway disk-cache hit (docs/12 P2-1). Object reads prefer
+	// trip — a gateway disk-cache hit (docs/11 P2-1). Object reads prefer
 	// this path: one decode memoizes the whole pack in memory, so a
 	// restarted gateway's first clone stops paying per-object RPCs for
 	// every pack it already holds on disk. (nil, false) keeps the
 	// single-object path.
 	CheapPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, bool)
-	// GetObject extracts one object from a pack (docs/12 P1-1): the holder
+	// GetObject extracts one object from a pack (docs/11 P1-1): the holder
 	// resolves it via its local idx without transferring or decoding the
 	// whole pack — the wire carries one object, not megabytes. Errors fall
 	// back to the whole-pack path at the caller.

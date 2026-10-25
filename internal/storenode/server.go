@@ -1,4 +1,4 @@
-// Package storenode implements the storage role (docs/11 §3): a dumb pack
+// Package storenode implements the storage role (docs/10 §3): a dumb pack
 // warehouse on local disk — PUT/GET/DELETE by (repo, packOID), content
 // addressed, no metadata of its own. It heartbeats its address to the refs
 // service; placement, holder sets and recovery all live elsewhere.
@@ -48,7 +48,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	})
 }
 
-// hObject serves single-object extraction (docs/12 P1-1): the pack's idx
+// hObject serves single-object extraction (docs/11 P1-1): the pack's idx
 // locates the object's offset; only that entry (plus its delta base chain)
 // inflates. The response body is the raw object; X-Banyan-Type carries the
 // git object type. Missing pack/idx/object answer 404 — the gateway falls

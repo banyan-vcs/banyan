@@ -1,6 +1,6 @@
-// git-over-SSH transport (docs/03 §8): the native git transport shape — one
+// git-over-SSH transport (docs/04 §8): the native git transport shape — one
 // connection authenticates with a public key (mapped to a user at the
-// auth.Service seam, docs/13 §7), then execs a git service over a session
+// auth.Service seam, docs/07 §7), then execs a git service over a session
 // channel:
 //
 //	env GIT_PROTOCOL version=2      ← client SendEnv (v2 negotiation)

@@ -1,4 +1,4 @@
-// Package bench is the performance comparison harness (docs/12 §3): fixed
+// Package bench is the performance comparison harness (docs/11 §3): fixed
 // deterministic seed repos, banyan and a genuine git http-backend (CGI) as
 // the peer baseline on the same transport and machine, three temperature
 // lanes (cold server / warm server / incremental client), byte and wall-time

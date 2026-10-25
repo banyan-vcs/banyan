@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-// Assembly algorithm (upstream write path) — docs/01 §4.
+// Assembly algorithm (upstream write path) — docs/02 §4.
 //
 // Information flow: subdirectory local commits ──ReplaceSubtree──▶ parent's
 //        new tree ──synthesis──▶ root synthetic commit into the root timeline.
@@ -81,7 +81,7 @@ type HeadResolver interface {
 	TimelineHead(tl Timeline) (TimelineState, error)
 }
 
-// CurrentTree computes directory D's current tree (docs/01 §4.1):
+// CurrentTree computes directory D's current tree (docs/02 §4.1):
 //
 //	CurrentTree(D) = base(D) ⊕ replace-children(D)
 //
@@ -105,7 +105,7 @@ func CurrentTree(lookup ObjectLookup, heads HeadResolver, algo HashAlgo, tl Time
 	return root, nil
 }
 
-// AssembleRoot performs upward assembly after a subdirectory commit (docs/01 §4.2):
+// AssembleRoot performs upward assembly after a subdirectory commit (docs/02 §4.2):
 //
 //  1. root_new = ReplaceSubtree(CurrentTree("/"), path, C.TreeOID)
 //  2. synthetic commit into the root timeline (M1 synchronous mode)
@@ -149,5 +149,5 @@ func AssembleRoot(store TreeStore, heads HeadResolver, algo HashAlgo, repo, root
 }
 
 // EmptyTreeOID exposes the content-addressed empty tree (the fold-genesis
-// base for view weaving, docs/01 §13).
+// base for view weaving, docs/02 §13).
 func EmptyTreeOID(algo HashAlgo) OID { return emptyTreeOID(algo) }

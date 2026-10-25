@@ -15,7 +15,7 @@ import (
 )
 
 // NodeClient is the gateway's / reconciler's HTTP client to one storage node
-// (docs/11 §3): packs are raw bodies, content-addressed by query params.
+// (docs/10 §3): packs are raw bodies, content-addressed by query params.
 type NodeClient struct {
 	Addr string
 	HTTP *http.Client
@@ -104,7 +104,7 @@ func AlgoFromQuery(v string) model.HashAlgo {
 	return model.SHA1
 }
 
-// GetObject extracts one object on the node via its local idx (docs/12
+// GetObject extracts one object on the node via its local idx (docs/11
 // P1-1): the response body is the object, X-Banyan-Type carries its type.
 func (n *NodeClient) GetObject(ctx context.Context, repo string, packOID, oid model.OID, algo model.HashAlgo) (model.ObjectType, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, n.objectURL(repo, packOID, oid, algo), nil)
@@ -127,7 +127,7 @@ func (n *NodeClient) GetObject(ctx context.Context, repo string, packOID, oid mo
 	return model.ObjectType(resp.Header.Get("X-Banyan-Type")), data, nil
 }
 
-// --- ScatteredStore: the gateway's shard backend (docs/11 §3/§5) ---
+// --- ScatteredStore: the gateway's shard backend (docs/10 §3/§5) ---
 
 // ScatteredStore places each pack on R random healthy nodes, confirms W
 // writes, and reads from any holder. Registration is the fact: PutPack
@@ -136,7 +136,7 @@ type ScatteredStore struct {
 	Refs      *RefsClient
 	DefaultR  int    // cluster default replica target
 	WriteAcks string // "quorum" (default) | "all" | "one"
-	// DiskCache persists whole packs on gateway disk (docs/12 P2-1): a
+	// DiskCache persists whole packs on gateway disk (docs/11 P2-1): a
 	// restart serves its first clones from disk instead of re-transferring
 	// from storage nodes. Optional — nil disables.
 	DiskCache *DiskPackCache
@@ -200,7 +200,7 @@ func (s *ScatteredStore) healthyNodes(ctx context.Context) []NodeInfo {
 	return out
 }
 
-// pickRandom draws n distinct entries at random (placement, docs/11 §3).
+// pickRandom draws n distinct entries at random (placement, docs/10 §3).
 func pickRandom[T any](items []T, n int) []T {
 	if n >= len(items) {
 		return append([]T(nil), items...)
@@ -264,7 +264,7 @@ func (s *ScatteredStore) PutPack(ctx context.Context, repo string, packOID model
 }
 
 func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error) {
-	// Disk cache first (docs/12 P2-1): content-addressed by pack OID, so a
+	// Disk cache first (docs/11 P2-1): content-addressed by pack OID, so a
 	// hit is the pack and no node round trip is needed.
 	if s.DiskCache != nil {
 		if raw, ok := s.DiskCache.Get(repo, packOID); ok {
@@ -298,7 +298,7 @@ func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model
 	return nil, errNoHolder(packOID, holders)
 }
 
-// CheapPack: a disk-cache hit IS the pack (content-addressed, docs/12 P2-1).
+// CheapPack: a disk-cache hit IS the pack (content-addressed, docs/11 P2-1).
 func (s *ScatteredStore) CheapPack(_ context.Context, repo string, packOID model.OID, _ []string) ([]byte, bool) {
 	if s.DiskCache == nil {
 		return nil, false
@@ -306,7 +306,7 @@ func (s *ScatteredStore) CheapPack(_ context.Context, repo string, packOID model
 	return s.DiskCache.Get(repo, packOID)
 }
 
-// GetObject single-object extraction with holder fallback (docs/12 P1-1):
+// GetObject single-object extraction with holder fallback (docs/11 P1-1):
 // the holder resolves the object via its local idx — the wire carries one
 // object instead of the whole pack. Any failure surfaces as an error; the
 // caller falls back to GetPack.

@@ -57,7 +57,7 @@ directory timelines align both boundaries at the same granularity.
 ## Design goals
 
 1. **Drop-in git compatibility** — plain `git clone / fetch / push` just works
-   (Smart HTTP v1 + v2 fetch-side command set — ls-refs/fetch, docs/03 9b).
+   (Smart HTTP v1 + v2 fetch-side command set — ls-refs/fetch, docs/04 9b).
 2. **Any subdirectory is a repo** — not sparse checkout: every directory owns
    its commit timeline, and `/r/{repo}/tree/{subdir}` serves a semantically
    complete repository with full projected history.
@@ -77,11 +77,11 @@ directory timelines align both boundaries at the same granularity.
 | Capability | Status |
 |---|---|
 | Root + subtree `git clone/fetch/push` (Smart HTTP v1 + v2) | ✅ verified against real git clients |
-| Git over SSH (`ssh://` + public-key auth, v0 stateful negotiation + v2) | ✅ same serving core, same authz (docs/03 §7b) |
+| Git over SSH (`ssh://` + public-key auth, v0 stateful negotiation + v2) | ✅ same serving core, same authz (docs/04 §7b) |
 | Partial clone (`--filter=blob:none`/`tree:0` + lazy fetch) | ✅ |
 | Serve-path delta packs (OFS/REF-delta past 64KiB) | ✅ |
-| Thin packs on incremental fetch (REF_DELTA vs client-held bases) | ✅ (0.87x git's bytes, docs/12 sec.3) |
-| Authorization: repo / directory / branch granularity, fetch and push (docs/13) | ✅ demo policy, opt-in |
+| Thin packs on incremental fetch (REF_DELTA vs client-held bases) | ✅ (0.87x git's bytes, docs/11 sec.3) |
+| Authorization: repo / directory / branch granularity, fetch and push (docs/07) | ✅ demo policy, opt-in |
 | Personal branch namespaces (`refs/heads/<user>/*`) visible to their owner alone | ✅ the monorepo too-many-branches answer |
 | Web UI: repository management + file browsing (TypeScript, zero runtime deps) | ✅ `web/` |
 | Subtree virtual repos (`/tree/<path>`), full-history projection | ✅ |
@@ -95,10 +95,10 @@ directory timelines align both boundaries at the same granularity.
 | Thin-workspace CLI (`clone/status/commit/pull/log/cat/...`) | ✅ |
 | HA cluster: gateway + refs service + scattered multi-replica pack storage, node failure recovery, dynamic per-repo replicas | ✅ core (local-disk cluster, T23-T26; MySQL/raft refs backend → HA-2) |
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
-| Gitaly gRPC frontend (act as GitLab's storage node) | 🚧 planned (docs/10 §4) |
+| Gitaly gRPC frontend (act as GitLab's storage node) | 🚧 planned (docs/05 §4) |
 
 43 integration cases pin the behavior with the **real git CLI** as the client
-([docs/07](docs/07-testing.md)) — the thin-CLI commit path is cross-verified
+([docs/13](docs/13-testing.md)) — the thin-CLI commit path is cross-verified
 by fresh git clones plus `fsck`.
 
 ## Repository layout
@@ -110,7 +110,7 @@ internal/model/     core data model (anchored commit / timeline / assembly / pro
 internal/storage/   sharded pack storage (shard / metastore / packfile / index / repack)
 internal/view/      read-time view engine (v5 weave, subtree views)
 internal/gitwire/   git wire protocol (smart HTTP v1 / upload-pack / receive-pack)
-internal/service/   protocol-agnostic service layer (shared by all frontends, docs/10)
+internal/service/   protocol-agnostic service layer (shared by all frontends, docs/05)
 internal/rpc/       httpd JSON frontend (/api/v1)
 internal/cli/       thin-workspace client implementation
 internal/config/    layered config (defaults < YAML < flags)
@@ -122,7 +122,7 @@ internal/config/    layered config (defaults < YAML < flags)
 
 ```bash
 docker compose up -d          # build + run; data persists in the banyan-data volume
-                              # authorization is ON in the demo (docs/13):
+                              # authorization is ON in the demo (docs/07):
                               #   web UI  http://localhost:8101 (alice / bob / admin, password demo)
                               #   git     http://alice:demo@localhost:8100/r/demo.git
 
@@ -130,7 +130,7 @@ docker compose up -d          # build + run; data persists in the banyan-data vo
 git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
 
-# git over SSH too (throwaway demo keys in demo/ssh/, docs/14 §3b)
+# git over SSH too (throwaway demo keys in demo/ssh/, docs/12 §3b)
 git clone ssh://alice@localhost:8102/r/demo.git \
   -c core.sshCommand="ssh -i demo/ssh/alice -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
@@ -148,7 +148,7 @@ Constrained networks can build through a mirror:
 
 ### HA cluster demo
 
-One command boots the split deployment (docs/11): a refs service, four
+One command boots the split deployment (docs/10): a refs service, four
 storage nodes and a stateless gateway — packs scatter across the storage
 nodes with 3 replicas each; killing a storage node keeps reads and writes
 alive while the reconciler restores the replica target.
@@ -194,38 +194,58 @@ go run ../cmd/banyan log           # remote history, zero download
 
 ## Non-goals (current stage)
 
-- Push stays on protocol v0 (git itself never defined v2 for receive-pack); the fetch side speaks v2 natively (ls-refs + fetch, docs/03 9b).
+- Push stays on protocol v0 (git itself never defined v2 for receive-pack); the fetch side speaks v2 natively (ls-refs + fetch, docs/04 9b).
 - No DevOps platform features (MR/CI/permissions UI) — banyan is a
-  **storage layer**; collaboration stays on existing platforms (docs/08).
+  **storage layer**; collaboration stays on existing platforms (docs/01).
 - No praefect replication protocol; multi-replica follows banyan's own
-  sharding roadmap (docs/02).
+  sharding roadmap (docs/03).
 
 ## Documentation
 
+Reading order follows the design: overview and positioning first, then the
+architecture layer by layer, then cross-cutting concerns, then operations.
+
+**The story** — what banyan is and where it sits:
+
 | Doc | Contents |
 |---|---|
-| [docs/00-overview.md](docs/00-overview.md) | Vision, design principles, architecture |
-| [docs/01-data-model.md](docs/01-data-model.md) | **Core**: anchored timelines, assembly, git projection |
-| [docs/02-storage.md](docs/02-storage.md) | Sharded pack storage: CAS, dual indexes, repack |
-| [docs/03-git-compat.md](docs/03-git-compat.md) | Git compatibility: Smart HTTP, virtual subtree repos |
-| [docs/04-derived-data.md](docs/04-derived-data.md) | Derived data: commit-graph, path history, blame |
-| [docs/05-cli.md](docs/05-cli.md) | Thin-client CLI command design |
-| [docs/06-roadmap.md](docs/06-roadmap.md) | Milestones |
-| [docs/07-testing.md](docs/07-testing.md) | Integration test matrix |
-| [docs/08-big-picture.md](docs/08-big-picture.md) | Positioning: universal code storage layer + GitLab integration |
+| [docs/00-overview.md](docs/00-overview.md) | Vision, design principles, architecture map |
+| [docs/01-big-picture.md](docs/01-big-picture.md) | Positioning: universal code storage layer + platform integration |
+
+**Core design** — bottom-up by layer (model → storage → wire → service → client):
+
+| Doc | Contents |
+|---|---|
+| [docs/02-data-model.md](docs/02-data-model.md) | **Core**: anchored timelines, assembly, git projection |
+| [docs/03-storage.md](docs/03-storage.md) | Sharded pack storage: CAS, dual indexes, repack |
+| [docs/04-git-compat.md](docs/04-git-compat.md) | Git compatibility: Smart HTTP, SSH transport, virtual subtree repos |
+| [docs/05-service-api.md](docs/05-service-api.md) | Service layer + httpd/Gitaly frontends, API contracts |
+| [docs/06-cli.md](docs/06-cli.md) | Thin-client CLI command design |
+
+**Cross-cutting**:
+
+| Doc | Contents |
+|---|---|
+| [docs/07-authorization.md](docs/07-authorization.md) | Authorization model, personal-branch visibility, web demo |
+| [docs/08-derived-data.md](docs/08-derived-data.md) | Derived data: commit-graph, path history, blame |
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
-| [docs/10-service-api.md](docs/10-service-api.md) | Service layer + httpd/Gitaly dual frontend, API contracts |
-| [docs/11-ha.md](docs/11-ha.md) | High availability: all-in-one vs gateway + Raft cluster, per-repo replicas |
-| [docs/13-authorization.md](docs/13-authorization.md) | Authorization model, personal-branch visibility, web demo |
-| [docs/14-docker-demo.md](docs/14-docker-demo.md) | Docker demo walkthrough: auth, web UI, HA cluster pointers |
-| [docs/12-performance.md](docs/12-performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates |
+
+**Operations & evolution**:
+
+| Doc | Contents |
+|---|---|
+| [docs/10-ha.md](docs/10-ha.md) | High availability: all-in-one vs gateway + cluster, per-repo replicas |
+| [docs/11-performance.md](docs/11-performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates |
+| [docs/12-docker-demo.md](docs/12-docker-demo.md) | Docker demo walkthrough: auth, ssh, web UI, cluster pointers |
+| [docs/13-testing.md](docs/13-testing.md) | Integration test matrix |
+| [docs/14-roadmap.md](docs/14-roadmap.md) | Milestones |
 
 ## Conventions
 
 - Layered commits (bottom-up): `docs → model → storage → gitwire → service →
   cli`; every commit builds and passes its tests independently.
 - New capabilities land with an integration case registered in
-  [docs/07](docs/07-testing.md); assertions use testify (require = scenario
+  [docs/13](docs/13-testing.md); assertions use testify (require = scenario
   gates, assert = independent checks).
 - git is the behavioral reference (its source is the oracle); go-git is just
   a codec library, confined to `internal/storage/packfile.go`.

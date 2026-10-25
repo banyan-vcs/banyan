@@ -15,7 +15,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// ObjectService orchestrates the read path (docs/02 §3):
+// ObjectService orchestrates the read path (docs/03 §3):
 // locate (global index) → local cache → cross-node fetch → decode objects.
 // It also implements model.ObjectLookup for direct model-layer assembly/projection use.
 type ObjectService struct {
@@ -23,7 +23,7 @@ type ObjectService struct {
 	Local *LocalShardStore // all-in-one shard store (nil in gateway mode; tests may use it directly)
 	Algo  model.HashAlgo
 
-	// Backend owns where pack bytes live (docs/11 §3): local disk in
+	// Backend owns where pack bytes live (docs/10 §3): local disk in
 	// all-in-one, the scattered fleet in cluster mode.
 	Backend ShardBackend
 
@@ -32,12 +32,12 @@ type ObjectService struct {
 	packOrder map[string]map[model.OID][]model.OID  // repo → packOID → object list (whole-pack direct serve detection)
 
 	synthMu sync.Mutex
-	synth   map[string]map[model.OID]synthObject // repo → oid → server-synthesized object (projection commits etc., docs/01 §5.2)
+	synth   map[string]map[model.OID]synthObject // repo → oid → server-synthesized object (projection commits etc., docs/02 §5.2)
 
 	idxMu sync.Mutex
-	idx   map[string]*repoIndex // repo → in-memory derived index (docs/02 §1.3 / docs/04)
+	idx   map[string]*repoIndex // repo → in-memory derived index (docs/03 §1.3 / docs/08)
 
-	// Location cache (docs/12 P0-1, B1): oid → pack placement, LRU per repo.
+	// Location cache (docs/11 P0-1, B1): oid → pack placement, LRU per repo.
 	// Entries are valid until a repack moves the object: repack invalidates
 	// the repo set, and a failed read triggers one invalidate + re-locate to
 	// cover repacks initiated by another gateway.
@@ -46,7 +46,7 @@ type ObjectService struct {
 	locLRU  map[string]*list.List
 	locElem map[string]map[model.OID]*list.Element
 
-	// Synthetic-object batching (docs/12 P0-2, B3): a weave materialization
+	// Synthetic-object batching (docs/11 P0-2, B3): a weave materialization
 	// buffers its synthetics and persists them as ONE pack at flush.
 	// Refcounted per repo (nested view entries compose); reads stay correct —
 	// the in-memory synth table updates immediately, only persistence defers.
@@ -54,7 +54,7 @@ type ObjectService struct {
 	batchDep map[string]int
 	batchBuf map[string]map[model.OID]synthObject
 
-	// Clone-shaped response pack cache (docs/12 P2-2, B9): a subtree (or
+	// Clone-shaped response pack cache (docs/11 P2-2, B9): a subtree (or
 	// woven-root) clone's closure never equals a stored pack — projection and
 	// weave OIDs are synthetic — so ExactPackHit cannot fire and every clone
 	// re-encodes online. With no haves, no shallowing and no filter the
@@ -68,7 +68,7 @@ type ObjectService struct {
 	respHits   int
 	respStores int
 
-	// Read-amplification watch (docs/12 P2-1): consecutive single-object
+	// Read-amplification watch (docs/11 P2-1): consecutive single-object
 	// reads of one pack (a cold gateway's closure walk) switch to ONE
 	// whole-pack fetch after packReadAmplify of them — memoized for the
 	// rest of the walk and persisted to the gateway disk cache.
@@ -204,11 +204,11 @@ func (s *ObjectService) ResponseCacheStats() (hits, stores, entries int) {
 // referencing synthetics (adoption merges, thin commits, projections)
 // survive a restart — inside a synth batch (BeginSynthBatch) the
 // persistence defers and the whole batch lands as one pack at flush
-// (docs/12 P0-2); the in-memory table always updates immediately, so
+// (docs/11 P0-2); the in-memory table always updates immediately, so
 // same-process reads (the fold's own ReplaceSubtree) see the object at
 // once. Re-materialization dedups via the in-memory table; pack CAS keeps
 // re-ingest idempotent. Per-object fragments are repack's consolidation job
-// (docs/02 §5, M3).
+// (docs/03 §5, M3).
 func (s *ObjectService) PutSynthetic(repo string, oid model.OID, t model.ObjectType, data []byte) {
 	s.synthMu.Lock()
 	if s.synth[repo] == nil {
@@ -333,7 +333,7 @@ func (s *ObjectService) persistSynthOne(repo string, oid model.OID, t model.Obje
 	}
 }
 
-// --- location cache (docs/12 P0-1) ---
+// --- location cache (docs/11 P0-1) ---
 
 func (s *ObjectService) locHit(repo string, oid model.OID) (ObjectLocation, bool) {
 	s.locMu.Lock()
@@ -386,7 +386,7 @@ func (s *ObjectService) locInvalidate(repo string) {
 	s.readMu.Unlock()
 }
 
-// locate resolves one object's placement, LRU-first (docs/12 P0-1).
+// locate resolves one object's placement, LRU-first (docs/11 P0-1).
 func (s *ObjectService) locate(ctx context.Context, repo string, oid model.OID) (ObjectLocation, error) {
 	if loc, ok := s.locHit(repo, oid); ok {
 		return loc, nil
@@ -404,7 +404,7 @@ func (s *ObjectService) locate(ctx context.Context, repo string, oid model.OID) 
 }
 
 // Prefetch batch-locates every not-yet-cached oid in ONE Meta round trip
-// (docs/12 P0-1): tree-expansion points feed their children here, cutting
+// (docs/11 P0-1): tree-expansion points feed their children here, cutting
 // the cluster's refs RPC count from O(objects) to O(trees).
 func (s *ObjectService) Prefetch(ctx context.Context, repo string, oids []model.OID) {
 	var missing []model.OID
@@ -512,8 +512,8 @@ func objectFromDecoded(dp *DecodedPack, oid model.OID) (model.ObjectType, []byte
 
 // objectFromPack reads one object out of its located pack: decoded-cache
 // fast path, then the cheap whole-pack path (a gateway disk-cache hit — one
-// decode memoizes the pack, docs/12 P2-1), then single-object extraction
-// (docs/12 P1-1), then the whole-pack network fetch + decode as the final
+// decode memoizes the pack, docs/11 P2-1), then single-object extraction
+// (docs/11 P1-1), then the whole-pack network fetch + decode as the final
 // fallback (idx-less packs, old nodes, extraction errors).
 func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid model.OID, loc ObjectLocation) (model.ObjectType, []byte, error) {
 	s.mu.Lock()
@@ -571,7 +571,7 @@ func (s *ObjectService) memoizeDecoded(repo string, packOID model.OID, dp *Decod
 	s.mu.Unlock()
 }
 
-// IngestPack handles one pushed pack (docs/02 §4 write path, docs/11 §5):
+// IngestPack handles one pushed pack (docs/03 §4 write path, docs/10 §5):
 // decode → backend placement/persist (returns the CONFIRMED holder set C) →
 // metadata registration (registration is the fact) → build in-memory indexes.
 func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes []byte) (model.OID, error) {
@@ -614,7 +614,7 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 	return dp.PackOID, nil
 }
 
-// ExactPackHit implements the hot-path whole-pack direct serve (docs/02 §5):
+// ExactPackHit implements the hot-path whole-pack direct serve (docs/03 §5):
 // when the requested object set exactly equals a stored pack's object set it
 // returns that pack OID; the caller can stream the pack bytes verbatim, skipping online re-encoding (re-hash + re-compress).
 func (s *ObjectService) ExactPackHit(repo string, oids map[model.OID]bool) (model.OID, bool) {
@@ -674,7 +674,7 @@ func (s *ObjectService) Lookup(repo string) model.ObjectLookup {
 	return &repoLookup{svc: s, repo: repo}
 }
 
-// TreeStoreFor returns a writable repo view (for assembly, docs/01 §4):
+// TreeStoreFor returns a writable repo view (for assembly, docs/02 §4):
 // reads go through cache/packs; PutTree persists assembly-produced new trees into the synthetic-object layer.
 func (s *ObjectService) TreeStoreFor(repo string) model.TreeStore {
 	return &synthTreeStore{lookup: s.Lookup(repo), svc: s, repo: repo}
@@ -713,7 +713,7 @@ func (r *repoLookup) Blob(oid model.OID) ([]byte, error) {
 	return data, nil
 }
 
-// Tree goes through the tree-entry index (docs/02 §1.3): parse once, memoize
+// Tree goes through the tree-entry index (docs/03 §1.3): parse once, memoize
 // forever; repeated path walks in projection/closure traversal all hit the cache.
 // The returned slice is index-owned; callers must not modify it.
 func (r *repoLookup) Tree(oid model.OID) (*model.Tree, error) {
@@ -787,7 +787,7 @@ func (l *LocalShardStore) DeletePack(repo string, packOID model.OID) {
 }
 
 // GetDecoded reads back and decodes a pack (miss path; object bodies then stay in cache).
-// Single-object reads go through GetObject instead (docs/12 P1-1): idx offset
+// Single-object reads go through GetObject instead (docs/11 P1-1): idx offset
 // + delta-chain inflate, no whole-pack decode.
 func (l *LocalShardStore) GetDecoded(repo string, packOID model.OID) (*DecodedPack, error) {
 	raw, err := l.GetPackBytes(repo, packOID)
@@ -797,7 +797,7 @@ func (l *LocalShardStore) GetDecoded(repo string, packOID model.OID) (*DecodedPa
 	return DecodePack(raw)
 }
 
-// GetObject extracts one object from a stored pack via its idx v2 (docs/12
+// GetObject extracts one object from a stored pack via its idx v2 (docs/11
 // P1-1): header parse at the located offset + delta-chain inflate. A missing
 // or unusable idx surfaces as an error — callers fall back to the whole-pack
 // path.

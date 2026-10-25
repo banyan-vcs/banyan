@@ -54,7 +54,7 @@ func (p AnchorPath) JoinPath(rel string) AnchorPath {
 	return AnchorPath(strings.TrimSuffix(string(p), "/") + "/" + strings.TrimPrefix(rel, "/"))
 }
 
-// Timeline identifies a commit timeline: (repo, anchor, name) (docs/01 §2).
+// Timeline identifies a commit timeline: (repo, anchor, name) (docs/02 §2).
 // The root timeline (anchor="/") is semantically a git branch; a directory
 // timeline is the history of "that subdirectory as an independent repo".
 type Timeline struct {
@@ -67,7 +67,7 @@ type Timeline struct {
 type TimelineState struct {
 	Head OID `json:"head"`
 	// Base records which root-timeline commit the directory timeline forked
-	// from (snapshot fork, explicit rebase semantics, docs/01 §5.2 / §7).
+	// from (snapshot fork, explicit rebase semantics, docs/02 §5.2 / §7).
 	// The root timeline has a zero Base.
 	Base OID `json:"base"`
 }
@@ -77,13 +77,13 @@ func (t Timeline) RefName() string {
 	return "refs/heads/" + t.Name
 }
 
-// InternalRef renders the banyan-internal ref (exposed only via rpc, never on the git wire, docs/03 §6).
+// InternalRef renders the banyan-internal ref (exposed only via rpc, never on the git wire, docs/04 §6).
 func (t Timeline) InternalRef() string {
 	return "refs/banyan/" + strings.TrimPrefix(string(t.Anchor), "/") + "/" + t.Name
 }
 
 // VirtualRepoPath renders the virtual repo URL path (/tree/ prefix form,
-// docs/03 §1: git clients normalize "//" in URLs, so /tree/ is canonical).
+// docs/04 §1: git clients normalize "//" in URLs, so /tree/ is canonical).
 func (t Timeline) VirtualRepoPath() string {
 	if t.Anchor.IsRoot() {
 		return "/r/" + t.Repo

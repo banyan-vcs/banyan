@@ -1,4 +1,4 @@
-// Package model defines banyan's core data model (docs/01-data-model.md):
+// Package model defines banyan's core data model (docs/02-data-model.md):
 //
 //   - Object layer: blob/tree are immutable content-addressed objects, byte-for-byte git-compatible encoding;
 //   - Commit layer: AnchoredCommit can anchor (anchor) a tree at any directory,

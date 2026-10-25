@@ -71,7 +71,7 @@ export function repoListPage(user: string, repos: RepoInfo[], activeUser: string
  <input name="name" placeholder="name" required pattern="[A-Za-z0-9._-]+">
  <button class="btn">create</button>
 </form>
-<p class="muted">Signed in as <b>${esc(activeUser)}</b>: the branch lists you see on each repository are YOUR view — personal branches of other users are invisible (docs/13 §3).</p>`
+<p class="muted">Signed in as <b>${esc(activeUser)}</b>: the branch lists you see on each repository are YOUR view — personal branches of other users are invisible (docs/07 §3).</p>`
   );
 }
 

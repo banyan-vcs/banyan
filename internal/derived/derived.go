@@ -1,4 +1,4 @@
-// Package derived is the derived-data engine (docs/04-derived-data.md).
+// Package derived is the derived-data engine (docs/08-derived-data.md).
 // Contract: pure functions + memoization (key = input version + query) + subscribable incremental recomputation (M3+).
 package derived
 
@@ -9,7 +9,7 @@ import (
 )
 
 // CommitGraph is commit-graph derived data: generation numbers (the git
-// commit-graph algorithm, docs/04 §1) support O(log n) merge-base.
+// commit-graph algorithm, docs/08 §1) support O(log n) merge-base.
 type CommitGraph interface {
 	// Generation returns the commit's generation number (root = 1).
 	Generation(ctx context.Context, repo string, oid model.OID) (uint32, error)
@@ -17,7 +17,7 @@ type CommitGraph interface {
 	MergeBase(ctx context.Context, repo string, a, b model.OID) (model.OID, error)
 }
 
-// PathHistory is path-history derived data: the recursive definition of commits(c, /p) (docs/04 §1).
+// PathHistory is path-history derived data: the recursive definition of commits(c, /p) (docs/08 §1).
 type PathHistory interface {
 	History(ctx context.Context, repo string, path string, since model.OID, limit int) ([]model.OID, error)
 }
@@ -28,7 +28,7 @@ type BlameHunk struct {
 	Commit     model.OID
 }
 
-// Blame is blame derived data: Scion's file-level diff recursive merge algorithm (docs/04 §1).
+// Blame is blame derived data: Scion's file-level diff recursive merge algorithm (docs/08 §1).
 type Blame interface {
 	Blame(ctx context.Context, repo string, rev model.OID, path string) ([]BlameHunk, error)
 }
