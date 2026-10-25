@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
@@ -48,6 +49,10 @@ type Server struct {
 	Opt    Options
 	Health *HealthTable
 	Recon  *Reconciler
+	// Policy is the cluster authorization source of truth (docs/13 §4):
+	// gateways sync their snapshot from /internal/authz/policy. Nil = the
+	// cluster runs open (the pre-M5 behavior).
+	Policy *auth.StaticPolicy
 }
 
 func NewServer(meta storage.MetaStore, opt Options) *Server {
@@ -86,6 +91,19 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/internal/health/nodes", s.hHealthNodes)
 	mux.HandleFunc("/internal/health/maintenance", s.hMaintenance)
 	mux.HandleFunc("/internal/reconcile", s.hReconcile)
+	mux.HandleFunc("/internal/authz/policy", s.hAuthzPolicy)
+}
+
+// hAuthzPolicy serves the cluster's policy snapshot for gateways
+// (docs/13 §4): the refs role is the source of truth, RemotePolicy caches
+// this briefly. Cluster-internal surface, like the meta RPC beside it.
+func (s *Server) hAuthzPolicy(w http.ResponseWriter, _ *http.Request) {
+	if s.Policy == nil {
+		http.Error(w, "authorization disabled on this cluster", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(s.Policy)
 }
 
 // RunBackground drives the health ticker and the reconciler loop until ctx

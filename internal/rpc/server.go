@@ -5,12 +5,14 @@
 package rpc
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 
+	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
 	"github.com/banyan-vcs/banyan/internal/storage"
@@ -24,6 +26,11 @@ type Server struct {
 	Algo    model.HashAlgo
 	Views   *view.Service // derived-view engine (docs/01 sec.13)
 	Svc     *service.Service
+	// Auth, when set, requires an authenticated identity on every /api/v1
+	// request (docs/13 §5): the JSON surface is authentication-gated; the
+	// fine-grained repo/dir/branch rules live on the git wire — the web
+	// service enforces page-level visibility through it.
+	Auth auth.Service
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
@@ -32,20 +39,59 @@ func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo mode
 }
 
 func (s *Server) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v1/objects", s.handleObjects)
-	mux.HandleFunc("/api/v1/objects/content", s.handleObjectsContent)
-	mux.HandleFunc("/api/v1/timelines", s.handleTimelines)
-	mux.HandleFunc("/api/v1/log", s.handleLog)
-	mux.HandleFunc("/api/v1/repack", s.handleRepack)
-	mux.HandleFunc("/api/v1/fetch-trees", s.handleFetchTrees)
-	mux.HandleFunc("/api/v1/commit", s.handleCommit)
-	mux.HandleFunc("/api/v1/refs", s.handleRefs)
-	mux.HandleFunc("/api/v1/repos", s.handleRepos)
-	mux.HandleFunc("/api/v1/repos/", s.handleRepoSub) // /api/v1/repos/<repo>/placement
-	mux.HandleFunc("/api/v1/cluster/nodes", s.handleClusterNodes)
-	mux.HandleFunc("/api/v1/resolve", s.handleResolve)
+	mux.HandleFunc("/api/v1/objects", s.authn(s.handleObjects))
+	mux.HandleFunc("/api/v1/objects/content", s.authn(s.handleObjectsContent))
+	mux.HandleFunc("/api/v1/timelines", s.authn(s.handleTimelines))
+	mux.HandleFunc("/api/v1/log", s.authn(s.handleLog))
+	mux.HandleFunc("/api/v1/repack", s.authn(s.handleRepack))
+	mux.HandleFunc("/api/v1/fetch-trees", s.authn(s.handleFetchTrees))
+	mux.HandleFunc("/api/v1/commit", s.authn(s.handleCommit))
+	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
+	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
+	mux.HandleFunc("/api/v1/repos/", s.authn(s.handleRepoSub)) // /api/v1/repos/<repo>/placement
+	mux.HandleFunc("/api/v1/cluster/nodes", s.authn(s.handleClusterNodes))
+	mux.HandleFunc("/api/v1/resolve", s.authn(s.handleResolve))
+	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
 	// TODO(M2): /api/v1/diff  /api/v1/file-history
 	// TODO(M3): /api/v1/blame
+}
+
+// authn wraps a handler with the authentication requirement (no-op without
+// an Auth service).
+func (s *Server) authn(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Auth != nil && s.Auth.Identify(r).Anonymous() {
+			w.Header().Set("WWW-Authenticate", `Basic realm="banyan"`)
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// handleLogin verifies credentials for the web service (docs/13 §5): the
+// single-source check against the wired policy — the session layer lives in
+// the web tier, the password table never leaves the server.
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if s.Auth == nil {
+		writeJSON(w, http.StatusNotImplemented, errEnvelope{Error: errBody{Code: "AUTH_DISABLED", Message: "authorization is off"}})
+		return
+	}
+	check := r.Clone(r.Context())
+	check.Header.Set("Authorization",
+		"Basic "+base64.StdEncoding.EncodeToString([]byte(req.User+":"+req.Password)))
+	if s.Auth.Identify(check).Anonymous() {
+		writeJSON(w, http.StatusUnauthorized, errEnvelope{Error: errBody{Code: "INVALID_CREDENTIALS", Message: "wrong user or password"}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"user": req.User})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -306,12 +352,33 @@ func (s *Server) handleRefs(w http.ResponseWriter, r *http.Request) {
 // --- GET /api/v1/repos: repo registry ---
 
 func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
-	repos, err := s.Svc.ListRepos(r.Context())
-	if err != nil {
-		writeServiceErr(w, err)
-		return
+	switch r.Method {
+	case http.MethodPost:
+		// Repository creation for the management surface (docs/13 sec.5, the
+		// web tier): the same registry the git-surface auto-create uses.
+		var req struct {
+			Name string `json:"name"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.Name == "" || strings.Contains(req.Name, "/") {
+			writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "name required, single path segment"}})
+			return
+		}
+		if err := s.Meta.CreateRepo(r.Context(), req.Name, s.Algo); err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"name": req.Name})
+	default:
+		repos, err := s.Svc.ListRepos(r.Context())
+		if err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
 }
 
 // --- GET/PUT /api/v1/repos/<repo>/placement: per-repo replica target (docs/11 §6) ---

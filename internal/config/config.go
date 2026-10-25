@@ -38,6 +38,22 @@ type Config struct {
 	ReconCurrency int    `yaml:"recon_concurrency"`
 	HeartbeatSec  int    `yaml:"heartbeat_sec"`
 
+	Auth struct {
+		// Remote selects cluster mode on the gateway role: decisions run
+		// against the policy snapshot synced from the refs service
+		// (docs/13 §4).
+		Remote bool
+		// Users enables the demo authorization policy (docs/13): HTTP Basic
+		// against this static table; absent = authorization off.
+		Users  map[string]string `yaml:"users"`
+		Admins []string          `yaml:"admins"`
+		// ProtectedBranches are admin-push-only (e.g. main).
+		ProtectedBranches []string `yaml:"protected_branches"`
+		// SubtreeAccess restricts fetch of subtree virtual repos to listed
+		// users (directory granularity).
+		SubtreeAccess map[string][]string `yaml:"subtree_access"`
+	} `yaml:"auth"`
+
 	Cache struct {
 		// PackDir enables the gateway's on-disk pack cache (docs/12 P2-1):
 		// packs fetched from storage nodes persist across gateway restarts.

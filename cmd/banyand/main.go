@@ -20,6 +20,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/config"
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
@@ -76,10 +77,32 @@ func runAllInOne(cfg *config.Config) {
 	}
 
 	mux := http.NewServeMux()
-	gitwire.NewServer(meta, objects, model.SHA1).Register(mux)
-	rpc.NewServer(meta, objects, model.SHA1).Register(mux)
+	gw := gitwire.NewServer(meta, objects, model.SHA1)
+	api := rpc.NewServer(meta, objects, model.SHA1)
+	if policy := staticPolicy(cfg); policy != nil {
+		gw.Auth = policy
+		api.Auth = policy
+		log.Printf("auth: enabled (%d users, %d admins, protected %v)",
+			len(policy.Users), len(policy.Admins), policy.ProtectedBranches)
+	}
+	gw.Register(mux)
+	api.Register(mux)
 	root(mux)
 	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
+}
+
+// staticPolicy builds the demo authorization policy from config (docs/13
+// §2): nil when the auth section is absent — authorization off.
+func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
+	if len(cfg.Auth.Users) == 0 {
+		return nil
+	}
+	return &auth.StaticPolicy{
+		Users:             cfg.Auth.Users,
+		Admins:            cfg.Auth.Admins,
+		ProtectedBranches: cfg.Auth.ProtectedBranches,
+		SubtreeAccess:     cfg.Auth.SubtreeAccess,
+	}
 }
 
 // runGateway is the stateless frontend: every store/metadata call crosses
@@ -109,8 +132,19 @@ func runGateway(cfg *config.Config) {
 	}
 
 	mux := http.NewServeMux()
-	gitwire.NewServer(meta, objects, model.SHA1).Register(mux)
-	rpc.NewServer(meta, objects, model.SHA1).Register(mux)
+	gw := gitwire.NewServer(meta, objects, model.SHA1)
+	api := rpc.NewServer(meta, objects, model.SHA1)
+	if cfg.Auth.Remote {
+		// The gateway decides against a policy snapshot synced from the
+		// refs service (docs/13 §4) — same abstraction, synced state; the
+		// concrete rules live on refs, never duplicated here.
+		policy := auth.NewRemotePolicy(cfg.RefsAddr)
+		gw.Auth = policy
+		api.Auth = policy
+		log.Printf("auth: remote policy from %s", cfg.RefsAddr)
+	}
+	gw.Register(mux)
+	api.Register(mux)
 	root(mux)
 	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
 }
@@ -130,6 +164,7 @@ func runRefs(cfg *config.Config) {
 		ReconInterval:    time.Duration(cfg.ReconSec) * time.Second,
 		ReconConcurrency: cfg.ReconCurrency,
 	})
+	srv.Policy = staticPolicy(cfg)
 	mux := http.NewServeMux()
 	srv.Register(mux)
 	root(mux)

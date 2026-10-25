@@ -40,7 +40,9 @@ func newAuthServer(t *testing.T) (*server, *auth.StaticPolicy) {
 	gw := gitwire.NewServer(meta, objects, model.SHA1)
 	gw.Auth = policy
 	gw.Register(mux)
-	rpc.NewServer(meta, objects, model.SHA1).Register(mux)
+	api := rpc.NewServer(meta, objects, model.SHA1)
+	api.Auth = policy // same wiring as the banyand demo (docs/13 §5)
+	api.Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return &server{Server: srv}, policy
@@ -133,15 +135,55 @@ func TestAuthorizationWire(t *testing.T) {
 	fsckClean(t, fresh)
 }
 
-// TestAuthorizationRPCAuthnOff documents the M5 boundary: the JSON RPC
-// surface stays open when only the git wire layer carries a policy — fine
-// for the demo where the web service is the UI; fine-grained RPC authz is
-// listed as M5 follow-up (docs/13 §5).
-func TestAuthorizationRPCAuthnOff(t *testing.T) {
+// TestAuthorizationRPC drives the JSON-surface policy (docs/13 §5):
+// authentication-gated /api/v1, the login endpoint as the web tier's
+// single-source credential check, and repository creation for the
+// management page.
+func TestAuthorizationRPC(t *testing.T) {
 	needGit(t)
 	s, _ := newAuthServer(t)
+
+	// Anonymous RPC is challenged; credentials pass.
 	resp, err := http.Get(s.URL + "/api/v1/repos")
 	require.NoError(t, err)
-	defer resp.Body.Close()
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "RPC 无策略时保持开放（M5 后续）")
+	resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "匿名 RPC 应 401")
+
+	req, _ := http.NewRequest("GET", s.URL+"/api/v1/repos", nil)
+	req.SetBasicAuth("alice", "a")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "认证 RPC 应放行")
+
+	// Login endpoint: the web tier's credential check (single source).
+	login := func(user, pass string) int {
+		body := strings.NewReader(`{"user":"` + user + `","password":"` + pass + `"}`)
+		resp, err := http.Post(s.URL+"/api/v1/auth/login", "application/json", body)
+		require.NoError(t, err)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	assert.Equal(t, http.StatusOK, login("alice", "a"))
+	assert.Equal(t, http.StatusUnauthorized, login("alice", "wrong"))
+
+	// Repository creation (management surface), then it is pushable.
+	req, _ = http.NewRequest("POST", s.URL+"/api/v1/repos", strings.NewReader(`{"name":"t38b"}`))
+	req.SetBasicAuth("alice", "a")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "建仓应成功")
+
+	src := t.TempDir()
+	git(t, src, "init", "-q", "-b", "main", ".")
+	write(t, filepath.Join(src, "a.txt"), "a\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-qm", "first")
+	// main is protected: the admin seeds it (the developer path is covered
+	// by the wire test above).
+	git(t, src, "push", "-q", credURL(s, "admin", "x", "/r/t38b.git"), "main")
+	fresh := cloneRepo(t, s, credURL(s, "bob", "b", "/r/t38b.git"))
+	assert.Equal(t, "a\n", readFile(t, filepath.Join(fresh, "a.txt")))
 }

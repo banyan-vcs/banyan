@@ -59,3 +59,19 @@ meta: "mem"
 # cache:
 #   pack_dir: "/var/lib/banyan/gateway-cache"
 #   pack_max_mb: 1024
+
+# --- 授权（docs/13；缺省=关闭） ---
+
+# 一体化 demo 的静态策略：HTTP Basic 用户表 + 管理员 + 保护分支 + 目录访问
+#auth:
+#  users:
+#    alice: "demo"
+#    bob: "demo"
+#    admin: "admin"
+#  admins: [admin]
+#  protected_branches: [main]
+#  subtree_access:
+#    "/secret": [admin]     # 目录级下载控制（子树虚拟仓库粒度）
+
+# gateway 角色：决策走 refs 服务同步的策略快照（集群模式的策略源）
+#  remote: true
