@@ -21,6 +21,10 @@ type Options struct {
 	DeadAfter        time.Duration
 	ReconInterval    time.Duration
 	ReconConcurrency int
+	// AddressingMode selects the storage addressing mode (docs/03 §6):
+	// "named" (default) or "hashed" — the reconciler must copy/trim packs
+	// under the same key the gateways write them.
+	AddressingMode string
 }
 
 func (o *Options) fill() {
@@ -58,11 +62,13 @@ type Server struct {
 func NewServer(meta storage.MetaStore, opt Options) *Server {
 	opt.fill()
 	health := NewHealthTable(opt.SuspectAfter, opt.DeadAfter)
+	recon := NewReconciler(meta, health, opt.DefaultReplicas, opt.ReconConcurrency)
+	recon.Addressing = storage.NewAddressing(opt.AddressingMode, meta)
 	return &Server{
 		Meta:   meta,
 		Opt:    opt,
 		Health: health,
-		Recon:  NewReconciler(meta, health, opt.DefaultReplicas, opt.ReconConcurrency),
+		Recon:  recon,
 	}
 }
 
@@ -79,6 +85,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/create-repo", s.hCreateRepo)
 	meta.HandleFunc("/internal/meta/get-repo", s.hGetRepo)
 	meta.HandleFunc("/internal/meta/list-repos", s.hListRepos)
+	meta.HandleFunc("/internal/meta/rename-repo", s.hRenameRepo)
 	meta.HandleFunc("/internal/meta/timeline", s.hTimeline)
 	meta.HandleFunc("/internal/meta/cas-head", s.hCASHead)
 	meta.HandleFunc("/internal/meta/ensure-timeline", s.hEnsureTimeline)
@@ -314,6 +321,24 @@ func (s *Server) hCreateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Meta.CreateRepo(r.Context(), req.Repo, model.HashAlgo(req.Algo)); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// hRenameRepo flips the registry only (docs/03 §6): storage-layer moves for
+// named addressing happen at the gateway BEFORE this call, so by the time
+// the name changes the bytes already answer under it.
+func (s *Server) hRenameRepo(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.RenameRepo(r.Context(), req.From, req.To); err != nil {
 		writeErr(w, err)
 		return
 	}

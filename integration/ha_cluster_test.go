@@ -42,9 +42,11 @@ type haCluster struct {
 	refsHTTP *http.Server
 	RefsURL  string
 	Storage  map[string]*httptest.Server // nodeID → server (nil after kill)
+	Roots    map[string]string           // nodeID → shard root (T40 disk assertions)
 	beats    map[string]context.CancelFunc // nodeID → heartbeat loop cancel
 	GW       *httptest.Server
 	cancel   context.CancelFunc
+	mode     string // storage addressing mode (docs/03 §6): "" = named
 
 	// Per-node internal request counters (T36: gateway disk-cache effect).
 	packGets atomic.Int32 // GET /internal/pack
@@ -53,17 +55,22 @@ type haCluster struct {
 
 var haNodeSeq atomic.Int32
 
-// startHACluster boots refs + N storage nodes + one gateway. Health
-// thresholds are tight (50ms/200ms) so a killed node is deterministically
-// dead after a short wait; heartbeats run at 100ms.
+// startHACluster boots refs + N storage nodes + one gateway (named
+// addressing). startHAClusterMode covers hashed addressing (T40).
 func startHACluster(t *testing.T, nodes int) *haCluster {
+	return startHAClusterMode(t, nodes, "")
+}
+
+func startHAClusterMode(t *testing.T, nodes int, mode string) *haCluster {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &haCluster{
 		t:       t,
 		Storage: map[string]*httptest.Server{},
+		Roots:   map[string]string{},
 		beats:   map[string]context.CancelFunc{},
 		cancel:  cancel,
+		mode:    mode,
 	}
 
 	// refs service on a dedicated listener (restartable in T26).
@@ -80,6 +87,7 @@ func startHACluster(t *testing.T, nodes int) *haCluster {
 	rmeta := &storage.RemoteMeta{Refs: refsClient}
 	backend := storage.NewScatteredStore(refsClient, 3, "quorum")
 	objects := storage.NewObjectServiceWithBackend(rmeta, backend, model.SHA1)
+	objects.Addressing = storage.NewAddressing(c.mode, rmeta)
 	gmux := http.NewServeMux()
 	gitwire.NewServer(rmeta, objects, model.SHA1).Register(gmux)
 	rpc.NewServer(rmeta, objects, model.SHA1).Register(gmux)
@@ -101,6 +109,7 @@ func (c *haCluster) startRefs(ctx context.Context) {
 		DeadAfter:        1000 * time.Millisecond,
 		ReconInterval:    time.Hour, // background loop idle; tests drive RunOnce
 		ReconConcurrency: 4,
+		AddressingMode:   c.mode,
 	})
 	if c.refsAddr == "" {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -136,7 +145,8 @@ func (c *haCluster) startStorageNode(ctx context.Context) {
 	// listener first and serve on it explicitly.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(c.t, err)
-	node := storenode.New(id, c.t.TempDir(), c.RefsURL, ln.Addr().String())
+	root := c.t.TempDir()
+	node := storenode.New(id, root, c.RefsURL, ln.Addr().String())
 	mux := http.NewServeMux()
 	node.Register(mux)
 	counting := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +167,7 @@ func (c *haCluster) startStorageNode(ctx context.Context) {
 	nctx, ncancel := context.WithCancel(ctx)
 	go node.HeartbeatLoop(nctx, 100*time.Millisecond)
 	c.Storage[id] = ts
+	c.Roots[id] = root
 	c.beats[id] = ncancel
 }
 
@@ -177,6 +188,7 @@ func (c *haCluster) restartGateway(cacheDir string) {
 		backend.DiskCache = cache
 	}
 	objects := storage.NewObjectServiceWithBackend(rmeta, backend, model.SHA1)
+	objects.Addressing = storage.NewAddressing(c.mode, rmeta)
 	gmux := http.NewServeMux()
 	gitwire.NewServer(rmeta, objects, model.SHA1).Register(gmux)
 	rpc.NewServer(rmeta, objects, model.SHA1).Register(gmux)

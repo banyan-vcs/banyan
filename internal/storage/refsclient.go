@@ -169,6 +169,14 @@ func (m *RemoteMeta) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	return out.Repos, nil
 }
 
+// RenameRepo flips the registry on the refs service (docs/03 §6). Storage-
+// layer moves (named addressing) have already happened at the caller — the
+// refs service never touches pack bytes.
+func (m *RemoteMeta) RenameRepo(ctx context.Context, from, to string) error {
+	return m.Refs.call(ctx, "/internal/meta/rename-repo",
+		map[string]string{"from": from, "to": to}, nil)
+}
+
 func (m *RemoteMeta) PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {
 	oids := make([]string, len(objects))
 	for i, o := range objects {

@@ -92,7 +92,47 @@ func NewSQLiteMetaStore(path string) (*SQLiteMetaStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("sqlite meta: schema: %w", err)
 	}
+	if err := migrateRepoStorageID(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("sqlite meta: storage-id migration: %w", err)
+	}
 	return &SQLiteMetaStore{db: db}, nil
+}
+
+// migrateRepoStorageID adds repos.storage_id for databases predating the
+// column (docs/03 §6) and backfills every existing row with a fresh identity.
+func migrateRepoStorageID(db *sql.DB) error {
+	var hasCol int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('repos') WHERE name='storage_id'`).Scan(&hasCol); err != nil {
+		return err
+	}
+	if hasCol == 1 {
+		return nil
+	}
+	if _, err := db.Exec("ALTER TABLE repos ADD COLUMN storage_id TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	rows, err := db.Query("SELECT name FROM repos WHERE storage_id=''")
+	if err != nil {
+		return err
+	}
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return err
+		}
+		names = append(names, n)
+	}
+	rows.Close()
+	for _, n := range names {
+		if _, err := db.Exec("UPDATE repos SET storage_id=? WHERE name=?", NewStorageID(), n); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteMetaStore) Close() error { return s.db.Close() }
@@ -103,7 +143,8 @@ func isUniqueViolation(err error) bool {
 
 func (s *SQLiteMetaStore) CreateRepo(ctx context.Context, repo string, algo model.HashAlgo) error {
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO repos(name, algo, default_branch) VALUES(?, ?, 'main')", repo, int(algo))
+		"INSERT INTO repos(name, algo, default_branch, storage_id) VALUES(?, ?, 'main', ?)",
+		repo, int(algo), NewStorageID())
 	if isUniqueViolation(err) {
 		return fmt.Errorf("repo %s already exists", repo)
 	}
@@ -114,8 +155,8 @@ func (s *SQLiteMetaStore) GetRepo(ctx context.Context, repo string) (RepoInfo, e
 	var info RepoInfo
 	var algo int
 	err := s.db.QueryRowContext(ctx,
-		"SELECT name, algo, default_branch FROM repos WHERE name=?", repo).
-		Scan(&info.ID, &algo, &info.DefaultBranch)
+		"SELECT name, algo, default_branch, storage_id FROM repos WHERE name=?", repo).
+		Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID)
 	if err == sql.ErrNoRows {
 		return RepoInfo{}, fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
@@ -127,7 +168,7 @@ func (s *SQLiteMetaStore) GetRepo(ctx context.Context, repo string) (RepoInfo, e
 }
 
 func (s *SQLiteMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT name, algo, default_branch FROM repos ORDER BY name")
+	rows, err := s.db.QueryContext(ctx, "SELECT name, algo, default_branch, storage_id FROM repos ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -136,13 +177,44 @@ func (s *SQLiteMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	for rows.Next() {
 		var info RepoInfo
 		var algo int
-		if err := rows.Scan(&info.ID, &algo, &info.DefaultBranch); err != nil {
+		if err := rows.Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID); err != nil {
 			return nil, err
 		}
 		info.Algo = model.HashAlgo(algo)
 		out = append(out, info)
 	}
 	return out, rows.Err()
+}
+
+// RenameRepo moves every repo-keyed row in one transaction (docs/03 §6).
+// The storage_id column rides along untouched — hashed addressing keys stay
+// stable across renames by construction.
+func (s *SQLiteMetaStore) RenameRepo(ctx context.Context, from, to string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var one int
+	if err := tx.QueryRowContext(ctx, "SELECT 1 FROM repos WHERE name=?", from).Scan(&one); err == sql.ErrNoRows {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, from)
+	} else if err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, "SELECT 1 FROM repos WHERE name=?", to).Scan(&one); err == nil {
+		return fmt.Errorf("repo %s already exists", to)
+	} else if err != sql.ErrNoRows {
+		return err
+	}
+	for _, table := range []string{"timelines", "packs", "pack_nodes", "objects", "placement"} {
+		if _, err := tx.ExecContext(ctx, "UPDATE "+table+" SET repo=? WHERE repo=?", to, from); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE repos SET name=? WHERE name=?", to, from); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SQLiteMetaStore) PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {

@@ -8,9 +8,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/banyan-vcs/banyan/internal/model"
@@ -41,11 +43,36 @@ func New(nodeID, root, refsAddr, advertise string) *Server {
 // Register mounts the internal pack endpoints.
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/internal/pack", s.hPack)
+	mux.HandleFunc("/internal/pack/rename", s.hRename)
 	mux.HandleFunc("/internal/object", s.hObject)
 	mux.HandleFunc("/internal/status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"role":"storage"}`))
 	})
+}
+
+// hRename moves a repo directory between storage keys (named addressing,
+// docs/03 §6). Missing source = OK (idempotent re-runs); existing target is
+// refused — the node is a warehouse, not a merger.
+func (s *Server) hRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.From == "" || req.To == "" ||
+		strings.ContainsAny(req.From, `/\`) || strings.ContainsAny(req.To, `/\`) {
+		http.Error(w, "from and to required (single path segments)", http.StatusBadRequest)
+		return
+	}
+	if err := s.local.RenameRepo(req.From, req.To); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // hObject serves single-object extraction (docs/11 P1-1): the pack's idx

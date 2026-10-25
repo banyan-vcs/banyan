@@ -20,6 +20,10 @@ type Reconciler struct {
 	Health      *HealthTable
 	DefaultR    int
 	Concurrency int
+	// Addressing resolves repo names to storage keys for node calls
+	// (docs/03 §6): hashed mode copies/trims under the opaque key while the
+	// registry stays name-keyed. Nil = named (identity).
+	Addressing *storage.Addressing
 
 	clientsMu sync.Mutex
 	clients   map[string]*storage.NodeClient
@@ -116,7 +120,7 @@ func (r *Reconciler) convergePack(ctx context.Context, repo string, p storage.Pa
 		}
 		for _, id := range drop {
 			if addr, ok := r.Health.addrOf(id); ok {
-				_ = r.client(addr).DeletePack(ctx, repo, p.PackOID)
+				_ = r.client(addr).DeletePack(ctx, r.nodeKey(ctx, repo), p.PackOID)
 			}
 		}
 		mu.Lock()
@@ -171,16 +175,30 @@ func (r *Reconciler) convergePack(ctx context.Context, repo string, p storage.Pa
 	return false
 }
 
+// nodeKey resolves the storage key for node-facing calls (docs/03 §6);
+// identity under named addressing, the opaque @hashed path otherwise.
+// Resolution failure degrades to the name — the call fails on the node
+// instead of blocking the whole convergence pass.
+func (r *Reconciler) nodeKey(ctx context.Context, repo string) string {
+	key, err := r.Addressing.Key(ctx, repo)
+	if err != nil {
+		log.Printf("reconciler %s: addressing: %v", repo, err)
+		return repo
+	}
+	return key
+}
+
 // copyPack streams one pack from a live holder to the target nodes and
 // registers the new holder set: copy → verify checksum → register.
 func (r *Reconciler) copyPack(ctx context.Context, repo string, packOID model.OID, aliveSrc []string, targets []storage.NodeInfo) error {
+	key := r.nodeKey(ctx, repo)
 	var raw []byte
 	for _, id := range aliveSrc {
 		addr, ok := r.Health.addrOf(id)
 		if !ok {
 			continue
 		}
-		data, err := r.client(addr).GetPack(ctx, repo, packOID)
+		data, err := r.client(addr).GetPack(ctx, key, packOID)
 		if err != nil {
 			continue
 		}
@@ -195,7 +213,7 @@ func (r *Reconciler) copyPack(ctx context.Context, repo string, packOID model.OI
 	}
 	var confirmed []string
 	for _, t := range targets {
-		if err := r.client(t.Addr).PutPack(ctx, repo, packOID, raw, nil); err != nil {
+		if err := r.client(t.Addr).PutPack(ctx, key, packOID, raw, nil); err != nil {
 			log.Printf("reconciler: put %s to %s: %v", packOID, t.ID, err)
 			continue
 		}

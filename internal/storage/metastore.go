@@ -27,6 +27,11 @@ type RepoRegistry interface {
 	GetRepo(ctx context.Context, repo string) (RepoInfo, error)
 	// ListRepos enumerates all repos (CLI repo ls / Gitaly RepositoryService).
 	ListRepos(ctx context.Context) ([]RepoInfo, error)
+	// RenameRepo renames a repository across the registry (docs/03 §6):
+	// every repo-keyed row moves in one transaction; the immutable StorageID
+	// rides along untouched. Storage-layer moves (named addressing) happen
+	// BEFORE this call — see ObjectService.RenameRepo.
+	RenameRepo(ctx context.Context, from, to string) error
 }
 
 // PackRegistry is the central pack table: pack → replica nodes. Packs are
@@ -97,6 +102,10 @@ type RepoInfo struct {
 	ID            string         `json:"id"`
 	Algo          model.HashAlgo `json:"algo"`
 	DefaultBranch string         `json:"default_branch"`
+	// StorageID is the immutable per-repo storage identity (docs/03 §6):
+	// hashed addressing derives its opaque on-disk key from it, so renames
+	// never move data. Empty only for rows predating the column.
+	StorageID string `json:"storage_id,omitempty"`
 }
 
 // ErrNonFastForward mirrors git push non-fast-forward (docs/02 §4.3).
@@ -138,7 +147,7 @@ func (m *MemoryMetaStore) CreateRepo(_ context.Context, repo string, algo model.
 	if _, exists := m.repos[repo]; exists {
 		return fmt.Errorf("repo %s already exists", repo)
 	}
-	m.repos[repo] = RepoInfo{ID: repo, Algo: algo, DefaultBranch: "main"}
+	m.repos[repo] = RepoInfo{ID: repo, Algo: algo, DefaultBranch: "main", StorageID: NewStorageID()}
 	return nil
 }
 
@@ -150,6 +159,33 @@ func (m *MemoryMetaStore) GetRepo(_ context.Context, repo string) (RepoInfo, err
 		return RepoInfo{}, fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
 	return info, nil
+}
+
+func (m *MemoryMetaStore) RenameRepo(_ context.Context, from, to string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	info, ok := m.repos[from]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, from)
+	}
+	if _, exists := m.repos[to]; exists {
+		return fmt.Errorf("repo %s already exists", to)
+	}
+	delete(m.repos, from)
+	m.repos[to] = info
+	m.packs[to], m.packs[from] = m.packs[from], nil
+	delete(m.packs, from)
+	m.packObjs[to], m.packObjs[from] = m.packObjs[from], nil
+	delete(m.packObjs, from)
+	m.index[to], m.index[from] = m.index[from], nil
+	delete(m.index, from)
+	m.timelines[to], m.timelines[from] = m.timelines[from], nil
+	delete(m.timelines, from)
+	if p, ok := m.placements[from]; ok {
+		m.placements[to] = p
+		delete(m.placements, from)
+	}
+	return nil
 }
 
 func (m *MemoryMetaStore) ListRepos(_ context.Context) ([]RepoInfo, error) {

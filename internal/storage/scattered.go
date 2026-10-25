@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -27,6 +28,28 @@ func NewNodeClient(addr string) *NodeClient {
 
 func (n *NodeClient) packURL(repo string, packOID model.OID) string {
 	return n.Addr + "/internal/pack?repo=" + url.QueryEscape(repo) + "&oid=" + url.QueryEscape(string(packOID))
+}
+
+// RenameRepo asks a node to move a repo directory between storage keys
+// (named addressing, docs/03 §6). A node without the source answers OK —
+// the move is idempotent per node.
+func (n *NodeClient) RenameRepo(ctx context.Context, from, to string) error {
+	body := []byte(`{"from":` + strconv.Quote(from) + `,"to":` + strconv.Quote(to) + `}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.Addr+"/internal/pack/rename", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("storage %s rename %s→%s: status %d", n.Addr, from, to, resp.StatusCode)
+	}
+	return nil
 }
 
 func (n *NodeClient) PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) error {
@@ -351,4 +374,29 @@ func (s *ScatteredStore) DeletePack(ctx context.Context, repo string, packOID mo
 		}(addr)
 	}
 	wg.Wait()
+}
+
+// RenameRepo fans a directory move out to every node in the current health
+// view (named addressing, docs/03 §6). Idempotent per node: a holder without
+// the source answers OK, so a re-run after a partial failure only reaches
+// laggards. Any refusal aborts before the registry flip at the caller.
+func (s *ScatteredStore) RenameRepo(ctx context.Context, from, to string) error {
+	var firstErr error
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, n := range s.healthyNodes(ctx) {
+		wg.Add(1)
+		go func(addr string) {
+			defer wg.Done()
+			if err := s.client(addr).RenameRepo(ctx, from, to); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("node %s: %w", addr, err)
+				}
+				mu.Unlock()
+			}
+		}(n.Addr)
+	}
+	wg.Wait()
+	return firstErr
 }

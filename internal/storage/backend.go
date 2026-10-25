@@ -37,6 +37,11 @@ type ShardBackend interface {
 	// DeletePack removes the pack from the given holders (repack old-shard
 	// cleanup / replica trim). Missing files are tolerated.
 	DeletePack(ctx context.Context, repo string, packOID model.OID, holders []string)
+	// RenameRepo moves every pack between two storage keys (named
+	// addressing only — hashed keys are immutable, docs/03 §6). Idempotent:
+	// a holder without the source answers OK. The registry flip happens at
+	// the caller AFTER this succeeds.
+	RenameRepo(ctx context.Context, from, to string) error
 }
 
 // LocalBackend is the all-in-one shard backend: one local store, one node ID.
@@ -70,6 +75,10 @@ func (b *LocalBackend) GetObject(_ context.Context, repo string, packOID, oid mo
 
 func (b *LocalBackend) DeletePack(_ context.Context, repo string, packOID model.OID, _ []string) {
 	b.Local.DeletePack(repo, packOID)
+}
+
+func (b *LocalBackend) RenameRepo(_ context.Context, from, to string) error {
+	return b.Local.RenameRepo(from, to)
 }
 
 // nodeClientFor adapts a holder address to a NodeClient (ScatteredStore and

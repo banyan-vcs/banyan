@@ -27,6 +27,12 @@ type ObjectService struct {
 	// all-in-one, the scattered fleet in cluster mode.
 	Backend ShardBackend
 
+	// Addressing, when set to hashed mode, maps repo names to opaque
+	// storage keys at this one seam (docs/03 §6): everything below the
+	// ObjectService — backend wire calls and on-disk layouts — speaks keys,
+	// never names. Nil = named addressing (the repo name IS the key).
+	Addressing *Addressing
+
 	mu        sync.Mutex
 	cache     map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result (LRU is M2's business)
 	packOrder map[string]map[model.OID][]model.OID  // repo → packOID → object list (whole-pack direct serve detection)
@@ -522,21 +528,25 @@ func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid mod
 	if dp != nil {
 		return objectFromDecoded(dp, oid)
 	}
+	key, kerr := s.storeKey(ctx, repo)
+	if kerr != nil {
+		return "", nil, kerr
+	}
 	holders := s.packHolders(ctx, repo, loc.PackOID, loc.NodeID)
-	if raw, ok := s.Backend.CheapPack(ctx, repo, loc.PackOID, holders); ok {
+	if raw, ok := s.Backend.CheapPack(ctx, key, loc.PackOID, holders); ok {
 		if decoded, derr := DecodePack(raw); derr == nil {
 			s.memoizeDecoded(repo, loc.PackOID, decoded)
 			return objectFromDecoded(decoded, oid)
 		}
 	}
 	if !s.ampRead(repo, loc.PackOID) {
-		if t, data, err := s.Backend.GetObject(ctx, repo, loc.PackOID, oid, holders, s.Algo); err == nil {
+		if t, data, err := s.Backend.GetObject(ctx, key, loc.PackOID, oid, holders, s.Algo); err == nil {
 			return t, data, nil
 		}
 	}
 	// Amplified (a closure walk) or single-object failed: one whole-pack
 	// fetch memoizes everything and lands in the gateway disk cache.
-	raw, err := s.Backend.GetPack(ctx, repo, loc.PackOID, holders)
+	raw, err := s.Backend.GetPack(ctx, key, loc.PackOID, holders)
 	if err != nil {
 		return "", nil, err
 	}
@@ -588,7 +598,11 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 			log.Printf("ingest %s: idx encode failed (skip): %v", repo, err)
 		}
 	}
-	confirmed, err := s.Backend.PutPack(ctx, repo, dp.PackOID, packBytes, idxBytes)
+	key, kerr := s.storeKey(ctx, repo)
+	if kerr != nil {
+		return "", kerr
+	}
+	confirmed, err := s.Backend.PutPack(ctx, key, dp.PackOID, packBytes, idxBytes)
 	if err != nil {
 		return "", err
 	}
@@ -656,7 +670,42 @@ func (s *ObjectService) packHolders(ctx context.Context, repo string, packOID mo
 // PackBytes fetches raw pack bytes (whole-pack direct serve, repack input),
 // routed through the backend with holder fallback.
 func (s *ObjectService) PackBytes(ctx context.Context, repo string, packOID model.OID) ([]byte, error) {
-	return s.Backend.GetPack(ctx, repo, packOID, s.packHolders(ctx, repo, packOID, ""))
+	key, err := s.storeKey(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	return s.Backend.GetPack(ctx, key, packOID, s.packHolders(ctx, repo, packOID, ""))
+}
+
+// RenameRepo renames a repository end to end (docs/03 §6).
+//
+//	hashed addressing: the registry flip alone — the storage key derives
+//	 from the immutable storage id and never moves.
+//	named addressing:  every storage location moves FIRST (idempotent —
+//	 re-running after a partial failure only hits laggards), the registry
+//	 flips LAST, so the data is never behind the name it is looked up by.
+//
+// Named-mode boundary (honest): the move fans out to the backend's current
+// node view; a node absent from that view keeps the old-named directory and
+// must be renamed after it returns (re-run the same call — nodes already
+// moved answer OK).
+func (s *ObjectService) RenameRepo(ctx context.Context, from, to string) error {
+	if s.Addressing != nil && s.Addressing.Mode == "hashed" {
+		return s.Meta.RenameRepo(ctx, from, to)
+	}
+	if err := s.Backend.RenameRepo(ctx, from, to); err != nil {
+		return err
+	}
+	return s.Meta.RenameRepo(ctx, from, to)
+}
+
+// storeKey resolves the repo's storage key (addressing modes, docs/03 §6);
+// the identity mapping unless hashed addressing is wired.
+func (s *ObjectService) storeKey(ctx context.Context, repo string) (string, error) {
+	if s.Addressing == nil {
+		return repo, nil
+	}
+	return s.Addressing.Key(ctx, repo)
 }
 
 func (s *ObjectService) BlobOrTreeOrCommit(ctx context.Context, repo string, oid model.OID) ([]byte, error) {
@@ -737,6 +786,8 @@ func (r *repoLookup) Commit(oid model.OID) (*model.AnchoredCommit, error) {
 
 // LocalShardStore is the M1 local-disk shard store:
 // <root>/<repo>/packs/<first two oid hex>/pack-<oid>.pack + .idx (git idx v2).
+// The <repo> path segment is the STORAGE KEY (docs/03 §6): the repo name
+// itself under named addressing, an opaque @hashed/… path under hashed.
 type LocalShardStore struct {
 	Root string
 }
@@ -784,6 +835,24 @@ func (l *LocalShardStore) GetPackBytes(repo string, packOID model.OID) ([]byte, 
 func (l *LocalShardStore) DeletePack(repo string, packOID model.OID) {
 	_ = os.Remove(l.packPath(repo, packOID))
 	_ = os.Remove(l.idxPath(repo, packOID))
+}
+
+// RenameRepo moves the whole repo directory (named addressing, docs/03 §6):
+// a missing source is a successful no-op (idempotent re-runs), an existing
+// target is refused — a merge would need byte-level reconciliation.
+func (l *LocalShardStore) RenameRepo(from, to string) error {
+	src := filepath.Join(l.Root, from)
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		return nil
+	}
+	dst := filepath.Join(l.Root, to)
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("rename %s: target %s already exists", from, to)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(src, dst)
 }
 
 // GetDecoded reads back and decodes a pack (miss path; object bodies then stay in cache).
