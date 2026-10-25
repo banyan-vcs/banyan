@@ -96,7 +96,7 @@ func TestLocationCacheHitsAndInvalidation(t *testing.T) {
 
 	// Repack merges the packs and moves every object: the cache
 	// invalidates, the next read re-locates and still resolves.
-	_, rerr := svc.Repack(ctx, "r", 2)
+	_, rerr := svc.Repack(ctx, "r", 2, 0)
 	require.NoError(t, rerr)
 	meta.locates = 0
 	_, data, err = svc.Raw(ctx, "r", alpha)

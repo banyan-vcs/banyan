@@ -183,7 +183,7 @@ func TestRepackFragmentMerge(t *testing.T) {
 	// Below-threshold is a no-op. (The fresh clone above re-fragmented a
 	// little — advertisement materializes the weave and persists synthetics
 	// — which is exactly why repack runs periodically above a threshold.)
-	res, err := objects.Repack(ctx, "t21", 64)
+	res, err := objects.Repack(ctx, "t21", 64, 0)
 	require.NoError(t, err)
 	assert.Equal(t, res.PacksBefore, res.PacksAfter, "阈值之下应为 no-op")
 }
@@ -206,7 +206,7 @@ func TestRepackRestartSurvival(t *testing.T) {
 	tip := headOf(t, src)
 
 	ctx := context.Background()
-	_, err := objects1.Repack(ctx, "t21b", 2)
+	_, err := objects1.Repack(ctx, "t21b", 2, 0)
 	require.NoError(t, err)
 	packsBeforeRestart, err := objects1.Meta.ListPacks(ctx, "t21b")
 	require.NoError(t, err)

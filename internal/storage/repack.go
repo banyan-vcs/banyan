@@ -1,10 +1,10 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 
 	"github.com/banyan-vcs/banyan/internal/model"
@@ -30,15 +30,29 @@ import (
 // object), the next repack cleans up.
 type Repacker struct {
 	Objects           *ObjectService
-	FragmentThreshold int // repos below this many packs are left alone
-	GeometricFactor   int // adjacent pack object-count ratio (git default 2)
+	FragmentThreshold int   // repos below this many packs are left alone
+	GeometricFactor   int   // adjacent pack object-count ratio (git default 2)
+	MergeMaxBytes     int64 // per merge-group input byte cap (0 = default)
 }
+
+// repackMergeMaxBytes caps one merge group's total INPUT bytes — the group
+// union lives in memory while merging, so equal-sized large packs (which
+// the count-based geometric rule happily groups) must not gang up past any
+// budget. Oversized groups split at the cap.
+const repackMergeMaxBytes = 256 << 20
 
 func NewRepacker(objects *ObjectService, fragmentThreshold int) *Repacker {
 	if fragmentThreshold <= 0 {
 		fragmentThreshold = 64
 	}
 	return &Repacker{Objects: objects, FragmentThreshold: fragmentThreshold, GeometricFactor: 2}
+}
+
+func (r *Repacker) mergeMax() int64 {
+	if r.MergeMaxBytes > 0 {
+		return r.MergeMaxBytes
+	}
+	return repackMergeMaxBytes
 }
 
 // geometricGroups splits packs (object counts, ascending) into merge groups
@@ -73,7 +87,7 @@ type RepackResult struct {
 // RunOnce executes one repack round for one repo. Below the fragment
 // threshold it is a no-op ("" plan, nil error).
 func (r *Repacker) RunOnce(ctx context.Context, repo string) (string, error) {
-	res, err := r.Objects.Repack(ctx, repo, r.FragmentThreshold)
+	res, err := r.Objects.Repack(ctx, repo, r.FragmentThreshold, r.mergeMax())
 	if err != nil {
 		return "", err
 	}
@@ -88,10 +102,14 @@ func (r *Repacker) RunOnce(ctx context.Context, repo string) (string, error) {
 // in-memory indexes that must follow the swap). Geometric strategy: only the
 // merge groups that break the factor-2 sequence are consolidated, one new
 // pack per group; singleton groups (large packs included) are untouched.
-func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) (RepackResult, error) {
+// mergeMax caps each group's input bytes (0 = default).
+func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int, mergeMax int64) (RepackResult, error) {
 	packs, err := s.Meta.ListPacks(ctx, repo)
 	if err != nil {
 		return RepackResult{}, err
+	}
+	if mergeMax <= 0 {
+		mergeMax = repackMergeMaxBytes
 	}
 	res := RepackResult{PacksBefore: len(packs)}
 	if len(packs) < 2 || (threshold > 0 && len(packs) < threshold) {
@@ -99,10 +117,13 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 		return res, nil
 	}
 
-	// 0. Geometric split: ascending object counts → merge groups.
+	// 0. Geometric split: ascending object counts → merge groups, then the
+	// byte cap splits any group whose input bytes would blow the merge
+	// budget (the count rule alone lets equal-sized big packs gang up).
 	type sizedPack struct {
 		info   PackInfo
 		counts int
+		size   int64
 	}
 	sized := make([]sizedPack, 0, len(packs))
 	for _, p := range packs {
@@ -111,7 +132,11 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, oerr)
 			continue
 		}
-		sized = append(sized, sizedPack{info: p, counts: len(objs)})
+		sz := s.packSizeCached(ctx, repo, p.PackOID)
+		if sz < 0 {
+			sz = 0 // unknown (old node): the count rule alone governs it
+		}
+		sized = append(sized, sizedPack{info: p, counts: len(objs), size: sz})
 	}
 	sort.Slice(sized, func(i, j int) bool {
 		if sized[i].counts != sized[j].counts {
@@ -123,16 +148,33 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 	for i := range sized {
 		counts[i] = sized[i].counts
 	}
+	max := mergeMax
 	var mergeSets [][]PackInfo
 	for _, g := range geometricGroups(counts, 2) {
 		if g[1]-g[0] < 2 {
 			continue
 		}
-		set := make([]PackInfo, 0, g[1]-g[0])
-		for i := g[0]; i < g[1]; i++ {
-			set = append(set, sized[i].info)
+		var cur []sizedPack
+		var acc int64
+		emit := func() {
+			if len(cur) < 2 {
+				return
+			}
+			set := make([]PackInfo, 0, len(cur))
+			for _, sp := range cur {
+				set = append(set, sp.info)
+			}
+			mergeSets = append(mergeSets, set)
 		}
-		mergeSets = append(mergeSets, set)
+		for i := g[0]; i < g[1]; i++ {
+			if len(cur) > 0 && acc+sized[i].size > max {
+				emit()
+				cur, acc = nil, 0
+			}
+			cur = append(cur, sized[i])
+			acc += sized[i].size
+		}
+		emit()
 	}
 	if len(mergeSets) == 0 {
 		res.PacksAfter = len(packs)
@@ -196,17 +238,40 @@ func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []PackI
 		return res, nil
 	}
 
-	var buf bytes.Buffer
-	if err := EncodePackDelta(&buf, blobs, trees, commits, tags); err != nil {
+	// Encode straight to a spool file and register via the streaming ingest:
+	// no whole-output buffer, no second full decode (the old IngestPack path
+	// re-decoded what had just been encoded — one more whole-group copy).
+	tmp, err := os.CreateTemp("", "banyan-repack-*.pack")
+	if err != nil {
 		return RepackResult{}, err
 	}
-	newOID, err := s.IngestPack(ctx, repo, buf.Bytes())
+	tmpName := tmp.Name()
+	if err := EncodePackDelta(tmp, blobs, trees, commits, tags); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return RepackResult{}, err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return RepackResult{}, err
+	}
+	st, serr := os.Stat(tmpName)
+	if serr != nil {
+		os.Remove(tmpName)
+		return RepackResult{}, serr
+	}
+	newOID, err := s.IngestPackFile(ctx, repo, tmpName, st.Size())
+	os.Remove(tmpName)
 	if err != nil {
 		return RepackResult{}, err
 	}
 	res.Delta = true
-	res.BytesAfter = int64(buf.Len())
+	res.BytesAfter = st.Size()
 
+	key, kerr := s.storeKey(ctx, repo)
+	if kerr != nil {
+		return RepackResult{}, kerr
+	}
 	for _, p := range set {
 		if p.PackOID == newOID {
 			continue // CAS idempotency: the merged pack may equal a fragment
@@ -215,9 +280,12 @@ func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []PackI
 			log.Printf("repack %s: drop meta %s: %v", repo, p.PackOID, derr)
 			continue
 		}
-		s.Backend.DeletePack(ctx, repo, p.PackOID, p.Nodes)
+		s.Backend.DeletePack(ctx, key, p.PackOID, p.Nodes) // key, not name (hashed addressing)
+		s.forgetDecoded(repo, p.PackOID)
+		s.readMu.Lock()
+		delete(s.readAmp, repo+"/"+string(p.PackOID))
+		s.readMu.Unlock()
 		s.mu.Lock()
-		delete(s.cache[repo], p.PackOID)
 		delete(s.packOrder[repo], p.PackOID)
 		s.mu.Unlock()
 	}

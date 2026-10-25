@@ -394,10 +394,20 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 		wanted[oid] = true
 	}
 	if packOID, ok := s.Objects.ExactPackHit(vr.Repo, wanted); ok {
-		if raw, err := s.Objects.PackBytes(ctx, vr.Repo, packOID); err == nil {
-			if _, werr := out.Write(raw); werr == nil {
-				return "exact-pack " + string(packOID)
+		if rc, _, oerr := s.Objects.OpenPackStream(ctx, vr.Repo, packOID); oerr == nil {
+			buf := make([]byte, 256<<10)
+			n, cerr := io.CopyBuffer(out, rc, buf)
+			rc.Close()
+			if cerr == nil {
+				return "exact-pack-stream " + string(packOID)
 			}
+			if n > 0 {
+				// Bytes are already on the wire: terminal, like any dropped
+				// response — falling through would append a second pack.
+				log.Printf("upload-pack %s%s: exact-pack %s broke mid-copy: %v", vr.Repo, vr.Sub, packOID, cerr)
+				return "exact-pack-stream " + string(packOID) + " (broken)"
+			}
+			// Nothing written yet: the ladder below still can serve.
 		}
 	}
 	if cacheable {
@@ -405,6 +415,21 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 			if _, werr := out.Write(raw); werr == nil {
 				return "closure-cache"
 			}
+		}
+		// Oversized closures skip the cache by construction — serve them
+		// straight off the encoder instead of parking a whole-response
+		// buffer that would only be thrown away.
+		total := 0
+		for _, m := range []map[model.OID][]byte{blobs, trees, commits, tags} {
+			for _, b := range m {
+				total += len(b)
+			}
+		}
+		if total > storage.ResponsePackCacheMax {
+			if err := serveObjectPack(out, blobs, trees, commits, tags, ofsDelta); err != nil {
+				log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
+			}
+			return "encode"
 		}
 		var buf bytes.Buffer
 		if err := serveObjectPack(&buf, blobs, trees, commits, tags, ofsDelta); err != nil {

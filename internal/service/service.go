@@ -368,5 +368,5 @@ func (s *Service) Timelines(ctx context.Context, repo string) ([]TimelineSummary
 }
 
 func (s *Service) Repack(ctx context.Context, repo string, threshold int) (storage.RepackResult, error) {
-	return s.Objects.Repack(ctx, repo, threshold)
+	return s.Objects.Repack(ctx, repo, threshold, 0) // 0 = default merge byte cap
 }

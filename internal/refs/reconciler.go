@@ -3,6 +3,7 @@ package refs
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"sync"
 
@@ -188,32 +189,36 @@ func (r *Reconciler) nodeKey(ctx context.Context, repo string) string {
 	return key
 }
 
-// copyPack streams one pack from a live holder to the target nodes and
-// registers the new holder set: copy → verify checksum → register.
+// copyPack repairs one pack's replicas without ever holding it: the source
+// is verified by a streaming trailer-hash pass, then each target streams
+// its own copy straight from the source (the node's landing verifies the
+// trailer + OID again on receipt). Register the new holder set last.
 func (r *Reconciler) copyPack(ctx context.Context, repo string, packOID model.OID, aliveSrc []string, targets []storage.NodeInfo) error {
 	key := r.nodeKey(ctx, repo)
-	var raw []byte
+	var srcAddr string
 	for _, id := range aliveSrc {
-		addr, ok := r.Health.addrOf(id)
-		if !ok {
-			continue
+		if addr, ok := r.Health.addrOf(id); ok {
+			srcAddr = addr
+			break
 		}
-		data, err := r.client(addr).GetPack(ctx, key, packOID)
-		if err != nil {
-			continue
-		}
-		raw = data
-		break
 	}
-	if raw == nil {
+	if srcAddr == "" {
 		return fmt.Errorf("no readable source among %v", aliveSrc)
 	}
-	if !storage.VerifyPackChecksum(packOID, raw) {
-		return fmt.Errorf("checksum mismatch")
+	if err := r.client(srcAddr).VerifyPack(ctx, key, packOID); err != nil {
+		return fmt.Errorf("verify source: %w", err)
+	}
+	size, serr := r.client(srcAddr).HeadPack(ctx, key, packOID) // -1: no size check
+	if serr != nil {
+		size = -1
+	}
+	open := func() (io.ReadCloser, error) {
+		rc, _, err := r.client(srcAddr).OpenPack(ctx, key, packOID)
+		return rc, err
 	}
 	var confirmed []string
 	for _, t := range targets {
-		if err := r.client(t.Addr).PutPack(ctx, key, packOID, raw, nil); err != nil {
+		if err := r.client(t.Addr).PutPackStream(ctx, key, packOID, size, open, nil); err != nil {
 			log.Printf("reconciler: put %s to %s: %v", packOID, t.ID, err)
 			continue
 		}

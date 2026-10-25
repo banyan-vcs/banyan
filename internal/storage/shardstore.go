@@ -36,9 +36,16 @@ type ObjectService struct {
 	Addressing *Addressing
 
 	mu        sync.Mutex
-	cache     map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result (LRU is M2's business)
+	cache     map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result
+	cacheLRU  *list.List                           // decoded-pack LRU, byte-budgeted (see MemoMaxBytes)
+	cacheBytes int64                               // total decoded bytes memoized
 	packOrder map[string]map[model.OID][]model.OID  // repo → packOID → object list (whole-pack direct serve detection)
 	sizeKnown map[string]int64                      // repo/packOID → byte size (immutable; whole-pack memoize guard)
+
+	// MemoMaxBytes bounds the total decoded-pack memory (LRU eviction past
+	// it); 0 = decodedMemoMaxBytes. Per-pack entry is already gated by
+	// packMemoMaxBytes — this is the fleet-wide cap.
+	MemoMaxBytes int64
 
 	synthMu sync.Mutex
 	synth   map[string]map[model.OID]synthObject // repo → oid → server-synthesized object (projection commits etc., docs/02 §5.2)
@@ -95,8 +102,14 @@ const packReadAmplify = 8
 // what the streaming chain exists to avoid.
 const packMemoMaxBytes = 32 << 20
 
-// responsePackCacheMax bounds the clone-shaped response cache.
-const responsePackCacheMax = 128 << 20
+// decodedMemoMaxBytes bounds the TOTAL decoded-pack memory — without it, a
+// repo of many just-under-the-cap packs memoizes its way past any budget.
+const decodedMemoMaxBytes = 256 << 20
+
+// ResponsePackCacheMax bounds the clone-shaped response cache (total bytes,
+// LRU). Responses whose closure exceeds it skip the cache AND the
+// whole-response buffer (gitwire streams them straight to the wire).
+const ResponsePackCacheMax = 128 << 20
 
 type closureKey struct {
 	repo  string
@@ -135,6 +148,7 @@ func newObjectService(meta MetaStore, local *LocalShardStore, backend ShardBacke
 		Backend:   backend,
 		Algo:      algo,
 		cache:     map[string]map[model.OID]*DecodedPack{},
+		cacheLRU:  list.New(),
 		packOrder: map[string]map[model.OID][]model.OID{},
 		synth:     map[string]map[model.OID]synthObject{},
 		idx:       map[string]*repoIndex{},
@@ -195,7 +209,7 @@ func (s *ObjectService) StoreResponsePack(repo string, sub model.AnchorPath, wan
 	s.respCache[key] = s.respLRU.PushFront(closureEntry{key: key, raw: raw})
 	s.respBytes += int64(len(raw))
 	s.respStores++
-	for s.respBytes > responsePackCacheMax && s.respLRU.Len() > 1 {
+	for s.respBytes > ResponsePackCacheMax && s.respLRU.Len() > 1 {
 		oldest := s.respLRU.Back()
 		if oldest == nil {
 			break
@@ -548,7 +562,7 @@ func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid mod
 			return objectFromDecoded(decoded, oid)
 		}
 	}
-	if s.packTooBigToMemo(ctx, repo, key, loc.PackOID) {
+	if s.packTooBigToMemo(ctx, repo, loc.PackOID) {
 		// A big pack rides ONLY the single-object extraction path: the
 		// whole-pack fetch + decode + memoize below would park the entire
 		// pack in gateway memory — exactly what the streaming chain avoids.
@@ -588,21 +602,24 @@ func (s *ObjectService) ampRead(repo string, packOID model.OID) bool {
 	return s.readAmp[key] >= packReadAmplify
 }
 
-// packTooBigToMemo reports whether the pack exceeds the whole-pack memoize
-// cap (objectFromPack guard). Sizes are probed once and cached — content
-// addressing makes them immutable. Unknown (-1: old nodes) answers false so
-// legacy deployments keep the old ladder.
-func (s *ObjectService) packTooBigToMemo(ctx context.Context, repo, key string, packOID model.OID) bool {
+// packSizeCached reports a pack's byte size, probing the backend once and
+// caching it forever (content addressing makes sizes immutable). -1 =
+// unknown (old nodes) — callers treat unknown per their own policy.
+func (s *ObjectService) packSizeCached(ctx context.Context, repo string, packOID model.OID) int64 {
 	ck := repo + "/" + string(packOID)
 	s.mu.Lock()
 	if v, ok := s.sizeKnown[ck]; ok {
 		s.mu.Unlock()
-		return v > packMemoMaxBytes
+		return v
 	}
 	s.mu.Unlock()
+	key, err := s.storeKey(ctx, repo)
+	if err != nil {
+		return -1
+	}
 	size, err := s.Backend.PackSize(ctx, key, packOID, s.packHolders(ctx, repo, packOID, ""))
 	if err != nil || size < 0 {
-		return false
+		return -1
 	}
 	s.mu.Lock()
 	if s.sizeKnown == nil {
@@ -610,20 +627,111 @@ func (s *ObjectService) packTooBigToMemo(ctx context.Context, repo, key string, 
 	}
 	s.sizeKnown[ck] = size
 	s.mu.Unlock()
+	return size
+}
+
+// packTooBigToMemo reports whether the pack exceeds the whole-pack memoize
+// cap (objectFromPack guard). Unknown (-1: old nodes) answers false so
+// legacy deployments keep the old ladder.
+func (s *ObjectService) packTooBigToMemo(ctx context.Context, repo string, packOID model.OID) bool {
+	size := s.packSizeCached(ctx, repo, packOID)
 	return size > packMemoMaxBytes
 }
 
+// memoizedPack keys the decoded-pack LRU (repo + packOID: packOID alone is
+// globally unique, the repo keeps the accounting readable).
+type memoizedPack struct {
+	repo string
+	pack model.OID
+	dp   *DecodedPack
+	size int64
+}
+
+func decodedPackBytes(dp *DecodedPack) int64 {
+	var n int64
+	for _, b := range dp.Blobs {
+		n += int64(len(b))
+	}
+	for _, b := range dp.Trees {
+		n += int64(len(b))
+	}
+	for _, b := range dp.Commits {
+		n += int64(len(b))
+	}
+	for _, b := range dp.Tags {
+		n += int64(len(b))
+	}
+	return n
+}
+
+// memoizeDecoded caches a decoded pack under the byte-budgeted LRU: past
+// MemoMaxBytes the least recently used packs drop (reads re-fetch on miss —
+// correctness never depends on the cache).
 func (s *ObjectService) memoizeDecoded(repo string, packOID model.OID, dp *DecodedPack) {
+	entry := memoizedPack{repo: repo, pack: packOID, dp: dp, size: decodedPackBytes(dp)}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forgetDecodedLocked(repo, packOID)
 	if s.cache[repo] == nil {
 		s.cache[repo] = map[model.OID]*DecodedPack{}
 	}
 	s.cache[repo][packOID] = dp
+	if s.cacheLRU == nil {
+		s.cacheLRU = list.New()
+	}
+	s.cacheLRU.PushFront(entry)
+	s.cacheBytes += entry.size
+	for s.cacheBytes > s.memoMax() && s.cacheLRU.Len() > 1 {
+		oldest := s.cacheLRU.Back()
+		if oldest == nil {
+			break
+		}
+		old := oldest.Value.(memoizedPack)
+		s.cacheLRU.Remove(oldest)
+		if m := s.cache[old.repo]; m != nil {
+			delete(m, old.pack)
+		}
+		s.cacheBytes -= old.size
+	}
+	// packOrder feeds ExactPackHit and is metadata-only (OID list): it stays
+	// regardless of eviction — the pack itself doesn't move.
 	if s.packOrder[repo] == nil {
 		s.packOrder[repo] = map[model.OID][]model.OID{}
 	}
 	s.packOrder[repo][packOID] = dp.Order
-	s.mu.Unlock()
+}
+
+func (s *ObjectService) memoMax() int64 {
+	if s.MemoMaxBytes > 0 {
+		return s.MemoMaxBytes
+	}
+	return decodedMemoMaxBytes
+}
+
+// forgetDecoded drops a pack from the decoded cache + LRU accounting
+// (repack shard cleanup).
+func (s *ObjectService) forgetDecoded(repo string, packOID model.OID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forgetDecodedLocked(repo, packOID)
+}
+
+func (s *ObjectService) forgetDecodedLocked(repo string, packOID model.OID) {
+	if m := s.cache[repo]; m != nil {
+		if dp, ok := m[packOID]; ok {
+			delete(m, packOID)
+			if s.cacheLRU != nil {
+				for e := s.cacheLRU.Front(); e != nil; e = e.Next() {
+					mp := e.Value.(memoizedPack)
+					if mp.repo == repo && mp.pack == packOID {
+						s.cacheLRU.Remove(e)
+						s.cacheBytes -= decodedPackBytes(dp)
+						break
+					}
+				}
+			}
+		}
+	}
 }
 
 // IngestPack handles one pushed pack (docs/03 §4 write path, docs/10 §5):
@@ -660,16 +768,7 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 			repo, n, unique, 100*float64(n-unique)/float64(n), fails)
 	}
 
-	s.mu.Lock()
-	if s.cache[repo] == nil {
-		s.cache[repo] = map[model.OID]*DecodedPack{}
-	}
-	s.cache[repo][dp.PackOID] = dp
-	if s.packOrder[repo] == nil {
-		s.packOrder[repo] = map[model.OID][]model.OID{}
-	}
-	s.packOrder[repo][dp.PackOID] = dp.Order
-	s.mu.Unlock()
+	s.memoizeDecoded(repo, dp.PackOID, dp)
 	return dp.PackOID, nil
 }
 

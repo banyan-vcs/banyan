@@ -165,6 +165,28 @@ func (n *NodeClient) HeadPack(ctx context.Context, repo string, packOID model.OI
 	return resp.ContentLength, nil
 }
 
+// VerifyPack streams the pack from the node and checks its trailer with a
+// trailing hash window — full-content integrity at O(window) memory, the
+// multi-GB replica-verify path (reconciler).
+func (n *NodeClient) VerifyPack(ctx context.Context, repo string, packOID model.OID) error {
+	rc, _, err := n.OpenPack(ctx, repo, packOID)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	_, sum, ok, err := SpoolVerifiedCopy(io.Discard, rc, algoOfPackOID(packOID))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("storage %s pack %s: checksum mismatch", n.Addr, packOID)
+	}
+	if sum != string(packOID) {
+		return fmt.Errorf("storage %s pack %s: checksum/oid mismatch (got %s)", n.Addr, packOID, sum)
+	}
+	return nil
+}
+
 func (n *NodeClient) DeletePack(ctx context.Context, repo string, packOID model.OID) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, n.packURL(repo, packOID), nil)
 	if err != nil {
