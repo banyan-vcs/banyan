@@ -77,6 +77,7 @@ directory timelines align both boundaries at the same granularity.
 | Capability | Status |
 |---|---|
 | Root + subtree `git clone/fetch/push` (Smart HTTP v1 + v2) | ✅ verified against real git clients |
+| Git over SSH (`ssh://` + public-key auth, v0 stateful negotiation + v2) | ✅ same serving core, same authz (docs/03 §7b) |
 | Partial clone (`--filter=blob:none`/`tree:0` + lazy fetch) | ✅ |
 | Serve-path delta packs (OFS/REF-delta past 64KiB) | ✅ |
 | Thin packs on incremental fetch (REF_DELTA vs client-held bases) | ✅ (0.87x git's bytes, docs/12 sec.3) |
@@ -96,7 +97,7 @@ directory timelines align both boundaries at the same granularity.
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
 | Gitaly gRPC frontend (act as GitLab's storage node) | 🚧 planned (docs/10 §4) |
 
-23 integration cases pin the behavior with the **real git CLI** as the client
+43 integration cases pin the behavior with the **real git CLI** as the client
 ([docs/07](docs/07-testing.md)) — the thin-CLI commit path is cross-verified
 by fresh git clones plus `fsck`.
 
@@ -128,6 +129,10 @@ docker compose up -d          # build + run; data persists in the banyan-data vo
 # push any git repo (main is admin-push-only under the demo policy)
 git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
+
+# git over SSH too (throwaway demo keys in demo/ssh/, docs/14 §3b)
+git clone ssh://alice@localhost:8102/r/demo.git \
+  -c core.sshCommand="ssh -i demo/ssh/alice -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
 git clone http://alice:demo@localhost:8100/r/demo.git            # root repo
 git clone http://alice:demo@localhost:8100/r/demo.git/tree/plumbing  # any subtree is a repo

@@ -24,7 +24,7 @@ docker compose up -d        # 首次构建约 1-2 分钟
 
 | 服务 | 端口 | 说明 |
 |---|---|---|
-| `banyan` | 8100 | git smart HTTP + JSON RPC，**授权开启**（只读挂载 `demo/auth-demo.yaml`）；SQLite 元数据与 pack 分片持久化在 `banyan-data` 卷 |
+| `banyan` | 8100 / 8102 | git smart HTTP（8100）+ **git over SSH**（8102，demo 密钥 `demo/ssh/`）；授权开启（只读挂载 `demo/auth-demo.yaml`）；SQLite 元数据与 pack 分片持久化在 `banyan-data` 卷 |
 | `banyan-web` | 8101 | 仓库管理与文件浏览（web/，零运行时依赖）；经 `BANYAN_URL` 内网调 banyan |
 
 探活：`curl -u alice:demo http://localhost:8100/api/v1/repos`（匿名 401 即授权生效）。
@@ -82,6 +82,43 @@ cd .. && git clone http://bob:demo@$U/tree/secret      # → permission denied�
 要点：可见性过滤发生在**广告**（v1 info/refs 与 v2 ls-refs 同一份过滤），但
 不依赖广告防绕过——fetch 的 want 覆盖检查对**可见 tips** 计算，他人个人分支
 可达的对象按裸 OID 也取不走；push 逐 ref 检查，越权请求不改动任何 ref。
+
+### 3b. 走查：SSH 面（8102，公钥认证）
+
+demo 自带一次性密钥（`demo/ssh/<user>`，公钥已配进 `auth.keys`；勿复用）。
+命令在 banyan 仓库根目录执行（密钥相对路径 `demo/ssh/`），沿用 §3 的 demo 仓库：
+
+```bash
+SU=localhost:8102/r/demo.git      # SSH 面：ssh://user@host/path
+KEY() { echo "ssh -i demo/ssh/$1 -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"; }
+
+# 认证即身份：同一人 HTTP 与 SSH 看到的完全一致
+git -c core.sshCommand="$(KEY alice)" ls-remote ssh://alice@$SU   # main + alice/feat
+git -c core.sshCommand="$(KEY bob)"   ls-remote ssh://bob@$SU     # 只有 main
+
+# 克隆（v0）→ bob 先有一份旧 main → admin 推进 → bob fetch（多轮 have 协商）
+git -c core.sshCommand="$(KEY bob)" clone -q ssh://bob@$SU sshc
+echo via-ssh >> sshc/README.md && git -C sshc commit -qam via-ssh
+git -C sshc -c core.sshCommand="$(KEY admin)" push -q ssh://admin@$SU main   # 受保护分支必须 admin（注意换 admin@ URL）
+git -C sshc -c core.sshCommand="$(KEY bob)" fetch -q && \
+  git -C sshc log --oneline origin/main | head -2
+
+# v2 命令会话（GIT_PROTOCOL env 协商入口）
+git -c protocol.version=2 -c core.sshCommand="$(KEY alice)" ls-remote ssh://alice@$SU
+
+# 越权：bob 把自己的提交推进 alice 的命名空间
+git -C sshc -c core.sshCommand="$(KEY bob)" push ssh://bob@$SU main:alice/evil
+                                                                   # → ! [remote rejected] (permission denied)
+
+# 未授权密钥在握手层即被拒（identity 解不出 → 连接拒绝）
+ssh-keygen -q -t ed25519 -N "" -f /tmp/stray
+git -c core.sshCommand="ssh -i /tmp/stray -o IdentitiesOnly=yes -o StrictHostKeyChecking=no" \
+  ls-remote ssh://alice@$SU                                       # → Permission denied (publickey)
+```
+
+首次连接会提示未知 host key（`accept-new` 自动接受；指纹在
+`docker logs banyan | grep "host key"`）。协议语义与 HTTP 的差异仅在
+v0 协商应答轮次（docs/03 §7b）。
 
 ## 4. 走查：Web（8101）
 

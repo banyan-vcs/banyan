@@ -13,6 +13,7 @@ nil Service = 授权关闭（存量行为，全部测试不依赖认证）；一
 | 决策 | 语义 | 粒度 |
 |---|---|---|
 | `Identify(r)` | 凭证 → 身份（Basic 校验；token/SSO 的替换缝） | — |
+| `IdentifyKey(user, key)` | SSH 公钥 → 身份（§7；authorized_keys 载荷比对） | — |
 | `VisibleRefs(id, repo, refs)` | 广告过滤 = 身份视角的 ref 视图 | 分支 |
 | `CanFetch(id, repo, sub)` | 下载准入（sub="" 根仓库，"/lib" 子树虚拟仓库） | 仓库 / 目录 |
 | `CanPush(id, repo, sub, branch)` | 提交互准（branch 为 refs/heads/ 后段；辅助 ref 传 ""） | 仓库 / 目录 / 分支 |
@@ -76,3 +77,13 @@ HttpOnly cookie）→ 仓库列表/建仓 → 仓库页**分支列表 = 登录�
 
 测试：T38（wire 全矩阵，真实 git 客户端 v0+v2）+ TestAuthorizationRPC
 （认证门/login/建仓）；Web 端到端为实测验证（见提交记录）。
+
+## 7. SSH 公钥身份（git-over-SSH，2026-10-25）
+
+`IdentifyKey(user, keyBlob)` 加入 Service 缝——SSH 传输的公钥认证
+（authorized_keys 行的 base64 载荷）与 Basic 认证同源解析为 Identity，
+此后**走完全相同的四决策**：广告过滤、CanFetch、CanPush 对 ssh:// 会话
+与 HTTP 会话逐字节同义。demo 策略 `auth.keys` 按用户配置公钥行；集群
+网关经 refs 策略快照解析（快照携带 keys，fail-closed 语义不变）。传输
+细节（会话形态/协商轮次）见 docs/03 §7b，T39 钉住。边界：SSH 传输要求
+auth 必须开启（无钥匙表可认证任何人——拒绝启动而非裸监听）。

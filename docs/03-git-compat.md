@@ -1,6 +1,6 @@
 # 03 · git 兼容层（gitwire）
 
-兼容性承诺：**标准 git CLI 的 clone / fetch / push 对根仓库与虚拟子树仓库都直接可用**。协议取 Smart HTTP v1（go-git 同款；标准 git 客户端自动协商回退）。protocol v2 已立项（perf-2，docs/12 P1-5）——ls-refs/fetch 命令面。
+兼容性承诺：**标准 git CLI 的 clone / fetch / push 对根仓库与虚拟子树仓库都直接可用**。传输取 Smart HTTP v1（go-git 同款；标准 git 客户端自动协商回退）与 **SSH 传输**（§7b，`ssh://` 直连 + 公钥认证）；fetch 侧 protocol v2 已落地（§9b，HTTP 头与 SSH env 双入口）。
 
 ## 1. 端点路由
 
@@ -148,6 +148,34 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 ## 7. hooks / 策略点
 
 `receive-pack.c` 的 pre-receive/post-receive/update 钩子在 banyan 中抽象为 `Policy` 接口（M1 仅日志策略）：push 校验、组装前准入（M4 合并队列的挂点）、CI 触发。
+
+## 7b. SSH 传输（git-over-SSH，2026-10-25）
+
+`ssh://user@host:port/r/<repo>.git[/tree/<sub>]` 直连（x/crypto/ssh），
+与 Smart HTTP 共用同一套服务核心（finishFetch / finishPush / serveV2Command）
+与授权决策（docs/13 §7）。会话形态对照 `connect.c` / `serve.c`：
+
+```
+连接 → 公钥认证（IdentifyKey → auth.Identity；无策略 = 拒绝）
+channel "session"
+  env GIT_PROTOCOL version=2        ← 客户端 SendEnv（v2 协商入口）
+  exec "git-upload-pack '/r/demo.git'"
+  … pkt 流（与 HTTP body 同构，无 "# service" 前导）…
+  exit-status <uint32>              ← 非零 = 客户端报 Could not read…
+```
+
+**与 HTTP 的唯一语义差异是 v0 协商的应答轮次**（HTTP 无状态：每个 POST
+客户端一次写完；SSH 有状态：客户端在第二个 have 批次后会**阻塞读**）。
+对照 `upload-pack.c get_common_commits`（multi_ack 关）：首个**双方共有**
+的 have 触发终态 `ACK <oid>`（其后 done 不再补行）；尚无共有 have 时每个
+flush 答 `NAK`；deepen 在 wants-flush 后立即回 shallow 段（`send_shallow`）。
+v2 会话对照 `protocol_v2_serve_loop`：一次能力广告，随后命令循环，EOF 或
+裸 flush 结束；receive-pack 恒 v0。
+
+运维语义：host key（`ssh.host_key`，默认 `<root>/ssh_host_ed25519_key`）
+首启生成、随数据持久化；`ssh.listen` 未配置即关闭该传输；配了 listen 而
+无 auth 策略则拒绝启动（无钥匙表可认证任何人）。T39 钉住（真实 git 客户端：
+克隆/增量 fetch（51 提交多轮协商）/v2/个人分支可见性/越权拒/未授权密钥拒）。
 
 ## 8. 已知限制（接受并记录）
 

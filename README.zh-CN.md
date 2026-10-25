@@ -46,6 +46,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 能力 | 状态 |
 |---|---|
 | 根/子树 `git clone/fetch/push`（Smart HTTP v1 + v2） | ✅ 真实 git 客户端实测 |
+| git-over-SSH 传输（`ssh://` + 公钥认证，v0 有状态协商 + v2） | ✅ 同一服务核心与授权（docs/03 §7b） |
 | partial clone（`--filter=blob:none`/`tree:0` + 惰性取回） | ✅ |
 | serve 路径 delta 包（过 64KiB 阈值 OFS/REF-delta） | ✅ |
 | 增量 fetch 真 thin pack（对客户端持有基对象出 REF_DELTA） | ✅（字节 0.87× git，docs/12 §3） |
@@ -92,10 +93,15 @@ docker compose up -d          # 构建并启动；数据持久化在 banyan-data
                               # demo 默认开启授权（docs/13）：
                               #   Web 界面 http://localhost:8101（alice / bob / admin，密码 demo）
                               #   git      http://alice:demo@localhost:8100/r/demo.git
+                              #   git ssh  ssh://alice@localhost:8102/r/demo.git（demo/ssh/ 密钥）
 
 # 推任意 git 仓库上来（demo 策略里 main 仅 admin 可推）
 git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
+
+# git-over-SSH 同样可用（一次性 demo 密钥在 demo/ssh/，docs/14 §3b）
+git clone ssh://alice@localhost:8102/r/demo.git \
+  -c core.sshCommand="ssh -i demo/ssh/alice -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
 git clone http://alice:demo@localhost:8100/r/demo.git            # 根仓库
 git clone http://alice:demo@localhost:8100/r/demo.git/tree/plumbing  # 任意子目录即仓库

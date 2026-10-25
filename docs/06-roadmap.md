@@ -112,6 +112,8 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
       三粒度门禁全部上 wire（v1+v2）；refs/heads/<user>/* 个人分支仅本人（+admin）可见——
       monorepo 分支过多解法；gateway 经 refs 策略快照走同一抽象；TS Web 管理面 + 文件浏览；
       T38/T38b。认证为 demo 级 Basic，token 认证仍待建）
+- [x] git-over-SSH 传输（2026-10-25，docs/03 §7b：`ssh://` 直连 + 公钥认证（IdentifyKey
+      身份缝，docs/13 §7）+ v0 有状态协商/v2 命令会话/receive-pack；同一授权矩阵；T39）
 - [ ] token 认证（PAT / CI job token 透传，仓库级 R/W scope）+ 自动建仓收紧开关（已收紧：授权
       开启时建仓需 push 权）+ RPC 层细粒度授权
 - [ ] Gitaly gRPC 兼容前端 P1（Server/Repository/SmartHTTP/Ref/Commit/Blob/Diff 子集；GitLab 直连 banyand 为存储节点，docs/10 §4）
