@@ -6,6 +6,22 @@
 // recursive content merge). Pure Go — the diff engine is go-diff, no git
 // CLI involvement (behavioral reference: xdiff/xmerge.c, verified against
 // `git merge-file` in the oracle tests).
+//
+// Oracle parity is exact for overlapping conflicts (markers byte-identical)
+// and deliberately wider than git in three shapes, pinned as documented
+// deviations in git_deviations_test.go:
+//
+//   - adjacent edits (ours line N, theirs line N+1) merge cleanly here;
+//     git's touch-fuse rule conflicts them;
+//   - conflict spans are rendered whole; git's ZEALOUS refinement shrinks
+//     them by diffing the two sides (shared inner runs land outside the
+//     markers);
+//   - conflicts up to three context lines apart stay separate here; git
+//     fuses them into one block.
+//
+// For a convergence engine the wider merge is the intended posture (fewer
+// tickets, both changes preserved); the conflict-render deltas only affect
+// the ng diagnostics.
 package merge
 
 import (
@@ -22,10 +38,11 @@ type Options struct {
 	TheirsLabel string
 }
 
-// isBinary mirrors git's buffer_is_binary: a NUL byte in the first 8KiB.
+// isBinary mirrors git's buffer_is_binary: a NUL byte in the first
+// FIRST_FEW_BYTES (8000) of the buffer.
 func isBinary(b []byte) bool {
-	if len(b) > 8192 {
-		b = b[:8192]
+	if len(b) > 8000 {
+		b = b[:8000]
 	}
 	return bytes.IndexByte(b, 0) >= 0
 }
@@ -41,12 +58,13 @@ type region struct {
 // Blobs merges ours and theirs changes to base. The result carries conflict
 // markers wherever both sides changed overlapping base lines (or both
 // inserted at the same point); clean reports whether any conflict occurred.
-// Binary input (any side) is never merged: ours is returned, clean=false —
+// The blob-identity shortcuts run BEFORE the binary check (git's
+// merge-ort does the same at the content-merge entry): identical sides,
+// or one side identical to the base, is clean even for binaries — two
+// clients pushing the same binary asset must not be ticketed. Otherwise
+// binary input is never merged: ours is returned, clean=false —
 // ll_binary_merge semantics.
 func Blobs(base, ours, theirs []byte, o Options) ([]byte, bool) {
-	if isBinary(base) || isBinary(ours) || isBinary(theirs) {
-		return ours, false
-	}
 	if bytes.Equal(ours, theirs) {
 		return ours, true
 	}
@@ -55,6 +73,9 @@ func Blobs(base, ours, theirs []byte, o Options) ([]byte, bool) {
 	}
 	if bytes.Equal(base, theirs) {
 		return ours, true
+	}
+	if isBinary(base) || isBinary(ours) || isBinary(theirs) {
+		return ours, false
 	}
 
 	baseL := splitLines(base)

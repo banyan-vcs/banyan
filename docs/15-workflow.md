@@ -97,7 +97,9 @@ bench 场景 **agent-burst**：8/32/128 并发同目录，单网关与多网关�
 ## 3. 实施分片（修订，refs 零改动）
 
 > **落地状态（2026-10-25，db2af27/3c4ea8c）**：M4.1（internal/merge 纯 Go
-> 三方合并，git merge-file oracle 逐字节钉住）+ M4.2/M4.3 主体（队列 +
+> 三方合并，git merge-file oracle 在重叠冲突形态逐字节钉住；三类已声明
+> 偏差 T42b——相邻行干净叠加宽于 git、冲突块整段渲染无精化/融合、
+> blob 同一性先于 binary 判定）+ M4.2/M4.3 主体（队列 +
 > 收敛 + 冲突隔离 + OCC）已交付，T41/T42 全绿；config
 > `workflow.convergence: auto(默认)|reject`。**实证补充的语义事实**：真
 > git 客户端对顺序性非 FF push 在发送前就自行拒绝（"fetch first"），
