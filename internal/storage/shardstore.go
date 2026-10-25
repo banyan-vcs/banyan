@@ -5,6 +5,7 @@ import (
 	"container/list"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/go-git/go-git/v5/plumbing/format/packfile"
 )
 
 // ObjectService orchestrates the read path (docs/03 §3):
@@ -628,6 +630,69 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 	return dp.PackOID, nil
 }
 
+// IngestPackFile ingests a spooled pack file — the large-push streaming
+// path (docs/03 §4): ONE streaming scan (the Parser over the seekable file
+// with no storage, so object bodies never materialize — resident memory is
+// object-count metadata plus the bounded delta LRU) collects order/offsets/
+// crcs; the pack lands on storage via streaming copies (one independent
+// reader per replica); and nothing else is pre-warmed — the decoded-pack
+// cache stays cold and commit/tree indexes back-fill lazily on first touch
+// (CommitInfo/TreeEntries), so a multi-hundred-GB import costs the same
+// resident window as a small push.
+func (s *ObjectService) IngestPackFile(ctx context.Context, repo, path string, size int64) (model.OID, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	obs := &idxObserver{}
+	parser, err := packfile.NewParser(packfile.NewScanner(f), obs)
+	if err != nil {
+		return "", err
+	}
+	checksum, err := parser.Parse()
+	if err != nil {
+		return "", fmt.Errorf("scan pack: %w", err)
+	}
+	if len(obs.order) == 0 {
+		// A zero-object pack is legal wire traffic: the client pushes refs
+		// whose objects the server already holds and git sends the empty
+		// pack anyway. Nothing to place or register.
+		return model.OID(checksum.String()), nil
+	}
+	packOID := model.OID(checksum.String())
+
+	var idxBytes []byte
+	if len(obs.offsets) == len(obs.order) {
+		if b, err := EncodeIdx(s.Algo, packOID, obs.offsets, obs.crcs); err == nil {
+			idxBytes = b
+		} else {
+			log.Printf("ingest %s: idx encode failed (skip): %v", repo, err)
+		}
+	}
+	key, kerr := s.storeKey(ctx, repo)
+	if kerr != nil {
+		return "", kerr
+	}
+	open := func() (io.ReadCloser, error) { return os.Open(path) }
+	confirmed, err := s.Backend.PutPackStream(ctx, key, packOID, size, open, idxBytes)
+	if err != nil {
+		return "", err
+	}
+	if err := s.Meta.PutPack(ctx, repo, packOID, obs.order, confirmed); err != nil {
+		return "", err
+	}
+	// packOrder feeds ExactPackHit; the decoded-pack cache stays cold by
+	// design (see the doc note above).
+	s.mu.Lock()
+	if s.packOrder[repo] == nil {
+		s.packOrder[repo] = map[model.OID][]model.OID{}
+	}
+	s.packOrder[repo][packOID] = obs.order
+	s.mu.Unlock()
+	return packOID, nil
+}
+
 // ExactPackHit implements the hot-path whole-pack direct serve (docs/03 §5):
 // when the requested object set exactly equals a stored pack's object set it
 // returns that pack OID; the caller can stream the pack bytes verbatim, skipping online re-encoding (re-hash + re-compress).
@@ -828,6 +893,41 @@ func (l *LocalShardStore) PutPack(repo string, packOID model.OID, packBytes, idx
 // GetPackBytes reads raw pack bytes.
 func (l *LocalShardStore) GetPackBytes(repo string, packOID model.OID) ([]byte, error) {
 	return os.ReadFile(l.packPath(repo, packOID))
+}
+
+// PutPackStream lands the pack from a reader with one streaming copy (the
+// large-push ingest path — the whole pack never materializes in memory).
+// size cross-checks the copy when positive; idx lands after the pack so a
+// crash mid-write leaves at most a pack without its idx.
+func (l *LocalShardStore) PutPackStream(repo string, packOID model.OID, size int64, open func() (io.ReadCloser, error), idxBytes []byte) error {
+	p := l.packPath(repo, packOID)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	src, err := open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.Create(p)
+	if err != nil {
+		return err
+	}
+	n, cerr := io.Copy(dst, src)
+	werr := dst.Close()
+	if cerr != nil {
+		return cerr
+	}
+	if werr != nil {
+		return werr
+	}
+	if size > 0 && n != size {
+		return fmt.Errorf("put %s: short copy %d/%d", packOID, n, size)
+	}
+	if len(idxBytes) > 0 {
+		return os.WriteFile(l.idxPath(repo, packOID), idxBytes, 0o644)
+	}
+	return nil
 }
 
 // DeletePack removes the pack and idx files from disk (repack old-shard

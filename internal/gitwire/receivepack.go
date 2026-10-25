@@ -3,10 +3,14 @@ package gitwire
 import (
 	"bufio"
 	"context"
+	"crypto/sha1"
+	"crypto/sha256"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -93,12 +97,6 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		})
 	}
 
-	// Pack section: after the flush until body end (empty for delete-only pushes).
-	packBytes, err := io.ReadAll(br)
-	if err != nil {
-		return fmt.Errorf("read pack: %w", err)
-	}
-
 	fail := func(why string) {
 		_ = WritePacket(out, []byte("unpack "+why+"\n"))
 		for _, u := range updates {
@@ -107,15 +105,27 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		_ = WriteFlush(out)
 	}
 
-	// ① pack decode + chunked ingest (error if no pack yet non-delete updates exist).
-	var dp *storage.DecodedPack
-	if len(packBytes) > 0 {
-		dp, err = storage.DecodePack(packBytes)
-		if err != nil {
-			fail("pack decode: " + err.Error())
+	// Pack section: after the flush until body end (empty for delete-only
+	// pushes). The body streams straight to a spool file — one small window
+	// through the request, never the whole pack in memory — with the pack
+	// trailer verified by a trailing-window hash as the bytes fly past.
+	var spoolPath string
+	var spoolSize int64
+	if peek, _ := br.Peek(1); len(peek) > 0 {
+		path, size, serr := s.spoolPack(br)
+		if serr != nil {
+			fail("pack spool: " + serr.Error())
 			return nil
 		}
-		if _, err := s.Objects.IngestPack(ctx, vr.Repo, packBytes); err != nil {
+		spoolPath, spoolSize = path, size
+		defer os.Remove(spoolPath)
+	}
+
+	// ① streaming ingest (error if no pack yet non-delete updates exist):
+	// one metadata-only scan of the spooled file, streaming placement to
+	// storage, lazy index back-fill on first read.
+	if spoolPath != "" {
+		if _, err := s.Objects.IngestPackFile(ctx, vr.Repo, spoolPath, spoolSize); err != nil {
 			fail("ingest: " + err.Error())
 			return nil
 		}
@@ -137,7 +147,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 				_ = WritePacket(out, []byte("ng "+u.Name+" permission denied\n"))
 				continue
 			}
-			s.handleAuxRefUpdate(ctx, out, vr, u.Old, u.New, u.Name, dp)
+			s.handleAuxRefUpdate(ctx, out, vr, u.Old, u.New, u.Name)
 			continue
 		}
 		name := strings.TrimPrefix(u.Name, "refs/heads/")
@@ -167,16 +177,9 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
 			continue
 		}
-		// The new head must be in this pack and be a commit (for the re-push case where
-		// the object is already in a pack: also accept already-ingested objects — global-index fallback).
-		if dp != nil {
-			if _, ok := dp.Commits[u.New]; !ok {
-				if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, u.New); rerr != nil {
-					_ = WritePacket(out, []byte("ng "+u.Name+" head object missing\n"))
-					continue
-				}
-			}
-		} else if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, u.New); rerr != nil {
+		// The new head must exist (this pack just ingested it, or it is an
+		// already-ingested object — the re-push case, global-index lookup).
+		if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, u.New); rerr != nil {
 			_ = WritePacket(out, []byte("ng "+u.Name+" head object missing\n"))
 			continue
 		}
@@ -189,7 +192,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			// per-timeline FIFO and divergent chains converge server-side;
 			// otherwise the pre-M4 adopt path runs inline.
 			if s.Convergence {
-				res := s.runSubtreeJob(ctx, vr, name, u.Old, u.New, dp)
+				res := s.runSubtreeJob(ctx, vr, name, u.Old, u.New)
 				if res.err != nil {
 					_ = WritePacket(out, []byte("ng "+u.Name+" "+res.err.Error()+"\n"))
 					continue
@@ -212,7 +215,6 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		// which the weave persists via the /.woven timeline, so the chain is
 		// self-consistent root-local state; the incremental weave then
 		// identity-reuses those commits (same tree, same parents).
-		_ = dp
 		tl := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: name}
 		expected := u.Old
 		if st, serr := s.Meta.Timeline(ctx, tl); serr == nil {
@@ -237,6 +239,77 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 
 	_ = WriteFlush(out)
 	return nil
+}
+
+// spoolPack streams the receive-pack body into a temp file, hashing as the
+// bytes fly past: a trailing window of hash-width bytes stays out of the
+// hasher, so at EOF the hasher holds the checksum of everything BEFORE the
+// trailer and the window holds the trailer itself — the pack's integrity
+// check without ever holding the pack. Returns the spooled path and size;
+// the caller owns removal.
+func (s *Server) spoolPack(br *bufio.Reader) (string, int64, error) {
+	tmp, err := os.CreateTemp("", "banyan-push-*.pack")
+	if err != nil {
+		return "", 0, err
+	}
+	bad := func(e error) (string, int64, error) {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", 0, e
+	}
+
+	width := 20
+	var h hash.Hash = sha1.New()
+	if s.Algo == model.SHA256 {
+		width = 32
+		h = sha256.New()
+	}
+	pending := make([]byte, 0, width+64*1024)
+	buf := make([]byte, 64*1024)
+	var total int64
+	for {
+		n, rerr := br.Read(buf)
+		if n > 0 {
+			if _, werr := tmp.Write(buf[:n]); werr != nil {
+				return bad(werr)
+			}
+			total += int64(n)
+			pending = append(pending, buf[:n]...)
+			if len(pending) > width {
+				h.Write(pending[:len(pending)-width])
+				copy(pending, pending[len(pending)-width:])
+				pending = pending[:width]
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return bad(rerr)
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		return bad(err)
+	}
+	if total < int64(width)+12 { // pack header (12) + trailer
+		return bad(fmt.Errorf("pack too short (%d bytes)", total))
+	}
+	if !equalBytes(pending, h.Sum(nil)) {
+		return bad(fmt.Errorf("pack checksum mismatch"))
+	}
+	return tmp.Name(), total, nil
+}
+
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // warmView pre-materializes the views the next advertisement will resolve
@@ -267,20 +340,18 @@ func (s *Server) warmView(repo string, sub model.AnchorPath, branch string) {
 // timeline name IS the full ref name; the head is the raw OID with no
 // derived-view semantics; deletion mirrors the branch path's expected
 // mapping (the advertised value equals the stored head).
-func (s *Server) handleAuxRefUpdate(ctx context.Context, out *bufWriter, vr VirtualRepo, old, newHead model.OID, refName string, dp *storage.DecodedPack) {
+func (s *Server) handleAuxRefUpdate(ctx context.Context, out *bufWriter, vr VirtualRepo, old, newHead model.OID, refName string) {
 	if !vr.Sub.IsRoot() {
 		_ = WritePacket(out, []byte("ng "+refName+" auxiliary refs only supported in the root repo\n"))
 		return
 	}
 	if !newHead.IsZero() {
-		// Any object type is a valid target (unlike branch heads).
-		known := dp != nil && (dp.Commits[newHead] != nil || dp.Tags[newHead] != nil ||
-			dp.Trees[newHead] != nil || dp.Blobs[newHead] != nil)
-		if !known {
-			if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, newHead); rerr != nil {
-				_ = WritePacket(out, []byte("ng "+refName+" target object missing\n"))
-				return
-			}
+		// Any object type is a valid target (unlike branch heads): resolved
+		// through the global index (this push just ingested it, or it is an
+		// already-stored object).
+		if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, newHead); rerr != nil {
+			_ = WritePacket(out, []byte("ng "+refName+" target object missing\n"))
+			return
 		}
 	}
 	tl := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: refName}

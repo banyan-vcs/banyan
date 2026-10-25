@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 )
@@ -19,6 +21,11 @@ import (
 // fact: readers only ever trust the holder set recorded in MetaStore.
 type ShardBackend interface {
 	PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) ([]string, error)
+	// PutPackStream persists a pack from a stream (the large-push ingest
+	// path): open() hands each writer an independent reader of the same
+	// bytes, so no copy of the pack ever sits in memory. size feeds
+	// Content-Length on the wire.
+	PutPackStream(ctx context.Context, repo string, packOID model.OID, size int64, open func() (io.ReadCloser, error), idxBytes []byte) ([]string, error)
 	// GetPack reads one pack, trying the given holders in order (docs/10 §3:
 	// any holder may serve — the OID trailer checksum proves integrity).
 	GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error)
@@ -44,6 +51,15 @@ type ShardBackend interface {
 	RenameRepo(ctx context.Context, from, to string) error
 }
 
+// putPackStreamFromBytes adapts an in-memory pack to the streaming interface
+// (small packs: synthetics, repack output, tests).
+func putPackStreamFromBytes(ctx context.Context, b ShardBackend, key string, packOID model.OID, packBytes, idxBytes []byte) ([]string, error) {
+	open := func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(packBytes)), nil
+	}
+	return b.PutPackStream(ctx, key, packOID, int64(len(packBytes)), open, idxBytes)
+}
+
 // LocalBackend is the all-in-one shard backend: one local store, one node ID.
 type LocalBackend struct {
 	Local  *LocalShardStore
@@ -52,6 +68,15 @@ type LocalBackend struct {
 
 func (b *LocalBackend) PutPack(_ context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) ([]string, error) {
 	if err := b.Local.PutPack(repo, packOID, packBytes, idxBytes); err != nil {
+		return nil, err
+	}
+	return []string{b.NodeID}, nil
+}
+
+// PutPackStream lands the pack with one streaming copy — the whole pack
+// never materializes in memory (large-push ingest path).
+func (b *LocalBackend) PutPackStream(_ context.Context, repo string, packOID model.OID, size int64, open func() (io.ReadCloser, error), idxBytes []byte) ([]string, error) {
+	if err := b.Local.PutPackStream(repo, packOID, size, open, idxBytes); err != nil {
 		return nil, err
 	}
 	return []string{b.NodeID}, nil

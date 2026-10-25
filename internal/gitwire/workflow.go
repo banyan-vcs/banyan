@@ -38,7 +38,6 @@ type subtreeJob struct {
 	branch  string
 	old     model.OID
 	newHead model.OID
-	dp      *storage.DecodedPack
 	done    chan struct{}
 	result  jobResult
 }
@@ -52,7 +51,7 @@ type jobResult struct {
 // for the drainer (docs/15 §2.1). The drainer processes queued jobs FIFO —
 // each converging onto the tip left by its predecessor (the merge train) —
 // and exits once the queue is empty, so no goroutine lingers.
-func (s *Server) runSubtreeJob(ctx context.Context, vr VirtualRepo, branch string, old, newHead model.OID, dp *storage.DecodedPack) jobResult {
+func (s *Server) runSubtreeJob(ctx context.Context, vr VirtualRepo, branch string, old, newHead model.OID) jobResult {
 	s.wfOnce.Do(func() { s.wf = &workflow{queues: map[string]*dirQueue{}} })
 	key := vr.Repo + "|" + string(vr.Sub) + "|" + branch
 	s.wf.mu.Lock()
@@ -63,7 +62,7 @@ func (s *Server) runSubtreeJob(ctx context.Context, vr VirtualRepo, branch strin
 	}
 	s.wf.mu.Unlock()
 
-	job := &subtreeJob{vr: vr, branch: branch, old: old, newHead: newHead, dp: dp, done: make(chan struct{})}
+	job := &subtreeJob{vr: vr, branch: branch, old: old, newHead: newHead, done: make(chan struct{})}
 
 	q.mu.Lock()
 	take := q.idle

@@ -72,6 +72,36 @@ func (n *NodeClient) PutPack(ctx context.Context, repo string, packOID model.OID
 	return nil
 }
 
+// PutPackStream streams the pack body from open() (one pass, no buffering)
+// with ContentLength set so the node can size-check the landing file.
+func (n *NodeClient) PutPackStream(ctx context.Context, repo string, packOID model.OID, size int64, open func() (io.ReadCloser, error), idxBytes []byte) error {
+	src, err := open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, n.packURL(repo, packOID), src)
+	if err != nil {
+		return err
+	}
+	if size > 0 {
+		req.ContentLength = size
+	}
+	if h := encodeIdxHeader(idxBytes); h != "" {
+		req.Header.Set("X-Banyan-Idx", h)
+	}
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("storage %s put %s: status %d", n.Addr, packOID, resp.StatusCode)
+	}
+	return nil
+}
+
 func (n *NodeClient) GetPack(ctx context.Context, repo string, packOID model.OID) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, n.packURL(repo, packOID), nil)
 	if err != nil {
@@ -245,6 +275,13 @@ func acksFor(replicas int, mode string) int {
 }
 
 func (s *ScatteredStore) PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) ([]string, error) {
+	return putPackStreamFromBytes(ctx, s, repo, packOID, packBytes, idxBytes)
+}
+
+// PutPackStream fans the pack out to R healthy nodes in parallel, each
+// writer drawing its own reader of the same bytes (the spooled push file) —
+// the pack never sits whole in gateway memory.
+func (s *ScatteredStore) PutPackStream(ctx context.Context, repo string, packOID model.OID, size int64, open func() (io.ReadCloser, error), idxBytes []byte) ([]string, error) {
 	healthy := s.healthyNodes(ctx)
 	if len(healthy) == 0 {
 		return nil, fmt.Errorf("scattered: no healthy storage nodes")
@@ -268,7 +305,7 @@ func (s *ScatteredStore) PutPack(ctx context.Context, repo string, packOID model
 		wg.Add(1)
 		go func(i int, t NodeInfo) {
 			defer wg.Done()
-			results[i] = result{node: t, ok: s.client(t.Addr).PutPack(ctx, repo, packOID, packBytes, idxBytes) == nil}
+			results[i] = result{node: t, ok: s.client(t.Addr).PutPackStream(ctx, repo, packOID, size, open, idxBytes) == nil}
 		}(i, t)
 	}
 	wg.Wait()
