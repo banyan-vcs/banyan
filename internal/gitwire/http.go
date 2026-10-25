@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 
@@ -74,6 +75,16 @@ type Server struct {
 	// SSHHostKey signs the git-over-SSH transport's server key exchange
 	// (docs/04 §8); wired by cmd/banyand (generated/persisted host key).
 	SSHHostKey ssh.Signer
+
+	// Convergence enables the M4 workflow semantics (docs/15): same-
+	// directory pushes serialize on a per-timeline queue and divergent
+	// chains converge server-side (pure-Go merge-ort subset, conflict =
+	// rejected ticket). Off (the default at this layer) keeps the pre-M4
+	// reject-and-rebase behavior; cmd/banyand turns it on via config.
+	Convergence bool
+
+	wf     *workflow
+	wfOnce sync.Once
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {

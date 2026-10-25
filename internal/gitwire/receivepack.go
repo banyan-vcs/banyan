@@ -185,6 +185,19 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			// Ⓑ subtree-view push (docs/02 §13): the write path touches ONLY
 			// this directory's timeline — no root head CAS, no adoption merge.
 			// The root view is derived on read (view.RootTip weave).
+			// Under M4 convergence (docs/15) the update queues on the
+			// per-timeline FIFO and divergent chains converge server-side;
+			// otherwise the pre-M4 adopt path runs inline.
+			if s.Convergence {
+				res := s.runSubtreeJob(ctx, vr, name, u.Old, u.New, dp)
+				if res.err != nil {
+					_ = WritePacket(out, []byte("ng "+u.Name+" "+res.err.Error()+"\n"))
+					continue
+				}
+				_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
+				s.warmView(vr.Repo, vr.Sub, name)
+				continue
+			}
 			if aerr := s.adoptSubtreePush(ctx, vr, name, u.Old, u.New); aerr != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+aerr.Error()+"\n"))
 				continue

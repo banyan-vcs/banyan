@@ -73,6 +73,16 @@ type Config struct {
 		Mode string `yaml:"mode"`
 	} `yaml:"storage"`
 
+	// Workflow configures the M4 directory-level collaboration semantics
+	// (docs/15).
+	Workflow struct {
+		// Convergence: "auto" (default — divergent same-directory pushes
+		// converge server-side, pure-Go merge-ort subset; conflicts reject
+		// that push in isolation) or "reject" (pre-M4 semantics: non-FF
+		// rejection, client pull --rebase).
+		Convergence string `yaml:"convergence"`
+	} `yaml:"workflow"`
+
 	Cache struct {
 		// PackDir enables the gateway's on-disk pack cache (docs/11 P2-1):
 		// packs fetched from storage nodes persist across gateway restarts.
@@ -213,6 +223,14 @@ func (c *Config) normalize() error {
 	case "named", "hashed":
 	default:
 		return fmt.Errorf("config: storage.mode %q: want named|hashed", c.Storage.Mode)
+	}
+	if c.Workflow.Convergence == "" {
+		c.Workflow.Convergence = "auto"
+	}
+	switch c.Workflow.Convergence {
+	case "auto", "reject":
+	default:
+		return fmt.Errorf("config: workflow.convergence %q: want auto|reject", c.Workflow.Convergence)
 	}
 	if c.DefaultR < 1 {
 		c.DefaultR = 1

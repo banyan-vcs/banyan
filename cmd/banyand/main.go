@@ -80,6 +80,7 @@ func runAllInOne(cfg *config.Config) {
 	gw := gitwire.NewServer(meta, objects, model.SHA1)
 	api := rpc.NewServer(meta, objects, model.SHA1)
 	objects.Addressing = storage.NewAddressing(cfg.Storage.Mode, meta)
+	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	if policy := staticPolicy(cfg); policy != nil {
 		gw.Auth = policy
 		api.Auth = policy
@@ -140,6 +141,7 @@ func runGateway(cfg *config.Config) {
 	gw := gitwire.NewServer(meta, objects, model.SHA1)
 	api := rpc.NewServer(meta, objects, model.SHA1)
 	objects.Addressing = storage.NewAddressing(cfg.Storage.Mode, meta)
+	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	if cfg.Auth.Remote {
 		// The gateway decides against a policy snapshot synced from the
 		// refs service (docs/07 §4) — same abstraction, synced state; the
