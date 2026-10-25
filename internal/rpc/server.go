@@ -386,11 +386,37 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
-	if len(parts) != 2 || parts[1] != "placement" {
-		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/placement"}})
+	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename") {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename)"}})
 		return
 	}
 	repo := parts[0]
+	if parts[1] == "rename" {
+		// Repository rename (docs/03 §6): hashed addressing flips the
+		// registry alone; named addressing moves every storage location
+		// first. Same authentication gate as repo creation (docs/07 §5 —
+		// fine-grained RPC authz is the listed follow-up).
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "POST"}})
+			return
+		}
+		var req struct {
+			To string `json:"to"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if req.To == "" || strings.Contains(req.To, "/") {
+			writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "to required, single path segment"}})
+			return
+		}
+		if err := s.Objects.RenameRepo(r.Context(), repo, req.To); err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"from": repo, "to": req.To})
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		replicas, err := s.Svc.GetPlacement(r.Context(), repo)
