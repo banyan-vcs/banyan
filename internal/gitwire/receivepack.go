@@ -325,7 +325,6 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	//     the projection (different OID) plus newer local content, so it is
 	//     ahead of, not stale against, the root side.
 	if !old.IsZero() {
-		log.Printf("GUARD %s%s: old=%s curTip=%s same=%v", vr.Repo, vr.Sub, old, curTip, s.sameXView(vr, old, curTip))
 		if !s.sameXView(vr, old, curTip) {
 			return storage.ErrNonFastForward
 		}
@@ -350,6 +349,26 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	} else if terr := s.Meta.EnsureTimeline(ctx, localTL, curTip, s.rootLocalHead(ctx, vr.Repo, branch)); terr != nil {
 		return terr
 	}
+	// Rollback guard (force-push revival, docs/04 §6b): git's wire protocol
+	// cannot signal "force" — the client-side ancestry check is all that
+	// --force bypasses, and old is always the advertised tip — so a client
+	// that fetches, rewinds (reset --hard) or rewrites away peers' commits
+	// and pushes --force presents old=curTip: the staleness guards above
+	// pass and the CAS would silently rewind the directory timeline. Under
+	// convergence the fast path never even shows the merge train (the
+	// client's true base is erased from the wire). The pushed chain must
+	// carry the current tip's content forward — by ancestry (plain
+	// fast-forward), by identical X content (no-op), or by the current X
+	// tree recorded in the chain's history (a content-preserving rewrite,
+	// the T18 rebase-recovery shape). A rewind that drops content is
+	// refused; rolling content back is the revert route's job, which keeps
+	// history moving forward.
+	if !s.Views.Descends(vr.Repo, newHead, curTip) &&
+		!s.sameXView(vr, newHead, curTip) &&
+		!s.treeKnownXView(vr, newHead, curTip) {
+		return ErrForceRewind
+	}
+
 	if err := s.Meta.CASHead(ctx, localTL, localTip, newHead); err != nil {
 		return err
 	}
@@ -364,6 +383,11 @@ func (s *Server) rootLocalHead(ctx context.Context, repo, branch string) model.O
 	}
 	return state.Head
 }
+
+// ErrForceRewind rejects a subtree update whose chain drops the current
+// tip's content (force-push revival): the non-fast-forward prefix keeps
+// git's client-side wording, the suffix names the recovery route.
+var ErrForceRewind = fmt.Errorf("non-fast-forward: update would rewind the timeline (fetch & rebase, or revert)")
 
 // sameXView is the content-level fast-forward check: whether two commits have the same
 // tree under the path-X view (X-view normalization: a full-repo tree maps to its X subtree; a tree lacking X's first segment Ã¢ÂÂ the tree itself
@@ -383,6 +407,21 @@ func (s *Server) sameXView(vr VirtualRepo, a, b model.OID) bool {
 }
 
 // xviewTree normalizes a tree to the X view (docs/02 ÃÂ§10 mixed scope).
+// treeKnownXView reports whether the X-view tree of tip is already recorded
+// somewhere in head's ancestry — the rollback guard's content-preserving
+// rewrite recognition (cross-view rewrites carry identical X trees).
+func (s *Server) treeKnownXView(vr VirtualRepo, head, tip model.OID) bool {
+	info, err := s.Objects.CommitInfo(vr.Repo, tip)
+	if err != nil {
+		return false
+	}
+	tree := s.xviewTree(vr, info.Tree)
+	if tree.IsZero() {
+		return false
+	}
+	return s.Views.TreeKnown(vr.Repo, head, tree)
+}
+
 func (s *Server) xviewTree(vr VirtualRepo, tree model.OID) model.OID {
 	lookup := s.Objects.Lookup(vr.Repo)
 	segs := vr.Sub.Segments()
