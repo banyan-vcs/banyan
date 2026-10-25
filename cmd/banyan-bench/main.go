@@ -1,11 +1,13 @@
 // banyan-bench runs the performance comparison harness (docs/11 §3):
 // banyan vs a genuine git http-backend on the same machine and transport,
-// deterministic seed repos, cold/warm/incremental lanes, and a >20%
-// regression gate against a saved baseline.
+// deterministic seed repos, cold/warm/incremental lanes plus workflow lanes
+// (dev-loop, 8-writer burst), hyperfine-style sampling (percentiles + IQR
+// outlier counts), and a >20% regression gate against a saved baseline.
 //
-//	banyan-bench --profile small                 # run + print table
-//	banyan-bench --profile small --save base.json
-//	banyan-bench --profile small --check base.json   # exit 1 on regression
+//	banyan-bench --profile medium                    # run + print table
+//	banyan-bench --profile medium --save base.json
+//	banyan-bench --profile medium --check base.json   # exit 1 on regression
+//	banyan-bench --profile large --runs 5 --md report.md --csv samples.csv
 package main
 
 import (
@@ -18,16 +20,18 @@ import (
 )
 
 func main() {
-	profile := flag.String("profile", "small", "seed profile: small | medium")
-	runs := flag.Int("runs", 3, "runs per scenario (run 0 = cold lane, rest warm)")
+	profile := flag.String("profile", "small", "seed profile: small | medium | large")
+	runs := flag.Int("runs", 3, "runs per scenario (run 0 = cold lane, rest warm; minimum 3)")
 	save := flag.String("save", "", "write the report as a baseline JSON file")
 	check := flag.String("check", "", "compare against a baseline JSON; exit 1 on >20% regression")
+	md := flag.String("md", "", "write a Markdown comparison report")
+	csv := flag.String("csv", "", "write every raw sample as CSV (workload,tool,run,ms,bytes)")
 	workdir := flag.String("work", "", "working directory (default: temp)")
 	flag.Parse()
 
 	p, ok := bench.Profiles[*profile]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "unknown profile %q (have small, medium)\n", *profile)
+		fmt.Fprintf(os.Stderr, "unknown profile %q (have small, medium, large)\n", *profile)
 		os.Exit(2)
 	}
 	dir := *workdir
@@ -74,5 +78,19 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("SLO GREEN — 全部指标在基线 20% 以内")
+	}
+	if *md != "" {
+		if err := rep.WriteMarkdown(*md); err != nil {
+			fmt.Fprintf(os.Stderr, "write markdown: %v\n", err)
+			os.Exit(2)
+		}
+		fmt.Printf("markdown report: %s\n", *md)
+	}
+	if *csv != "" {
+		if err := rep.WriteCSV(*csv); err != nil {
+			fmt.Fprintf(os.Stderr, "write csv: %v\n", err)
+			os.Exit(2)
+		}
+		fmt.Printf("raw samples: %s\n", *csv)
 	}
 }

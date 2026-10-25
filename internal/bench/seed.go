@@ -33,6 +33,10 @@ type SeedProfile struct {
 var Profiles = map[string]SeedProfile{
 	"small":  {Commits: 30, Dirs: 5, FilesPerDir: 5, BlobMin: 1024, BlobMax: 3072, ChurnFiles: 3},
 	"medium": {Commits: 120, Dirs: 10, FilesPerDir: 8, BlobMin: 2048, BlobMax: 6144, ChurnFiles: 4},
+	// large is the monorepo-shaped ladder step: enough history for
+	// negotiation/closure costs to show, enough directories for subtree
+	// clones to differ meaningfully from full clones.
+	"large": {Commits: 500, Dirs: 20, FilesPerDir: 12, BlobMin: 2048, BlobMax: 8192, ChurnFiles: 5},
 }
 
 // git runs git with the benchmark's fixed identity config.
