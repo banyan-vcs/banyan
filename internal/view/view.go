@@ -546,6 +546,58 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 	return last, nil
 }
 
+// ResetWoven deletes the whole /.woven family for one branch (docs/04 §6a
+// force-push rollback). After a timeline is force-moved backward, the
+// persisted anchors and per-source markers no longer describe the new
+// source chains — and the anti-regress skips they feed (prevWoven prefix,
+// TreeKnown, batchTrees) would hold the pre-rollback state in place. Weave
+// materialization is a deterministic pure function of the timeline tips, so
+// the next materialization rebuilds every scope from scratch: the rewound
+// timeline folds its new chain, dropped commits vanish from ancestor views
+// (history rebuild), and untouched timelines re-weave byte-identically
+// (synthetics reuse source author/committer — no clock input).
+//
+// Best-effort per timeline: a CAS racing a concurrent materialization is
+// logged and skipped — that scope degrades to an incremental fold over a
+// stale anchor (correct content, mixed history) until the next reset.
+func (s *Service) ResetWoven(ctx context.Context, repo, branch string) error {
+	all, err := s.Meta.ListAllTimelines(ctx, repo)
+	if err != nil {
+		return err
+	}
+	for _, tl := range all {
+		if tl.Name != branch || !isWovenFamily(tl.Anchor) {
+			continue
+		}
+		st, terr := s.Meta.Timeline(ctx, tl)
+		if terr != nil || st.Head.IsZero() {
+			continue
+		}
+		if err := s.Meta.CASHead(ctx, tl, st.Head, model.OID("")); err != nil {
+			// A lost CAS means a concurrent weave advanced this anchor after
+			// we listed it; see the doc note above.
+			continue
+		}
+	}
+	// Cached views keyed on tips miss naturally (the rewound timeline's head
+	// changed every ancestor scope's key), but sibling scopes keep stale
+	// entries — deterministic re-weave reproduces them, so dropping is
+	// cheap insurance, not correctness.
+	s.mu.Lock()
+	for k := range s.rootCache {
+		if k.repo == repo {
+			delete(s.rootCache, k)
+		}
+	}
+	for k := range s.subCache {
+		if k.repo == repo {
+			delete(s.subCache, k)
+		}
+	}
+	s.mu.Unlock()
+	return nil
+}
+
 // markerStop returns the woven-marker head for one contributing source and
 // its source-space exclusion set (the marker's ancestry). A zero head means
 // "collect all". A marker that is not an ancestor of the current head

@@ -349,7 +349,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	} else if terr := s.Meta.EnsureTimeline(ctx, localTL, curTip, s.rootLocalHead(ctx, vr.Repo, branch)); terr != nil {
 		return terr
 	}
-	// Rollback guard (force-push revival, docs/04 §6b): git's wire protocol
+	// Rollback guard (force-push revival, docs/04 §6a): git's wire protocol
 	// cannot signal "force" — the client-side ancestry check is all that
 	// --force bypasses, and old is always the advertised tip — so a client
 	// that fetches, rewinds (reset --hard) or rewrites away peers' commits
@@ -360,20 +360,44 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	// carry the current tip's content forward — by ancestry (plain
 	// fast-forward), by identical X content (no-op), or by the current X
 	// tree recorded in the chain's history (a content-preserving rewrite,
-	// the T18 rebase-recovery shape). A rewind that drops content is
-	// refused; rolling content back is the revert route's job, which keeps
-	// history moving forward.
-	if !s.Views.Descends(vr.Repo, newHead, curTip) &&
-		!s.sameXView(vr, newHead, curTip) &&
-		!s.treeKnownXView(vr, newHead, curTip) {
+	// the T18 rebase-recovery shape). A rewind that drops content is refused
+	// (the revert route keeps history moving forward) — UNLESS the repo's
+	// force-push switch is on: then the rewind lands as an explicit
+	// administrative rewrite and every woven view rebuilds from the new
+	// source chains (ResetWoven below re-derives parent/root commits).
+	forward := s.Views.Descends(vr.Repo, newHead, curTip) ||
+		s.sameXView(vr, newHead, curTip) ||
+		s.treeKnownXView(vr, newHead, curTip)
+	if !forward && !s.repoForcePush(ctx, vr.Repo) {
 		return ErrForceRewind
 	}
 
 	if err := s.Meta.CASHead(ctx, localTL, localTip, newHead); err != nil {
 		return err
 	}
-	log.Printf("subtree %s%s: /%s Ã¢ÂÂ %s (root-local untouched)", vr.Repo, vr.Sub, branch, newHead)
+	if !forward {
+		// The rewind landed under the force-push switch: drop the /.woven
+		// family so the next materialization re-weaves every scope from the
+		// new source chains (docs/04 §6a). Failure is logged, not fatal —
+		// the rewind itself already landed; views then degrade to a stale
+		// incremental fold until the next reset or restart.
+		if rerr := s.Views.ResetWoven(ctx, vr.Repo, branch); rerr != nil {
+			log.Printf("force-push %s%s: woven reset failed: %v", vr.Repo, vr.Sub, rerr)
+		} else {
+			log.Printf("force-push %s%s: /%s rewound, woven views reset", vr.Repo, vr.Sub, branch)
+		}
+		return nil
+	}
+	log.Printf("subtree %s%s: /%s → %s (root-local untouched)", vr.Repo, vr.Sub, branch, newHead)
 	return nil
+}
+
+// repoForcePush reads the repo-level force-push switch (docs/04 §6a): a
+// per-push metadata lookup — pushes are not hot-path enough to need a cache,
+// and the switch must take effect without restarts.
+func (s *Server) repoForcePush(ctx context.Context, repo string) bool {
+	info, err := s.Meta.GetRepo(ctx, repo)
+	return err == nil && info.ForcePush
 }
 
 func (s *Server) rootLocalHead(ctx context.Context, repo, branch string) model.OID {
