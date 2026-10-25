@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/go-git/go-git/v5 v5.13.0
+	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.58.0
 	gopkg.in/yaml.v3 v3.0.1
