@@ -221,3 +221,11 @@ go run ../cmd/banyan log           # 远端历史，零下载
 - Go + [go-git](https://github.com/go-git/go-git)（对象模型、packfile/idx 编解码——
   只作库，不作为行为边界）
 - 自研：时间线模型、读时织入、分片存储、虚拟仓库、Smart HTTP 层、服务层、薄 CLI
+
+## 许可
+
+核心为 **MIT**（[LICENSE](LICENSE)）。商业化能力维护在
+[enterprise/](enterprise/)——独立 Go module，按
+[enterprise/LICENSE.enterprise](enterprise/LICENSE.enterprise) 授权：
+开发与测试免费，生产使用需 banyan 企业订阅。核心永不 import
+enterprise，只有 enterprise 引用核心。

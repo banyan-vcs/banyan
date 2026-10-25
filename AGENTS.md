@@ -35,3 +35,9 @@ v4 timeline-first, see `docs/02`).
   matrix in `docs/13`. Prefer blob-hash assertions over worktree diffs
   (line-ending noise). Protocol bugs surface only under the real git CLI.
 - Comments: English first, stating constraints the code cannot show.
+
+- `enterprise/` is a SEPARATE Go module under a separate license
+  (`enterprise/LICENSE.enterprise`). Dependency direction is one-way:
+  enterprise may import the core; the core must never import enterprise
+  (and neither may core CI, docs examples, or tests). Keep new commercial
+  capabilities inside that module.

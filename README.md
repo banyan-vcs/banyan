@@ -257,3 +257,11 @@ architecture layer by layer, then cross-cutting concerns, then operations.
   codec — library only, never a behavioral boundary)
 - Homegrown: timeline model, read-time weaving, sharded storage, virtual
   repos, Smart HTTP layer, service layer, thin CLI
+
+## License
+
+The core is **MIT** ([LICENSE](LICENSE)). Commercial capabilities live under
+[enterprise/](enterprise/) — a separate Go module licensed under
+[enterprise/LICENSE.enterprise](enterprise/LICENSE.enterprise): free to
+modify and test, production use requires a banyan enterprise subscription.
+The core never imports enterprise; only enterprise imports the core.
