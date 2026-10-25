@@ -55,13 +55,13 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 
 ## M4 · 高并发工作流
 
-设计定稿见 [15-workflow.md](15-workflow.md)（2026-10-25）：目录票 +
-同目录提交队列（P2-5）+ 分歧收敛 merge train + agent-burst 基准门。
+设计 v2 定稿见 [15-workflow.md](15-workflow.md)（2026-10-25：网关本地
+批队列 + 一次 CAS 批追加 + 收敛 merge train + OCC 环；refs 零改动）。
 
-- [ ] M4.1 treeKnown 树→提交索引 + 重放机械抽取（纯重构）
-- [ ] M4.2 同目录提交队列（目录票，只串行化）——P2-5 交付
-- [ ] M4.3 分歧收敛：服务端 auto-rebase + 冲突隔离（默认开，repo 级可关）
-- [ ] M4.4 指标（queue_wait_p99 等）+ agent-burst bench 场景 + SLO 门
+- [ ] M4.1 重放原语抽取（diff/applyPaths/提交合成）+ treeKnown 索引（纯重构）
+- [ ] M4.2 网关批队列 + 一次 CAS 批追加（只串行化，收敛默认关）
+- [ ] M4.3 收敛 merge train：路径级合并 + 冲突隔离 + OCC 环（默认开，repo 级可关）
+- [ ] M4.4 指标 + agent-burst bench 场景 + SLO 门
 - [ ] 快照式本地状态（banyan snapshot / status）
 - [ ] 栈式变更（banyan stack）
 - [ ] `banyan sync`（子目录显式 rebase 对齐根）
