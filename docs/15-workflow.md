@@ -103,8 +103,12 @@ bench 场景 **agent-burst**：8/32/128 并发同目录，单网关与多网关�
 > git 客户端对顺序性非 FF push 在发送前就自行拒绝（"fetch first"），
 > 到不了服务端——收敛的真实作用面是**并发竞争窗口**（广告已取、他人
 > 落地在即），T41 的 8 并发突发正是该形态；顺序分歧语义用 rawPush 直
-> 钉 wire。未完：M4.4（指标 + agent-burst bench 场景 + 一次 CAS 批追加
-> 优化）、treeKnown 树→提交索引。
+> 钉 wire。**fast path 回滚守卫**（T43，docs/04 §6a）：force push 的
+> old 恒=广告值，回滚/重写形态会被 fast path 误判为连续 push 绕过列车
+> ——new 链内容前向校验（Descends/sameXView/TreeKnown 三形态）封死，
+> rawPush 伪造 old 形态则由收敛重放天然免疫（三方 base=客户端基底，
+> 回滚意图在其 diff 中不可表达）。未完：M4.4（指标 + agent-burst bench
+> 场景 + 一次 CAS 批追加优化）、treeKnown 树→提交索引。
 
 ```
 M4.1  重放原语抽取（diff/applyPaths/合成，纯函数）+ treeKnown 树→提交索引
@@ -121,9 +125,10 @@ M4.4  指标 + agent-burst 场景 + SLO 门
 |---|---|---|
 | T41 | 8 客户端并发同目录：全部落地、FIFO 有序、零拒绝、一次 CAS（计数断言） | 批队列正确性 |
 | T42 | 收敛语义：不同文件自动合并（内容逐文件断言）；同文件冲突 ng 隔离、后续票继续；收敛链可再被客户端 rebase 续推（T18 交叉） | merge train |
-| T43 | 队满 backpressure / 超时 busy / 网关重启（队列消失）后客户端重试仍正确 | 边界与崩溃 |
-| T44 | 4 目录 × 8 并发混合：吞吐与单目录对照不降 | 跨目录零干扰 |
-| T45 | 双网关拓扑同时批：最终一致、零客户端拒绝（OCC 环） | 跨网关 |
+| T43 | **已用于 force push 回滚守卫**（docs/04 §6a——fast path 的内容前向校验，回滚形态 force push 拒绝 + 恢复路线 + 根视图单调） | 回滚守卫 |
+| T44 | 队满 backpressure / 超时 busy / 网关重启（队列消失）后客户端重试仍正确 | 边界与崩溃 |
+| T45 | 4 目录 × 8 并发混合：吞吐与单目录对照不降 | 跨目录零干扰 |
+| T46 | 双网关拓扑同时批：最终一致、零客户端拒绝（OCC 环） | 跨网关 |
 
 ## 5. 边界（诚实清单）
 

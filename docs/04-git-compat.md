@@ -145,6 +145,32 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
   refs/banyan//src/lib/main   ← 目录时间线原生形态
 ```
 
+## 6a. force push 语义（子树回滚守卫，2026-10-25）
+
+协议事实：**wire 上不存在"force"信号**——`--force` 只解除客户端的祖先
+自检，update 行里 old 恒为广告值（客户端 push 前重新 GET 的服务端 tip）。
+由此，"fetch 后 `reset --hard` 旧提交（或重写历史丢他人提交）再 force
+push"以 old=curTip 的形态到达：§6 的内容守卫（sameXView/投影包含）全部
+通过，CAS 会**静默回滚目录时间线**——他人已落地内容从视图消失（回魂）。
+收敛模式下更隐蔽：fast path 把它当连续 push，列车（docs/15）从未参与，
+因为客户端真实基底已从 wire 上消失。
+
+守卫（receivepack.go，adoptSubtreePush 内 CAS 前）：**new 链必须前向承载
+curTip 的内容**，三种认可形态——祖先（普通快进）、X 内容等值（no-op）、
+curTip 的 X 树记录于 new 链历史（内容保持的重写，即 T18 rebase 恢复形态，
+与 §6 root 侧投影守卫同构）。不满足即 ng `non-fast-forward: update would
+rewind the timeline`。语义上等价于 git 服务端 `receive.denyNonFastForwards`，
+但判据是内容前向性而非纯祖先（重写恢复仍放行）。
+
+| force push 形态 | 结果 |
+|---|---|
+| 回滚/丢弃他人内容（reset、rebase drop） | 拒绝；恢复路线 `pull --rebase` 后普通 push |
+| 显式回滚内容 | 走 `git revert`（new 为 curTip 后代，天然放行） |
+| 内容保持的历史重写（T18 恢复链） | 放行（TreeKnown 认可） |
+| 根仓库 force push | git 原生放行（verbatim 层可重写）；但织入视图单调（/.woven 记忆），可见内容不回魂 |
+
+T43 钉住（四种回滚形态拒绝 + 拒后 rebase 恢复路线 + 根视图单调性）。
+
 ## 7. hooks / 策略点
 
 `receive-pack.c` 的 pre-receive/post-receive/update 钩子在 banyan 中抽象为 `Policy` 接口（M1 仅日志策略）：push 校验、组装前准入（M4 合并队列的挂点）、CI 触发。
@@ -190,6 +216,7 @@ v2 会话对照 `protocol_v2_serve_loop`：一次能力广告，随后命令循�
 | ~~浅克隆（deepen）~~ | **已实现**（§3a：deepen N / 加深 / unshallow / 客户端边界上报裁剪，对照 git 2.50 http-backend 参考流字节级实现） | T15/T16 钉住 |
 | `deepen-since` / `deepen-not` | 未广告未实现（`--shallow-since`/`--shallow-exclude`） | 需要时按 §3a 同框架扩展 |
 | 浅仓 push | 拒绝（HTTP 400）——对照参考服务端默认行为（`receive.shallowUpdate=false` → 403），同为干净拒绝 | 完整仓库 push 不受影响 |
+| 子树 force push 重写历史 | 服务端拒绝（§6a 内容前向校验）——目录时间线是多股共织的，不允许单方静默重写 | 显式回滚走 revert；恢复路线 pull --rebase |
 
 ## 9. 协议兼容矩阵（git 2.50.0.windows.1 实测，集成测试 T13–T16 钉住）
 
