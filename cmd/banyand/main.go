@@ -88,6 +88,9 @@ func runAllInOne(cfg *config.Config) {
 	gw.Register(mux)
 	api.Register(mux)
 	root(mux)
+	if err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw); err != nil {
+		log.Fatalf("ssh: %v", err)
+	}
 	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
 }
 
@@ -102,6 +105,7 @@ func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
 		Admins:            cfg.Auth.Admins,
 		ProtectedBranches: cfg.Auth.ProtectedBranches,
 		SubtreeAccess:     cfg.Auth.SubtreeAccess,
+		Keys:              cfg.Auth.Keys,
 	}
 }
 
@@ -146,6 +150,11 @@ func runGateway(cfg *config.Config) {
 	gw.Register(mux)
 	api.Register(mux)
 	root(mux)
+	// Same transport wiring as all-in-one: the gateway decides access
+	// against the synced policy snapshot (keys ride along, docs/13 §4/§7).
+	if err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw); err != nil {
+		log.Fatalf("ssh: %v", err)
+	}
 	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
 }
 

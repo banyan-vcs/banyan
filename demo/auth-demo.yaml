@@ -1,9 +1,13 @@
 # Authorization-enabled demo config (docs/13 §2), mounted by
 # docker-compose.yml. Users: alice/bob are developers, admin owns main
 # and the /secret subtree. Log in on the web UI with the same accounts.
+# auth.keys authorize the demo SSH keys in demo/ssh/ (docs/03 §8).
 listen: "0.0.0.0:8080"
 root: "/var/lib/banyan"
 meta: sqlite
+
+ssh:
+  listen: "0.0.0.0:8022" # git-over-SSH transport; host key persists under root
 
 auth:
   users:
@@ -14,3 +18,10 @@ auth:
   protected_branches: [main]
   subtree_access:
     "/secret": [admin]
+  keys:
+    alice:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJfii9DM0NzhjEffnmDIkPq+pn/adudJaAo5XI5Y3cRV banyan-demo-alice"
+    bob:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKlV1xdUcHmn11KcjWOxK8435V04TZm4A3/3IApNJhXj banyan-demo-bob"
+    admin:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJyzv2L4R1tZbD4F4eai9qna4J7aAb017MNQMQOorwFH banyan-demo-admin"

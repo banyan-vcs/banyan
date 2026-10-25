@@ -1,8 +1,10 @@
 # One-command local demo: docker compose up -d
 #
 #   web UI     http://localhost:8101  (log in: alice / bob / admin, password demo)
-#   git        http://localhost:8100/r/<repo>.git
+#   git http   http://localhost:8100/r/<repo>.git
 #              credentials in the URL: http://alice:demo@localhost:8100/r/<repo>.git
+#   git ssh    ssh://alice@localhost:8102/r/<repo>.git
+#              demo keys in demo/ssh/ (GIT_SSH_COMMAND="ssh -i demo/ssh/alice ...")
 #   thin CLI   go run ./cmd/banyan clone http://alice:demo@localhost:8100/r/<repo>
 #
 # Authorization is ON in this demo (demo/auth-demo.yaml): main is
@@ -16,8 +18,9 @@ services:
     command: ["-config", "/etc/banyan/auth-demo.yaml"]
     ports:
       - "8100:8080" # git smart HTTP (credentials in URL or http.extraHeader)
+      - "8102:8022" # git over SSH (public keys in auth.keys)
     volumes:
-      - banyan-data:/var/lib/banyan # SQLite metadata + pack shards persist
+      - banyan-data:/var/lib/banyan # SQLite metadata + pack shards + ssh host key persist
       - ./demo/auth-demo.yaml:/etc/banyan/auth-demo.yaml:ro
     restart: unless-stopped
 
