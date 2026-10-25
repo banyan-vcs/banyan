@@ -150,7 +150,8 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
   >20% 退出码 1（夜间跑，不进 go test 热路径）。
 
 本机实测（Windows 开发机，runs=5；随机器浮动，回归判断以 `--check`
-门为准；综合报告见 workspace 根目录《banyan性能对比报告.md》）：
+门为准；**多轮验证与三个劣化指标的 pack 级归因见 [16-benchmark-report
+](16-benchmark-report.md)**）：
 
 | 场景 | medium 字节比/耗时比 | large 字节比/耗时比 |
 |---|---|---|

@@ -232,6 +232,7 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 | [docs/08-derived-data.md](docs/08-derived-data.md) | Derived data: commit-graph, path history, blame |
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
 | [docs/15-workflow.md](docs/15-workflow.md) | M4 design: per-directory commit queue + convergence (merge train) |
+| [docs/16-benchmark-report.md](docs/16-benchmark-report.md) | Measured benchmark report vs git http-backend (multi-run, drift forensics) |
 
 **Operations & evolution**:
 

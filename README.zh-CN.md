@@ -198,6 +198,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 | [docs/08-derived-data.md](docs/08-derived-data.md) | 派生数据：commit-graph、路径历史、blame |
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | 索引（代数）与打包（have 减除/delta/repack）设计 |
 | [docs/15-workflow.md](docs/15-workflow.md) | M4 设计：同目录提交队列 + 分歧收敛（merge train） |
+| [docs/16-benchmark-report.md](docs/16-benchmark-report.md) | 性能实测报告：多轮验证与劣化归因（对 git http-backend） |
 
 **运行与演进**：
 
