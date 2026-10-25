@@ -75,3 +75,11 @@ meta: "mem"
 
 # gateway 角色：决策走 refs 服务同步的策略快照（集群模式的策略源）
 #  remote: true
+
+# --- 存储寻址模式（docs/03 §6；缺省 named） ---
+# named:  磁盘目录=仓库名（可读）；rename/迁移需在所有持有节点上移动数据
+# hashed: 磁盘目录=@hashed/<xx>/<yy>/<sha256(storage_id)>（不可读）；rename 仅
+#         改注册表零存储动作——名字→键映射在网关（经 refs 元数据）解析。
+#         gateway 与 refs 角色必须一致。
+#storage:
+#  mode: hashed

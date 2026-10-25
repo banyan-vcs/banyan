@@ -57,12 +57,21 @@ type Config struct {
 		Keys map[string][]string `yaml:"keys"`
 	} `yaml:"auth"`
 
-	// SSH configures the git-over-SSH transport (docs/04 §8): absent listen
+	// SSH configures the git-over-SSH transport (docs/04 §7b): absent listen
 	// keeps the transport off.
 	SSH struct {
 		Listen  string `yaml:"listen"`   // e.g. "0.0.0.0:8022"
 		HostKey string `yaml:"host_key"` // PEM private key; default: <root>/ssh_host_ed25519_key (generated on first boot)
 	} `yaml:"ssh"`
+
+	// Storage configures storage addressing (docs/03 §6).
+	Storage struct {
+		// Mode selects how a repo name maps onto storage: "named" (default,
+		// readable directories; renames move data) or "hashed" (opaque
+		// @hashed/… keys derived from the immutable storage id; renames are
+		// registry-only). Must match across the gateway/refs roles.
+		Mode string `yaml:"mode"`
+	} `yaml:"storage"`
 
 	Cache struct {
 		// PackDir enables the gateway's on-disk pack cache (docs/11 P2-1):
@@ -196,6 +205,14 @@ func (c *Config) normalize() error {
 	case "quorum", "all", "one":
 	default:
 		return fmt.Errorf("config: write_acks %q: want quorum|all|one", c.WriteAcks)
+	}
+	if c.Storage.Mode == "" {
+		c.Storage.Mode = "named"
+	}
+	switch c.Storage.Mode {
+	case "named", "hashed":
+	default:
+		return fmt.Errorf("config: storage.mode %q: want named|hashed", c.Storage.Mode)
 	}
 	if c.DefaultR < 1 {
 		c.DefaultR = 1
