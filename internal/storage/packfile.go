@@ -144,15 +144,21 @@ type DecodedPack struct {
 	// callbacks, which carry the offset explicitly (the Parser's resolution
 	// order differs from pack order for delta entries, so the old
 	// positional pairing mis-mapped delta packs; found by P1-1 extraction).
-	Offsets map[model.OID]uint32
+	// Offsets are 64-bit: packs beyond 4GiB are first-class (idx v2's
+	// large-offset table).
+	Offsets map[model.OID]uint64
 	CRCs    map[model.OID]uint32
 }
 
 // idxObserver collects the authoritative oid → offset/crc mapping from the
 // Parser's observer callbacks (the same feed go-git's idx encoder uses).
+// order (with a seen-set guard against placeholder double callbacks) feeds
+// the streaming ingest path, where there is no storer to read it back from.
 type idxObserver struct {
-	offsets map[model.OID]uint32
+	offsets map[model.OID]uint64
 	crcs    map[model.OID]uint32
+	order   []model.OID
+	seen    map[model.OID]bool
 }
 
 func (o *idxObserver) OnHeader(uint32) error { return nil }
@@ -161,12 +167,17 @@ func (o *idxObserver) OnInflatedObjectHeader(plumbing.ObjectType, int64, int64) 
 }
 func (o *idxObserver) OnInflatedObjectContent(h plumbing.Hash, pos int64, crc uint32, _ []byte) error {
 	if o.offsets == nil {
-		o.offsets = map[model.OID]uint32{}
+		o.offsets = map[model.OID]uint64{}
 		o.crcs = map[model.OID]uint32{}
+		o.seen = map[model.OID]bool{}
 	}
 	oid := model.OID(h.String())
-	o.offsets[oid] = uint32(pos)
+	o.offsets[oid] = uint64(pos)
 	o.crcs[oid] = crc
+	if !o.seen[oid] {
+		o.seen[oid] = true
+		o.order = append(o.order, oid)
+	}
 	return nil
 }
 func (o *idxObserver) OnFooter(plumbing.Hash) error { return nil }

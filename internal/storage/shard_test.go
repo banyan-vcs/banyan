@@ -52,7 +52,7 @@ func TestPickNodesRendezvousStability(t *testing.T) {
 }
 
 func TestEncodeDecodeIdxRoundTrip(t *testing.T) {
-	offsets := map[model.OID]uint32{
+	offsets := map[model.OID]uint64{
 		"0000000000000000000000000000000000000001": 12,
 		"0000000000000000000000000000000000000002": 480,
 		"ffffffffffffffffffffffffffffffffffffffff": 0x90,
