@@ -8,8 +8,8 @@ import (
 	"io"
 	"sync"
 
-	"crypto/sha1"
 	"compress/zlib"
+	"crypto/sha1"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 )
