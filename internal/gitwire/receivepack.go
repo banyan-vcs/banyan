@@ -3,11 +3,7 @@ package gitwire
 import (
 	"bufio"
 	"context"
-	"crypto/sha1"
-	"crypto/sha256"
 	"fmt"
-	"hash"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -241,12 +237,10 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	return nil
 }
 
-// spoolPack streams the receive-pack body into a temp file, hashing as the
-// bytes fly past: a trailing window of hash-width bytes stays out of the
-// hasher, so at EOF the hasher holds the checksum of everything BEFORE the
-// trailer and the window holds the trailer itself — the pack's integrity
-// check without ever holding the pack. Returns the spooled path and size;
-// the caller owns removal.
+// spoolPack streams the receive-pack body into a temp file, verifying the
+// pack trailer as the bytes fly past (storage.SpoolVerifiedCopy: a trailing
+// hash window, never the whole pack in memory). Returns the spooled path and
+// size; the caller owns removal.
 func (s *Server) spoolPack(br *bufio.Reader) (string, int64, error) {
 	tmp, err := os.CreateTemp("", "banyan-push-*.pack")
 	if err != nil {
@@ -258,58 +252,17 @@ func (s *Server) spoolPack(br *bufio.Reader) (string, int64, error) {
 		return "", 0, e
 	}
 
-	width := 20
-	var h hash.Hash = sha1.New()
-	if s.Algo == model.SHA256 {
-		width = 32
-		h = sha256.New()
+	total, _, ok, cerr := storage.SpoolVerifiedCopy(tmp, br, s.Algo)
+	if cerr == nil && !ok {
+		cerr = fmt.Errorf("pack checksum mismatch")
 	}
-	pending := make([]byte, 0, width+64*1024)
-	buf := make([]byte, 64*1024)
-	var total int64
-	for {
-		n, rerr := br.Read(buf)
-		if n > 0 {
-			if _, werr := tmp.Write(buf[:n]); werr != nil {
-				return bad(werr)
-			}
-			total += int64(n)
-			pending = append(pending, buf[:n]...)
-			if len(pending) > width {
-				h.Write(pending[:len(pending)-width])
-				copy(pending, pending[len(pending)-width:])
-				pending = pending[:width]
-			}
-		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			return bad(rerr)
-		}
+	if cerr != nil {
+		return bad(cerr)
 	}
 	if err := tmp.Close(); err != nil {
 		return bad(err)
 	}
-	if total < int64(width)+12 { // pack header (12) + trailer
-		return bad(fmt.Errorf("pack too short (%d bytes)", total))
-	}
-	if !equalBytes(pending, h.Sum(nil)) {
-		return bad(fmt.Errorf("pack checksum mismatch"))
-	}
 	return tmp.Name(), total, nil
-}
-
-func equalBytes(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // warmView pre-materializes the views the next advertisement will resolve

@@ -206,6 +206,18 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 		return
 	}
 
+	// Clone-shaped fast path (docs/03 §5): no haves, depth, filter or
+	// shallow — the client wants a whole history. When one stored pack
+	// holds exactly that object set, stream it verbatim without building
+	// the closure: multi-hundred-MB repos serve in a small memory window.
+	if len(st.haves) == 0 && st.depth == 0 && st.filter == nil && len(st.clientShallow) == 0 {
+		if served, ok := s.tryExactPackStream(ctx, out, vr, st.wants); ok {
+			_ = out.Flush()
+			log.Printf("upload-pack %s%s: %d wants → %s (closure skipped)", vr.Repo, vr.Sub, len(st.wants), served)
+			return
+		}
+	}
+
 	closureStart := time.Now()
 	blobs, trees, commits, tags, exclude, err := s.closure(ctx, vr, st.wants, st.depth, st.clientShallow, st.haves, st.filter)
 	closureDur := time.Since(closureStart)
@@ -265,6 +277,87 @@ func filterSpecName(f *FilterSpec) string {
 		return "off"
 	}
 	return f.Spec()
+}
+
+// enumerateClosure walks the want closure collecting OIDs only (docs/03 §5,
+// the streaming-serve probe): commits and trees are read through the
+// metadata indexes (transient bytes, nothing retained beyond per-object
+// metadata), blobs are resolved for type but their bytes are never kept.
+// The resulting set equals what closure() yields for the same clone-shaped
+// request (no haves/depth/filter/shallow) — at a fraction of the memory.
+func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []model.OID) (map[model.OID]bool, error) {
+	s.Objects.Prefetch(ctx, vr.Repo, wants)
+	set := make(map[model.OID]bool, 1024)
+	queue := append([]model.OID(nil), wants...)
+	for len(queue) > 0 {
+		oid := queue[0]
+		queue = queue[1:]
+		if set[oid] {
+			continue
+		}
+		set[oid] = true
+		t, raw, err := s.Objects.Raw(ctx, vr.Repo, oid)
+		if err != nil {
+			return nil, err
+		}
+		switch t {
+		case model.CommitType:
+			ci, err := s.Objects.CommitInfo(vr.Repo, oid)
+			if err != nil {
+				return nil, err
+			}
+			queue = append(queue, ci.Tree)
+			queue = append(queue, ci.Parents...)
+		case model.TreeType:
+			entries, err := s.Objects.TreeEntries(vr.Repo, oid)
+			if err != nil {
+				return nil, err
+			}
+			children := make([]model.OID, 0, len(entries))
+			for _, e := range entries {
+				children = append(children, e.Target)
+			}
+			s.Objects.Prefetch(ctx, vr.Repo, children)
+			queue = append(queue, children...)
+		case model.TagType:
+			tg, terr := model.DecodeTag(raw)
+			if terr != nil {
+				return nil, terr
+			}
+			queue = append(queue, tg.Object)
+		case model.BlobType: // leaf: bytes discarded, only the OID matters
+		}
+	}
+	return set, nil
+}
+
+// tryExactPackStream is the clone-shaped fast path (docs/03 §5): enumerate
+// the wanted set (OIDs only), probe for a stored pack with exactly that
+// object set, and stream the pack verbatim — node disk → network →
+// response in one small window, the closure's object bytes never resident
+// in gateway memory. Any miss before the first byte falls back to the full
+// closure path; a break MID-copy is terminal (bytes are already on the
+// wire, same as any dropped response).
+func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID) (string, bool) {
+	oids, err := s.enumerateClosure(ctx, vr, wants)
+	if err != nil {
+		return "", false
+	}
+	packOID, hit := s.Objects.ExactPackHit(vr.Repo, oids)
+	if !hit {
+		return "", false
+	}
+	rc, _, oerr := s.Objects.OpenPackStream(ctx, vr.Repo, packOID)
+	if oerr != nil {
+		return "", false // before the first byte: the closure path still can
+	}
+	defer rc.Close()
+	buf := make([]byte, 256<<10)
+	if _, cerr := io.CopyBuffer(out, rc, buf); cerr != nil {
+		log.Printf("upload-pack %s%s: exact-pack stream %s broke mid-copy: %v", vr.Repo, vr.Sub, packOID, cerr)
+		return "exact-pack-stream " + string(packOID) + " (broken)", true
+	}
+	return "exact-pack-stream " + string(packOID), true
 }
 
 // serveClosurePack writes the response pack for a computed closure:

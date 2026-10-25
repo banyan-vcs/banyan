@@ -380,6 +380,30 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 		_ = WriteDelim(out)
 	}
 
+	// Packfile section header + sideband framing go on the wire before the
+	// serve decision: the clone-shaped fast path below may answer right
+	// here, and a miss falls through to the closure with the framing in
+	// place.
+	_ = WritePacket(out, []byte("packfile\n")) // section header
+	// Section content is sideband pkt-lines (spec: *PKT-LINE(%x01-03
+	// *%x00-ff): each chunk carries band 1 (pack data) — this framing is
+	// unconditional in v2, independent of the sideband-all capability.
+	sb := sidebandWriter{w: out}
+	// Serve ladder shared with v1 (docs/11 P2-2): stored-pack verbatim →
+	// clone-shaped response cache → online encoding. Thin packs (haves
+	// present) are client-specific and never cached.
+	cacheable := len(fa.haves) == 0 && fa.depth == 0 && fa.filter == nil
+	// Clone-shaped fast path (docs/03 §5): enumeration-only probe + verbatim
+	// stream — the closure (object bytes resident) is skipped entirely, so
+	// big repos serve in a small memory window.
+	if cacheable && len(fa.clientShallow) == 0 {
+		if fast, ok := s.tryExactPackStream(ctx, sb, vr, fa.wants); ok {
+			_ = WriteFlush(out)
+			log.Printf("v2 fetch %s%s: %d wants → %s (closure skipped)", vr.Repo, vr.Sub, len(fa.wants), fast)
+			return
+		}
+	}
+
 	closureStart := time.Now()
 	blobs, trees, commits, tags, excluded, cerr := s.closure(ctx, vr, fa.wants, fa.depth, fa.clientShallow, fa.haves, fa.filter)
 	if cerr != nil {
@@ -396,17 +420,7 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 		}
 	}
 	encodeStart := time.Now()
-	served := "encode"
-	_ = WritePacket(out, []byte("packfile\n")) // section header
-	// Section content is sideband pkt-lines (spec: *PKT-LINE(%x01-03
-	// *%x00-ff)): each chunk carries band 1 (pack data) — this framing is
-	// unconditional in v2, independent of the sideband-all capability.
-	sb := sidebandWriter{w: out}
-	// Serve ladder shared with v1 (docs/11 P2-2): stored-pack verbatim →
-	// clone-shaped response cache → online encoding. Thin packs (haves
-	// present) are client-specific and never cached.
-	cacheable := len(fa.haves) == 0 && fa.depth == 0 && fa.filter == nil
-	served = s.serveClosurePack(ctx, sb, vr, fa.wants, blobs, trees, commits, tags, cacheable, fa.ofsDelta, plan)
+	served := s.serveClosurePack(ctx, sb, vr, fa.wants, blobs, trees, commits, tags, cacheable, fa.ofsDelta, plan)
 	_ = WriteFlush(out)
 	log.Printf("v2 fetch %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, filter %s, closure %s, serve %s/%s)",
 		vr.Repo, vr.Sub, len(fa.wants), len(commits), len(trees), len(blobs), len(excluded), filterSpecName(fa.filter),
