@@ -230,6 +230,7 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 | [docs/07-authorization.md](docs/07-authorization.md) | Authorization model, personal-branch visibility, web demo |
 | [docs/08-derived-data.md](docs/08-derived-data.md) | Derived data: commit-graph, path history, blame |
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
+| [docs/15-workflow.md](docs/15-workflow.md) | M4 design: per-directory commit queue + convergence (merge train) |
 
 **Operations & evolution**:
 
