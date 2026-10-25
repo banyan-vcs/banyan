@@ -72,6 +72,7 @@ HttpOnly cookie）→ 仓库列表/建仓 → 仓库页**分支列表 = 登录�
 过滤广告）。所有请求携带会话用户凭证 → 服务端规则与 git 客户端
 完全一致。`docker compose up -d`：Web 8101 / git 8100（compose 内
 挂载 demo/auth-demo.yaml：alice/bob/admin，密码 demo）。
+端到端走查手册（命令即脚本）见 [14-docker-demo.md](14-docker-demo.md)。
 
 测试：T38（wire 全矩阵，真实 git 客户端 v0+v2）+ TestAuthorizationRPC
 （认证门/login/建仓）；Web 端到端为实测验证（见提交记录）。

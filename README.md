@@ -212,6 +212,7 @@ go run ../cmd/banyan log           # remote history, zero download
 | [docs/10-service-api.md](docs/10-service-api.md) | Service layer + httpd/Gitaly dual frontend, API contracts |
 | [docs/11-ha.md](docs/11-ha.md) | High availability: all-in-one vs gateway + Raft cluster, per-repo replicas |
 | [docs/13-authorization.md](docs/13-authorization.md) | Authorization model, personal-branch visibility, web demo |
+| [docs/14-docker-demo.md](docs/14-docker-demo.md) | Docker demo walkthrough: auth, web UI, HA cluster pointers |
 | [docs/12-performance.md](docs/12-performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates |
 
 ## Conventions

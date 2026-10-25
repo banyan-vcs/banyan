@@ -177,6 +177,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 | [docs/10-service-api.md](docs/10-service-api.md) | 服务层抽象 + httpd/Gitaly 双前端与 API 契约 |
 | [docs/11-ha.md](docs/11-ha.md) | 高可用：一体化 vs 网关 + Raft 集群、仓库级副本 |
 | [docs/13-authorization.md](docs/13-authorization.md) | 授权模型、个人分支可见性、Web 演示 |
+| [docs/14-docker-demo.md](docs/14-docker-demo.md) | Docker demo 走查：授权、Web、集群栈指引 |
 | [docs/12-performance.md](docs/12-performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门 |
 
 ## 开发与提交约定
