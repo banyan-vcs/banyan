@@ -5,12 +5,18 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Repack merges a repo's pack fragments into one delta-encoded pack
-// (docs/03 §5, docs/09 §3.2 — git repack -a + pack-objects window deltas).
+// Repack merges pack fragments under git's geometric packing strategy
+// (docs/03 §5, docs/09 §3.2 — `git repack --geometric=2`): packs sorted by
+// object count must form a geometric sequence (each ≥ factor × its
+// predecessor); the smallest run that violates it merges into one pack.
+// Large packs are NEVER touched — merge cost stays proportional to the
+// fragment run, not the repository (the old full-merge strategy was
+// infeasible past a few GB), and hot packs keep serving verbatim.
 //
 // Fragment source: every server-side synthesis (projection commits, woven
 // rewrites) persists as a single-object pack (PutSynthetic write-through), so
@@ -25,13 +31,35 @@ import (
 type Repacker struct {
 	Objects           *ObjectService
 	FragmentThreshold int // repos below this many packs are left alone
+	GeometricFactor   int // adjacent pack object-count ratio (git default 2)
 }
 
 func NewRepacker(objects *ObjectService, fragmentThreshold int) *Repacker {
 	if fragmentThreshold <= 0 {
 		fragmentThreshold = 64
 	}
-	return &Repacker{Objects: objects, FragmentThreshold: fragmentThreshold}
+	return &Repacker{Objects: objects, FragmentThreshold: fragmentThreshold, GeometricFactor: 2}
+}
+
+// geometricGroups splits packs (object counts, ascending) into merge groups
+// following git's geometric packing: the sequence holds when each pack is
+// at least factor × its PREDECESSOR (adjacent ratio, not cumulative — a
+// cumulative test snowballs and swallows the big packs); a run of adjacent
+// violations merges into one pack. Returns half-open ranges [lo,hi).
+// [1,1,100,100] with factor 2 yields {0,2} and {2,4}; [1,3,10,40] yields
+// four singletons (already geometric).
+func geometricGroups(counts []int, factor int) [][2]int {
+	var groups [][2]int
+	i := 0
+	for i < len(counts) {
+		j := i
+		for j+1 < len(counts) && counts[j+1] < factor*counts[j] {
+			j++
+		}
+		groups = append(groups, [2]int{i, j + 1})
+		i = j + 1
+	}
+	return groups
 }
 
 // RepackResult reports one round's effect (observability + tests).
@@ -57,7 +85,9 @@ func (r *Repacker) RunOnce(ctx context.Context, repo string) (string, error) {
 }
 
 // Repack is the implementation (on ObjectService: it owns the pack cache and
-// in-memory indexes that must follow the swap).
+// in-memory indexes that must follow the swap). Geometric strategy: only the
+// merge groups that break the factor-2 sequence are consolidated, one new
+// pack per group; singleton groups (large packs included) are untouched.
 func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) (RepackResult, error) {
 	packs, err := s.Meta.ListPacks(ctx, repo)
 	if err != nil {
@@ -69,11 +99,72 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 		return res, nil
 	}
 
-	// 1. Merge: read every fragment, union by object identity (content
-	// addressing makes duplicates interchangeable).
-	var blobs, trees, commits, tags = map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}
-	var bytesBefore int64
+	// 0. Geometric split: ascending object counts → merge groups.
+	type sizedPack struct {
+		info   PackInfo
+		counts int
+	}
+	sized := make([]sizedPack, 0, len(packs))
 	for _, p := range packs {
+		objs, oerr := s.Meta.PackObjects(ctx, repo, p.PackOID)
+		if oerr != nil {
+			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, oerr)
+			continue
+		}
+		sized = append(sized, sizedPack{info: p, counts: len(objs)})
+	}
+	sort.Slice(sized, func(i, j int) bool {
+		if sized[i].counts != sized[j].counts {
+			return sized[i].counts < sized[j].counts
+		}
+		return sized[i].info.PackOID < sized[j].info.PackOID
+	})
+	counts := make([]int, len(sized))
+	for i := range sized {
+		counts[i] = sized[i].counts
+	}
+	var mergeSets [][]PackInfo
+	for _, g := range geometricGroups(counts, 2) {
+		if g[1]-g[0] < 2 {
+			continue
+		}
+		set := make([]PackInfo, 0, g[1]-g[0])
+		for i := g[0]; i < g[1]; i++ {
+			set = append(set, sized[i].info)
+		}
+		mergeSets = append(mergeSets, set)
+	}
+	if len(mergeSets) == 0 {
+		res.PacksAfter = len(packs)
+		return res, nil
+	}
+
+	for _, set := range mergeSets {
+		setRes, merr := s.mergePacks(ctx, repo, set)
+		if merr != nil {
+			return res, merr
+		}
+		res.Objects += setRes.Objects
+		res.BytesBefore += setRes.BytesBefore
+		res.BytesAfter += setRes.BytesAfter
+		res.Delta = res.Delta || setRes.Delta
+	}
+	res.PacksAfter = res.PacksBefore
+	for _, set := range mergeSets {
+		res.PacksAfter -= len(set) - 1
+	}
+	return res, nil
+}
+
+// mergePacks consolidates one geometric group: read the fragments, union by
+// object identity (content addressing makes duplicates interchangeable),
+// encode one delta pack, register it (registration re-points every object
+// location atomically per object — reads switch as of this call), then drop
+// the old shards (metadata first, then files, then caches).
+func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []PackInfo) (RepackResult, error) {
+	var res RepackResult
+	var blobs, trees, commits, tags = map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}
+	for _, p := range set {
 		raw, rerr := s.PackBytes(ctx, repo, p.PackOID)
 		if rerr != nil {
 			// A vanished fragment (racing deletion) is skipped; its objects
@@ -81,7 +172,7 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, rerr)
 			continue
 		}
-		bytesBefore += int64(len(raw))
+		res.BytesBefore += int64(len(raw))
 		dp, derr := DecodePack(raw)
 		if derr != nil {
 			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, derr)
@@ -102,13 +193,9 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 	}
 	res.Objects = len(blobs) + len(trees) + len(commits) + len(tags)
 	if res.Objects == 0 {
-		res.PacksAfter = len(packs)
 		return res, nil
 	}
 
-	// 2. Encode one delta pack (window heuristics are the encoder's) and
-	// register it — registration re-points every object location atomically
-	// per object, so reads switch to the merged pack as of this call.
 	var buf bytes.Buffer
 	if err := EncodePackDelta(&buf, blobs, trees, commits, tags); err != nil {
 		return RepackResult{}, err
@@ -120,8 +207,7 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 	res.Delta = true
 	res.BytesAfter = int64(buf.Len())
 
-	// 3. Drop the old shards (metadata first, then files, then caches).
-	for _, p := range packs {
+	for _, p := range set {
 		if p.PackOID == newOID {
 			continue // CAS idempotency: the merged pack may equal a fragment
 		}
@@ -139,11 +225,5 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int) 
 	// ever change at repack (docs/11 P0-1). Other gateways' caches self-heal
 	// through Raw's stale-placement retry.
 	s.locInvalidate(repo)
-	packsAfter, err := s.Meta.ListPacks(ctx, repo)
-	if err == nil {
-		res.PacksAfter = len(packsAfter)
-	} else {
-		res.PacksAfter = 1
-	}
 	return res, nil
 }

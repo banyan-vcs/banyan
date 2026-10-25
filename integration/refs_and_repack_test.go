@@ -128,12 +128,20 @@ func TestRepackFragmentMerge(t *testing.T) {
 	before, err := objects.Meta.ListPacks(ctx, "t21")
 	require.NoError(t, err)
 	require.Greater(t, len(before), 3, "预备条件：应已碎片化")
-	objsBefore := 0
 	bytesBeforePre := 0
+	unionObjs := func(packs []storage.PackInfo) map[model.OID]bool {
+		set := map[model.OID]bool{}
+		for _, p := range packs {
+			objs, err := objects.Meta.PackObjects(ctx, "t21", p.PackOID)
+			require.NoError(t, err)
+			for _, o := range objs {
+				set[o] = true
+			}
+		}
+		return set
+	}
+	beforeUnion := unionObjs(before)
 	for _, p := range before {
-		objs, err := objects.Meta.PackObjects(ctx, "t21", p.PackOID)
-		require.NoError(t, err)
-		objsBefore += len(objs)
 		if raw, err := objects.Local.GetPackBytes("t21", p.PackOID); err == nil {
 			bytesBeforePre += len(raw)
 		}
@@ -148,16 +156,21 @@ func TestRepackFragmentMerge(t *testing.T) {
 
 	after, err := objects.Meta.ListPacks(ctx, "t21")
 	require.NoError(t, err)
-	assert.Equal(t, 1, len(after), "repack 后应只剩一个 pack")
-	objsAfter, err := objects.Meta.PackObjects(ctx, "t21", after[0].PackOID)
-	require.NoError(t, err)
-	assert.Equal(t, objsBefore, len(objsAfter), "对象必须全部保全（无丢失无重复）")
+	assert.Less(t, len(after), len(before), "几何合并应减少 pack 数")
+	// Object preservation at UNION scope: packs overlap (synthetics
+	// duplicate push objects), and the geometric merge only consolidates
+	// the violating run — the union across packs must be unchanged.
+	assert.Equal(t, beforeUnion, unionObjs(after), "对象必须全部保全（并集口径）")
 
-	// Byte shrink: one delta-encoded pack beats the fragment sum (similar
-	// consecutive big.txt versions are prime delta bases).
-	rawAfter, err := objects.Local.GetPackBytes("t21", after[0].PackOID)
-	require.NoError(t, err)
-	assert.Less(t, len(rawAfter), bytesBeforePre, "delta 化后应小于分片字节总和（%d → %d）", bytesBeforePre, len(rawAfter))
+	// Byte shrink: the merged run is delta-encoded (similar consecutive
+	// big.txt versions are prime delta bases), so total bytes drop.
+	bytesAfterPre := 0
+	for _, p := range after {
+		if raw, err := objects.Local.GetPackBytes("t21", p.PackOID); err == nil {
+			bytesAfterPre += len(raw)
+		}
+	}
+	assert.Less(t, bytesAfterPre, bytesBeforePre, "delta 化后总字节应小于分片字节总和（%d → %d）", bytesBeforePre, bytesAfterPre)
 
 	// Serving survives: fresh clone complete and fsck-clean (the merged pack
 	// now also feeds ExactPackHit whole-pack direct serve).
@@ -195,6 +208,8 @@ func TestRepackRestartSurvival(t *testing.T) {
 	ctx := context.Background()
 	_, err := objects1.Repack(ctx, "t21b", 2)
 	require.NoError(t, err)
+	packsBeforeRestart, err := objects1.Meta.ListPacks(ctx, "t21b")
+	require.NoError(t, err)
 	s1.Close()
 
 	// Brand-new process state (fresh ObjectService, cold caches) on the same
@@ -205,7 +220,7 @@ func TestRepackRestartSurvival(t *testing.T) {
 	fsckClean(t, fresh)
 	packs, err := objects2.Meta.ListPacks(ctx, "t21b")
 	require.NoError(t, err)
-	assert.Equal(t, 1, len(packs), "重启后 pack 数应保持 1")
+	assert.Equal(t, len(packsBeforeRestart), len(packs), "重启不应改变 pack 布局（几何合并产物持久）")
 }
 
 // --- T31 synth batching: one weave materialization = one pack (docs/11 P0-2) ---
