@@ -82,6 +82,7 @@ directory timelines align both boundaries at the same granularity.
 | Serve-path delta packs (OFS/REF-delta past 64KiB) | ✅ |
 | Thin packs on incremental fetch (REF_DELTA vs client-held bases) | ✅ (0.87x git's bytes, docs/11 sec.3) |
 | Authorization: repo / directory / branch granularity, fetch and push (docs/07) | ✅ demo policy, opt-in |
+| Storage addressing: named (readable dirs) vs hashed (opaque keys, gateway-mapped) + rename (docs/03 §6) | ✅ hashed renames never touch storage, T40 |
 | Personal branch namespaces (`refs/heads/<user>/*`) visible to their owner alone | ✅ the monorepo too-many-branches answer |
 | Web UI: repository management + file browsing (TypeScript, zero runtime deps) | ✅ `web/` |
 | Subtree virtual repos (`/tree/<path>`), full-history projection | ✅ |

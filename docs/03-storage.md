@@ -171,7 +171,32 @@ push pack 通常小而碎（一次 push 一个 pack），长期累积会拖垮�
 
 与 git `pack-objects` 的差异：**不追求全局最优 pack**，追求"合并碎片 + 局部性 delta"的成本收益；大 pack 的进一步优化交给 M3 的分层策略（热路径 pack 直传：客户端要的对象恰好整 pack 命中时，直接把存储侧 pack 作为响应体回传，零重编码）。
 
-## 6. 生产选型（设计层面，M2+）
+## 6. 存储寻址模式与 rename（2026-10-25，T40）
+
+仓库名 → 存储键的两种映射（`storage.mode`，gateway/refs 须一致；存储
+节点无感知——它只是键的仓库）：
+
+| | named（默认） | hashed |
+|---|---|---|
+| 磁盘/网络键 | 仓库名（目录可读） | `@hashed/<xx>/<yy>/<sha256(storage_id)>` |
+| rename/组迁移 | 集群动作：先在全部持有节点移动目录（幂等，可重跑），后翻转注册表 | 仅注册表翻转，存储层零动作 |
+| 名字可读性 | 保留在存储层 | 存储层移除——映射在**网关**（ObjectService 经 refs 注册表解析名字→键） |
+| 适用 | 小集群/调试友好 | 大集群推荐（GitLab @hashed 同构）：rename/迁移零成本 |
+
+**不变 storage id**：每仓库在 CreateRepo 时铸造（crypto/rand，落
+SQLite，老库打开时自动 ALTER+回填）；hashed 键 = 它的哈希 fanout，
+因此 **rename 后键不变**，新旧名共享同一存储树。元数据行（timelines/
+packs/objects/placement…）仍按名字键控，rename 为单事务全表改名。
+
+**rename 语义**（`POST /api/v1/repos/<repo>/rename`，docs/07 §5 认证门）：
+- hashed：refs 注册表一次翻转；
+- named：网关向健康视图内**所有**节点发 `POST /internal/pack/rename`
+  （缺源目录=OK 幂等），全部确认后才翻转注册表——数据始终先于名字。
+  **边界（诚实）**：改名瞬间存在短暂不可读窗口；不在健康视图内的节点
+  保留旧目录，节点回归后重跑同一 rename 补齐（reconciler 自动补齐为
+  HA-2 项）；目标名已存在则拒绝（不做合并）。
+
+## 6a. 生产选型（设计层面，M2+）
 
 | 组件 | 选型 | 说明 |
 |---|---|---|

@@ -51,6 +51,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | serve 路径 delta 包（过 64KiB 阈值 OFS/REF-delta） | ✅ |
 | 增量 fetch 真 thin pack（对客户端持有基对象出 REF_DELTA） | ✅（字节 0.87× git，docs/11 §3） |
 | 授权：仓库/目录/分支粒度的下载与提交控制（docs/07） | ✅ demo 策略，opt-in |
+| 存储寻址双模式：named 可读目录 / hashed 不透明键 + rename（docs/03 §6） | ✅ hashed 模式 rename 零存储动作，T40 |
 | 个人分支命名空间（refs/heads/<user>/*）仅本人可见 | ✅ monorepo 分支过多解法 |
 | Web 界面：仓库管理 + 文件浏览（TypeScript 零运行时依赖） | ✅ web/ |
 | 子树虚拟仓库（`/tree/<path>`，完整历史投影） | ✅ |

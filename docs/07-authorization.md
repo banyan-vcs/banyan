@@ -59,7 +59,8 @@ nil Service = 授权关闭（存量行为，全部测试不依赖认证）；一
 
 - RPC 层目前**只做认证**，不做细粒度授权（repo/dir/branch 规则在
   git wire 上；Web 经 gitwire 广告拿分支列表故页面可见性正确）——
-  RPC 细粒度授权列 M5 后续；
+  RPC 细粒度授权列 M5 后续；建仓与 rename 端点同享这道认证门
+  （docs/03 §6）；
 - 密码表现明存储于配置（demo 定位）；token 认证（PAT/CI 透传）为
   M5 下一项；
 - Web 会话为进程内存（重启即登出）；生产需持久会话存储。

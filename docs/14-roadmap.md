@@ -114,8 +114,11 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
       T38/T38b。认证为 demo 级 Basic，token 认证仍待建）
 - [x] git-over-SSH 传输（2026-10-25，docs/04 §7b：`ssh://` 直连 + 公钥认证（IdentifyKey
       身份缝，docs/07 §7）+ v0 有状态协商/v2 命令会话/receive-pack；同一授权矩阵；T39）
+- [x] 存储寻址双模式 + rename（2026-10-25，docs/03 §6：named 可读目录 vs hashed
+      @hashed 不透明键——映射在网关解析、rename 零存储动作；不变 storage_id；
+      T40。reconciler 自动补齐 named 改名残留归 HA-2）
 - [ ] token 认证（PAT / CI job token 透传，仓库级 R/W scope）+ 自动建仓收紧开关（已收紧：授权
-      开启时建仓需 push 权）+ RPC 层细粒度授权
+      开启时建仓需 push 权）+ RPC 层细粒度授权（rename 端点现为认证门）
 - [ ] Gitaly gRPC 兼容前端 P1（Server/Repository/SmartHTTP/Ref/Commit/Blob/Diff 子集；GitLab 直连 banyand 为存储节点，docs/05 §4）
 - [ ] webhook 派发（push event → 平台 trigger）
 - [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）

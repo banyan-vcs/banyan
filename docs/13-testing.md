@@ -64,6 +64,7 @@ testify，文件按测试目标拆分）：
 | T38 | `TestAuthorizationWire` | **授权 wire 全矩阵**（docs/07）：匿名 401/错密匿名、个人分支推/看归属（本人+admin）、跨命名空间 push 拒绝、保护 main 开发者拒/admin 过、裸 OID 取隐藏分支拒（可见 tips 覆盖）、受限目录 403、v2 ls-refs 同过滤；含 credential.helper 复位（否则开发机管理器会替匿名请求补凭证） |
 | T38b | `TestAuthorizationRPC` | **RPC 认证面**（docs/07 §5）：匿名 401/认证 200、login 对错密码、建仓端点 + admin 播种 + 开发者克隆 |
 | T39 | `TestGitSSH` | **git-over-SSH 传输**（docs/04 §7b，docs/07 §7）：公钥认证（IdentifyKey）→ 同一授权矩阵（个人分支可见性/跨命名空间拒/保护分支/受限目录/未授权密钥拒）；v0 克隆 + 51 提交增量 fetch（**多轮 have 协商**：客户端第二批 have 后阻塞读，服务端必须逐 flush 应答——终态 ACK 模型）；v2 命令会话（ls-refs/clone）；push + 自动建仓 |
+| T40 | `TestStorageModes` | **存储寻址双模式**（docs/03 §6）：named——磁盘有可读仓库名目录、rename 移动全部持有节点目录且持有集不变、旧名消失新名可克隆；hashed——任何节点磁盘无仓库名、键=storageID 的 @hashed fanout、rename 前后各节点文件树逐项相同（零存储动作）、rename 后 push 落同一键、新旧名克隆均正确 |
 | T33 | `TestFetchTreesBinary` | **fetch-trees 二进制帧**（docs/05 §3.3、docs/11 P1-2）：bin/JSON 语义全等（树与 blob 集合逐字节一致）、二进制小于 JSON、真实 CLI clone 走 bin 路径物化 |
 | T32 | storage `TestExtractObjectRoundTrip`/`TestLocalGetObjectViaDisk` + T23-T26 回归 | **P1-1 单对象解压**（docs/11）：idx 偏移 + delta 基链递归解压（含 ofs/ref 两型）；集群 wire 从整包降为单对象（/internal/object 端点）；修复 idx oid→offset 在 delta pack 上的按位配对错位（Parser Observer 为权威源），idx crc 段补真值 |
 | T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |
