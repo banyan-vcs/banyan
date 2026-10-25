@@ -1,18 +1,41 @@
 # One-command local demo: docker compose up -d
 #
-#   git        http://localhost:8100/r/<repo>.git     (push auto-creates)
-#   thin CLI   go run ./cmd/banyan clone http://localhost:8100/r/<repo>
-#   in-container CLI (no host Go needed):
-#              docker compose exec banyan banyan clone http://127.0.0.1:8080/r/<repo>
+#   web UI     http://localhost:8101  (log in: alice / bob / admin, password demo)
+#   git        http://localhost:8100/r/<repo>.git
+#              credentials in the URL: http://alice:demo@localhost:8100/r/<repo>.git
+#   thin CLI   go run ./cmd/banyan clone http://alice:demo@localhost:8100/r/<repo>
+#
+# Authorization is ON in this demo (demo/auth-demo.yaml): main is
+# admin-push-only, /secret is admin-read-only, and refs/heads/<user>/*
+# personal branches are visible to their owner alone (docs/13).
 services:
   banyan:
     build: .
     image: banyan:dev
     container_name: banyan
+    command: ["-config", "/etc/banyan/auth-demo.yaml"]
     ports:
-      - "8100:8080" # host 8100 -> container 8080
+      - "8100:8080" # git smart HTTP (credentials in URL or http.extraHeader)
     volumes:
       - banyan-data:/var/lib/banyan # SQLite metadata + pack shards persist
+      - ./demo/auth-demo.yaml:/etc/banyan/auth-demo.yaml:ro
+    restart: unless-stopped
+
+  web:
+    build:
+      context: web
+      args:
+        # Constrained networks point this at a mirror, e.g.
+        #   https://registry.npmmirror.com
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    image: banyan-web:dev
+    container_name: banyan-web
+    environment:
+      BANYAN_URL: http://banyan:8080
+    ports:
+      - "8101:3000"
+    depends_on:
+      - banyan
     restart: unless-stopped
 
 volumes:

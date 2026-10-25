@@ -61,6 +61,8 @@ testify，文件按测试目标拆分）：
 | T35 | `TestClosureResponseCache` | **闭包响应包缓存**（docs/12 P2-2）：clone 形态纯函数缓存（首存/复用命中/tips 换键/ExactPackHit 不污染/haves 不入缓存） |
 | T36 | `TestHAGatewayDiskCache` | **网关磁盘 pack cache**（docs/12 P2-1）：节点请求计数器下，缓存填充后整网关重启、克隆零节点请求（读放大翻转 + CheapPack 路径） |
 | T37 | `TestThinPackFetch` + storage delta/thin 单测 | **真 thin pack**（docs/12 P2-6）：REF_DELTA 条目 + 字节收缩 + 未请求不发；真实客户端 v0/v2 双协议消费；delta 往返（增/删/中改/块拷贝/不可压）与 thin 写出器对 fix-thin 式解码器往返 |
+| T38 | `TestAuthorizationWire` | **授权 wire 全矩阵**（docs/13）：匿名 401/错密匿名、个人分支推/看归属（本人+admin）、跨命名空间 push 拒绝、保护 main 开发者拒/admin 过、裸 OID 取隐藏分支拒（可见 tips 覆盖）、受限目录 403、v2 ls-refs 同过滤；含 credential.helper 复位（否则开发机管理器会替匿名请求补凭证） |
+| T38b | `TestAuthorizationRPC` | **RPC 认证面**（docs/13 §5）：匿名 401/认证 200、login 对错密码、建仓端点 + admin 播种 + 开发者克隆 |
 | T33 | `TestFetchTreesBinary` | **fetch-trees 二进制帧**（docs/10 §3.3、docs/12 P1-2）：bin/JSON 语义全等（树与 blob 集合逐字节一致）、二进制小于 JSON、真实 CLI clone 走 bin 路径物化 |
 | T32 | storage `TestExtractObjectRoundTrip`/`TestLocalGetObjectViaDisk` + T23-T26 回归 | **P1-1 单对象解压**（docs/12）：idx 偏移 + delta 基链递归解压（含 ofs/ref 两型）；集群 wire 从整包降为单对象（/internal/object 端点）；修复 idx oid→offset 在 delta pack 上的按位配对错位（Parser Observer 为权威源），idx crc 段补真值 |
 | T20 | `TestTagsAndAuxRefs` | **refs 命名空间泛化**：annotated/lightweight tag、tag 对象闭包、自定义 refs/<ns>、tag 删除与非 FF 拒绝、浅克隆 tag 剥离 |

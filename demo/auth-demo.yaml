@@ -1,0 +1,16 @@
+# Authorization-enabled demo config (docs/13 §2), mounted by
+# docker-compose.yml. Users: alice/bob are developers, admin owns main
+# and the /secret subtree. Log in on the web UI with the same accounts.
+listen: "0.0.0.0:8080"
+root: "/var/lib/banyan"
+meta: sqlite
+
+auth:
+  users:
+    alice: "demo"
+    bob: "demo"
+    admin: "demo"
+  admins: [admin]
+  protected_branches: [main]
+  subtree_access:
+    "/secret": [admin]

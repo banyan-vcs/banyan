@@ -108,7 +108,12 @@ CommitPush 单事务未做（保持 PutPack+CASHead 两步，崩溃窗口=无害
 GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
 
 - [x] tags 与任意 refs/<ns> 命名空间（2026-10-18：辅助 ref 全名存储/原样广告/tag 对象入包闭包剥离；T20 钉住——annotated/lightweight/删除/自定义命名空间/浅克隆 tag）
-- [ ] token 认证（PAT / CI job token 透传，仓库级 R/W scope）+ 自动建仓收紧开关
+- [x] 授权抽象 + demo 策略 + 个人分支可见性（2026-10-25，docs/13：仓库/目录/分支 × 下载/提交
+      三粒度门禁全部上 wire（v1+v2）；refs/heads/<user>/* 个人分支仅本人（+admin）可见——
+      monorepo 分支过多解法；gateway 经 refs 策略快照走同一抽象；TS Web 管理面 + 文件浏览；
+      T38/T38b。认证为 demo 级 Basic，token 认证仍待建）
+- [ ] token 认证（PAT / CI job token 透传，仓库级 R/W scope）+ 自动建仓收紧开关（已收紧：授权
+      开启时建仓需 push 权）+ RPC 层细粒度授权
 - [ ] Gitaly gRPC 兼容前端 P1（Server/Repository/SmartHTTP/Ref/Commit/Blob/Diff 子集；GitLab 直连 banyand 为存储节点，docs/10 §4）
 - [ ] webhook 派发（push event → 平台 trigger）
 - [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）

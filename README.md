@@ -80,6 +80,9 @@ directory timelines align both boundaries at the same granularity.
 | Partial clone (`--filter=blob:none`/`tree:0` + lazy fetch) | ✅ |
 | Serve-path delta packs (OFS/REF-delta past 64KiB) | ✅ |
 | Thin packs on incremental fetch (REF_DELTA vs client-held bases) | ✅ (0.87x git's bytes, docs/12 sec.3) |
+| Authorization: repo / directory / branch granularity, fetch and push (docs/13) | ✅ demo policy, opt-in |
+| Personal branch namespaces (`refs/heads/<user>/*`) visible to their owner alone | ✅ the monorepo too-many-branches answer |
+| Web UI: repository management + file browsing (TypeScript, zero runtime deps) | ✅ `web/` |
 | Subtree virtual repos (`/tree/<path>`), full-history projection | ✅ |
 | Per-directory timelines, linear woven root view (v5) | ✅ |
 | Shallow clone (depth / deepen / unshallow) | ✅ |
@@ -118,13 +121,16 @@ internal/config/    layered config (defaults < YAML < flags)
 
 ```bash
 docker compose up -d          # build + run; data persists in the banyan-data volume
+                              # authorization is ON in the demo (docs/13):
+                              #   web UI  http://localhost:8101 (alice / bob / admin, password demo)
+                              #   git     http://alice:demo@localhost:8100/r/demo.git
 
-# push any git repo (first push auto-creates it)
-git remote add banyan http://localhost:8100/r/demo.git
+# push any git repo (main is admin-push-only under the demo policy)
+git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
 
-git clone http://localhost:8100/r/demo.git                      # root repo
-git clone http://localhost:8100/r/demo.git/tree/plumbing        # any subtree is a repo
+git clone http://alice:demo@localhost:8100/r/demo.git            # root repo
+git clone http://alice:demo@localhost:8100/r/demo.git/tree/plumbing  # any subtree is a repo
 
 # thin workspace: minimal download, no .git, server-side history
 go run ./cmd/banyan clone http://localhost:8100/r/demo
@@ -205,6 +211,7 @@ go run ../cmd/banyan log           # remote history, zero download
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
 | [docs/10-service-api.md](docs/10-service-api.md) | Service layer + httpd/Gitaly dual frontend, API contracts |
 | [docs/11-ha.md](docs/11-ha.md) | High availability: all-in-one vs gateway + Raft cluster, per-repo replicas |
+| [docs/13-authorization.md](docs/13-authorization.md) | Authorization model, personal-branch visibility, web demo |
 | [docs/12-performance.md](docs/12-performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates |
 
 ## Conventions

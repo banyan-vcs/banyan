@@ -49,6 +49,9 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | partial clone（`--filter=blob:none`/`tree:0` + 惰性取回） | ✅ |
 | serve 路径 delta 包（过 64KiB 阈值 OFS/REF-delta） | ✅ |
 | 增量 fetch 真 thin pack（对客户端持有基对象出 REF_DELTA） | ✅（字节 0.87× git，docs/12 §3） |
+| 授权：仓库/目录/分支粒度的下载与提交控制（docs/13） | ✅ demo 策略，opt-in |
+| 个人分支命名空间（refs/heads/<user>/*）仅本人可见 | ✅ monorepo 分支过多解法 |
+| Web 界面：仓库管理 + 文件浏览（TypeScript 零运行时依赖） | ✅ web/ |
 | 子树虚拟仓库（`/tree/<path>`，完整历史投影） | ✅ |
 | 目录时间线 + 线性织入根视图（v5） | ✅ |
 | 浅克隆（depth / deepen / unshallow） | ✅ |
@@ -86,13 +89,16 @@ internal/config/    三层配置（默认 < YAML < 显式标志）
 
 ```bash
 docker compose up -d          # 构建并启动；数据持久化在 banyan-data 卷
+                              # demo 默认开启授权（docs/13）：
+                              #   Web 界面 http://localhost:8101（alice / bob / admin，密码 demo）
+                              #   git      http://alice:demo@localhost:8100/r/demo.git
 
-# 推任意 git 仓库上来（首次 push 自动建仓）
-git remote add banyan http://localhost:8100/r/demo.git
+# 推任意 git 仓库上来（demo 策略里 main 仅 admin 可推）
+git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
 
-git clone http://localhost:8100/r/demo.git                      # 根仓库
-git clone http://localhost:8100/r/demo.git/tree/plumbing        # 任意子目录即仓库
+git clone http://alice:demo@localhost:8100/r/demo.git            # 根仓库
+git clone http://alice:demo@localhost:8100/r/demo.git/tree/plumbing  # 任意子目录即仓库
 
 # 薄工作区：最小化下载、无 .git、历史在服务端
 go run ./cmd/banyan clone http://localhost:8100/r/demo
@@ -170,6 +176,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | 索引（代数）与打包（have 减除/delta/repack）设计 |
 | [docs/10-service-api.md](docs/10-service-api.md) | 服务层抽象 + httpd/Gitaly 双前端与 API 契约 |
 | [docs/11-ha.md](docs/11-ha.md) | 高可用：一体化 vs 网关 + Raft 集群、仓库级副本 |
+| [docs/13-authorization.md](docs/13-authorization.md) | 授权模型、个人分支可见性、Web 演示 |
 | [docs/12-performance.md](docs/12-performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门 |
 
 ## 开发与提交约定
