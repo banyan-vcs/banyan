@@ -10,7 +10,7 @@ export interface Session {
 }
 
 export interface RepoInfo {
-  name: string;
+  id: string;
   defaultBranch: string;
 }
 

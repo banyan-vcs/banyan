@@ -57,7 +57,7 @@ ${msg ? `<p style="color:#a33">${esc(msg)}</p>` : ""}
 export function repoListPage(user: string, repos: RepoInfo[], activeUser: string): string {
   const rows = repos
     .map(
-      (r) => `<tr><td><a href="/r/${esc(r.name)}">${esc(r.name)}</a></td>
+      (r) => `<tr><td><a href="/r/${esc(r.id)}">${esc(r.id)}</a></td>
  <td class="muted">${esc(r.defaultBranch || "main")}</td></tr>`
     )
     .join("");
