@@ -108,6 +108,9 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | cat（非 HEAD rev / 缓存脱靶） | `POST /api/v1/resolve` | Resolve | **已落地**（计划外增补：rev:path → 对象指针） |
 | branch / tag | `GET /api/v1/refs` / `POST /api/v1/refs` | Ref.List / Ref.CAS | **已落地**（POST 限根仓库） |
 | repo create/ls | `GET /api/v1/repos` | Repo.List | GET **已落地**；create 配合 M5 |
+| repo rename | `POST /api/v1/repos/<repo>/rename` | Repo.Rename | **已落地**（docs/03 §6） |
+| 副本数 | `GET/PUT /api/v1/repos/<repo>/placement` | Admin.Placement | **已落地**（docs/10 §6） |
+| force-push 开关 | `GET/PUT /api/v1/repos/<repo>/force-push` | Repo.ForcePush | **已落地**（docs/04 §6a；PUT body `{"enabled":bool}`，运行时生效无需重启） |
 | timelines（诊断） | `GET /api/v1/timelines` | Admin.Timelines | **已有**（已接 ListAllTimelines） |
 | admin repack | `POST /api/v1/repack` | Admin.Repack | **已有** |
 

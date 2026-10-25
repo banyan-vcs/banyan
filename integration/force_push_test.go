@@ -10,7 +10,11 @@
 package integration
 
 import (
+	"io"
+	"net/http"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -173,4 +177,91 @@ func TestRootForcePushViewMonotonic(t *testing.T) {
 	assert.Equal(t, "a-v1\nby-a\n", readFile(t, filepath.Join(freshLib, "a.txt")), "子树视图内容应稳定")
 	fsckClean(t, freshRoot)
 	fsckClean(t, freshLib)
+}
+
+// --- T44: opt-in force push (repo-level switch) with woven-view rebuild ---
+// The switch is an explicit administrative opt-in: off (default) the T43
+// rollback guard stands; on, a rewind-shaped subtree push lands, the /.woven
+// family resets, and every ancestor scope re-weaves from the new source
+// chains — the rewound directory's commits vanish from parent/root history
+// (rebuild), while independent timelines below it survive untouched.
+
+func setForcePush(t *testing.T, s *server, repo string, enabled bool) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPut, s.URL+"/api/v1/repos/"+repo+"/force-push",
+		strings.NewReader(`{"enabled":`+strconv.FormatBool(enabled)+`}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "force-push 开关设置")
+}
+
+func TestForcePushOptIn(t *testing.T) {
+	needGit(t)
+	s := newConvergeServer(t)
+	seedRepo(t, s, "t44")
+
+	// Two scopes of subtree activity: lib (to be rewound) and lib/nested
+	// (an independent timeline that must survive the rewind).
+	a := cloneRepo(t, s, s.treeURL("t44", "lib"))
+	seed := headOf(t, a)
+	appendLine(t, filepath.Join(a, "a.txt"), "by-a\n")
+	git(t, a, "commit", "-qam", "a edits a.txt")
+	git(t, a, "push", "-q", "origin", "main")
+
+	n := cloneRepo(t, s, s.treeURL("t44", "lib/nested"))
+	appendLine(t, filepath.Join(n, "SHARED.txt"), "by-n\n")
+	git(t, n, "commit", "-qam", "n adds nested")
+	git(t, n, "push", "-q", "origin", "main")
+
+	// Switch OFF (default): the rewind is refused — T43 semantics unchanged.
+	c := cloneRepo(t, s, s.treeURL("t44", "lib"))
+	out := revive(t, c, seed, false)
+	require.Contains(t, out, "rejected", "开关关闭时回滚 force push 必须仍被拒:\n%s", out)
+
+	// Opt in via the management RPC; GET reflects it.
+	setForcePush(t, s, "t44", true)
+	resp, err := http.Get(s.URL + "/api/v1/repos/t44/force-push")
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, string(body), `"enabled":true`, "GET 应回报开关状态: %s", body)
+
+	// Retry the rewind: it lands, and the woven views rebuild.
+	out = revive(t, c, seed, false)
+	require.NotContains(t, out, "rejected", "开关开启后回滚 force push 应落地:\n%s", out)
+	require.Contains(t, out, "forced update", "落地形态:\n%s", out)
+
+	// Subtree view: A's change gone (this timeline rewound); the independent
+	// nested timeline survives (timeline boundary = rewind boundary).
+	freshLib := cloneRepo(t, s, s.treeURL("t44", "lib"))
+	assert.Equal(t, "a-v1\n", readFile(t, filepath.Join(freshLib, "a.txt")), "lib 时间线回滚应生效")
+	assert.Equal(t, "base\nby-n\n", readFile(t, filepath.Join(freshLib, "nested", "SHARED.txt")),
+		"下层独立时间线内容必须保留")
+
+	// Root view rebuilt: A's woven commit is GONE from root history, content
+	// rewound, nested's weave preserved.
+	freshRoot := cloneRepo(t, s, s.repoURL("t44"))
+	assert.Equal(t, "a-v1\n", readFile(t, filepath.Join(freshRoot, "lib", "a.txt")), "根视图内容应回滚")
+	rootLog := git(t, freshRoot, "log", "--format=%s")
+	assert.NotContains(t, rootLog, "a edits a.txt", "根视图历史应重建（被回滚提交的织入体消失）")
+	assert.Contains(t, rootLog, "n adds nested", "下层时间线织入应保留")
+	fsckClean(t, freshRoot)
+	fsckClean(t, freshLib)
+
+	// Post-rewind collaboration flows: a normal push builds on the rewound
+	// state with no guard friction.
+	appendLine(t, filepath.Join(freshLib, "a.txt"), "after-rewind\n")
+	git(t, freshLib, "commit", "-qam", "after rewind")
+	git(t, freshLib, "push", "-q", "origin", "main")
+	after := cloneRepo(t, s, s.treeURL("t44", "lib"))
+	assert.Equal(t, "a-v1\nafter-rewind\n", readFile(t, filepath.Join(after, "a.txt")), "回滚后协作应恢复")
+	fsckClean(t, after)
+
+	// Switch back off: the guard re-arms (runtime toggle, no restart).
+	setForcePush(t, s, "t44", false)
+	out = revive(t, after, seed, false)
+	require.Contains(t, out, "rejected", "开关关闭后守卫应重新生效:\n%s", out)
 }

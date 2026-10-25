@@ -164,12 +164,29 @@ rewind the timeline`。语义上等价于 git 服务端 `receive.denyNonFastForw
 
 | force push 形态 | 结果 |
 |---|---|
-| 回滚/丢弃他人内容（reset、rebase drop） | 拒绝；恢复路线 `pull --rebase` 后普通 push |
+| 回滚/丢弃他人内容（reset、rebase drop） | 拒绝；恢复路线 `pull --rebase` 后普通 push；或管理员开启仓库级开关（下述） |
 | 显式回滚内容 | 走 `git revert`（new 为 curTip 后代，天然放行） |
 | 内容保持的历史重写（T18 恢复链） | 放行（TreeKnown 认可） |
 | 根仓库 force push | git 原生放行（verbatim 层可重写）；但织入视图单调（/.woven 记忆），可见内容不回魂 |
 
 T43 钉住（四种回滚形态拒绝 + 拒后 rebase 恢复路线 + 根视图单调性）。
+
+**仓库级开关（opt-in 受控回滚，T44）**：`PUT /api/v1/repos/<repo>/force-push
+{"enabled":true}`（docs/05 §3.1；运行时生效）。开启后回滚形态的子树 push
+落地为**显式管理性重写**：目录时间线 head 指向回滚链，且 **`/.woven` 织入
+家族整体重置**（ResetWoven）——织入是时间线 tips 的确定性纯函数（合成提交
+复用源 author/committer，无时钟输入），下次物化各作用域从零重织：
+
+- **祖先作用域 commits 重建**：被回滚提交（其源链不再可达）的织入体从
+  父目录/根历史中消失——不是追加 revert，是历史真的重写；
+- **时间线边界 = 回滚边界**：本目录时间线回滚，不波及下层独立时间线
+  （lib 回滚后 lib/nested 的内容照常织入保留）；
+- 未受影响的时间线重织幂等（OID 不变）；
+- 回滚后正常协作即刻恢复（回滚链即新基底）。
+
+竞态降级：重置逐条 CAS，与并发物化碰撞的那条锚保留——该作用域退化为
+增量折叠（内容正确、历史混有旧织入体），下次重置/重启收敛。reset 失败
+仅记日志不回滚 CAS（回滚本身已落地）。
 
 ## 7. hooks / 策略点
 
@@ -216,7 +233,7 @@ v2 会话对照 `protocol_v2_serve_loop`：一次能力广告，随后命令循�
 | ~~浅克隆（deepen）~~ | **已实现**（§3a：deepen N / 加深 / unshallow / 客户端边界上报裁剪，对照 git 2.50 http-backend 参考流字节级实现） | T15/T16 钉住 |
 | `deepen-since` / `deepen-not` | 未广告未实现（`--shallow-since`/`--shallow-exclude`） | 需要时按 §3a 同框架扩展 |
 | 浅仓 push | 拒绝（HTTP 400）——对照参考服务端默认行为（`receive.shallowUpdate=false` → 403），同为干净拒绝 | 完整仓库 push 不受影响 |
-| 子树 force push 重写历史 | 服务端拒绝（§6a 内容前向校验）——目录时间线是多股共织的，不允许单方静默重写 | 显式回滚走 revert；恢复路线 pull --rebase |
+| 子树 force push 重写历史 | 默认拒绝（§6a 内容前向校验）——目录时间线是多股共织的，不允许单方静默重写；仓库级开关（`PUT /api/v1/repos/<repo>/force-push`）opt-in 后放行并重织祖先视图 | 显式回滚走 revert；恢复路线 pull --rebase；受控回滚开开关 |
 
 ## 9. 协议兼容矩阵（git 2.50.0.windows.1 实测，集成测试 T13–T16 钉住）
 
