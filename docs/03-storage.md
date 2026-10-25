@@ -134,42 +134,47 @@ wants = 客户端协商所得对象集合
 
 缓存三层同构：同一套「定位 → 拉取 → 编码」逻辑运行在 banyand 进程内 cache、独立的 cache 层、存储节点上——pack 不可变 ⇒ 缓存键即 pack_oid ⇒ 无失效问题。
 
-## 4. 写路径（服务一次 push）
+## 4. 写路径（服务一次 push，2026-10-25 起流式化）
 
 ```
 receive-pack 收到 (ref 命令行, pack 流)
-  ① 流式落盘临时文件 + 校验 pack trailer
-  ② 解包索引：解码对象 OID 清单（不展开对象内容）
-  ③ 校验：可达性（新 head 必须包含旧 head 或显式 force）、锚点合法性
-  ④ pack 原样写入分片（rendezvous × R 副本）          ← 不解散！
+  ① spool：请求体流式落盘临时文件（64KiB 窗口），滑动窗口哈希
+     边流边校验 pack trailer——内存与 pack 大小无关
+  ② 流式扫描：Parser 无 storage 模式（seekable 文件）只收集
+     order/offsets/crcs 元数据 + 写 idx v2（偏移全链 uint64，
+     大偏移走 8 字节表——单 pack 无 4GiB 限制）
+  ③ 校验：head 对象存在性（全局索引）、锚点合法性
+  ④ pack 流式写入分片：每副本独立打开 spool 文件（io.Copy，
+     不解算不驻内存；rendezvous × R 副本）              ← 不解散！
   ⑤ 元数据事务（WAL 单写者）：
        ObjectIndex 批量 upsert（oids → 新 pack）
        Timelines head CAS 前进
-       （锚定 /src/foo 等目录锚点时：追加组装任务）
-  ⑥ 组装执行（M1 同步，见 01 §4.2）：
-       读 CurrentTree("/") 相关 tree → ReplaceSubtree → synthetic commit
-       → synthetic commit 对象入 CAS（小 pack）→ 根 head CAS
-  ⑦ report-status 回写客户端
+  ⑥ commit/tree 索引惰性回填：首次读取时从 idx 偏移按需解压
+     （CommitInfo/TreeEntries 的 miss→解包→回填路径）；
+     整包解码缓存不预热——大仓导入的常驻内存 ∝ 对象数元数据
+  ⑦ report-status 回写客户端，spool 删除
 ```
 
-步骤 ④ 与 ⑥ 的对象写入互相独立、可并行；串行点只有 ⑤⑥ 的 head CAS。
+空 pack（0 对象）是合法 wire 形态（客户端推服务端已有对象）——直接
+跳过落库。步骤 ④⑥ 并行；串行点只有 ⑤ 的 head CAS。
 
-## 5. 后台 repack（碎片合并与 delta 化）
+## 5. 后台 repack（几何打包，2026-10-25 起）
 
-push pack 通常小而碎（一次 push 一个 pack），长期累积会拖垮读路径（单对象读取最多触达 N 个 pack）。后台 repack：
+push pack 通常小而碎（一次 push 一个 pack），长期累积会拖垮读路径。
+repack 采用 **git 几何打包策略**（`--geometric=2`，builtin/repack.c 的
+分组语义）：
 
 ```
-触发：碎片率 = packs(repo) > 阈值（默认 64）或对象冗余 > 阈值
-计划：RepackPlan 圈定一批小 pack → 按时间/路径局部性排序
-执行：
-  ① 目标对象集 = 圈定 pack 的并集（排除已被更新 pack 收编的）
-  ② delta 化：滑动窗口 + 路径局部性（同目录 blob 优先做 delta base）
-  ③ 写出新 pack + idx（origin=repack）
-  ④ 元数据版本化切换：ObjectIndex 批量改指向新 pack（单事务）
-  ⑤ 旧 pack 引用计数（在途读 + 在途 cache）归零后删除
+触发：packs(repo) ≥ 阈值（默认 64）
+分组：pack 按对象数升序；相邻比 p[i+1] < 2×p[i] 的连续段为一组
+      （相邻比而非累计——累计判据会滚雪球吞掉大 pack）
+合并：仅组内 >1 的组——每组合成一个 delta pack（原合并机械）；
+      单元素组不动——大 pack 永不重打，合并成本 ∝ 碎片段而非仓库
+协议：注册先行（对象位置重指向）→ 删旧分片；中断任意点最多超副本
 ```
 
-与 git `pack-objects` 的差异：**不追求全局最优 pack**，追求"合并碎片 + 局部性 delta"的成本收益；大 pack 的进一步优化交给 M3 的分层策略（热路径 pack 直传：客户端要的对象恰好整 pack 命中时，直接把存储侧 pack 作为响应体回传，零重编码）。
+与旧全量合并的差异：300GB 仓不再触发 300GB 重打（旧策略在阈值之上
+不可行）；碎片合并与 delta 化的成本被几何序列约束在最小段。
 
 ## 6. 存储寻址模式与 rename（2026-10-25，T40）
 

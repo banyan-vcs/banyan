@@ -44,7 +44,9 @@ delta 化（客户端打包时 vs 服务端服务时）的基选择不同 → ~8
 （> verbatim 215.2KB > git 199.4KB）——banyan 的 Go delta 编码器
 （go-git EncodePackDelta 移植）压缩质量低于 C diff-delta。
 **结论：现状即最优解**——7% 字节换零拷贝直传；repack 的价值在碎片
-合并运维，不在 serve 字节（部署不必为带宽而 repack）。
+合并运维，不在 serve 字节（部署不必为带宽而 repack）。注：pack 尺寸
+本身没有 4GiB 限制——idx v2 的 64 位大偏移表即为此设计，banyan 的
+偏移自 2026-10-25 起全链 uint64——此处差异纯在 delta 选择。
 
 **② clone 浅化 1.14x —— 对象集相同，编码差异，方向随形态波动。**
 bench 场景（多 pack 状态）下浅化克隆对象数相同（116=116）、pack 级
