@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"net/http"
+	"io"
 	"strings"
 
 	"github.com/banyan-vcs/banyan/internal/model"
@@ -95,7 +95,7 @@ type bufWriter struct {
 	bw *bufio.Writer
 }
 
-func newBufWriter(w http.ResponseWriter) *bufWriter {
+func newBufWriter(w io.Writer) *bufWriter {
 	return &bufWriter{bw: bufio.NewWriterSize(w, 64*1024)}
 }
 

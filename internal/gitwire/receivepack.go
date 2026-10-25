@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
@@ -51,6 +52,19 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	}
 
 	br := bufio.NewReaderSize(r.Body, 256*1024)
+	out := newBufWriter(w)
+	if err := s.finishPush(r.Context(), id, br, out, vr); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = out.Flush()
+}
+
+// finishPush serves the receive-pack data phase shared by smart HTTP and the
+// SSH transport (docs/03 §5, write path docs/02 §4): read the ref commands
+// and pack, then per-ref validation + head CAS with a report-status receipt.
+// A non-nil error is a pre-report protocol failure.
+func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Reader, out *bufWriter, vr VirtualRepo) error {
 	type refUpdate struct {
 		Old, New model.OID
 		Name     string
@@ -60,8 +74,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	for !sawFlush {
 		line, flush, err := ReadPacketText(br)
 		if err != nil {
-			http.Error(w, "read ref commands: "+err.Error(), http.StatusBadRequest)
-			return
+			return fmt.Errorf("read ref commands: %w", err)
 		}
 		if flush {
 			sawFlush = true
@@ -71,8 +84,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		cmd, _, _ := strings.Cut(line, "\x00")
 		fields := strings.Fields(cmd)
 		if len(fields) != 3 {
-			http.Error(w, "malformed ref update: "+line, http.StatusBadRequest)
-			return
+			return fmt.Errorf("malformed ref update: %s", line)
 		}
 		updates = append(updates, refUpdate{
 			Old:  model.OID(fields[0]).NormalizeZero(),
@@ -84,35 +96,32 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	// Pack section: after the flush until body end (empty for delete-only pushes).
 	packBytes, err := io.ReadAll(br)
 	if err != nil {
-		http.Error(w, "read pack: "+err.Error(), http.StatusBadRequest)
-		return
+		return fmt.Errorf("read pack: %w", err)
 	}
 
-	out := newBufWriter(w)
 	fail := func(why string) {
 		_ = WritePacket(out, []byte("unpack "+why+"\n"))
 		for _, u := range updates {
 			_ = WritePacket(out, []byte("ng "+u.Name+" "+why+"\n"))
 		}
 		_ = WriteFlush(out)
-		_ = out.Flush()
 	}
 
-	// Ã¢ÂÂ  pack decode + chunked ingest (error if no pack yet non-delete updates exist).
+	// ① pack decode + chunked ingest (error if no pack yet non-delete updates exist).
 	var dp *storage.DecodedPack
 	if len(packBytes) > 0 {
 		dp, err = storage.DecodePack(packBytes)
 		if err != nil {
 			fail("pack decode: " + err.Error())
-			return
+			return nil
 		}
-		if _, err := s.Objects.IngestPack(r.Context(), vr.Repo, packBytes); err != nil {
+		if _, err := s.Objects.IngestPack(ctx, vr.Repo, packBytes); err != nil {
 			fail("ingest: " + err.Error())
-			return
+			return nil
 		}
 	}
 
-	// Ã¢ÂÂ¡Ã¢ÂÂ¢ per-ref validation + head CAS. report-status mandates the order:
+	// ②③ per-ref validation + head CAS. report-status mandates the order:
 	// the first pkt is "unpack ok", followed by per-ref statuses (mirrors receive-pack.c).
 	_ = WritePacket(out, []byte("unpack ok\n"))
 	for _, u := range updates {
@@ -128,7 +137,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 				_ = WritePacket(out, []byte("ng "+u.Name+" permission denied\n"))
 				continue
 			}
-			s.handleAuxRefUpdate(out, r, vr, u.Old, u.New, u.Name, dp)
+			s.handleAuxRefUpdate(ctx, out, vr, u.Old, u.New, u.Name, dp)
 			continue
 		}
 		name := strings.TrimPrefix(u.Name, "refs/heads/")
@@ -148,10 +157,10 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			}
 			tl := model.Timeline{Repo: vr.Repo, Anchor: vr.Sub, Name: name}
 			expected := u.Old
-			if st, serr := s.Meta.Timeline(r.Context(), tl); serr == nil {
+			if st, serr := s.Meta.Timeline(ctx, tl); serr == nil {
 				expected = st.Head // the advertised (derived) tip maps to stored state
 			}
-			if err := s.Meta.CASHead(r.Context(), tl, expected, u.New); err != nil {
+			if err := s.Meta.CASHead(ctx, tl, expected, u.New); err != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+err.Error()+"\n"))
 				continue
 			}
@@ -159,15 +168,15 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			continue
 		}
 		// The new head must be in this pack and be a commit (for the re-push case where
-		// the object is already in a pack: also accept already-ingested objects Ã¢ÂÂ global-index fallback).
+		// the object is already in a pack: also accept already-ingested objects — global-index fallback).
 		if dp != nil {
 			if _, ok := dp.Commits[u.New]; !ok {
-				if _, _, rerr := s.Objects.Raw(r.Context(), vr.Repo, u.New); rerr != nil {
+				if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, u.New); rerr != nil {
 					_ = WritePacket(out, []byte("ng "+u.Name+" head object missing\n"))
 					continue
 				}
 			}
-		} else if _, _, rerr := s.Objects.Raw(r.Context(), vr.Repo, u.New); rerr != nil {
+		} else if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, u.New); rerr != nil {
 			_ = WritePacket(out, []byte("ng "+u.Name+" head object missing\n"))
 			continue
 		}
@@ -176,7 +185,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			// Ⓑ subtree-view push (docs/01 §13): the write path touches ONLY
 			// this directory's timeline — no root head CAS, no adoption merge.
 			// The root view is derived on read (view.RootTip weave).
-			if aerr := s.adoptSubtreePush(r.Context(), vr, name, u.Old, u.New); aerr != nil {
+			if aerr := s.adoptSubtreePush(ctx, vr, name, u.Old, u.New); aerr != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+aerr.Error()+"\n"))
 				continue
 			}
@@ -193,18 +202,18 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		_ = dp
 		tl := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: name}
 		expected := u.Old
-		if st, serr := s.Meta.Timeline(r.Context(), tl); serr == nil {
+		if st, serr := s.Meta.Timeline(ctx, tl); serr == nil {
 			// Race-window guard: the client's old is the advertised woven tip;
 			// it must still equal the tip derivable now, else another push
 			// landed in between (fetch first, git-equivalent semantics).
-			if curWoven, werr := s.Views.RootTip(r.Context(), vr.Repo, name); werr == nil &&
+			if curWoven, werr := s.Views.RootTip(ctx, vr.Repo, name); werr == nil &&
 				!u.Old.IsZero() && !curWoven.IsZero() && u.Old != curWoven {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+storage.ErrNonFastForward.Error()+"\n"))
 				continue
 			}
 			expected = st.Head
 		}
-		if err := s.Meta.CASHead(r.Context(), tl, expected, u.New); err != nil {
+		if err := s.Meta.CASHead(ctx, tl, expected, u.New); err != nil {
 			_ = WritePacket(out, []byte("ng "+u.Name+" "+err.Error()+"\n"))
 			continue
 		}
@@ -214,7 +223,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	}
 
 	_ = WriteFlush(out)
-	_ = out.Flush()
+	return nil
 }
 
 // warmView pre-materializes the views the next advertisement will resolve
@@ -245,7 +254,7 @@ func (s *Server) warmView(repo string, sub model.AnchorPath, branch string) {
 // timeline name IS the full ref name; the head is the raw OID with no
 // derived-view semantics; deletion mirrors the branch path's expected
 // mapping (the advertised value equals the stored head).
-func (s *Server) handleAuxRefUpdate(out *bufWriter, r *http.Request, vr VirtualRepo, old, newHead model.OID, refName string, dp *storage.DecodedPack) {
+func (s *Server) handleAuxRefUpdate(ctx context.Context, out *bufWriter, vr VirtualRepo, old, newHead model.OID, refName string, dp *storage.DecodedPack) {
 	if !vr.Sub.IsRoot() {
 		_ = WritePacket(out, []byte("ng "+refName+" auxiliary refs only supported in the root repo\n"))
 		return
@@ -255,7 +264,7 @@ func (s *Server) handleAuxRefUpdate(out *bufWriter, r *http.Request, vr VirtualR
 		known := dp != nil && (dp.Commits[newHead] != nil || dp.Tags[newHead] != nil ||
 			dp.Trees[newHead] != nil || dp.Blobs[newHead] != nil)
 		if !known {
-			if _, _, rerr := s.Objects.Raw(r.Context(), vr.Repo, newHead); rerr != nil {
+			if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, newHead); rerr != nil {
 				_ = WritePacket(out, []byte("ng "+refName+" target object missing\n"))
 				return
 			}
@@ -263,10 +272,10 @@ func (s *Server) handleAuxRefUpdate(out *bufWriter, r *http.Request, vr VirtualR
 	}
 	tl := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: refName}
 	expected := old
-	if st, serr := s.Meta.Timeline(r.Context(), tl); serr == nil {
+	if st, serr := s.Meta.Timeline(ctx, tl); serr == nil {
 		expected = st.Head
 	}
-	if err := s.Meta.CASHead(r.Context(), tl, expected, newHead); err != nil {
+	if err := s.Meta.CASHead(ctx, tl, expected, newHead); err != nil {
 		_ = WritePacket(out, []byte("ng "+refName+" "+err.Error()+"\n"))
 		return
 	}

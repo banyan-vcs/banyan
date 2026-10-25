@@ -9,6 +9,7 @@ package gitwire
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,13 +34,21 @@ func wantsV2(r *http.Request) bool {
 	return false
 }
 
-// advertiseV2 serves the v2 capability advertisement: pkt-lines "version 2"
-// then capability key[=value] lines, terminated by a flush. No "# service"
-// prelude — that is v1-only and would break the v2 client's parser.
+// advertiseV2 serves the v2 capability advertisement (HTTP wrapper: headers
+// plus the packets).
 func (s *Server) advertiseV2(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 	w.Header().Set("Cache-Control", "no-cache")
 	out := newBufWriter(w)
+	s.advertiseV2Packets(out)
+	_ = out.Flush()
+}
+
+// advertiseV2Packets writes the transport-neutral v2 advertisement:
+// pkt-lines "version 2" then capability key[=value] lines, terminated by a
+// flush. No "# service" prelude — that is v1-only and would break the v2
+// client's parser.
+func (s *Server) advertiseV2Packets(out *bufWriter) {
 	_ = WritePacket(out, []byte("version 2\n"))
 	_ = WritePacket(out, []byte("agent=banyan/0.1\n"))
 	_ = WritePacket(out, []byte("ls-refs=unborn\n")) // unborn HEAD of an empty repo
@@ -53,7 +62,6 @@ func (s *Server) advertiseV2(w http.ResponseWriter) {
 	}
 	_ = WritePacket(out, []byte(objFmt))
 	_ = WriteFlush(out)
-	_ = out.Flush()
 }
 
 // serveUploadPackV2 handles one v2 command request (stateless: one command
@@ -79,21 +87,30 @@ func (s *Server) serveUploadPackV2(w http.ResponseWriter, r *http.Request, vr Vi
 	br := bufio.NewReaderSize(r.Body, 64*1024)
 	out := newBufWriter(w)
 
-	line, _, err := ReadPacketText(br)
-	if err != nil || !strings.HasPrefix(line, "command=") {
-		http.Error(w, "v2: expected command= pkt", http.StatusBadRequest)
-		return
-	}
-	command := strings.TrimPrefix(line, "command=")
+	s.serveV2Command(r.Context(), br, out, vr, id)
+	_ = out.Flush()
+}
 
+// readV2Command reads one v2 command frame: the command= pkt, capability
+// lines until the delim, then args until flush. The bool reports a session
+// end (EOF or a bare flush-pkt — serve.c treats a flush with no command as
+// the client terminating the connection).
+func readV2Command(br *bufio.Reader) (command string, args []string, ended bool, err error) {
+	line, flush, rerr := ReadPacketText(br)
+	if rerr != nil || flush {
+		return "", nil, true, nil // EOF or a bare flush-pkt ends the session
+	}
+	if !strings.HasPrefix(line, "command=") {
+		return "", nil, false, fmt.Errorf("v2: expected command= pkt")
+	}
+	command = strings.TrimPrefix(line, "command=")
 	// Capability lines until the delim (agent / object-format echoes carry no
 	// new information — we advertised them), then command args until flush.
-	var args []string
 	inArgs := false
 	for {
 		payload, kind, err := ReadPacketKind(br)
 		if err != nil {
-			break // body ended without flush: the args read so far stand
+			break // stream ended without flush: the args read so far stand
 		}
 		if kind == PktDelim {
 			inArgs = true
@@ -106,17 +123,30 @@ func (s *Server) serveUploadPackV2(w http.ResponseWriter, r *http.Request, vr Vi
 			args = append(args, strings.TrimSuffix(string(payload), "\n"))
 		}
 	}
+	return command, args, false, nil
+}
 
+// serveV2Command dispatches one v2 command (shared by the stateless HTTP
+// POST loop and the stateful SSH session loop).
+func (s *Server) serveV2Command(ctx context.Context, br *bufio.Reader, out *bufWriter, vr VirtualRepo, id auth.Identity) {
+	command, args, ended, err := readV2Command(br)
+	if err != nil {
+		_ = WritePacket(out, []byte("ERR "+err.Error()+"\n"))
+		_ = WriteFlush(out)
+		return
+	}
+	if ended {
+		return
+	}
 	switch command {
 	case "ls-refs":
-		s.lsRefsV2(out, r, vr, args, id)
+		s.lsRefsV2(ctx, out, vr, args, id)
 	case "fetch":
-		s.fetchV2(out, r, vr, args, id)
+		s.fetchV2(ctx, out, vr, args, id)
 	default:
 		_ = WritePacket(out, []byte("ERR unknown command "+command+"\n"))
 		_ = WriteFlush(out)
 	}
-	_ = out.Flush()
 }
 
 // lsRefsV2 serves command=ls-refs: pkt-lines "<oid> <refname>
@@ -125,8 +155,7 @@ func (s *Server) serveUploadPackV2(w http.ResponseWriter, r *http.Request, vr Vi
 // Args: peel, symrefs, unborn, ref-prefix <p> (prefix match on the full
 // refname — HEAD goes through the same filter, so `git fetch origin
 // <branch>` traffic stays minimal).
-func (s *Server) lsRefsV2(out *bufWriter, r *http.Request, vr VirtualRepo, args []string, id auth.Identity) {
-	ctx := r.Context()
+func (s *Server) lsRefsV2(ctx context.Context, out *bufWriter, vr VirtualRepo, args []string, id auth.Identity) {
 	peel, symrefs, unborn := false, false, false
 	var prefixes []string
 	for _, a := range args {
@@ -263,8 +292,7 @@ func parseFetchV2(args []string) (*v2FetchArgs, error) {
 // client would read the pack right after "ready" anyway); a round with no
 // known have and no done answers acknowledgments/NAK + flush and ends — the
 // client POSTs again with more haves or done.
-func (s *Server) fetchV2(out *bufWriter, r *http.Request, vr VirtualRepo, args []string, id auth.Identity) {
-	ctx := r.Context()
+func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, args []string, id auth.Identity) {
 	fa, err := parseFetchV2(args)
 	if err != nil {
 		_ = WritePacket(out, []byte("ERR "+err.Error()+"\n"))

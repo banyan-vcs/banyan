@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
@@ -69,6 +71,9 @@ type Server struct {
 	// the pre-M5 open behavior; set, every advertisement, fetch and push
 	// passes through it. Wired by cmd/banyand per role.
 	Auth auth.Service
+	// SSHHostKey signs the git-over-SSH transport's server key exchange
+	// (docs/03 §8); wired by cmd/banyand (generated/persisted host key).
+	SSHHostKey ssh.Signer
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
@@ -187,31 +192,38 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr Virtu
 		return
 	}
 
-	refs, err := s.ResolveRefs(r.Context(), vr)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	refs = s.visibleRefs(id, vr.Repo, refs)
-	if len(refs) > 0 && !vr.Sub.IsRoot() {
-		// Debugging: per-request log of subtree advertisements (to locate concurrent advertisement inconsistency).
-		state, _ := s.Meta.Timeline(r.Context(), model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: s.defaultBranch(r.Context(), vr.Repo)})
-		log.Printf("ADVERT %s%s: tip=%s rootHead=%s", vr.Repo, vr.Sub, refs[0].OID, state.Head)
-	}
-
 	br := newBufWriter(w)
 	// Service header pkt (Smart HTTP v1 requires "# service=..." as the first line + flush).
 	_ = WritePacket(br, []byte("# service="+service+"\n"))
 	_ = WriteFlush(br)
+	_ = s.writeRefAdvertisement(r.Context(), br, vr, id, service)
+	_ = br.Flush()
+}
 
-	caps := s.capabilities(service, s.defaultBranch(r.Context(), vr.Repo))
+// writeRefAdvertisement writes the v0 ref advertisement shared by smart HTTP
+// and the SSH transport (docs/03 §2): "<oid> <ref>" lines with the
+// capability block trailing the first, terminated by a flush; an empty repo
+// advertises the virtual capabilities^{} header (mirrors upload-pack.c
+// empty-repo handling). The advertisement is the identity's VISIBLE view.
+func (s *Server) writeRefAdvertisement(ctx context.Context, out *bufWriter, vr VirtualRepo, id auth.Identity, service string) error {
+	refs, err := s.ResolveRefs(ctx, vr)
+	if err != nil {
+		return err
+	}
+	refs = s.visibleRefs(id, vr.Repo, refs)
+	if len(refs) > 0 && !vr.Sub.IsRoot() {
+		// Debugging: per-request log of subtree advertisements (to locate concurrent advertisement inconsistency).
+		state, _ := s.Meta.Timeline(ctx, model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: s.defaultBranch(ctx, vr.Repo)})
+		log.Printf("ADVERT %s%s: tip=%s rootHead=%s", vr.Repo, vr.Sub, refs[0].OID, state.Head)
+	}
+
+	caps := s.capabilities(service, s.defaultBranch(ctx, vr.Repo))
 	if len(refs) == 0 {
-		// Empty repo: capabilities hang off the virtual capability^{} header (mirrors upload-pack.c empty-repo handling).
 		zero := strings.Repeat("0", 40)
 		if s.Algo == model.SHA256 {
 			zero = strings.Repeat("0", 64)
 		}
-		_ = WritePacket(br, []byte(zero+" capabilities^{}\x00"+caps+"\n"))
+		_ = WritePacket(out, []byte(zero+" capabilities^{}\x00"+caps+"\n"))
 	} else {
 		first := true
 		for _, ref := range refs {
@@ -220,11 +232,10 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr Virtu
 				line += "\x00" + caps
 				first = false
 			}
-			_ = WritePacket(br, []byte(line+"\n"))
+			_ = WritePacket(out, []byte(line+"\n"))
 		}
 	}
-	_ = WriteFlush(br)
-	_ = br.Flush()
+	return WriteFlush(out)
 }
 
 // defaultBranch returns the repo's default branch name (symref target), falling back to main when unknown.

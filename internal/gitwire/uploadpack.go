@@ -18,6 +18,67 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
+// fetchReq accumulates one upload-pack request (shared by the stateless
+// HTTP loop and the stateful SSH loop).
+type fetchReq struct {
+	wants          []model.OID
+	haves          []model.OID
+	clientShallow  []model.OID // client's current shallow boundary (reported by deepen/unshallow requests)
+	filter         *FilterSpec // active partial-clone filter (blob:none / tree:0, docs/03 §4)
+	clientOfsDelta bool        // client accepted OFS_DELTA (v1 want-line capability)
+	clientThin     bool        // client asked for a thin pack (v1 cap / v2 arg)
+	depth          int         // deepen N; 0 = no deepen
+	done           bool
+}
+
+// applyFetchLine folds one request pkt-line into st. Returns a wire error
+// message ("" = ok) and whether the transport should surface it as an ERR
+// pkt (true — the filter contract, docs/03 §4) or as a protocol error
+// (HTTP 400 / session failure).
+func applyFetchLine(st *fetchReq, line string) (string, bool) {
+	switch {
+	case strings.HasPrefix(line, "want "):
+		fields := strings.Fields(strings.TrimPrefix(line, "want "))
+		if len(fields) == 0 {
+			return "malformed want", false
+		}
+		st.wants = append(st.wants, model.OID(strings.SplitN(fields[0], "\x00", 2)[0]))
+		// Capabilities trail the first want (gitprotocol-pack); OFS_DELTA
+		// packs may only go to clients that asked for it, thin packs only
+		// to clients that promised to --fix-thin.
+		if strings.Contains(line, " ofs-delta") {
+			st.clientOfsDelta = true
+		}
+		if strings.Contains(line, " thin-pack") {
+			st.clientThin = true
+		}
+	case strings.HasPrefix(line, "have "):
+		st.haves = append(st.haves, model.OID(strings.TrimPrefix(line, "have ")))
+	case strings.HasPrefix(line, "shallow "):
+		st.clientShallow = append(st.clientShallow, model.OID(strings.TrimSpace(strings.TrimPrefix(line, "shallow "))))
+	case strings.HasPrefix(line, "deepen "):
+		if n, derr := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "deepen "))); derr == nil && n > 0 {
+			st.depth = n // ultra-deep values like 2147483647 (--unshallow) naturally cover full history
+		}
+	case strings.HasPrefix(line, "filter "):
+		spec := strings.TrimSpace(strings.TrimPrefix(line, "filter "))
+		fs, ferr := ParseFilterSpec(spec)
+		if ferr != nil || !fs.ServeSupported() {
+			// Mirrors upload-pack.c: an unsupported filter is answered with
+			// an ERR pkt the client surfaces as "remote error: ...".
+			why := ferr
+			if why == nil {
+				why = fmt.Errorf("unsupported filter %q", spec)
+			}
+			return "filter: " + why.Error(), true
+		}
+		st.filter = fs
+	case line == "done":
+		st.done = true
+	}
+	return "", false
+}
+
 // serveUploadPack serves the fetch/clone data phase (docs/03 §3).
 //
 // v1 session (mirrors the upload-pack.c state machine):
@@ -39,17 +100,18 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		return
 	}
 
+	// Identity resolved up front (the gate itself runs in finishFetch, after
+	// the request body — same wire behavior: the 401 either way makes the
+	// client retry with Basic credentials).
+	id, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+
 	br := bufio.NewReaderSize(r.Body, 64*1024)
 	out := newBufWriter(w)
 
-	var wants []model.OID
-	var haves []model.OID
-	var clientShallow []model.OID // client's current shallow boundary (reported by deepen/unshallow requests)
-	var filter *FilterSpec        // active partial-clone filter (blob:none / tree:0, docs/03 §4)
-	clientOfsDelta := false       // client accepted OFS_DELTA (v1 want-line capability)
-	clientThin := false           // client asked for a thin pack (v1 cap / v2 arg)
-	depth := 0                    // deepen N; 0 = no deepen
-	done := false
+	st := &fetchReq{}
 	// Stateless HTTP negotiation (mirrors remote-curl.c / upload-pack.c get_common_commits):
 	// each POST = the client writes everything once, then reads (want [+haves] [+flush] [done]).
 	// The server writes only **one** response line at POST end — writing mid-stream makes the done
@@ -60,15 +122,15 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	// every response starts with a shallow section — shallow lines (new boundary) + unshallow lines
 	// (client-reported boundaries now completed) + flush-pkt; a negotiation round sends **only** the shallow section
 	// (no NAK), and the done round follows with ACK/NAK + pack pruned at the boundary.
-	for !done {
+	for !st.done {
 		line, _, err := ReadPacketText(br)
 		if err != nil {
-			if len(wants) == 0 && len(haves) == 0 {
+			if len(st.wants) == 0 && len(st.haves) == 0 {
 				http.Error(w, "read request: "+err.Error(), http.StatusBadRequest)
 				return
 			}
-			if depth > 0 {
-				s.writeShallowSection(out, vr.Repo, wants, clientShallow, depth)
+			if st.depth > 0 {
+				s.writeShallowSection(out, vr.Repo, st.wants, st.clientShallow, st.depth)
 				_ = out.Flush()
 				return
 			}
@@ -76,7 +138,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 			// mode of upload-pack.c get_common_commits: with a common commit the ACK is terminal,
 			// so the pack must go in the same response (the client reads the pack right after a bare ACK);
 			// with no common commit, NAK + flush-pkt ends this round and the client continues with the next POST.
-			if common := s.firstKnown(r.Context(), vr.Repo, haves); !common.IsZero() {
+			if common := s.firstKnown(r.Context(), vr.Repo, st.haves); !common.IsZero() {
 				_ = WritePacket(out, []byte("ACK "+string(common)+"\n"))
 				break // terminal ACK, go straight to the pack phase
 			}
@@ -85,92 +147,56 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 			_ = out.Flush()
 			return
 		}
-		switch {
-		case strings.HasPrefix(line, "want "):
-			fields := strings.Fields(strings.TrimPrefix(line, "want "))
-			if len(fields) == 0 {
-				http.Error(w, "malformed want", http.StatusBadRequest)
-				return
-			}
-			wants = append(wants, model.OID(strings.SplitN(fields[0], "\x00", 2)[0]))
-			// Capabilities trail the first want (gitprotocol-pack); OFS_DELTA
-			// packs may only go to clients that asked for it, thin packs only
-			// to clients that promised to --fix-thin.
-			if strings.Contains(line, " ofs-delta") {
-				clientOfsDelta = true
-			}
-			if strings.Contains(line, " thin-pack") {
-				clientThin = true
-			}
-		case strings.HasPrefix(line, "have "):
-			haves = append(haves, model.OID(strings.TrimPrefix(line, "have ")))
-		case strings.HasPrefix(line, "shallow "):
-			clientShallow = append(clientShallow, model.OID(strings.TrimSpace(strings.TrimPrefix(line, "shallow "))))
-		case strings.HasPrefix(line, "deepen "):
-			if n, derr := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "deepen "))); derr == nil && n > 0 {
-				depth = n // ultra-deep values like 2147483647 (--unshallow) naturally cover full history
-			}
-		case strings.HasPrefix(line, "filter "):
-			spec := strings.TrimSpace(strings.TrimPrefix(line, "filter "))
-			fs, ferr := ParseFilterSpec(spec)
-			if ferr != nil || !fs.ServeSupported() {
-				// Mirrors upload-pack.c: an unsupported filter is answered with
-				// an ERR pkt the client surfaces as "remote error: ...".
-				why := ferr
-				if why == nil {
-					why = fmt.Errorf("unsupported filter %q", spec)
-				}
-				_ = WritePacket(out, []byte("ERR filter: "+why.Error()+"\n"))
+		if msg, errPkt := applyFetchLine(st, line); msg != "" {
+			if errPkt {
+				_ = WritePacket(out, []byte("ERR "+msg+"\n"))
 				_ = out.Flush()
 				return
 			}
-			filter = fs
-		case line == "done":
-			done = true
+			http.Error(w, msg, http.StatusBadRequest)
+			return
 		}
 	}
 
-	if !done && len(wants) > 0 && len(haves) > 0 {
-		// The terminal ACK was already written in the negotiation round (break path); only the done-round terminal line is added here.
-	}
-
-	if done {
-		if depth > 0 {
-			s.writeShallowSection(out, vr.Repo, wants, clientShallow, depth)
+	if st.done {
+		if st.depth > 0 {
+			s.writeShallowSection(out, vr.Repo, st.wants, st.clientShallow, st.depth)
 		}
-		if common := s.firstKnown(r.Context(), vr.Repo, haves); !common.IsZero() {
+		if common := s.firstKnown(r.Context(), vr.Repo, st.haves); !common.IsZero() {
 			_ = WritePacket(out, []byte("ACK "+string(common)+"\n"))
 		} else {
 			_ = WritePacket(out, []byte("NAK\n"))
 		}
 	}
 
-	if len(wants) == 0 {
+	if len(st.wants) == 0 {
 		_ = out.Flush()
 		return
 	}
+	s.finishFetch(r.Context(), out, vr, id, st)
+}
 
+// finishFetch serves the pack for an accumulated request: authorization
+// gates, closure, thin-pack plan and the serve ladder (docs/12 P2-2).
+// Shared by the HTTP and SSH transports.
+func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo, id auth.Identity, st *fetchReq) {
 	// Authorization gates (docs/13): identity + repository/directory fetch
 	// permission, then the want-coverage check against the identity's
 	// VISIBLE tips — with auth on this replaces (and strengthens) the
 	// reachability gate: an oid reachable only through someone else's
 	// personal branch is not fetchable even by raw OID.
-	var id auth.Identity
 	if s.Auth != nil {
-		var ok bool
-		if id, ok = s.requireAuth(w, r); !ok {
-			return
-		}
 		if !s.Auth.CanFetch(id, vr.Repo, string(vr.Sub)) {
-			http.Error(w, "permission denied", http.StatusForbidden)
+			_ = WritePacket(out, []byte("ERR upload-pack: permission denied\n"))
+			_ = out.Flush()
 			return
 		}
-		if bad := s.wantsBeyondTips(r.Context(), vr, wants, id); !bad.IsZero() {
+		if bad := s.wantsBeyondTips(ctx, vr, st.wants, id); !bad.IsZero() {
 			_ = WritePacket(out, []byte("ERR upload-pack: not our ref "+string(bad)+"\n"))
 			_ = out.Flush()
 			return
 		}
-	} else if bad := s.unadvertisedWant(r.Context(), vr, wants); !bad.IsZero() {
+	} else if bad := s.unadvertisedWant(ctx, vr, st.wants); !bad.IsZero() {
 		// allow-reachable-sha1-in-want (advertised): wants that are not
 		// themselves advertised refs must be reachable from the advertised
 		// tips — partial-clone lazy fetches name missing blobs/trees by OID
@@ -181,31 +207,31 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	}
 
 	closureStart := time.Now()
-	blobs, trees, commits, tags, exclude, err := s.closure(r.Context(), vr, wants, depth, clientShallow, haves, filter)
+	blobs, trees, commits, tags, exclude, err := s.closure(ctx, vr, st.wants, st.depth, st.clientShallow, st.haves, st.filter)
 	closureDur := time.Since(closureStart)
 	if err != nil {
 		log.Printf("upload-pack %s%s: closure: %v", vr.Repo, vr.Sub, err)
-		// Headers are already written; finish with an empty response. The client will report missing objects.
+		// The stream is live; finish with an empty response. The client will report missing objects.
 		_ = out.Flush()
 		return
 	}
 	// Thin pack (docs/12 P2-6): with haves and a thin-pack client, delta the
 	// served objects against same-path predecessors the client holds.
 	var plan *thinPackPlan
-	if clientThin && len(haves) > 0 {
+	if st.clientThin && len(st.haves) > 0 {
 		plan = &thinPackPlan{
-			bases:    s.thinBases(r.Context(), vr, commits, exclude),
-			loadBase: func(oid model.OID) (model.ObjectType, []byte, error) { return s.Objects.Raw(r.Context(), vr.Repo, oid) },
+			bases:    s.thinBases(ctx, vr, commits, exclude),
+			loadBase: func(oid model.OID) (model.ObjectType, []byte, error) { return s.Objects.Raw(ctx, vr.Repo, oid) },
 		}
 	}
 	encodeStart := time.Now()
 	// Hot-path serve ladder (docs/02 §5, docs/12 P2-2): stored-pack verbatim
 	// → clone-shaped response cache → online encoding (delta past threshold).
-	cacheable := len(haves) == 0 && depth == 0 && filter == nil
-	served := s.serveClosurePack(r.Context(), out, vr, wants, blobs, trees, commits, tags, cacheable, clientOfsDelta, plan)
+	cacheable := len(st.haves) == 0 && st.depth == 0 && st.filter == nil
+	served := s.serveClosurePack(ctx, out, vr, st.wants, blobs, trees, commits, tags, cacheable, st.clientOfsDelta, plan)
 	_ = out.Flush()
 	log.Printf("upload-pack %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, filter %s, closure %s, serve %s/%s)",
-		vr.Repo, vr.Sub, len(wants), len(commits), len(trees), len(blobs), len(exclude), filterSpecName(filter),
+		vr.Repo, vr.Sub, len(st.wants), len(commits), len(trees), len(blobs), len(exclude), filterSpecName(st.filter),
 		closureDur.Round(time.Millisecond), served, time.Since(encodeStart).Round(time.Millisecond))
 }
 
