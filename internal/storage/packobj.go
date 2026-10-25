@@ -1,8 +1,11 @@
-// Single-object extraction from pack bytes via idx offsets (docs/11 P1-1,
+// Single-object extraction from a pack via idx offsets (docs/11 P1-1,
 // B2): parse the object header at the located offset, inflate just that
 // entry, and resolve OFS/REF delta chains recursively — instead of
-// transferring and decoding the whole pack for one object. Format reference:
-// pack-format.txt ("Pack file format" and "The delta data format").
+// transferring and decoding the whole pack for one object. The source is
+// random-access (in-memory bytes or a pack FILE read in windows), so a
+// multi-hundred-MB pack costs O(object) memory per extraction. Format
+// reference: pack-format.txt ("Pack file format" and "The delta data
+// format").
 package storage
 
 import (
@@ -35,47 +38,82 @@ var packObjType = map[byte]model.ObjectType{
 // deltaChainLimit bounds delta-base recursion (corrupt packs, cycles).
 const deltaChainLimit = 64
 
+// packSource is random access into pack bytes: an in-memory buffer or a
+// file (section reads on demand — the whole pack never has to be resident).
+type packSource interface {
+	io.ReaderAt
+	Size() int64
+}
+
+type sizedSource struct {
+	io.ReaderAt
+	size int64
+}
+
+func (s *sizedSource) Size() int64 { return s.size }
+
+// ExtractObject reads one object out of in-memory pack bytes using its idx.
+func ExtractObject(raw []byte, idx *PackIndex, algo model.HashAlgo, oid model.OID) (model.ObjectType, []byte, error) {
+	return extractObject(bytes.NewReader(raw), idx, algo, oid)
+}
+
+// ExtractObjectAt reads one object out of a random-access pack source (the
+// node-side FILE path): header bytes and the object's zlib stream are read
+// in windows at the located offsets, never the whole pack.
+func ExtractObjectAt(src io.ReaderAt, size int64, idx *PackIndex, algo model.HashAlgo, oid model.OID) (model.ObjectType, []byte, error) {
+	return extractObject(&sizedSource{ReaderAt: src, size: size}, idx, algo, oid)
+}
+
 // ExtractObject reads one object out of a pack using its idx. The object
 // header at the idx offset carries the type and inflated size; ofs-delta
 // entries encode a negative offset to their base, ref-delta entries the
 // base oid (which must itself be in the pack — our stored packs are
 // self-contained; receive-pack advertises no-thin).
-func ExtractObject(raw []byte, idx *PackIndex, algo model.HashAlgo, oid model.OID) (model.ObjectType, []byte, error) {
+func extractObject(src packSource, idx *PackIndex, algo model.HashAlgo, oid model.OID) (model.ObjectType, []byte, error) {
 	off, ok := idx.Entries[oid]
 	if !ok {
 		return "", nil, fmt.Errorf("%w: %s not in pack idx", model.ErrObjectNotFound, oid)
 	}
-	return readObjectAt(raw, idx, int64(off), algo, 0)
+	return readObjectAt(src, idx, int64(off), algo, 0)
 }
 
-func readObjectAt(raw []byte, idx *PackIndex, off int64, algo model.HashAlgo, depth int) (model.ObjectType, []byte, error) {
+func readObjectAt(src packSource, idx *PackIndex, off int64, algo model.HashAlgo, depth int) (model.ObjectType, []byte, error) {
 	// Pack layout: 12-byte header ... objects ... 20-byte trailer.
-	if off < 12 || off >= int64(len(raw))-20 {
+	if off < 12 || off >= src.Size()-20 {
 		return "", nil, fmt.Errorf("extract: offset %d out of pack bounds", off)
 	}
 	if depth > deltaChainLimit {
 		return "", nil, fmt.Errorf("extract: delta chain deeper than %d", deltaChainLimit)
 	}
-	pos := int(off)
+	// The header window: size varint (≤ 20B with 7-bit groups) plus, for
+	// deltas, the ofs offset (≤ 20B) or base oid (20/32B) — 64 bytes covers
+	// every legal encoding with slack.
+	hdr := make([]byte, 64)
+	n, err := src.ReadAt(hdr, off)
+	if n == 0 {
+		return "", nil, fmt.Errorf("extract: read header at %d: %w", off, err)
+	}
+	hdr = hdr[:n]
 
 	// Object header: first byte = (type << 4) | size[3:0], continuation
 	// bytes carry 7 more size bits each.
-	b := raw[pos]
+	pos := 0
+	b := hdr[pos]
 	pos++
 	typ := (b >> 4) & 7
 	size := int64(b & 0x0f)
 	for shift := uint(4); b&0x80 != 0; shift += 7 {
-		if pos >= len(raw) {
+		if pos >= len(hdr) {
 			return "", nil, fmt.Errorf("extract: truncated size varint")
 		}
-		b = raw[pos]
+		b = hdr[pos]
 		pos++
 		size |= int64(b&0x7f) << shift
 	}
 
 	switch typ {
 	case packObjCommit, packObjTree, packObjBlob, packObjTag:
-		data, err := inflateAt(raw, pos, size)
+		data, err := inflateAt(src, off+int64(pos), size)
 		if err != nil {
 			return "", nil, fmt.Errorf("extract: inflate: %w", err)
 		}
@@ -84,28 +122,28 @@ func readObjectAt(raw []byte, idx *PackIndex, off int64, algo model.HashAlgo, de
 	case packObjOfs:
 		// Negative offset to the base's header, git's "offset encoding":
 		// 7 bits per byte, +1 on every continuation.
-		if pos >= len(raw) {
+		if pos >= len(hdr) {
 			return "", nil, fmt.Errorf("extract: truncated ofs-delta offset")
 		}
-		b = raw[pos]
+		b = hdr[pos]
 		pos++
 		rel := int64(b & 0x7f)
 		for b&0x80 != 0 {
-			if pos >= len(raw) {
+			if pos >= len(hdr) {
 				return "", nil, fmt.Errorf("extract: truncated ofs-delta offset")
 			}
-			b = raw[pos]
+			b = hdr[pos]
 			pos++
 			rel = ((rel + 1) << 7) | int64(b&0x7f)
 		}
 		if rel > off {
 			return "", nil, fmt.Errorf("extract: ofs-delta base before pack start")
 		}
-		baseType, base, err := readObjectAt(raw, idx, off-rel, algo, depth+1)
+		baseType, base, err := readObjectAt(src, idx, off-rel, algo, depth+1)
 		if err != nil {
 			return "", nil, err
 		}
-		delta, err := inflateAt(raw, pos, size)
+		delta, err := inflateAt(src, off+int64(pos), size)
 		if err != nil {
 			return "", nil, fmt.Errorf("extract: inflate delta: %w", err)
 		}
@@ -117,20 +155,20 @@ func readObjectAt(raw []byte, idx *PackIndex, off int64, algo model.HashAlgo, de
 
 	case packObjRef:
 		width := RawOIDWidth(algo)
-		if pos+width > len(raw) {
+		if pos+width > len(hdr) {
 			return "", nil, fmt.Errorf("extract: truncated ref-delta base")
 		}
-		baseOID := model.OID(hex.EncodeToString(raw[pos : pos+width]))
+		baseOID := model.OID(hex.EncodeToString(hdr[pos : pos+width]))
 		pos += width
 		baseOff, ok := idx.Entries[baseOID]
 		if !ok {
 			return "", nil, fmt.Errorf("extract: ref-delta base %s not in pack", baseOID)
 		}
-		baseType, base, err := readObjectAt(raw, idx, int64(baseOff), algo, depth+1)
+		baseType, base, err := readObjectAt(src, idx, int64(baseOff), algo, depth+1)
 		if err != nil {
 			return "", nil, err
 		}
-		delta, err := inflateAt(raw, pos, size)
+		delta, err := inflateAt(src, off+int64(pos), size)
 		if err != nil {
 			return "", nil, fmt.Errorf("extract: inflate delta: %w", err)
 		}
@@ -147,11 +185,13 @@ func readObjectAt(raw []byte, idx *PackIndex, off int64, algo model.HashAlgo, de
 
 // inflateAt decompresses one zlib stream starting at pos; the header's
 // declared size must materialize exactly (a short stream means corruption).
-func inflateAt(raw []byte, pos int, size int64) ([]byte, error) {
-	if size < 0 || size > int64(len(raw)) {
+// The stream is read in windows from the source — only the object's own
+// bytes transit memory.
+func inflateAt(src packSource, pos int64, size int64) ([]byte, error) {
+	if size < 0 || size > src.Size() {
 		return nil, fmt.Errorf("declared size %d exceeds pack", size)
 	}
-	zr, err := zlib.NewReader(bytes.NewReader(raw[pos:]))
+	zr, err := zlib.NewReader(io.NewSectionReader(src, pos, src.Size()-pos))
 	if err != nil {
 		return nil, err
 	}

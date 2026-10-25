@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,34 +111,33 @@ func (s *Server) hPack(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodPut:
-		raw, err := io.ReadAll(r.Body)
-		if err != nil {
+		// One streaming landing with the trailer verified by a trailing
+		// hash window: the whole pack never transits node memory (the
+		// gateway's spool-then-stream chain ends here, docs/03 §4).
+		idx := decodeIdx(r.Header.Get("X-Banyan-Idx"))
+		if err := s.local.ReceivePack(repo, oid, r.ContentLength, r.Body, idx); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if !storage.VerifyPackChecksum(oid, raw) {
-			http.Error(w, "pack checksum mismatch", http.StatusBadRequest)
-			return
-		}
-		idx := decodeIdx(r.Header.Get("X-Banyan-Idx"))
-		if err := s.local.PutPack(repo, oid, raw, idx); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 		w.WriteHeader(http.StatusOK)
-	case http.MethodGet:
-		raw, err := s.local.GetPackBytes(repo, oid)
+	case http.MethodGet, http.MethodHead:
+		f, size, err := s.local.OpenPack(repo, oid)
 		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		defer f.Close()
 		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(raw)
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = io.Copy(w, f) // disk → response, no memory transit
 	case http.MethodDelete:
 		s.local.DeletePack(repo, oid)
 		w.WriteHeader(http.StatusOK)
 	default:
-		http.Error(w, "PUT, GET or DELETE", http.StatusMethodNotAllowed)
+		http.Error(w, "PUT, GET, HEAD or DELETE", http.StatusMethodNotAllowed)
 	}
 }
 

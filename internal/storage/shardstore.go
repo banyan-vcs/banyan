@@ -38,6 +38,7 @@ type ObjectService struct {
 	mu        sync.Mutex
 	cache     map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result (LRU is M2's business)
 	packOrder map[string]map[model.OID][]model.OID  // repo → packOID → object list (whole-pack direct serve detection)
+	sizeKnown map[string]int64                      // repo/packOID → byte size (immutable; whole-pack memoize guard)
 
 	synthMu sync.Mutex
 	synth   map[string]map[model.OID]synthObject // repo → oid → server-synthesized object (projection commits etc., docs/02 §5.2)
@@ -87,6 +88,12 @@ type ObjectService struct {
 // packReadAmplify is the single-object-read threshold that flips a pack to
 // the whole-pack path.
 const packReadAmplify = 8
+
+// packMemoMaxBytes caps which packs may ride the whole-pack decode-and-
+// memoize ladder: above it a single object read must stay on per-object
+// extraction — parking a multi-hundred-MB pack in gateway memory is exactly
+// what the streaming chain exists to avoid.
+const packMemoMaxBytes = 32 << 20
 
 // responsePackCacheMax bounds the clone-shaped response cache.
 const responsePackCacheMax = 128 << 20
@@ -541,6 +548,17 @@ func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid mod
 			return objectFromDecoded(decoded, oid)
 		}
 	}
+	if s.packTooBigToMemo(ctx, repo, key, loc.PackOID) {
+		// A big pack rides ONLY the single-object extraction path: the
+		// whole-pack fetch + decode + memoize below would park the entire
+		// pack in gateway memory — exactly what the streaming chain avoids.
+		t, data, gerr := s.Backend.GetObject(ctx, key, loc.PackOID, oid, holders, s.Algo)
+		if gerr != nil {
+			return "", nil, fmt.Errorf("%w: %s (big pack %s, extraction failed: %v)",
+				model.ErrObjectNotFound, oid, loc.PackOID, gerr)
+		}
+		return t, data, nil
+	}
 	if !s.ampRead(repo, loc.PackOID) {
 		if t, data, err := s.Backend.GetObject(ctx, key, loc.PackOID, oid, holders, s.Algo); err == nil {
 			return t, data, nil
@@ -568,6 +586,31 @@ func (s *ObjectService) ampRead(repo string, packOID model.OID) bool {
 	defer s.readMu.Unlock()
 	s.readAmp[key]++
 	return s.readAmp[key] >= packReadAmplify
+}
+
+// packTooBigToMemo reports whether the pack exceeds the whole-pack memoize
+// cap (objectFromPack guard). Sizes are probed once and cached — content
+// addressing makes them immutable. Unknown (-1: old nodes) answers false so
+// legacy deployments keep the old ladder.
+func (s *ObjectService) packTooBigToMemo(ctx context.Context, repo, key string, packOID model.OID) bool {
+	ck := repo + "/" + string(packOID)
+	s.mu.Lock()
+	if v, ok := s.sizeKnown[ck]; ok {
+		s.mu.Unlock()
+		return v > packMemoMaxBytes
+	}
+	s.mu.Unlock()
+	size, err := s.Backend.PackSize(ctx, key, packOID, s.packHolders(ctx, repo, packOID, ""))
+	if err != nil || size < 0 {
+		return false
+	}
+	s.mu.Lock()
+	if s.sizeKnown == nil {
+		s.sizeKnown = map[string]int64{}
+	}
+	s.sizeKnown[ck] = size
+	s.mu.Unlock()
+	return size > packMemoMaxBytes
 }
 
 func (s *ObjectService) memoizeDecoded(repo string, packOID model.OID, dp *DecodedPack) {
@@ -740,6 +783,17 @@ func (s *ObjectService) PackBytes(ctx context.Context, repo string, packOID mode
 		return nil, err
 	}
 	return s.Backend.GetPack(ctx, key, packOID, s.packHolders(ctx, repo, packOID, ""))
+}
+
+// OpenPackStream opens a stored pack for verbatim streaming (exact-pack
+// serve, docs/03 §5): node disk → network → response, one small window —
+// the bytes never transit gateway memory whole.
+func (s *ObjectService) OpenPackStream(ctx context.Context, repo string, packOID model.OID) (io.ReadCloser, int64, error) {
+	key, err := s.storeKey(ctx, repo)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.Backend.OpenPack(ctx, key, packOID, s.packHolders(ctx, repo, packOID, ""))
 }
 
 // RenameRepo renames a repository end to end (docs/03 §6).
@@ -930,6 +984,73 @@ func (l *LocalShardStore) PutPackStream(repo string, packOID model.OID, size int
 	return nil
 }
 
+// ReceivePack lands a pack from a request-body stream (storenode PUT): one
+// streaming copy into a temp file with the trailer verified by a trailing
+// hash window (SpoolVerifiedCopy), an OID identity check, then an atomic
+// rename — the whole pack never transits memory. size cross-checks the copy
+// when positive (a set Content-Length).
+func (l *LocalShardStore) ReceivePack(repo string, packOID model.OID, size int64, r io.Reader, idxBytes []byte) error {
+	p := l.packPath(repo, packOID)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".recv-*")
+	if err != nil {
+		return err
+	}
+	n, sum, ok, cerr := SpoolVerifiedCopy(tmp, r, algoOfPackOID(packOID))
+	tcErr := tmp.Close()
+	if cerr == nil && !ok {
+		cerr = fmt.Errorf("pack checksum mismatch")
+	}
+	if cerr == nil && sum != string(packOID) {
+		cerr = fmt.Errorf("pack checksum mismatch (got %s want %s)", sum, packOID)
+	}
+	if cerr == nil && size > 0 && n != size {
+		cerr = fmt.Errorf("put %s: short copy %d/%d", packOID, n, size)
+	}
+	if cerr == nil {
+		cerr = tcErr
+	}
+	if cerr != nil {
+		_ = os.Remove(tmp.Name())
+		return cerr
+	}
+	if err := os.Rename(tmp.Name(), p); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if len(idxBytes) > 0 {
+		return os.WriteFile(l.idxPath(repo, packOID), idxBytes, 0o644)
+	}
+	return nil
+}
+
+// OpenPack opens the pack file for streaming (storenode GET, exact-pack
+// serve): disk → response without a memory transit.
+func (l *LocalShardStore) OpenPack(repo string, packOID model.OID) (*os.File, int64, error) {
+	f, err := os.Open(l.packPath(repo, packOID))
+	if err != nil {
+		return nil, 0, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, 0, err
+	}
+	return f, st.Size(), nil
+}
+
+// PackFileSize stats a pack without opening it (size probes for the
+// whole-pack memoize guard).
+func (l *LocalShardStore) PackFileSize(repo string, packOID model.OID) (int64, error) {
+	st, err := os.Stat(l.packPath(repo, packOID))
+	if err != nil {
+		return 0, err
+	}
+	return st.Size(), nil
+}
+
 // DeletePack removes the pack and idx files from disk (repack old-shard
 // cleanup; missing files are tolerated — CAS re-ingest may have skipped writes).
 func (l *LocalShardStore) DeletePack(repo string, packOID model.OID) {
@@ -967,9 +1088,10 @@ func (l *LocalShardStore) GetDecoded(repo string, packOID model.OID) (*DecodedPa
 }
 
 // GetObject extracts one object from a stored pack via its idx v2 (docs/11
-// P1-1): header parse at the located offset + delta-chain inflate. A missing
-// or unusable idx surfaces as an error — callers fall back to the whole-pack
-// path.
+// P1-1): header parse at the located offset + delta-chain inflate, reading
+// the pack FILE in windows — a multi-hundred-MB pack costs O(object)
+// memory, never O(pack). A missing or unusable idx surfaces as an error —
+// callers fall back to the whole-pack path.
 func (l *LocalShardStore) GetObject(repo string, packOID, oid model.OID, algo model.HashAlgo) (model.ObjectType, []byte, error) {
 	idxRaw, err := os.ReadFile(l.idxPath(repo, packOID))
 	if err != nil {
@@ -979,9 +1101,14 @@ func (l *LocalShardStore) GetObject(repo string, packOID, oid model.OID, algo mo
 	if err != nil {
 		return "", nil, err
 	}
-	raw, err := l.GetPackBytes(repo, packOID)
+	f, err := os.Open(l.packPath(repo, packOID))
 	if err != nil {
 		return "", nil, fmt.Errorf("%w: pack %s: %v", model.ErrObjectNotFound, packOID, err)
 	}
-	return ExtractObject(raw, pi, algo, oid)
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return "", nil, err
+	}
+	return ExtractObjectAt(f, st.Size(), pi, algo, oid)
 }

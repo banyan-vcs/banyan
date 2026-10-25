@@ -2,6 +2,7 @@ package storage
 
 import (
 	"container/list"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,4 +167,140 @@ func (c *DiskPackCache) Stats() (int, int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.lru.Len(), c.bytes
+}
+
+// GetCapped returns the cached pack bytes only when the file is at most
+// maxBytes (the whole-pack memoize guard): a big cached pack is not "cheap"
+// — loading it would park the entire pack in gateway memory. An over-cap or
+// missing entry answers false without touching LRU order.
+func (c *DiskPackCache) GetCapped(repo string, packOID model.OID, maxBytes int64) ([]byte, bool) {
+	key, ok := safeKey(repo, packOID)
+	if !ok {
+		return nil, false
+	}
+	c.mu.Lock()
+	el, hit := c.index[key]
+	if hit && el.Value.(diskEntry).size > maxBytes {
+		c.mu.Unlock()
+		return nil, false
+	}
+	c.mu.Unlock()
+	if !hit {
+		return nil, false
+	}
+	return c.Get(repo, packOID)
+}
+
+// Open streams a cached pack straight from disk (exact-pack verbatim
+// serve): disk → consumer, no memory transit. A hit touches LRU order.
+func (c *DiskPackCache) Open(repo string, packOID model.OID) (*os.File, int64, bool) {
+	key, ok := safeKey(repo, packOID)
+	if !ok {
+		return nil, 0, false
+	}
+	c.mu.Lock()
+	el, hit := c.index[key]
+	if hit {
+		c.lru.MoveToFront(el)
+	}
+	c.mu.Unlock()
+	if !hit {
+		return nil, 0, false
+	}
+	f, err := os.Open(c.path(key))
+	if err != nil {
+		return nil, 0, false
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, 0, false
+	}
+	return f, st.Size(), true
+}
+
+// SizeHit reports a cached pack's size from the index, no I/O, no LRU touch.
+func (c *DiskPackCache) SizeHit(repo string, packOID model.OID) (int64, bool) {
+	key, ok := safeKey(repo, packOID)
+	if !ok {
+		return 0, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, hit := c.index[key]
+	if !hit {
+		return 0, false
+	}
+	return el.Value.(diskEntry).size, true
+}
+
+// CachePut is an in-progress streaming cache write (the tee target of
+// OpenPack's write-through): chunks land in a temp file; Complete promotes
+// atomically into the cache, Abort discards.
+type CachePut struct {
+	c    *DiskPackCache
+	key  string
+	path string
+	f    *os.File
+	n    int64
+	done bool
+}
+
+// BeginPut opens a temp cache file for a streaming write.
+func (c *DiskPackCache) BeginPut(repo string, packOID model.OID) (*CachePut, error) {
+	key, ok := safeKey(repo, packOID)
+	if !ok {
+		return nil, fmt.Errorf("cache: unsafe key")
+	}
+	path := c.path(key)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	tmp := path + ".streaming"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return nil, err
+	}
+	return &CachePut{c: c, key: key, path: tmp, f: f}, nil
+}
+
+func (p *CachePut) Write(b []byte) (int, error) {
+	n, err := p.f.Write(b)
+	p.n += int64(n)
+	return n, err
+}
+
+// Complete lands the cached file and registers it, evicting past the cap
+// (possibly this very entry if it alone exceeds MaxBytes — honest).
+func (p *CachePut) Complete() error {
+	p.done = true
+	if err := p.f.Close(); err != nil {
+		_ = os.Remove(p.path)
+		return err
+	}
+	final := p.c.path(p.key)
+	if err := os.Rename(p.path, final); err != nil {
+		_ = os.Remove(p.path)
+		return err
+	}
+	c := p.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, dup := c.index[p.key]; dup {
+		c.lru.MoveToFront(el)
+		return nil
+	}
+	c.index[p.key] = c.lru.PushFront(diskEntry{key: p.key, size: p.n})
+	c.bytes += p.n
+	c.evictLocked()
+	return nil
+}
+
+// Abort discards the temp file (the consumer broke off mid-stream).
+func (p *CachePut) Abort() {
+	if p.done {
+		return
+	}
+	p.f.Close()
+	_ = os.Remove(p.path)
 }

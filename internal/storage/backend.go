@@ -29,6 +29,15 @@ type ShardBackend interface {
 	// GetPack reads one pack, trying the given holders in order (docs/10 §3:
 	// any holder may serve — the OID trailer checksum proves integrity).
 	GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error)
+	// OpenPack streams one whole pack without buffering it (exact-pack
+	// verbatim serve, docs/03 §5): node disk → network → consumer in a small
+	// window. The caller owns closing the reader; size is the byte length
+	// when known (-1 otherwise).
+	OpenPack(ctx context.Context, repo string, packOID model.OID, holders []string) (io.ReadCloser, int64, error)
+	// PackSize reports a pack's byte size without transferring it (-1 when
+	// unknown): the whole-pack memoize guard — big packs never ride the
+	// decode-and-cache ladder.
+	PackSize(ctx context.Context, repo string, packOID model.OID, holders []string) (int64, error)
 	// CheapPack reports whole-pack bytes available WITHOUT a network round
 	// trip — a gateway disk-cache hit (docs/11 P2-1). Object reads prefer
 	// this path: one decode memoizes the whole pack in memory, so a
@@ -84,6 +93,14 @@ func (b *LocalBackend) PutPackStream(_ context.Context, repo string, packOID mod
 
 func (b *LocalBackend) GetPack(_ context.Context, repo string, packOID model.OID, _ []string) ([]byte, error) {
 	return b.Local.GetPackBytes(repo, packOID)
+}
+
+func (b *LocalBackend) OpenPack(_ context.Context, repo string, packOID model.OID, _ []string) (io.ReadCloser, int64, error) {
+	return b.Local.OpenPack(repo, packOID)
+}
+
+func (b *LocalBackend) PackSize(_ context.Context, repo string, packOID model.OID, _ []string) (int64, error) {
+	return b.Local.PackFileSize(repo, packOID)
 }
 
 // CheapPack is false for the local backend: packs live on this machine, but

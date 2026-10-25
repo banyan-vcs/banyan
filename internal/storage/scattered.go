@@ -121,6 +121,50 @@ func (n *NodeClient) GetPack(ctx context.Context, repo string, packOID model.OID
 	return io.ReadAll(resp.Body)
 }
 
+// OpenPack streams a pack GET: the node's response body is handed back
+// unbuffered (disk → network → consumer), with Content-Length as size.
+func (n *NodeClient) OpenPack(ctx context.Context, repo string, packOID model.OID) (io.ReadCloser, int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, n.packURL(repo, packOID), nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		rerr := fmt.Errorf("storage %s get %s: status %d", n.Addr, packOID, resp.StatusCode)
+		if resp.StatusCode == http.StatusNotFound {
+			rerr = fmt.Errorf("%w: pack %s on %s", model.ErrObjectNotFound, packOID, n.Addr)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return nil, 0, rerr
+	}
+	return resp.Body, resp.ContentLength, nil
+}
+
+// HeadPack probes a pack's size (Content-Length) without transferring it —
+// the whole-pack memoize guard's size check.
+func (n *NodeClient) HeadPack(ctx context.Context, repo string, packOID model.OID) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, n.packURL(repo, packOID), nil)
+	if err != nil {
+		return -1, err
+	}
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return -1, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return -1, fmt.Errorf("storage %s head %s: status %d", n.Addr, packOID, resp.StatusCode)
+	}
+	if resp.ContentLength < 0 {
+		return -1, nil
+	}
+	return resp.ContentLength, nil
+}
+
 func (n *NodeClient) DeletePack(ctx context.Context, repo string, packOID model.OID) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, n.packURL(repo, packOID), nil)
 	if err != nil {
@@ -323,6 +367,95 @@ func (s *ScatteredStore) PutPackStream(ctx context.Context, repo string, packOID
 	return confirmed, nil
 }
 
+// teeCacheReader streams a node body into the gateway disk cache while the
+// consumer reads it (write-through, one pass): EOF promotes the cache entry,
+// an early Close aborts it. Cache errors never fail the serving stream.
+type teeCacheReader struct {
+	rc  io.ReadCloser
+	put *CachePut
+}
+
+func (t *teeCacheReader) Read(p []byte) (int, error) {
+	n, err := t.rc.Read(p)
+	if n > 0 && t.put != nil {
+		if _, werr := t.put.Write(p[:n]); werr != nil {
+			t.put.Abort()
+			t.put = nil
+		}
+	}
+	if err == io.EOF && t.put != nil {
+		_ = t.put.Complete()
+		t.put = nil
+	}
+	return n, err
+}
+
+func (t *teeCacheReader) Close() error {
+	if t.put != nil {
+		t.put.Abort()
+		t.put = nil
+	}
+	return t.rc.Close()
+}
+
+// OpenPack streams one pack without buffering it (exact-pack verbatim
+// serve, docs/03 §5): gateway disk cache first (disk → consumer), else the
+// first reachable holder's response body, tee'd into the disk cache as the
+// bytes flow past.
+func (s *ScatteredStore) OpenPack(ctx context.Context, repo string, packOID model.OID, holders []string) (io.ReadCloser, int64, error) {
+	if s.DiskCache != nil {
+		if f, size, ok := s.DiskCache.Open(repo, packOID); ok {
+			return f, size, nil
+		}
+	}
+	byID := map[string]string{}
+	for _, n := range s.healthyNodes(ctx) {
+		byID[n.ID] = n.Addr
+	}
+	for _, id := range holders {
+		addr, ok := byID[id]
+		if !ok {
+			continue
+		}
+		rc, size, err := s.client(addr).OpenPack(ctx, repo, packOID)
+		if err != nil {
+			continue
+		}
+		if s.DiskCache != nil {
+			if put, perr := s.DiskCache.BeginPut(repo, packOID); perr == nil {
+				return &teeCacheReader{rc: rc, put: put}, size, nil
+			}
+		}
+		return rc, size, nil
+	}
+	return nil, 0, errNoHolder(packOID, holders)
+}
+
+// PackSize reports a pack's byte size cheaply: cache index first, then a
+// HEAD to the first reachable holder. -1 = unknown (old nodes) — callers
+// treat unknown as "no guard" and keep legacy behavior.
+func (s *ScatteredStore) PackSize(ctx context.Context, repo string, packOID model.OID, holders []string) (int64, error) {
+	if s.DiskCache != nil {
+		if size, ok := s.DiskCache.SizeHit(repo, packOID); ok {
+			return size, nil
+		}
+	}
+	byID := map[string]string{}
+	for _, n := range s.healthyNodes(ctx) {
+		byID[n.ID] = n.Addr
+	}
+	for _, id := range holders {
+		addr, ok := byID[id]
+		if !ok {
+			continue
+		}
+		if size, err := s.client(addr).HeadPack(ctx, repo, packOID); err == nil {
+			return size, nil
+		}
+	}
+	return -1, nil
+}
+
 func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error) {
 	// Disk cache first (docs/11 P2-1): content-addressed by pack OID, so a
 	// hit is the pack and no node round trip is needed.
@@ -358,12 +491,15 @@ func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model
 	return nil, errNoHolder(packOID, holders)
 }
 
-// CheapPack: a disk-cache hit IS the pack (content-addressed, docs/11 P2-1).
+// CheapPack: a disk-cache hit IS the pack (content-addressed, docs/11
+// P2-1) — but only when small: a cached big pack is NOT cheap to load
+// (whole-pack decode + memoize would park it in gateway memory), so
+// GetCapped routes big packs back to the single-object path.
 func (s *ScatteredStore) CheapPack(_ context.Context, repo string, packOID model.OID, _ []string) ([]byte, bool) {
 	if s.DiskCache == nil {
 		return nil, false
 	}
-	return s.DiskCache.Get(repo, packOID)
+	return s.DiskCache.GetCapped(repo, packOID, packMemoMaxBytes)
 }
 
 // GetObject single-object extraction with holder fallback (docs/11 P1-1):
