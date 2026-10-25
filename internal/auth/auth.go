@@ -33,6 +33,12 @@ type Service interface {
 	// substitute token introspection or a corporate SSO at this one seam.
 	Identify(h *http.Request) Identity
 
+	// IdentifyKey maps a public key to an identity (SSH transport,
+	// docs/13 §7): keyBlob is the wire-format key body the SSH server
+	// presents — the base64 payload of an authorized_keys line. The demo
+	// matches per-user authorized keys in the static table.
+	IdentifyKey(user string, keyBlob []byte) Identity
+
 	// VisibleRefs filters a repo's advertised refs for the identity —
 	// branch visibility. The personal-branch rule lives here:
 	// refs/heads/<user>/* is visible only to its owner and the admins, so

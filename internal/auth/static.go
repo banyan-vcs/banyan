@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/base64"
 	"net/http"
@@ -20,6 +21,10 @@ type StaticPolicy struct {
 	// users (directory granularity). Paths absent from the map are open to
 	// every authenticated user.
 	SubtreeAccess map[string][]string
+	// Keys are per-user SSH authorized keys (authorized_keys-style lines,
+	// "algo base64 comment" — extra fields ignored). The base64 payload is
+	// the wire-format key blob an SSH server presents.
+	Keys map[string][]string
 }
 
 func (p *StaticPolicy) isAdmin(user string) bool {
@@ -79,6 +84,24 @@ func basicAuth(h *http.Request) (user, pass string, ok bool) {
 	}
 	user, pass, ok = strings.Cut(string(raw), ":")
 	return user, pass, ok && user != ""
+}
+
+// IdentifyKey matches the presented key blob (the base64 payload of an
+// authorized_keys line) against the user's authorized keys.
+func (p *StaticPolicy) IdentifyKey(user string, keyBlob []byte) Identity {
+	if _, known := p.Users[user]; !known {
+		return Identity{}
+	}
+	for _, line := range p.Keys[user] {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if raw, err := base64.StdEncoding.DecodeString(fields[1]); err == nil && bytes.Equal(raw, keyBlob) {
+			return Identity{User: user, Name: user}
+		}
+	}
+	return Identity{}
 }
 
 // VisibleRefs: personal branches (refs/heads/<user>/*) are visible to their

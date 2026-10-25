@@ -57,6 +57,13 @@ func (p *RemotePolicy) Identify(h *http.Request) Identity {
 	return Identity{} // no policy synced: anonymous (callers challenge)
 }
 
+func (p *RemotePolicy) IdentifyKey(user string, keyBlob []byte) Identity {
+	if snap := p.snapshot(); snap != nil {
+		return snap.IdentifyKey(user, keyBlob)
+	}
+	return Identity{} // no snapshot: fail closed
+}
+
 func (p *RemotePolicy) VisibleRefs(id Identity, repo string, refs []Ref) []Ref {
 	if snap := p.snapshot(); snap != nil {
 		return snap.VisibleRefs(id, repo, refs)

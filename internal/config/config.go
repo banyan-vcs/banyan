@@ -52,7 +52,17 @@ type Config struct {
 		// SubtreeAccess restricts fetch of subtree virtual repos to listed
 		// users (directory granularity).
 		SubtreeAccess map[string][]string `yaml:"subtree_access"`
+		// Keys are per-user SSH authorized keys (authorized_keys-style lines)
+		// for the git-over-SSH transport (docs/13 §7).
+		Keys map[string][]string `yaml:"keys"`
 	} `yaml:"auth"`
+
+	// SSH configures the git-over-SSH transport (docs/03 §8): absent listen
+	// keeps the transport off.
+	SSH struct {
+		Listen  string `yaml:"listen"`   // e.g. "0.0.0.0:8022"
+		HostKey string `yaml:"host_key"` // PEM private key; default: <root>/ssh_host_ed25519_key (generated on first boot)
+	} `yaml:"ssh"`
 
 	Cache struct {
 		// PackDir enables the gateway's on-disk pack cache (docs/12 P2-1):
