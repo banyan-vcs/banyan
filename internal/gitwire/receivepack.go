@@ -32,8 +32,17 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	// Demo-friendly: auto-create the repo when pushing to a missing repo (M2 will tighten to ACL policy).
+	id, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	// Demo-friendly: auto-create the repo when pushing to a missing repo —
+	// the creation itself requires the push permission under authorization.
 	if _, err := s.Meta.GetRepo(r.Context(), vr.Repo); err != nil {
+		if s.Auth != nil && !s.Auth.CanPush(id, vr.Repo, string(vr.Sub), "") {
+			http.Error(w, "permission denied", http.StatusForbidden)
+			return
+		}
 		if err := s.Meta.CreateRepo(r.Context(), vr.Repo, s.Algo); err != nil {
 			http.Error(w, "create repo: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -115,10 +124,18 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 			continue
 		}
 		if !strings.HasPrefix(u.Name, "refs/heads/") {
+			if s.Auth != nil && !s.Auth.CanPush(id, vr.Repo, string(vr.Sub), "") {
+				_ = WritePacket(out, []byte("ng "+u.Name+" permission denied\n"))
+				continue
+			}
 			s.handleAuxRefUpdate(out, r, vr, u.Old, u.New, u.Name, dp)
 			continue
 		}
 		name := strings.TrimPrefix(u.Name, "refs/heads/")
+		if s.Auth != nil && !s.Auth.CanPush(id, vr.Repo, string(vr.Sub), name) {
+			_ = WritePacket(out, []byte("ng "+u.Name+" permission denied\n"))
+			continue
+		}
 		if name == "" {
 			_ = WritePacket(out, []byte("ng "+u.Name+" empty branch name\n"))
 			continue

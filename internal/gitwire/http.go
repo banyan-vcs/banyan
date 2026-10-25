@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/view"
@@ -58,16 +59,54 @@ func ParseVirtualRepo(p string) (VirtualRepo, error) {
 	return vr, nil
 }
 
-// Server mounts the git smart HTTP v1 endpoints.
+// Server mounts the git smart HTTP endpoints.
 type Server struct {
 	Meta    storage.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
 	Views   *view.Service // derived-view engine (docs/01 §13 assembly-on-read)
+	// Auth is the optional authorization service (docs/13, M5): nil keeps
+	// the pre-M5 open behavior; set, every advertisement, fetch and push
+	// passes through it. Wired by cmd/banyand per role.
+	Auth auth.Service
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
 	return &Server{Meta: meta, Objects: objects, Algo: algo, Views: view.New(meta, objects, algo)}
+}
+
+// requireAuth resolves the request identity: 401 (with the Basic challenge
+// git clients retry against) for anonymous callers when authorization is
+// enabled. The bool reports whether to proceed.
+func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) (auth.Identity, bool) {
+	if s.Auth == nil {
+		return auth.Identity{}, true
+	}
+	id := s.Auth.Identify(r)
+	if id.Anonymous() {
+		w.Header().Set("WWW-Authenticate", `Basic realm="banyan"`)
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return auth.Identity{}, false
+	}
+	return id, true
+}
+
+// visibleRefs applies the policy's branch-visibility filter (no-op without
+// an Auth service).
+func (s *Server) visibleRefs(id auth.Identity, repo string, refs []Ref) []Ref {
+	if s.Auth == nil {
+		return refs
+	}
+	out := make([]auth.Ref, len(refs))
+	for i, r := range refs {
+		out[i] = auth.Ref{Name: r.Name, OID: string(r.OID)}
+	}
+	filtered := s.Auth.VisibleRefs(id, repo, out)
+	back := make([]Ref, len(filtered))
+	for i, r := range filtered {
+		back[i] = Ref{Name: r.Name, OID: model.OID(r.OID)}
+	}
+	return back
 }
 
 // Register registers routes (docs/03 §1 endpoint table).
@@ -108,15 +147,26 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 
 // handleInfoRefs serves ref discovery (mirrors the smart protocol branch of http-backend.c).
 // v1: pkt-line sequence "<oid> <refname>\0<caps>\n", terminated by a flush.
+// With Auth set the advertisement is the identity's VISIBLE view: personal
+// branches of other users never leave the server (docs/13 §3).
 func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr VirtualRepo) {
 	service := r.URL.Query().Get("service")
 	if service != "git-upload-pack" && service != "git-receive-pack" {
 		http.Error(w, "dumb http not supported (use smart)", http.StatusBadRequest)
 		return
 	}
-	// Demo-friendly: auto-create the repo on first push to a missing repo (M2 will tighten to ACL policy).
+	id, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	// Demo-friendly: auto-create the repo on first push to a missing repo —
+	// gated by the push permission when authorization is on.
 	if _, err := s.Meta.GetRepo(r.Context(), vr.Repo); err != nil {
 		if service == "git-receive-pack" {
+			if s.Auth != nil && !s.Auth.CanPush(id, vr.Repo, string(vr.Sub), "") {
+				http.Error(w, "permission denied", http.StatusForbidden)
+				return
+			}
 			if err := s.Meta.CreateRepo(r.Context(), vr.Repo, s.Algo); err != nil {
 				http.Error(w, "create repo: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -142,6 +192,7 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, vr Virtu
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	refs = s.visibleRefs(id, vr.Repo, refs)
 	if len(refs) > 0 && !vr.Sub.IsRoot() {
 		// Debugging: per-request log of subtree advertisements (to locate concurrent advertisement inconsistency).
 		state, _ := s.Meta.Timeline(r.Context(), model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: s.defaultBranch(r.Context(), vr.Repo)})

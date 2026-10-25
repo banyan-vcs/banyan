@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
@@ -149,11 +150,31 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		return
 	}
 
-	// allow-reachable-sha1-in-want (advertised): wants that are not themselves
-	// advertised refs must be reachable from the advertised tips — partial-clone
-	// lazy fetches name missing blobs/trees by OID and rely on exactly this
-	// (upload-pack.c "not our ref" is the rejection git clients expect).
-	if bad := s.unadvertisedWant(r.Context(), vr, wants); !bad.IsZero() {
+	// Authorization gates (docs/13): identity + repository/directory fetch
+	// permission, then the want-coverage check against the identity's
+	// VISIBLE tips — with auth on this replaces (and strengthens) the
+	// reachability gate: an oid reachable only through someone else's
+	// personal branch is not fetchable even by raw OID.
+	var id auth.Identity
+	if s.Auth != nil {
+		var ok bool
+		if id, ok = s.requireAuth(w, r); !ok {
+			return
+		}
+		if !s.Auth.CanFetch(id, vr.Repo, string(vr.Sub)) {
+			http.Error(w, "permission denied", http.StatusForbidden)
+			return
+		}
+		if bad := s.wantsBeyondTips(r.Context(), vr, wants, id); !bad.IsZero() {
+			_ = WritePacket(out, []byte("ERR upload-pack: not our ref "+string(bad)+"\n"))
+			_ = out.Flush()
+			return
+		}
+	} else if bad := s.unadvertisedWant(r.Context(), vr, wants); !bad.IsZero() {
+		// allow-reachable-sha1-in-want (advertised): wants that are not
+		// themselves advertised refs must be reachable from the advertised
+		// tips — partial-clone lazy fetches name missing blobs/trees by OID
+		// and rely on exactly this ("not our ref" is what git expects).
 		_ = WritePacket(out, []byte("ERR upload-pack: not our ref "+string(bad)+"\n"))
 		_ = out.Flush()
 		return
@@ -570,11 +591,24 @@ func (s *Server) firstKnown(ctx context.Context, repo string, haves []model.OID)
 // advertised ref tip nor reachable from one is rejected. Reachability is the
 // full closure walk from the tips — the same trade git's upload-pack makes
 // without reachability bitmaps.
+// unadvertisedWant validates wants against all advertised refs (auth off).
 func (s *Server) unadvertisedWant(ctx context.Context, vr VirtualRepo, wants []model.OID) model.OID {
+	return s.wantsBeyondTips(ctx, vr, wants, auth.Identity{})
+}
+
+// wantsBeyondTips validates wants against the identity's VISIBLE view of the
+// advertised refs (docs/13): an oid that is neither a visible tip nor
+// reachable from one is rejected — the allow-reachable-sha1-in-want walk,
+// scoped to what the caller may actually see. With auth off the filter is a
+// no-op and this is the plain reachability contract; with auth on it makes
+// objects reachable only through another user's personal branch
+// unfetchable even by raw OID.
+func (s *Server) wantsBeyondTips(ctx context.Context, vr VirtualRepo, wants []model.OID, id auth.Identity) model.OID {
 	refs, err := s.ResolveRefs(ctx, vr)
 	if err != nil {
 		return "" // cannot advertise → cannot judge; the closure will fail anyway
 	}
+	refs = s.visibleRefs(id, vr.Repo, refs)
 	advertised := map[model.OID]bool{}
 	var tips []model.OID
 	for _, ref := range refs {

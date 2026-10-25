@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
@@ -69,6 +70,12 @@ func (s *Server) serveUploadPackV2(w http.ResponseWriter, r *http.Request, vr Vi
 		http.Error(w, "repository not found: "+vr.Repo, http.StatusNotFound)
 		return
 	}
+	// One identity per command request (docs/13); every v2 command path
+	// receives it.
+	id, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
 	br := bufio.NewReaderSize(r.Body, 64*1024)
 	out := newBufWriter(w)
 
@@ -102,9 +109,9 @@ func (s *Server) serveUploadPackV2(w http.ResponseWriter, r *http.Request, vr Vi
 
 	switch command {
 	case "ls-refs":
-		s.lsRefsV2(out, r, vr, args)
+		s.lsRefsV2(out, r, vr, args, id)
 	case "fetch":
-		s.fetchV2(out, r, vr, args)
+		s.fetchV2(out, r, vr, args, id)
 	default:
 		_ = WritePacket(out, []byte("ERR unknown command "+command+"\n"))
 		_ = WriteFlush(out)
@@ -118,7 +125,7 @@ func (s *Server) serveUploadPackV2(w http.ResponseWriter, r *http.Request, vr Vi
 // Args: peel, symrefs, unborn, ref-prefix <p> (prefix match on the full
 // refname — HEAD goes through the same filter, so `git fetch origin
 // <branch>` traffic stays minimal).
-func (s *Server) lsRefsV2(out *bufWriter, r *http.Request, vr VirtualRepo, args []string) {
+func (s *Server) lsRefsV2(out *bufWriter, r *http.Request, vr VirtualRepo, args []string, id auth.Identity) {
 	ctx := r.Context()
 	peel, symrefs, unborn := false, false, false
 	var prefixes []string
@@ -152,6 +159,7 @@ func (s *Server) lsRefsV2(out *bufWriter, r *http.Request, vr VirtualRepo, args 
 		_ = WriteFlush(out)
 		return
 	}
+	refs = s.visibleRefs(id, vr.Repo, refs)
 	if unborn && len(refs) == 0 && match("HEAD") {
 		// Unborn HEAD of an empty repo (ls-refs=unborn advertisement): a
 		// fresh v2 clone can configure its default branch with zero refs.
@@ -255,7 +263,7 @@ func parseFetchV2(args []string) (*v2FetchArgs, error) {
 // client would read the pack right after "ready" anyway); a round with no
 // known have and no done answers acknowledgments/NAK + flush and ends — the
 // client POSTs again with more haves or done.
-func (s *Server) fetchV2(out *bufWriter, r *http.Request, vr VirtualRepo, args []string) {
+func (s *Server) fetchV2(out *bufWriter, r *http.Request, vr VirtualRepo, args []string, id auth.Identity) {
 	ctx := r.Context()
 	fa, err := parseFetchV2(args)
 	if err != nil {
@@ -267,10 +275,16 @@ func (s *Server) fetchV2(out *bufWriter, r *http.Request, vr VirtualRepo, args [
 		_ = WriteFlush(out)
 		return
 	}
-	// Same reachability contract as the advertised v1 capability
-	// (allow-reachable-sha1-in-want): unadvertised wants must be reachable
-	// from the advertised tips — partial-clone lazy fetches depend on it.
-	if bad := s.unadvertisedWant(ctx, vr, fa.wants); !bad.IsZero() {
+	// Authorization gates (docs/13): repository/directory fetch
+	// permission, then want coverage against the identity's VISIBLE tips
+	// (with auth off this is the plain allow-reachable-sha1-in-want
+	// reachability contract — partial-clone lazy fetches rely on it).
+	if s.Auth != nil && !s.Auth.CanFetch(id, vr.Repo, string(vr.Sub)) {
+		_ = WritePacket(out, []byte("ERR upload-pack: permission denied\n"))
+		_ = WriteFlush(out)
+		return
+	}
+	if bad := s.wantsBeyondTips(ctx, vr, fa.wants, id); !bad.IsZero() {
 		_ = WritePacket(out, []byte("ERR upload-pack: not our ref "+string(bad)+"\n"))
 		_ = WriteFlush(out)
 		return
