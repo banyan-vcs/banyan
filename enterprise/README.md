@@ -6,7 +6,7 @@ is strictly one-way, core never imports enterprise). Licensed under
 [LICENSE.enterprise](LICENSE.enterprise): free to modify and test,
 production use requires a banyan enterprise subscription.
 
-## Contents
+## Structure
 
 - `license/` — the plan gate every commercial capability checks through:
   Ed25519-signed license tokens (stdlib only), plan→feature matrix, FREE
@@ -18,11 +18,9 @@ production use requires a banyan enterprise subscription.
   visibility rule is import-path based and this module lives under the
   core's path tree). If that probe breaks, the boundary design broke.
 
-## Roadmap (feature catalog)
-
-`license.Feature` enumerates the catalog as features land: audit stream,
-SSO/token governance, DB-backed policy source (an `auth.Service`
-implementation), DR, data governance, quotas/multi-tenancy.
+Feature capabilities (audit, SSO, DB-backed policy, DR, governance,
+quotas) land here incrementally; the catalog and rollout plan live with
+the vendor's enterprise design doc, not in this repository.
 
 ## Build & test
 
