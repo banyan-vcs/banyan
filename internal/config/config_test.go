@@ -96,3 +96,24 @@ func TestInvalidMetaFails(t *testing.T) {
 		t.Fatal("invalid meta in file must fail")
 	}
 }
+
+func TestDebugSection(t *testing.T) {
+	path := writeYAML(t, "debug:\n  pprof_addr: 127.0.0.1:6060\n  mutex_profile_fraction: 1\n  block_profile_rate_ns: 10000\n")
+	cfg, err := Load([]string{"-config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Debug.PprofAddr != "127.0.0.1:6060" || cfg.Debug.MutexProfileFraction != 1 || cfg.Debug.BlockProfileRateNs != 10000 {
+		t.Fatalf("debug section = %+v", cfg.Debug)
+	}
+	if !strings.Contains(cfg.Describe(), "debug_pprof=\"127.0.0.1:6060\"") {
+		t.Fatalf("Describe must surface the ops plane: %s", cfg.Describe())
+	}
+}
+
+func TestDebugRatesRequireAddr(t *testing.T) {
+	path := writeYAML(t, "debug:\n  mutex_profile_fraction: 1\n")
+	if _, err := Load([]string{"-config", path}); err == nil || !strings.Contains(err.Error(), "require debug.pprof_addr") {
+		t.Fatalf("rates without pprof_addr = %v, want a loud error", err)
+	}
+}

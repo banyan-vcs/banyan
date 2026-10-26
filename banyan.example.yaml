@@ -97,3 +97,13 @@ meta: "mem"
 # reject: M4 前语义——非 FF 拒绝，客户端 pull --rebase
 #workflow:
 #  convergence: auto
+
+# --- 运维面（docs/05 §5a；缺省整层关闭） ---
+# 独立辅助监听（四个角色通用），不搭公开 git/API 端口：
+#   /debug/pprof/*   pprof 全家（heap/allocs/goroutine/block/mutex/trace/…）
+#   /debug/stats     运行时快照（GOMEMLIMIT 读数、MemStats 精要）
+#   /debug/vars      expvar：gitwire 服务路径计数器（fetch 阶梯/push）
+#debug:
+#  pprof_addr: "127.0.0.1:6060"
+#  mutex_profile_fraction: 1     # 0=关；需要 pprof_addr
+#  block_profile_rate_ns: 10000  # 0=关；低于 ~10µs 有吞吐代价

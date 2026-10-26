@@ -96,6 +96,16 @@ type Config struct {
 		PackMaxMB int    `yaml:"pack_max_mb"` // default 1024
 	} `yaml:"cache"`
 
+	// Debug configures the ops plane (docs/05 §6): an auxiliary listener
+	// with the pprof family, a runtime snapshot (/debug/stats) and the
+	// expvar serve-path counters (/debug/vars). Absent pprof_addr keeps
+	// the whole plane off — it must never ride the public git/API port.
+	Debug struct {
+		PprofAddr            string `yaml:"pprof_addr"`             // e.g. "127.0.0.1:6060"; empty = off
+		MutexProfileFraction int    `yaml:"mutex_profile_fraction"` // runtime.SetMutexProfileFraction; 0 = off
+		BlockProfileRateNs   int    `yaml:"block_profile_rate_ns"`  // runtime.SetBlockProfileRate (ns); 0 = off — rates below ~10µs cost real throughput
+	} `yaml:"debug"`
+
 	// FullCloneMaxBytes is the repo-scale budget for full clones (docs/11
 	// §6): at or above it the gateway rejects clone-shaped fetches and
 	// points the client at partial/shallow clones. Default 100 GiB;
@@ -284,6 +294,14 @@ func (c *Config) normalize() error {
 		// hold packs locally (all-in-one/storage) or never fetch them (refs).
 		return fmt.Errorf("config: cache.pack_dir is only meaningful for role gateway")
 	}
+	if c.Debug.MutexProfileFraction < 0 || c.Debug.BlockProfileRateNs < 0 {
+		return fmt.Errorf("config: debug profile rates must not be negative")
+	}
+	if c.Debug.PprofAddr == "" && (c.Debug.MutexProfileFraction != 0 || c.Debug.BlockProfileRateNs != 0) {
+		// The rates only pay off through the pprof endpoints; setting them
+		// with the plane off is a config mistake, not a mode.
+		return fmt.Errorf("config: debug.mutex_profile_fraction/block_profile_rate_ns require debug.pprof_addr")
+	}
 	return nil
 }
 
@@ -303,6 +321,6 @@ func withScheme(addr string) string {
 
 // Describe renders the effective configuration for startup logging.
 func (c *Config) Describe() string {
-	return fmt.Sprintf("role=%s listen=%s root=%s meta=%s db=%q init_repo=%q refs_addr=%q node_id=%q advertise=%q default_replicas=%d write_acks=%s cache_pack_dir=%q",
-		c.Role, c.Listen, c.Root, c.MetaBackend, c.DBPath, c.InitRepo, c.RefsAddr, c.NodeID, c.Advertise, c.DefaultR, c.WriteAcks, c.Cache.PackDir)
+	return fmt.Sprintf("role=%s listen=%s root=%s meta=%s db=%q init_repo=%q refs_addr=%q node_id=%q advertise=%q default_replicas=%d write_acks=%s cache_pack_dir=%q debug_pprof=%q",
+		c.Role, c.Listen, c.Root, c.MetaBackend, c.DBPath, c.InitRepo, c.RefsAddr, c.NodeID, c.Advertise, c.DefaultR, c.WriteAcks, c.Cache.PackDir, c.Debug.PprofAddr)
 }
