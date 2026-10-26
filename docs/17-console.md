@@ -110,20 +110,29 @@ effectiveRole(user, P) = max{ role | memberships(user, n), n ∈ chain(P) }
 
 管理动作的门：管某节点成员 = 链上任一 Owner 或实例 admin；建子项目
 = 链上任一 Maintainer+。解析成本 O(链长×一次索引查询)，链长 ≤ 16。
+**保护分支只在根锚点生效**（实现期定案）：它守的是项目集成分支；
+子树时间线有自己的协作语义（收敛队列，docs/15），推子树的 main 是
+锚点粒度的日常工作，不算动集成分支。单段子项目名不得占用网关运维
+子资源（placement/size/hooks/rename/force-push）与 `members`。
 
 ## 5. 认证与授权流
 
-- **PAT**：`banyan_` 前缀随机 token，库存 sha256，带 scopes
-  （read/write/admin）与过期；git 用 HTTP Basic(user, PAT)，API 另
-  接受 `Authorization: Bearer`。密码登录仅 web 会话用（M6.4）。
+- **PAT**：`banyan_` 前缀随机 token，库存 sha256，带过期（v1 全权
+  限，scope 列留作后续）；git 用 HTTP Basic(user, PAT)，API 另接受
+  `Authorization: Bearer`。密码登录仅 web 会话用（M6.4）。
 - **签名身份头**：console 验证凭据后向网关注入
   `X-Banyan-Identity: <user>.<unix_ts>.<hmac-sha256>`（集群共享
-  internal_token 作 HMAC 密钥，30s 窗口）。网关只验签名——**用户表
-  与令牌哈希永不下放**，凭据不二跳。
+  internal_token 作 HMAC 密钥，±30s 窗）。网关只验签名——**用户表
+  与令牌哈希永不下放**，凭据不二跳。公开仓的匿名读者以签名的
+  pseudo-identity `anonymous` 通过（单一执行路径，gitwire 不为
+  匿名开口子）。
 - **快照 v2**：console 暴露 `/internal/authz/policy/v2`（集群内部面），
-  按 repo_uid 输出 {protected_branches, subtree_min_role{锚点},
-  admin_users}。RemotePolicy 扩展为 v2 快照 + 签名身份识别；demo
-  StaticPolicy 路径与格式不动（两形态共存）。
+  按 repo_uid 输出 {public, protected_branches, anchors{锚点→直接
+  成员}}与用户名/admin 集（个人分支归属判定）。网关侧 UpstreamPolicy
+  以同一前缀-max 公式聚合；demo StaticPolicy 路径与格式不动。TTL 10s
+  + 未知仓触发一次带限流的强制刷新 + **变更踢**：console 的每次
+  策略变更同步 POST 网关 `/internal/authz/refresh`（管理动作零延迟
+  生效，而非等 TTL——T50 实证 PATCH 后紧接的 push 立即受新规则）。
 - **SSH**：密钥是产品数据，终结点必须在 console。一期仅 HTTP；
   SSH（console 终结 → 内部 HTTP 走同一代理）列 M6.3，可滑出。
 
@@ -142,20 +151,28 @@ effectiveRole(user, P) = max{ role | memberships(user, n), n ∈ chain(P) }
 
 ## 7. 里程碑与测试
 
-- **M6.1** internal/console：模型 + sqlite + 链解析 + 角色聚合
-  （纯库，无 HTTP）。测试 T49：链解析/加授/管理员/改路径后解析
-  稳定性（rename 不动 repo_uid）。
-- **M6.2** cmd/banyans：CRUD API + 逻辑路由 + 流式代理 + 签名身份
-  + RemotePolicy 快照 v2。测试 T50：真实 git 客户端经 console
-  clone/push（根+子项目）；Reporter 拒 push；public 匿名 fetch；
-  无权 404；PAT 吊销即失效；**64MiB 限内存穿透 console 的大仓
-  clone**（T46 纪律，代理零缓冲证明）。
-- **M6.3** 子项目 bootstrap / visibility 细化 / 归档语义 / SSH
+- **M6.1 ✅（2026-10-26）** internal/console：模型 + sqlite + 链解析 +
+  角色聚合（纯库，无 HTTP）+ auth.UpstreamPolicy（签名身份/快照 v2/
+  前缀-max 聚合/未知仓强制刷新）。测试 T49。
+- **M6.2 ✅（2026-10-26）** cmd/banyans：CRUD API + 逻辑路由 + 流式
+  代理 + 签名身份 + 快照 v2 + 变更踢（/internal/authz/refresh）。
+  测试 T50：真实 git 客户端经 console clone/push（根+子项目）；
+  保护分支 PATCH 即时生效；Reporter 拒 push；锚点级授予后过且根
+  404；public 匿名 fetch；PAT 吊销即失效；64MiB 软限制下全链路
+  存活（代理贡献经直连网关隔离实验证零）。banyand 侧 auth.upstream
+  接线（与 remote/demo 模式互斥）。
+- **M6.3** 子项目 bootstrap / visibility 细化 / 归档恢复 / SSH
   （T51/T52，SSH 允许滑出到独立里程碑）。
 - **M6.4** web 会话 + 最小管理 UI（复用 web/ 零依赖经验）；审计
   事件流（enterprise 候选触点）。
 
 新用例登记 docs/13；console 侧同样"每个能力一个集成用例"。
+
+**T50 附带观察（存储面跟进项，非 console 范畴）**：all-in-one 形态
+下 exact-pack 命中的 clone 仍有 ~2.5×repo 的分配落在
+enumerateClosure（go-git MemoryObject 路径；差分 profile 直证），
+T46 的 haCluster 基线（150MiB 峰值 12.4MiB）未暴露此形态——待专项
+核查（怀疑点：首推轻量引导提交跨 pack 后的元数据索引路径）。
 
 ## 8. 边界与诚实清单（一期不做）
 

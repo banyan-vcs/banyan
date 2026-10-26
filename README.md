@@ -96,6 +96,7 @@ directory timelines align both boundaries at the same granularity.
 | Service layer + JSON API (`/api/v1/*`, error envelope) | ✅ |
 | Thin-workspace CLI (`clone/status/commit/pull/log/cat/...`) | ✅ |
 | HA cluster: gateway + refs service + scattered multi-replica pack storage, node failure recovery, dynamic per-repo replicas | ✅ core (local-disk cluster, T23-T26; MySQL/raft refs backend → HA-2) |
+| Product-side console (`banyans`): `{group}/{project}[/path]` routing, PAT auth, subtree-scoped member roles with prefix-chain inheritance (docs/17) | ✅ M6.1/M6.2 (HTTP; SSH/web → M6.3/M6.4) |
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
 | Gitaly gRPC frontend (act as GitLab's storage node) | 🚧 planned (docs/05 §4) |
 
