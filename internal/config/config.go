@@ -89,6 +89,15 @@ type Config struct {
 		PackDir   string `yaml:"pack_dir"`
 		PackMaxMB int    `yaml:"pack_max_mb"` // default 1024
 	} `yaml:"cache"`
+
+	// FullCloneMaxBytes is the repo-scale budget for full clones (docs/11
+	// §6): at or above it the gateway rejects clone-shaped fetches and
+	// points the client at partial/shallow clones. Default 100 GiB;
+	// -1 disables. Repo size is served at /api/v1/repos/<repo>/size.
+	//
+	// Receive hooks (docs/04 §7) need no config here: registrations live in
+	// the metadata plane via /api/v1/repos/<repo>/hooks.
+	FullCloneMaxBytes int64 `yaml:"full_clone_max_bytes"`
 }
 
 // Default returns the built-in defaults.

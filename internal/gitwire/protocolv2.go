@@ -380,6 +380,17 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 		_ = WriteDelim(out)
 	}
 
+	// Full-clone budget (docs/11 §6): clone-shaped requests against an
+	// oversized repo die BEFORE the packfile section — an ERR pkt after the
+	// section header would be parsed as sideband framing ("bad band #N").
+	cacheable := len(fa.haves) == 0 && fa.depth == 0 && fa.filter == nil
+	if cacheable && len(fa.clientShallow) == 0 {
+		if bytes, banned := s.fullCloneExceeded(ctx, vr, fa.wants); banned {
+			s.rejectFullClone(out, vr.Repo, bytes, s.fullCloneBudget())
+			return
+		}
+	}
+
 	// Packfile section header + sideband framing go on the wire before the
 	// serve decision: the clone-shaped fast path below may answer right
 	// here, and a miss falls through to the closure with the framing in
@@ -392,7 +403,6 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 	// Serve ladder shared with v1 (docs/11 P2-2): stored-pack verbatim →
 	// clone-shaped response cache → online encoding. Thin packs (haves
 	// present) are client-specific and never cached.
-	cacheable := len(fa.haves) == 0 && fa.depth == 0 && fa.filter == nil
 	// Clone-shaped fast path (docs/03 §5): enumeration-only probe + verbatim
 	// stream — the closure (object bytes resident) is skipped entirely, so
 	// big repos serve in a small memory window.

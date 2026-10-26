@@ -265,6 +265,7 @@ func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []PackI
 	if err != nil {
 		return RepackResult{}, err
 	}
+	s.rememberPackSize(repo, newOID, st.Size())
 	res.Delta = true
 	res.BytesAfter = st.Size()
 
@@ -282,6 +283,7 @@ func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []PackI
 		}
 		s.Backend.DeletePack(ctx, key, p.PackOID, p.Nodes) // key, not name (hashed addressing)
 		s.forgetDecoded(repo, p.PackOID)
+		s.forgetPackSize(repo, p.PackOID)
 		s.readMu.Lock()
 		delete(s.readAmp, repo+"/"+string(p.PackOID))
 		s.readMu.Unlock()

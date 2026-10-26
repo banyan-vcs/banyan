@@ -111,6 +111,7 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | repo rename | `POST /api/v1/repos/<repo>/rename` | Repo.Rename | **已落地**（docs/03 §6） |
 | 副本数 | `GET/PUT /api/v1/repos/<repo>/placement` | Admin.Placement | **已落地**（docs/10 §6） |
 | force-push 开关 | `GET/PUT /api/v1/repos/<repo>/force-push` | Repo.ForcePush | **已落地**（docs/04 §6a；PUT body `{"enabled":bool}`，运行时生效无需重启） |
+| 仓库规模 | `GET /api/v1/repos/<repo>/size` | Repo.Size | **已落地**（docs/11 §6；返回 `{bytes, packs}`，全 clone 预算同源） |
 | timelines（诊断） | `GET /api/v1/timelines` | Admin.Timelines | **已有**（已接 ListAllTimelines） |
 | admin repack | `POST /api/v1/repack` | Admin.Repack | **已有** |
 

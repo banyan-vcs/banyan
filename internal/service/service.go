@@ -370,3 +370,17 @@ func (s *Service) Timelines(ctx context.Context, repo string) ([]TimelineSummary
 func (s *Service) Repack(ctx context.Context, repo string, threshold int) (storage.RepackResult, error) {
 	return s.Objects.Repack(ctx, repo, threshold, 0) // 0 = default merge byte cap
 }
+
+// RepoSize reports the repo's scale statistics (docs/11 §6): total pack
+// bytes and pack count.
+func (s *Service) RepoSize(ctx context.Context, repo string) (bytes int64, packs int, err error) {
+	if _, err = s.Meta.GetRepo(ctx, repo); err != nil {
+		return 0, 0, err
+	}
+	list, lerr := s.Meta.ListPacks(ctx, repo)
+	if lerr != nil {
+		return 0, 0, lerr
+	}
+	bytes, err = s.Objects.RepoBytes(ctx, repo)
+	return bytes, len(list), err
+}

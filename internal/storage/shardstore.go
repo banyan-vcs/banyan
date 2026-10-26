@@ -768,6 +768,7 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 			repo, n, unique, 100*float64(n-unique)/float64(n), fails)
 	}
 
+	s.rememberPackSize(repo, dp.PackOID, int64(len(packBytes)))
 	s.memoizeDecoded(repo, dp.PackOID, dp)
 	return dp.PackOID, nil
 }
@@ -821,6 +822,7 @@ func (s *ObjectService) IngestPackFile(ctx context.Context, repo, path string, s
 	if err != nil {
 		return "", err
 	}
+	s.rememberPackSize(repo, packOID, size)
 	if err := s.Meta.PutPack(ctx, repo, packOID, obs.order, confirmed); err != nil {
 		return "", err
 	}
@@ -893,6 +895,46 @@ func (s *ObjectService) OpenPackStream(ctx context.Context, repo string, packOID
 		return nil, 0, err
 	}
 	return s.Backend.OpenPack(ctx, key, packOID, s.packHolders(ctx, repo, packOID, ""))
+}
+
+// RepoBytes reports the repo's total pack bytes — the scale statistic
+// behind the full-clone budget (docs/11 §6) and the BANYAN_REPO_BYTES hook
+// env. Sizes are content-immutable and probe-cached (ingest primes them),
+// so after the first ask this is map lookups over the pack registry.
+func (s *ObjectService) RepoBytes(ctx context.Context, repo string) (int64, error) {
+	packs, err := s.Meta.ListPacks(ctx, repo)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, p := range packs {
+		if sz := s.packSizeCached(ctx, repo, p.PackOID); sz > 0 {
+			total += sz
+		}
+	}
+	return total, nil
+}
+
+// rememberPackSize primes the size cache at the source of truth (ingest
+// knows the byte count; repack knows its output) — RepoBytes then never
+// needs a node HEAD round trip.
+func (s *ObjectService) rememberPackSize(repo string, packOID model.OID, size int64) {
+	if size <= 0 {
+		return
+	}
+	ck := repo + "/" + string(packOID)
+	s.mu.Lock()
+	if s.sizeKnown == nil {
+		s.sizeKnown = map[string]int64{}
+	}
+	s.sizeKnown[ck] = size
+	s.mu.Unlock()
+}
+
+func (s *ObjectService) forgetPackSize(repo string, packOID model.OID) {
+	s.mu.Lock()
+	delete(s.sizeKnown, repo+"/"+string(packOID))
+	s.mu.Unlock()
 }
 
 // RenameRepo renames a repository end to end (docs/03 §6).

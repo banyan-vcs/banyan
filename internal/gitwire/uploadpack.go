@@ -207,10 +207,15 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 	}
 
 	// Clone-shaped fast path (docs/03 §5): no haves, depth, filter or
-	// shallow — the client wants a whole history. When one stored pack
-	// holds exactly that object set, stream it verbatim without building
+	// shallow — the client wants a whole history. Oversized repos are
+	// refused first (full-clone budget, docs/11 §6), then one stored pack
+	// may hold exactly that object set and stream verbatim without building
 	// the closure: multi-hundred-MB repos serve in a small memory window.
 	if len(st.haves) == 0 && st.depth == 0 && st.filter == nil && len(st.clientShallow) == 0 {
+		if bytes, banned := s.fullCloneExceeded(ctx, vr, st.wants); banned {
+			s.rejectFullClone(out, vr.Repo, bytes, s.fullCloneBudget())
+			return
+		}
 		if served, ok := s.tryExactPackStream(ctx, out, vr, st.wants); ok {
 			_ = out.Flush()
 			log.Printf("upload-pack %s%s: %d wants → %s (closure skipped)", vr.Repo, vr.Sub, len(st.wants), served)
@@ -270,6 +275,70 @@ func serveObjectPack(w io.Writer, blobs, trees, commits, tags map[model.OID][]by
 		return storage.EncodePackDelta(w, blobs, trees, commits, tags)
 	}
 	return storage.EncodePackDeltaRef(w, blobs, trees, commits, tags)
+}
+
+// defaultFullCloneMaxBytes is the repo-scale budget for full clones when
+// the server doesn't override it (docs/11 §6): a clone-shaped fetch of a
+// repo at or above it is rejected with a pointer to partial/shallow
+// clones. Lazy single-object fetches (partial clones), shallow/deepen and
+// incremental fetches are never affected — only the "send me everything"
+// shape.
+const defaultFullCloneMaxBytes = 100 << 30
+
+// fullCloneBudget resolves the effective budget (0 = default, negative = off).
+func (s *Server) fullCloneBudget() int64 {
+	if s.FullCloneMaxBytes != 0 {
+		return s.FullCloneMaxBytes
+	}
+	return defaultFullCloneMaxBytes
+}
+
+// fullCloneExceeded reports the repo's byte total when a full clone should
+// be refused. Root view only: subtree views are inherently scoped. Fails
+// open (a stats error must not brick fetching); a want that is not an
+// advertised tip is a lazy/incremental-shaped fetch and passes.
+func (s *Server) fullCloneExceeded(ctx context.Context, vr VirtualRepo, wants []model.OID) (int64, bool) {
+	if s.FullCloneMaxBytes < 0 {
+		return 0, false
+	}
+	max := s.FullCloneMaxBytes
+	if max == 0 {
+		max = defaultFullCloneMaxBytes
+	}
+	if !vr.Sub.IsRoot() || len(wants) == 0 {
+		return 0, false
+	}
+	// The full-clone signature: every want is an advertised tip (what a
+	// fresh clone asks for). A lazy partial-clone fetch wants a blob/tree
+	// OID that is not a tip and passes through.
+	refs, err := s.ResolveRefs(ctx, vr)
+	if err != nil {
+		return 0, false
+	}
+	tips := map[model.OID]bool{}
+	for _, r := range refs {
+		if !r.OID.IsZero() {
+			tips[r.OID] = true
+		}
+	}
+	for _, w := range wants {
+		if !tips[w] {
+			return 0, false
+		}
+	}
+	bytes, err := s.Objects.RepoBytes(ctx, vr.Repo)
+	if err != nil || bytes < max {
+		return 0, false
+	}
+	return bytes, true
+}
+
+// rejectFullClone writes the budget refusal (v0 fetch stream / v2 ERR pkt).
+func (s *Server) rejectFullClone(out *bufWriter, repo string, bytes, max int64) {
+	_ = WritePacket(out, []byte(fmt.Sprintf(
+		"ERR full clone rejected: %s holds %.1f GiB ≥ the %.1f GiB budget — use a partial clone (--filter=blob:none) or a shallow clone (--depth 1)\n",
+		repo, float64(bytes)/(1<<30), float64(max)/(1<<30))))
+	_ = out.Flush()
 }
 
 func filterSpecName(f *FilterSpec) string {

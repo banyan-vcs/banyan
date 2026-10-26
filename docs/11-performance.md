@@ -235,3 +235,21 @@ repack 写放大与维护（限速已设计）、对象级保留缺失（远期�
 
 **正确演进是混合而非换架构**：pack 文件放对象存储（HA-3 的 S3 后端）——
 保留密度与顺序性，获得 S3 耐久与弹性；idx/定位已在元数据侧。
+
+## 6. 仓库规模统计与全 clone 预算（2026-10-25，T48）
+
+网关维护仓库级规模统计：`RepoBytes = Σ pack 字节数`（尺寸内容不可变故
+只探测一次；push/repack 在源头直接 prime，`/api/v1/repos/<repo>/size`
+返回 `{bytes, packs}`），并以 `full_clone_max_bytes`（默认 100GiB，-1 关闭）
+约束 **clone 形态** fetch（无 haves/depth/filter/shallow 且全部 want 为
+广告 tip——"把整个仓库给我"的签名）：
+
+- 拒绝响应带可行动信息：改用 `--depth 1` 浅化或（filter 广告后）
+  `--filter=blob:none` 部分克隆；v2 中 ERR 包置于 packfile 段头**之前**
+  （段后 ERR 会被解析成 sideband 帧位——"bad band #N"教训）。
+- 豁免形态：增量 fetch（有 haves）、浅化（depth）、partial lazy 单对象
+  fetch（want 非 tip）、子树视图 clone（天然有界）。
+- 统计失败 fail-open（规模查不到不阻断 fetch）。
+
+动机：多 pack 大仓的完整 clone 走 O(闭包) 在线编码路径（docs/03 §3.1
+开放项）——预算闸门先于该路径把最坏情况挡在门外。

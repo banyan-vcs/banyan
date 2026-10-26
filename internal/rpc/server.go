@@ -386,8 +386,23 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
-	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push") {
-		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push)"}})
+	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size") {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size)"}})
+		return
+	}
+	if parts[1] == "size" {
+		// Repo-scale statistics (docs/11 §6): total pack bytes + pack count —
+		// the number the full-clone budget enforces.
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET"}})
+			return
+		}
+		bytes, packs, err := s.Svc.RepoSize(r.Context(), parts[0])
+		if err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"repo": parts[0], "bytes": bytes, "packs": packs})
 		return
 	}
 	repo := parts[0]

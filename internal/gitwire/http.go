@@ -83,6 +83,12 @@ type Server struct {
 	// reject-and-rebase behavior; cmd/banyand turns it on via config.
 	Convergence bool
 
+	// FullCloneMaxBytes is the repo-size budget for clone-shaped fetches
+	// (docs/11 §6): at or above it the gateway rejects full clones and
+	// points the client at partial/shallow clones. 0 = the 100 GiB default;
+	// negative disables the gate.
+	FullCloneMaxBytes int64
+
 	wf     *workflow
 	wfOnce sync.Once
 }
