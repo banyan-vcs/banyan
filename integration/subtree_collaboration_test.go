@@ -293,3 +293,47 @@ func TestSequentialMultiScopeStability(t *testing.T) {
 	fsckClean(t, nested)
 	fsckClean(t, root)
 }
+
+// --- D1 (open defect, 2026-10-26): scoped-view cross-corruption after
+// own-scope pushes. Repro: root main carries two subtree paths; a push to
+// subtree A followed by A's re-materialization (clone) leaves the engine in
+// a state where subtree B's SubtreeHead resolves to zero (push: "subtree
+// view B unavailable (root has no commits)") and A's own view later
+// materializes double-nested (X content re-grafted at its own relative
+// path: both token.go and services/auth/token.go in one checkout). Surfaced
+// by the review surface's anchored diffs (T51); the per-view unit paths
+// (T5/T7/T8) never re-materialize a sibling view after an own-scope push,
+// which is why the suite stayed green. Fix belongs in the scoped weave's
+// marker/advance state; unskip when fixed — the assertions are the contract.
+func TestSubtreeViewCrossScopeCorruptionD1(t *testing.T) {
+	t.Skip("known defect D1 (docs/13 open defects): scoped-view cross-corruption after own-scope pushes")
+	needGit(t)
+	s := newServer(t)
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main", ".")
+	write(t, filepath.Join(dir, "README.md"), "r\n")
+	write(t, filepath.Join(dir, "a", "x.txt"), "x1\n")
+	write(t, filepath.Join(dir, "b", "y.txt"), "y1\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-qm", "seed")
+	git(t, dir, "push", "-q", s.repoURL("d1"), "main")
+
+	// Push to A, re-materialize A.
+	subA := cloneRepo(t, s, s.treeURL("d1", "a"))
+	write(t, filepath.Join(subA, "x.txt"), "x2\n")
+	git(t, subA, "commit", "-qam", "a: change")
+	git(t, subA, "push", "-q", "origin", "main")
+	reA := cloneRepo(t, s, s.treeURL("d1", "a"))
+	require.Len(t, strings.Fields(git(t, reA, "ls-files")), 1, "A scoped")
+
+	// B must still push and stay scoped.
+	subB := cloneRepo(t, s, s.treeURL("d1", "b"))
+	write(t, filepath.Join(subB, "y.txt"), "y2\n")
+	git(t, subB, "commit", "-qam", "b: change")
+	git(t, subB, "push", "-q", "origin", "main")
+	reB := cloneRepo(t, s, s.treeURL("d1", "b"))
+	require.Len(t, strings.Fields(git(t, reB, "ls-files")), 1, "B scoped")
+
+	// A unchanged by B's lifecycle.
+	require.Len(t, strings.Fields(git(t, reA, "ls-files")), 1, "A still scoped")
+}

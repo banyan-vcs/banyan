@@ -81,6 +81,10 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("console db: schema: %w", err)
 	}
+	if _, err := db.Exec(reviewSchema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("console db: review schema: %w", err)
+	}
 	return &DB{sql: db}, nil
 }
 

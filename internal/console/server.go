@@ -432,14 +432,19 @@ func (s *Server) handleRepoPath(w http.ResponseWriter, r *http.Request, caller U
 	rest2 := segs[2:]
 
 	// Members management owns any remainder containing a "members" segment;
-	// the split happens at its last occurrence.
-	if n := lastIndexStr(segs[2:], "members"); n >= 0 {
+	// the split happens at its last occurrence. Reviews likewise.
+	if n := lastIndexStr(rest2, "members"); n >= 0 {
 		subPath := strings.Join(rest2[:n], "/")
 		if len(rest2) > n+1 {
 			s.memberTarget(w, r, caller, group, project, subPath, rest2[n+1])
 		} else {
 			s.memberList(w, r, caller, group, project, subPath)
 		}
+		return
+	}
+	if n := lastIndexStr(rest2, "reviews"); n >= 0 {
+		subPath := strings.Join(rest2[:n], "/")
+		s.handleReviews(w, r, caller, group, project, subPath, rest2[n+1:])
 		return
 	}
 
@@ -641,7 +646,7 @@ func (s *Server) registerSubproject(w http.ResponseWriter, r *http.Request, call
 		apiErr(w, http.StatusForbidden, "FORBIDDEN", "maintainer+ required")
 		return
 	}
-	if segs := strings.Split(path, "/"); len(segs) == 1 && (gatewaySubResources[path] || path == "members") {
+	if segs := strings.Split(path, "/"); len(segs) == 1 && (gatewaySubResources[path] || path == "members" || path == "reviews") {
 		apiErr(w, http.StatusBadRequest, "INVALID_ARG", path+" is reserved")
 		return
 	}
