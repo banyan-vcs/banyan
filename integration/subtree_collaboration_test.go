@@ -293,3 +293,71 @@ func TestSequentialMultiScopeStability(t *testing.T) {
 	fsckClean(t, nested)
 	fsckClean(t, root)
 }
+
+// --- T52: cross-scope isolation around own-scope pushes (+ mixed-scope
+// semantics). The sequence "push to subtree A, re-materialize A's view, then
+// push to sibling B and re-materialize both" was never covered by T5/T7/T8 —
+// and a review-flow misdiagnosis (feat/review 2cea648) showed why exact-name
+// assertions matter: a helper writing the anchor-nested path inside a scoped
+// clone produces a MIXED-SCOPE commit whose faithful projection (nested
+// paths in the subtree view, anchor-doubled paths in the root weave) reads
+// exactly like "view corruption" if tests only count files. This test pins
+// both: precise isolation, and mixed-scope pushes as content.
+func TestSubtreeViewCrossScopeIsolation(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main", ".")
+	write(t, filepath.Join(dir, "README.md"), "r\n")
+	write(t, filepath.Join(dir, "a", "x.txt"), "x1\n")
+	write(t, filepath.Join(dir, "b", "y.txt"), "y1\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-qm", "seed")
+	git(t, dir, "push", "-q", s.repoURL("d1"), "main")
+
+	// Push to A, then re-materialize A (a fresh clone).
+	subA := cloneRepo(t, s, s.treeURL("d1", "a"))
+	write(t, filepath.Join(subA, "x.txt"), "x2\n")
+	git(t, subA, "commit", "-qam", "a: change")
+	git(t, subA, "push", "-q", "origin", "main")
+	reA := cloneRepo(t, s, s.treeURL("d1", "a"))
+	require.Equal(t, []string{"x.txt"}, strings.Fields(git(t, reA, "ls-files")), "A scoped")
+	require.Equal(t, "x2\n", readFile(t, filepath.Join(reA, "x.txt")), "A content")
+
+	// B must still push and stay scoped — exact name, not just count.
+	subB := cloneRepo(t, s, s.treeURL("d1", "b"))
+	require.Equal(t, []string{"y.txt"}, strings.Fields(git(t, subB, "ls-files")), "B scoped before push")
+	write(t, filepath.Join(subB, "y.txt"), "y2\n")
+	git(t, subB, "commit", "-qam", "b: change")
+	git(t, subB, "push", "-q", "origin", "main")
+	reB := cloneRepo(t, s, s.treeURL("d1", "b"))
+	require.Equal(t, []string{"y.txt"}, strings.Fields(git(t, reB, "ls-files")), "B scoped")
+	require.Equal(t, "y2\n", readFile(t, filepath.Join(reB, "y.txt")), "B content")
+
+	// A unchanged by B's lifecycle.
+	require.Equal(t, []string{"x.txt"}, strings.Fields(git(t, reA, "ls-files")), "A still scoped")
+
+	// The root weave sees each subtree exactly once, at its own path.
+	root := cloneRepo(t, s, s.repoURL("d1"))
+	require.Equal(t, []string{"README.md", "a/x.txt", "b/y.txt"}, strings.Fields(git(t, root, "ls-files")), "root shape")
+	require.Equal(t, "x2\n", readFile(t, filepath.Join(root, "a", "x.txt")), "root sees A")
+	require.Equal(t, "y2\n", readFile(t, filepath.Join(root, "b", "y.txt")), "root sees B")
+
+	// Mixed-scope push (client creates the anchor path inside its scoped
+	// clone) is CONTENT, faithfully projected (xviewTree's mixed-scope
+	// rule): the subtree view serves the commit verbatim, the root weave
+	// nests it under its own path — and nothing leaks across scopes.
+	mix := cloneRepo(t, s, s.treeURL("d1", "b"))
+	write(t, filepath.Join(mix, "b", "y.txt"), "y3\n")
+	git(t, mix, "add", ".")
+	git(t, mix, "commit", "-qm", "b: nested")
+	git(t, mix, "push", "-q", "origin", "main")
+	reMix := cloneRepo(t, s, s.treeURL("d1", "b"))
+	require.Equal(t, []string{"b/y.txt", "y.txt"}, strings.Fields(git(t, reMix, "ls-files")), "mixed-scope view is verbatim")
+	require.Equal(t, "y3\n", readFile(t, filepath.Join(reMix, "b", "y.txt")), "nested content")
+	root2 := cloneRepo(t, s, s.repoURL("d1"))
+	require.Equal(t, []string{"README.md", "a/x.txt", "b/b/y.txt", "b/y.txt"}, strings.Fields(git(t, root2, "ls-files")), "root nests mixed scope")
+	require.Equal(t, []string{"x.txt"}, strings.Fields(git(t, reA, "ls-files")), "A untouched by B's mixed push")
+	fsckClean(t, reMix)
+	fsckClean(t, root2)
+}
