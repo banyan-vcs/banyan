@@ -82,7 +82,15 @@ func runAllInOne(cfg *config.Config) {
 	objects.Addressing = storage.NewAddressing(cfg.Storage.Mode, meta)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
-	if policy := staticPolicy(cfg); policy != nil {
+	switch {
+	case cfg.Auth.Upstream != "":
+		// Console-fronted mode (docs/17 §5): the banyans control plane
+		// authenticates and vouches for callers; rules sync as snapshot v2.
+		up := auth.NewUpstreamPolicy(cfg.Auth.Upstream, []byte(cfg.Auth.UpstreamSecret))
+		gw.Auth, api.Auth = up, up
+		log.Printf("auth: upstream console %s (snapshot v2 + signed identity)", cfg.Auth.Upstream)
+	case staticPolicy(cfg) != nil:
+		policy := staticPolicy(cfg)
 		gw.Auth = policy
 		api.Auth = policy
 		log.Printf("auth: enabled (%d users, %d admins, protected %v)",
@@ -144,7 +152,15 @@ func runGateway(cfg *config.Config) {
 	objects.Addressing = storage.NewAddressing(cfg.Storage.Mode, meta)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
-	if cfg.Auth.Remote {
+	switch {
+	case cfg.Auth.Upstream != "":
+		// Console-fronted mode on the gateway role (docs/17 §5): same
+		// upstream policy as all-in-one — the console fronts both git and
+		// management traffic; this process only accepts signed identities.
+		up := auth.NewUpstreamPolicy(cfg.Auth.Upstream, []byte(cfg.Auth.UpstreamSecret))
+		gw.Auth, api.Auth = up, up
+		log.Printf("auth: upstream console %s (snapshot v2 + signed identity)", cfg.Auth.Upstream)
+	case cfg.Auth.Remote:
 		// The gateway decides against a policy snapshot synced from the
 		// refs service (docs/07 §4) — same abstraction, synced state; the
 		// concrete rules live on refs, never duplicated here.
