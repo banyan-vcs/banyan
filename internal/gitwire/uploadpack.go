@@ -246,6 +246,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 	// → clone-shaped response cache → online encoding (delta past threshold).
 	cacheable := len(st.haves) == 0 && st.depth == 0 && st.filter == nil
 	served := s.serveClosurePack(ctx, out, vr, st.wants, blobs, trees, commits, tags, cacheable, st.clientOfsDelta, plan)
+	countServeRung(served)
 	_ = out.Flush()
 	log.Printf("upload-pack %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, filter %s, closure %s, serve %s/%s)",
 		vr.Repo, vr.Sub, len(st.wants), len(commits), len(trees), len(blobs), len(exclude), filterSpecName(st.filter),
@@ -460,8 +461,10 @@ func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr Virtu
 	buf := make([]byte, 256<<10)
 	if _, cerr := io.CopyBuffer(out, rc, buf); cerr != nil {
 		log.Printf("upload-pack %s%s: exact-pack stream %s broke mid-copy: %v", vr.Repo, vr.Sub, packOID, cerr)
+		fetchExactPackStream.Add(1)
 		return "exact-pack-stream " + string(packOID) + " (broken)", true
 	}
+	fetchExactPackStream.Add(1)
 	return "exact-pack-stream " + string(packOID), true
 }
 
