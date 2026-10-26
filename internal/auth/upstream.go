@@ -150,6 +150,16 @@ type UpstreamPolicy struct {
 
 const upstreamSyncTTL = 10 * time.Second
 
+// Refresh invalidates the cached snapshot: the next decision re-syncs from
+// the console regardless of the TTL. The console kicks it after
+// policy-affecting mutations so a grant lands in ~zero latency instead of
+// one TTL later.
+func (p *UpstreamPolicy) Refresh() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.at = time.Time{}
+}
+
 func NewUpstreamPolicy(consoleURL string, secret []byte) *UpstreamPolicy {
 	return &UpstreamPolicy{ConsoleURL: consoleURL, Secret: secret,
 		HTTP: &http.Client{Timeout: 5 * time.Second}}
@@ -277,6 +287,13 @@ func (p *UpstreamPolicy) VisibleRefs(id Identity, _ string, refs []Ref) []Ref {
 	return out
 }
 
+// wireSub normalizes the subtree argument gitwire passes (an anchor path
+// like "/" or "/services/auth", docs/02 §2) into the snapshot's anchor-key
+// shape ("" or "services/auth").
+func wireSub(sub string) string {
+	return strings.TrimPrefix(sub, "/")
+}
+
 func (p *UpstreamPolicy) CanFetch(id Identity, repo, sub string) bool {
 	r, ok := p.repo(repo)
 	if !ok {
@@ -288,7 +305,7 @@ func (p *UpstreamPolicy) CanFetch(id Identity, repo, sub string) bool {
 	if id.Anonymous() {
 		return false
 	}
-	return p.effRole(id, r, sub) >= RoleRank("reporter")
+	return p.effRole(id, r, wireSub(sub)) >= RoleRank("reporter")
 }
 
 func (p *UpstreamPolicy) CanPush(id Identity, repo, sub, branch string) bool {
@@ -296,6 +313,7 @@ func (p *UpstreamPolicy) CanPush(id Identity, repo, sub, branch string) bool {
 	if !ok || id.Anonymous() {
 		return false
 	}
+	sub = wireSub(sub)
 	rank := p.effRole(id, r, sub)
 	if rank == 0 {
 		return false
@@ -305,9 +323,15 @@ func (p *UpstreamPolicy) CanPush(id Identity, repo, sub, branch string) bool {
 	if owner, _, ok := strings.Cut(branch, "/"); ok && p.knownUser(owner) {
 		return owner == id.User || p.isAdmin(id)
 	}
-	for _, b := range r.ProtectedBranches {
-		if b == branch {
-			return rank >= RoleRank("owner")
+	// Protected branches guard the project's integration branch at the ROOT
+	// anchor. Subtree timelines have their own collaboration semantics
+	// (convergence queues, docs/15); pushing a subtree's main is ordinary
+	// anchor-granularity work, not an integration-branch move.
+	if sub == "" {
+		for _, b := range r.ProtectedBranches {
+			if b == branch {
+				return rank >= RoleRank("owner")
+			}
 		}
 	}
 	return rank >= RoleRank("developer")
