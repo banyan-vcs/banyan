@@ -91,6 +91,47 @@ const (
 	writeTypeRef    byte = 7
 )
 
+// StreamEncodePack writes a delta-free pack of exactly count objects pulled
+// from next in order (docs/03 §3, the clone-shaped streaming serve): a
+// multi-pack closure where no stored pack matches exactly. The writer hashes
+// and compresses as it goes, so nothing beyond the current object is ever
+// resident — unlike EncodePack, which needs every object's bytes at once.
+// The count is in the pack header, so enumeration must complete first; the
+// caller owns that (type-directed, metadata-index fed, no object bytes).
+func StreamEncodePack(w io.Writer, algo model.HashAlgo, count int, next func(int) (model.ObjectType, []byte, error)) error {
+	if count < 0 || uint64(count) > 0xFFFFFFFF {
+		return fmt.Errorf("stream encode: object count %d out of pack range", count)
+	}
+	h := algo.New()
+	p := &packWriter{w: w, h: h, mw: io.MultiWriter(w, h), zw: zlib.NewWriter(io.Discard)}
+	p.write([]byte("PACK"))
+	var hdr [8]byte
+	binary.BigEndian.PutUint32(hdr[0:4], 2) // version
+	binary.BigEndian.PutUint32(hdr[4:8], uint32(count))
+	p.write(hdr[:])
+	for i := 0; i < count; i++ {
+		t, body, err := next(i)
+		if err != nil {
+			return err
+		}
+		var typ byte
+		switch t {
+		case model.CommitType:
+			typ = writeTypeCommit
+		case model.TreeType:
+			typ = writeTypeTree
+		case model.BlobType:
+			typ = writeTypeBlob
+		case model.TagType:
+			typ = writeTypeTag
+		default:
+			return fmt.Errorf("stream encode: unsupported object type %q", t)
+		}
+		p.object(typ, len(body), nil, body)
+	}
+	return p.finish()
+}
+
 // thinPackEntry pairs a served object with its contents and wire type.
 type thinPackEntry struct {
 	oid  model.OID
