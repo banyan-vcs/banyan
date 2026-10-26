@@ -123,8 +123,11 @@ type MetaStore      interface { 上述全部 }                              // c
 ```
 wants = 客户端协商所得对象集合
   ⓪ clone 形态快路径（无 haves/depth/filter/shallow）：
-       枚举闭包——只收集 OID（commit/tree 走元数据索引，瞬态读取；
-       blob 仅定位取类型，字节不驻留）
+       枚举闭包——只收集 OID，类型导向遍历（commit/tree 走元数据
+       索引；tree entry 按 mode 分类：目录→子树、160000→外部仓提交
+       （本仓不持有，跳过）、其余→blob 叶，**blob 字节永不触碰**；
+       want tip 用零 IO 类型探针（synth 表 + commit/tree 索引），
+       未命中才一次 Raw（annotated tag 剥皮））
        → ExactPackHit：对象集 == 某存储 pack 的对象集时
          该 pack 流式直传（节点盘 → 网络 → 响应，256KiB 窗口；
          网关磁盘缓存命中则盘 → 响应，未命中边流边写穿缓存）
@@ -135,7 +138,9 @@ wants = 客户端协商所得对象集合
      O(对象) 内存；delta 链递归同样窗口化）
   ④ 整包拉取 + 解码 memoize 仅接管 ≤32MiB 的 pack
      （PackSize 探测：网关缓存索引 / 节点 HEAD；大小不可变故缓存）
-     ——大包永不整包驻留网关内存
+     ——大包永不整包驻留网关内存；单对象读的"8 次翻转整包"
+     仅集群线（PrefersWholePack：每次单对象读是 RPC），本地后端
+     永不翻转（抽取即文件读；T50 复盘，见 docs/17 §7）
   ⑤ 在线合成响应 pack（含响应缓存 / thin；走 closure，小仓主路径）
   ⑥ side-band 流式回写
 ```
