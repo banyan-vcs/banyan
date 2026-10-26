@@ -97,7 +97,7 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 - `cache.pack_dir`（gateway 角色）：内容寻址磁盘 LRU（docs/03 三层缓存
   第一层），重启重扫重建索引；对象读走"廉价整包"路径（磁盘命中 → 一次
   解码全包 memoize），单对象读同一 pack 连续 8 次后自动翻转为整包取回
-  ——冷网关克隆从 N 次单对象 RPC 降为 8+1；T36（缓存命中后节点请求冻结）。
+  ——冷网关克隆从 N 次单对象 RPC 降为 8+1；T36（缓存命中后节点请求冻结）。翻转仅集群线（backend.PrefersWholePack：集群每次单对象读是 RPC round trip）；all-in-one 本地后端永不翻转——idx 抽取即文件读，翻转只会把整包驻留内存（T50 复盘，docs/17 §7）。
 
 **P2-2 闭包响应包缓存（治 B9）✅**
 - clone 形态（无 haves/无浅化/无 filter）的响应包是 wants 的纯函数 →

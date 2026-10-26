@@ -168,11 +168,17 @@ effectiveRole(user, P) = max{ role | memberships(user, n), n ∈ chain(P) }
 
 新用例登记 docs/13；console 侧同样"每个能力一个集成用例"。
 
-**T50 附带观察（存储面跟进项，非 console 范畴）**：all-in-one 形态
-下 exact-pack 命中的 clone 仍有 ~2.5×repo 的分配落在
-enumerateClosure（go-git MemoryObject 路径；差分 profile 直证），
-T46 的 haCluster 基线（150MiB 峰值 12.4MiB）未暴露此形态——待专项
-核查（怀疑点：首推轻量引导提交跨 pack 后的元数据索引路径）。
+**T50 附带观察（已消项，2026-10-26 专项）**：all-in-one 形态下
+exact-pack 命中的 clone 曾有 ~2.5×repo 的分配落在
+enumerateClosure。根因两层：探针式类型判定对每个对象（含 blob）
+先 Raw；push 走流式 ingest（docs/03 §4）设计上不构建 commit/tree
+索引，首触 miss 落进 objectFromPack 的"8 次翻转"——整包送进 go-git
+解码器。修复：枚举改类型导向（tree entry 按 mode 分类、want tip
+零 IO 类型探针、blob 字节永不触碰）；翻转改为 backend 能力位
+（PrefersWholePack，集群线保留、本地后端永不翻转）。T50 重测：
+20MiB 仓峰值 52.0MiB → **3.9MiB**；附带修复外部 gitlink（子模块
+指针）仓库 clone 失败的正确性缺陷（T53）。集群线行为不变
+（T46 haCluster 基线不回归）。
 
 ## 8. 边界与诚实清单（一期不做）
 
