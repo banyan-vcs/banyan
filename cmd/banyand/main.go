@@ -22,6 +22,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/config"
+	"github.com/banyan-vcs/banyan/internal/debug"
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/refs"
@@ -36,6 +37,14 @@ func main() {
 		log.Fatalf("%v\nusage: banyand [-config banyan.yaml] [-role all-in-one|gateway|refs|storage] [-listen addr] [-root dir] [-meta mem|sqlite] [-db path] [-refs-addr host:port] [-node-id id] [-init-repo name]", err)
 	}
 	fmt.Fprintf(os.Stderr, "banyand config: %s\n", cfg.Describe())
+	// Ops plane (docs/05 §6): pprof family + runtime snapshot + expvar
+	// counters on an auxiliary listener, off unless debug.pprof_addr is set.
+	// Started here so every role gets it.
+	debug.Start(debug.Options{
+		Addr:                 cfg.Debug.PprofAddr,
+		MutexProfileFraction: cfg.Debug.MutexProfileFraction,
+		BlockProfileRateNs:   cfg.Debug.BlockProfileRateNs,
+	})
 
 	switch cfg.Role {
 	case "storage":
