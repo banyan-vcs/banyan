@@ -60,6 +60,8 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 浅克隆（depth / deepen / unshallow） | ✅ |
 | have 减除增量 fetch | ✅ |
 | repack：碎片合并 + delta | ✅ |
+| 任意仓规模的有界内存服务：精确命中 verbatim 流式直传、多 pack 完整 clone 走类型化枚举 + 逐对象窗口编码 | ✅（T53/T55；docs/03 §3） |
+| 运维面：pprof 全家 + 运行时快照 + 服务路径计数器（`debug.pprof_addr`） | ✅（T54） |
 | tags 与任意 `refs/<ns>` 命名空间 | ✅ |
 | SQLite 元数据持久化 + YAML 配置 | ✅ |
 | 服务层 + JSON API（`/api/v1/*`，统一错误信封） | ✅ |
@@ -68,7 +70,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | token 认证 + 建仓收紧、diff/blame RPC | 🚧 下一步（M5 / M2–M3） |
 | Gitaly gRPC 前端（作为 GitLab 底层存储节点） | 🚧 规划中（docs/05 §4） |
 
-23 个集成用例以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
+63 个集成用例以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证。
 
 ## 代码结构
