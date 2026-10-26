@@ -161,6 +161,9 @@ effectiveRole(user, P) = max{ role | memberships(user, n), n ∈ chain(P) }
   404；public 匿名 fetch；PAT 吊销即失效；64MiB 软限制下全链路
   存活（代理贡献经直连网关隔离实验证零）。banyand 侧 auth.upstream
   接线（与 remote/demo 模式互斥）。
+- **M6.5 ✅（2026-10-26）** 轻量级代码评审（§9）：锚点作用域评审 +
+  服务层路径级 diff（POST /api/v1/diff）+ console Myers 行级渲染。
+  测试 T51（双子项目并行评审互不干扰）。
 - **M6.3** 子项目 bootstrap / visibility 细化 / 归档恢复 / SSH
   （T51/T52，SSH 允许滑出到独立里程碑）。
 - **M6.4** web 会话 + 最小管理 UI（复用 web/ 零依赖经验）；审计
@@ -185,3 +188,27 @@ T46 的 haCluster 基线（150MiB 峰值 12.4MiB）未暴露此形态——待�
   一并解决。网关/存储的 HA 不受影响（console 挂 = 产品面不可入，
   已建立的 git 直连网关形态不受波及——若部署选择直连）。
 - **组织级 SSO/SCIM、审计、配额**：enterprise 方向，另章。
+
+## 9. 轻量级代码评审（M6.5，2026-10-26 落地）
+
+锚点作用域的评审：一条评审 = {项目, 锚点, 标题, base_ref, source_ref,
+作者, 状态} + 只追加事件流（comment/approve/reject/close）。
+**可见性与裁决权全部复用锚点角色链**——评审挂在某锚点：读=该锚点
+reporter+；开=developer+（作者身份=可推提案）；评论=reporter+；
+approve/reject=developer+ 且不可自批；close=作者或 owner。兄弟子项目
+的评审者互相 404（锚点闭包外既看不到也够不着），根成员聚见全部；
+列表按锚点子树聚合。提案形态=对**本锚点 main** 的日常推送（v5 时间
+线优先语义），基线=冻结的根分支指针（任意根分支都投影到每个锚点，
+docs/02 §12）——评审的 diff 即"这次推送相对集成基线改了什么"。
+
+**分层**：路径级 diff 是服务层权威（POST /api/v1/diff，两 refs 两棵
+树递归比对，锚点相对路径，未出生侧按 git 对空 diff 语义并携带两侧
+head OID 供调用方甄别）；行级渲染在 console（Myers O(ND) + 上下文 3
+hunk，二进制/512KiB/2 万行/200 文件上限外降级为占位）。API 挂在
+/repos/{g}/{p}[/path]/reviews 之下：列表与创建（GET/POST）、详情
+（GET /{id}）、diff（GET /{id}/diff）、评论（POST /{id}/comments）、
+裁决（POST /{id}/approve|reject|close）。
+
+**已知依赖**：D1 开放缺陷（docs/13）——own-scope 推送后的跨作用域
+视图污染会让锚点视图在特定时序下双重嵌套/归零，评审 diff 的路径
+作用域断言暂为结构性（T51），D1 修复后收紧为锚点相对路径。
