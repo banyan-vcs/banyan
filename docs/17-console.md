@@ -209,6 +209,10 @@ hunk，二进制/512KiB/2 万行/200 文件上限外降级为占位）。API 挂
 （GET /{id}）、diff（GET /{id}/diff）、评论（POST /{id}/comments）、
 裁决（POST /{id}/approve|reject|close）。
 
-**已知依赖**：D1 开放缺陷（docs/13）——own-scope 推送后的跨作用域
-视图污染会让锚点视图在特定时序下双重嵌套/归零，评审 diff 的路径
-作用域断言暂为结构性（T51），D1 修复后收紧为锚点相对路径。
+**D1 复盘（2026-10-26 关闭，T52）**：原登记的"own-scope 推送后跨作用域
+视图污染"经定位为**评审测试 helper 的写入路径缺陷**——在已作用域化的
+克隆里按锚点嵌套路径写文件（sub/services/auth/token.go），产生混合作用
+域提交；视图引擎按设计忠实投影（xviewTree 的 mixed-scope 规则：子树视
+图原样服务、根织入嵌套于 services/auth/services/auth/）。引擎无缺陷；
+T51 的结构性后缀断言已收紧为锚点相对路径 + modified 状态，隔离契约由
+T52 钉住（docs/13）。

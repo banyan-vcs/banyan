@@ -294,19 +294,18 @@ func TestSequentialMultiScopeStability(t *testing.T) {
 	fsckClean(t, root)
 }
 
-// --- D1 (open defect, 2026-10-26): scoped-view cross-corruption after
-// own-scope pushes. Repro: root main carries two subtree paths; a push to
-// subtree A followed by A's re-materialization (clone) leaves the engine in
-// a state where subtree B's SubtreeHead resolves to zero (push: "subtree
-// view B unavailable (root has no commits)") and A's own view later
-// materializes double-nested (X content re-grafted at its own relative
-// path: both token.go and services/auth/token.go in one checkout). Surfaced
-// by the review surface's anchored diffs (T51); the per-view unit paths
-// (T5/T7/T8) never re-materialize a sibling view after an own-scope push,
-// which is why the suite stayed green. Fix belongs in the scoped weave's
-// marker/advance state; unskip when fixed — the assertions are the contract.
-func TestSubtreeViewCrossScopeCorruptionD1(t *testing.T) {
-	t.Skip("known defect D1 (docs/13 open defects): scoped-view cross-corruption after own-scope pushes")
+// --- T52 (D1 post-mortem): cross-scope isolation around own-scope pushes.
+// D1 was registered (2026-10-26, skip-guarded) as a scoped-weave defect
+// after the review surface surfaced nested diff paths and nested checkouts.
+// Investigation traced it to the review test HELPER writing the
+// anchor-nested path inside a scoped clone (sub/services/auth/token.go) —
+// a mixed-scope commit that the views project FAITHFULLY (xviewTree's
+// mixed-scope rule): the subtree view serves it verbatim and the root weave
+// nests it at services/auth/services/auth/. The engine was correct; the
+// defect was the helper. This test now pins the real contract — an
+// own-scope push followed by sibling re-materializations and pushes keeps
+// every view scoped, content-exact, and mutually isolated.
+func TestSubtreeViewCrossScopeIsolation(t *testing.T) {
 	needGit(t)
 	s := newServer(t)
 	dir := t.TempDir()
@@ -318,22 +317,33 @@ func TestSubtreeViewCrossScopeCorruptionD1(t *testing.T) {
 	git(t, dir, "commit", "-qm", "seed")
 	git(t, dir, "push", "-q", s.repoURL("d1"), "main")
 
-	// Push to A, re-materialize A.
+	// Push to A, then re-materialize A (a fresh clone).
 	subA := cloneRepo(t, s, s.treeURL("d1", "a"))
 	write(t, filepath.Join(subA, "x.txt"), "x2\n")
 	git(t, subA, "commit", "-qam", "a: change")
 	git(t, subA, "push", "-q", "origin", "main")
 	reA := cloneRepo(t, s, s.treeURL("d1", "a"))
-	require.Len(t, strings.Fields(git(t, reA, "ls-files")), 1, "A scoped")
+	require.Equal(t, []string{"x.txt"}, strings.Fields(git(t, reA, "ls-files")), "A scoped")
+	require.Equal(t, "x2\n", readFile(t, filepath.Join(reA, "x.txt")), "A content")
 
-	// B must still push and stay scoped.
+	// B must still push and stay scoped — exact name, not just count.
 	subB := cloneRepo(t, s, s.treeURL("d1", "b"))
+	require.Equal(t, []string{"y.txt"}, strings.Fields(git(t, subB, "ls-files")), "B scoped before push")
 	write(t, filepath.Join(subB, "y.txt"), "y2\n")
 	git(t, subB, "commit", "-qam", "b: change")
 	git(t, subB, "push", "-q", "origin", "main")
 	reB := cloneRepo(t, s, s.treeURL("d1", "b"))
-	require.Len(t, strings.Fields(git(t, reB, "ls-files")), 1, "B scoped")
+	require.Equal(t, []string{"y.txt"}, strings.Fields(git(t, reB, "ls-files")), "B scoped")
+	require.Equal(t, "y2\n", readFile(t, filepath.Join(reB, "y.txt")), "B content")
 
 	// A unchanged by B's lifecycle.
-	require.Len(t, strings.Fields(git(t, reA, "ls-files")), 1, "A still scoped")
+	require.Equal(t, []string{"x.txt"}, strings.Fields(git(t, reA, "ls-files")), "A still scoped")
+
+	// The root weave sees each subtree exactly once, at its own path.
+	root := cloneRepo(t, s, s.repoURL("d1"))
+	require.Equal(t, []string{"README.md", "a/x.txt", "b/y.txt"}, strings.Fields(git(t, root, "ls-files")), "root shape")
+	require.Equal(t, "x2\n", readFile(t, filepath.Join(root, "a", "x.txt")), "root sees A")
+	require.Equal(t, "y2\n", readFile(t, filepath.Join(root, "b", "y.txt")), "root sees B")
+	fsckClean(t, reA)
+	fsckClean(t, root)
 }

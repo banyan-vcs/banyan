@@ -8,7 +8,7 @@ package integration
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -138,32 +138,38 @@ func TestReviewSubprojectIsolation(t *testing.T) {
 	files := out["files"].([]any)
 	require.Len(t, files, 1)
 	f0 := files[0].(map[string]any)
-	// Anchor-relative paths ("token.go", status modified) hold once D1
-	// (docs/13 open defect: scoped-view cross-corruption after own-scope
-	// pushes) is fixed; structurally assert until then.
-	require.True(t, strings.HasSuffix(f0["path"].(string), "token.go"))
+	// Anchor-relative path and real modification (D1 post-mortem: the old
+	// "nested path" shape was the test helper's anchor-nested write, not an
+	// engine defect — see TestSubtreeViewCrossScopeIsolation).
+	require.Equal(t, "token.go", f0["path"].(string))
+	require.Equal(t, "modified", f0["status"].(string))
 	hunks := f0["hunks"].([]any)
 	require.NotEmpty(t, hunks)
 	require.Contains(t, fmt.Sprint(hunks), "v2-reviewed")
 
 	code, out = s.call(t, "GET", fmt.Sprintf("/api/v1/repos/mobile/app/services/db/reviews/%d/diff", dbReview),
 		s.tokens["dave"], nil)
-	require.Equal(t, 200, code)
+	require.Equal(t, 200, code, "%v", out)
 	files = out["files"].([]any)
 	require.Len(t, files, 1)
-	require.True(t, strings.HasSuffix(files[0].(map[string]any)["path"].(string), "store.go"))
+	require.Equal(t, "store.go", files[0].(map[string]any)["path"].(string))
+	require.Equal(t, "modified", files[0].(map[string]any)["status"].(string))
 }
 
 // proposeSubtreeChange drives one author's full proposal: clone the
-// subtree view, edit, push the anchor's main (the everyday v5 flow), open a
-// review of that push against the frozen baseline branch.
+// subtree view, edit the file at the CLONE ROOT (the anchor's scoped view —
+// a scoped clone's natural commit form), push the anchor's main (the
+// everyday v5 flow), open a review of that push against the frozen baseline
+// branch. Writing the anchor-nested path instead (sub/services/auth/x.go)
+// would create a MIXED-SCOPE commit the views faithfully project — nested
+// paths in the subtree view and services/auth/services/auth/... in the root
+// weave — which is content, not corruption (xviewTree's mixed-scope rule).
 func proposeSubtreeChange(t *testing.T, s *consoleStack, author, anchor, baseline, file, newContent, title string) int64 {
 	t.Helper()
 	dir := t.TempDir()
 	git(t, dir, "clone", s.gitURL("/mobile/app/"+anchor+".git", author), "sub")
 	sub := filepath.Join(dir, "sub")
-	target := filepath.Join(append([]string{sub}, strings.Split(anchor, "/")...)...)
-	write(t, filepath.Join(target, file), newContent)
+	write(t, filepath.Join(sub, file), newContent)
 	git(t, sub, "add", ".")
 	git(t, sub, "commit", "-m", title)
 	git(t, sub, "push")
