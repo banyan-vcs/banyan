@@ -220,7 +220,32 @@ gitaly:
   hooks:
     enabled: true            # P2 起生效：receive 后回调 Rails internal API
     internal_url: "https://gitlab.example/api/v4/internal"
+debug:
+  pprof_addr: 127.0.0.1:6060 # 运维面（§5a）；缺省整层关闭
 ```
+
+### 5a. 运维面（debug 节，2026-10-26 落地）
+
+性能跟踪端点跑在**独立辅助监听**上（`debug.pprof_addr`，四个角色通用，
+缺省关闭——刻意不搭公开 git/API 端口：profile 与计数器描述仓库内容
+与工作模式，暴露是部署决策）。启动失败仅告警不退出（运维面从不是
+启动依赖）。
+
+- `/debug/pprof/*`：pprof 全家（heap/allocs/goroutine/block/mutex/
+  threadcreate/profile/trace/cmdline/symbol）。
+- `/debug/stats`：一次性运行时快照（uptime、Go 版本、GOMAXPROCS、
+  goroutine/线程数、**GOMEMLIMIT 读数**（内存链纪律的软上限）、
+  MemStats 精要——heap/stack/sys/alloc/GC 次数与停顿）。
+- `/debug/vars`（expvar）：**gitwire 服务路径计数器**——
+  `banyan_fetch_exact_pack_stream`（clone 形态快路径，闭包跳过）/
+  `banyan_fetch_verbatim_pack`（闭包后精确命中直传）/
+  `banyan_fetch_closure_cache`（响应缓存）/
+  `banyan_fetch_encoded`（在线编码）/
+  `banyan_fetch_thin` / `banyan_push_accepted`。任何服务事故的第一个
+  性能问题（"实际走的哪级阶梯"）从此读数即答。
+- 采样率旋钮：`debug.mutex_profile_fraction` /
+  `debug.block_profile_rate_ns`（0=关；block 低于 ~10µs 有实测吞吐
+  代价）；设了采样率而没开 pprof_addr 会被严格校验拒绝。
 
 ## 6. 代码迁移路径（现状 → 目标）
 
