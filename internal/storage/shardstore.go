@@ -35,12 +35,12 @@ type ObjectService struct {
 	// never names. Nil = named addressing (the repo name IS the key).
 	Addressing *Addressing
 
-	mu        sync.Mutex
-	cache     map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result
-	cacheLRU  *list.List                           // decoded-pack LRU, byte-budgeted (see MemoMaxBytes)
-	cacheBytes int64                               // total decoded bytes memoized
-	packOrder map[string]map[model.OID][]model.OID  // repo → packOID → object list (whole-pack direct serve detection)
-	sizeKnown map[string]int64                      // repo/packOID → byte size (immutable; whole-pack memoize guard)
+	mu         sync.Mutex
+	cache      map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result
+	cacheLRU   *list.List                            // decoded-pack LRU, byte-budgeted (see MemoMaxBytes)
+	cacheBytes int64                                 // total decoded bytes memoized
+	packOrder  map[string]map[model.OID][]model.OID  // repo → packOID → object list (whole-pack direct serve detection)
+	sizeKnown  map[string]int64                      // repo/packOID → byte size (immutable; whole-pack memoize guard)
 
 	// MemoMaxBytes bounds the total decoded-pack memory (LRU eviction past
 	// it); 0 = decodedMemoMaxBytes. Per-pack entry is already gated by
@@ -614,6 +614,9 @@ func (s *ObjectService) ampRead(repo string, packOID model.OID) bool {
 // caching it forever (content addressing makes sizes immutable). -1 =
 // unknown (old nodes) — callers treat unknown per their own policy.
 func (s *ObjectService) packSizeCached(ctx context.Context, repo string, packOID model.OID) int64 {
+	if packOID == "" {
+		return -1 // the zero OID marks "not a pack" (the synthetic group), never a probe
+	}
 	ck := repo + "/" + string(packOID)
 	s.mu.Lock()
 	if v, ok := s.sizeKnown[ck]; ok {
@@ -848,7 +851,9 @@ func (s *ObjectService) IngestPackFile(ctx context.Context, repo, path string, s
 // ExactPackHit implements the hot-path whole-pack direct serve (docs/03 §5):
 // when the requested object set exactly equals a stored pack's object set it
 // returns that pack OID; the caller can stream the pack bytes verbatim, skipping online re-encoding (re-hash + re-compress).
-func (s *ObjectService) ExactPackHit(repo string, oids map[model.OID]bool) (model.OID, bool) {
+// The map's value (each object's type) is incidental — only membership is
+// probed; the clone-shaped passes hand their typed enumeration straight through.
+func (s *ObjectService) ExactPackHit(repo string, oids map[model.OID]model.ObjectType) (model.OID, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for packOID, order := range s.packOrder[repo] {
@@ -857,7 +862,7 @@ func (s *ObjectService) ExactPackHit(repo string, oids map[model.OID]bool) (mode
 		}
 		match := true
 		for _, oid := range order {
-			if !oids[oid] {
+			if _, ok := oids[oid]; !ok {
 				match = false
 				break
 			}
@@ -867,6 +872,41 @@ func (s *ObjectService) ExactPackHit(repo string, oids map[model.OID]bool) (mode
 		}
 	}
 	return "", false
+}
+
+// Placements reports each object's pack OID — synthetic objects report the
+// zero OID. One batched locate feeds the cache (Prefetch), then everything
+// is answered from the warmed cache; unknown placement reports zero (the
+// caller still reads such objects through Raw). The streaming serve uses
+// this to group its output by pack: contiguity keeps the decoded-pack LRU
+// from thrashing when a closure spans many packs.
+func (s *ObjectService) Placements(ctx context.Context, repo string, oids []model.OID) map[model.OID]model.OID {
+	s.Prefetch(ctx, repo, oids)
+	s.synthMu.Lock()
+	synth := s.synth[repo]
+	s.synthMu.Unlock()
+	out := make(map[model.OID]model.OID, len(oids))
+	for _, oid := range oids {
+		if synth != nil {
+			if _, ok := synth[oid]; ok {
+				out[oid] = ""
+				continue
+			}
+		}
+		if loc, ok := s.locHit(repo, oid); ok {
+			out[oid] = loc.PackOID
+			continue
+		}
+		out[oid] = ""
+	}
+	return out
+}
+
+// CachedPackSize reports a pack's byte size, probing the backend once and
+// caching forever (content addressing makes sizes immutable); -1 = unknown.
+// The streaming serve uses the pack-group total as its small-repo cutoff.
+func (s *ObjectService) CachedPackSize(ctx context.Context, repo string, packOID model.OID) int64 {
+	return s.packSizeCached(ctx, repo, packOID)
 }
 
 // --- model.ObjectLookup implementation (the model layer reads objects through this) ---
