@@ -263,8 +263,11 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 
 ## License
 
-The core is **MIT** ([LICENSE](LICENSE)). Commercial capabilities live under
-[enterprise/](enterprise/) — a separate Go module licensed under
+The core is **MIT** ([LICENSE](LICENSE)) — it covers everything outside
+[enterprise/](enterprise/). Commercial capabilities live under enterprise/
+— a separate Go module licensed under
 [enterprise/LICENSE.enterprise](enterprise/LICENSE.enterprise): free to
-modify and test, production use requires a banyan enterprise subscription.
-The core never imports enterprise; only enterprise imports the core.
+modify and test, production use requires a banyan enterprise subscription
+(each enterprise source carries a `LicenseRef-BANYAN-ENTERPRISE` SPDX
+header). The core never imports enterprise; only enterprise imports the
+core.

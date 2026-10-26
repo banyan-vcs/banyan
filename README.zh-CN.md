@@ -227,8 +227,9 @@ go run ../cmd/banyan log           # 远端历史，零下载
 
 ## 许可
 
-核心为 **MIT**（[LICENSE](LICENSE)）。商业化能力维护在
-[enterprise/](enterprise/)——独立 Go module，按
+核心为 **MIT**（[LICENSE](LICENSE)）——覆盖 enterprise/ 之外的一切。
+商业化能力维护在 [enterprise/](enterprise/)——独立 Go module，按
 [enterprise/LICENSE.enterprise](enterprise/LICENSE.enterprise) 授权：
-开发与测试免费，生产使用需 banyan 企业订阅。核心永不 import
+开发与测试免费，生产使用需 banyan 企业订阅（每个 enterprise 源文件
+带 `LicenseRef-BANYAN-ENTERPRISE` SPDX 头）。核心永不 import
 enterprise，只有 enterprise 引用核心。

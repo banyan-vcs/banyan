@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: LicenseRef-BANYAN-ENTERPRISE
+//
+// Enterprise License — see LICENSE.enterprise at the enterprise module
+// root: free to modify and test; production use requires a subscription.
+
 // Package wiring exists to pin the module-boundary contract at compile
 // time: enterprise is a separate Go module that MAY import the MIT core's
 // packages — including internal/ (the internal visibility rule is

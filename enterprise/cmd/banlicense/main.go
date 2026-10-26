@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: LicenseRef-BANYAN-ENTERPRISE
+//
+// Enterprise License — see LICENSE.enterprise at the enterprise module
+// root: free to modify and test; production use requires a subscription.
+
 // banlicense issues banyan enterprise licenses from a vendor private key
 // (Ed25519 PEM). Run from the enterprise module:
 //

@@ -1,11 +1,6 @@
-Copyright (c) 2026 banyan authors.
+MIT License
 
-Portions of this software are licensed as follows:
-
-- All files under the "enterprise/" directory are licensed under the
-  license defined in "enterprise/LICENSE.enterprise".
-- Content outside of the above mentioned directory is available under
-  the "MIT Expat" license as defined below.
+Copyright (c) 2026 banyan authors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: LicenseRef-BANYAN-ENTERPRISE
+//
+// Enterprise License — see LICENSE.enterprise at the enterprise module
+// root: free to modify and test; production use requires a subscription.
+
 // Package license is the enterprise plan gate: every commercial capability
 // checks through here before serving. Licenses are Ed25519-signed tokens —
 // base64url(payloadJSON) + "." + base64url(signature), no dependencies
