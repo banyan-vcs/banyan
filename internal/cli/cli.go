@@ -16,7 +16,7 @@ const usageText = `banyan — thin client for a banyan server (docs/06)
 
 usage: banyan [-C <dir>] <command> [args]
 
-workspace commands (run inside a clone, or with -C):
+workspace commands (run inside a clone — any subdirectory — or with -C):
   clone <url>[/tree/<dir>] [dir] [--sparse a,b] [-b branch]   minimal clone
   status                                                      manifest vs worktree (offline)
   commit -m <msg> [--name n] [--email e]                      scan → upload → server-side assembly

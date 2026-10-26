@@ -45,7 +45,33 @@ type workspace struct {
 	man  manifest
 }
 
+// findWorkspace walks up from dir (inclusive) to the enclosing workspace —
+// .git-style discovery: every state lives under the workspace's .banyan/
+// (never a global registry), and any subdirectory invocation finds it.
+// Returns the workspace ROOT (commands resolve paths against it).
+func findWorkspace(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, serr := os.Stat(filepath.Join(abs, configF)); serr == nil {
+			return abs, nil
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return "", fmt.Errorf("not a banyan workspace (no %s in %s or its parents)", configF, dir)
+		}
+		abs = parent
+	}
+}
+
 func loadWorkspace(root string) (*workspace, error) {
+	found, err := findWorkspace(root)
+	if err != nil {
+		return nil, err
+	}
+	root = found
 	cfgRaw, err := os.ReadFile(filepath.Join(root, configF))
 	if err != nil {
 		return nil, fmt.Errorf("not a banyan workspace (missing %s): %w", configF, err)

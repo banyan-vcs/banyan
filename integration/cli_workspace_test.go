@@ -252,3 +252,36 @@ func TestFetchTreesBinary(t *testing.T) {
 	assert.Equal(t, strings.Repeat("payload line for framing test\n", 512),
 		readFile(t, filepath.Join(ws, "lib", "bulk.txt")), "CLI 二进制路径物化内容")
 }
+
+// TestCLIWorkspaceDiscovery — .git-style upward discovery: any subdirectory
+// of a workspace resolves to its .banyan anchor; state never lives in a
+// global registry (docs/06 §2).
+func TestCLIWorkspaceDiscovery(t *testing.T) {
+	needGit(t)
+	s := newServer(t)
+	seedRepo(t, s, "wsd")
+
+	root := t.TempDir()
+	ws := filepath.Join(root, "wsd")
+	out, errOut, code := runCLI(t, "clone", s.repoURL("wsd"), ws)
+	require.Equal(t, 0, code, "clone 失败\nstdout:%s\nstderr:%s", out, errOut)
+
+	// status from a nested subdirectory sees workspace-root changes.
+	write(t, filepath.Join(ws, "README.md"), "readme-v2\n")
+	out, errOut, code = runCLI(t, "-C", filepath.Join(ws, "lib", "nested"), "status")
+	require.Equal(t, 0, code, "子目录 status 应向上发现工作区\nstdout:%s\nstderr:%s", out, errOut)
+	assert.Contains(t, out, "M  README.md")
+
+	// commit from a subdirectory commits the whole workspace (git parity).
+	out, errOut, code = runCLI(t, "-C", filepath.Join(ws, "lib"), "commit", "-m", "from-subdir",
+		"--name", "cli", "--email", "cli@banyan.dev")
+	require.Equal(t, 0, code, "子目录 commit 失败\nstdout:%s\nstderr:%s", out, errOut)
+
+	g := cloneRepo(t, s, s.repoURL("wsd"))
+	assert.Equal(t, "readme-v2\n", readFile(t, filepath.Join(g, "README.md")))
+
+	// Outside any workspace: a clear error, exit 2.
+	out, errOut, code = runCLI(t, "-C", t.TempDir(), "status")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errOut, "not a banyan workspace")
+}

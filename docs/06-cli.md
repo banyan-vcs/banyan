@@ -24,6 +24,8 @@ API 直取内容寻址对象；git 客户端走 wire pack——**同一服务端
   manifest      # 检出基准 {commit OID, tree OID, 文件→OID 清单}
   cache/objects # 内容寻址 blob 缓存（LRU 上界，可随时清）
 工作区 = 普通目录，无 .git，无本地历史
+
+2026-10-25 review 复核（T22c）：状态模型确认**无全局仓库配置**——一切工作区状态在 `.banyan/`（config.json + manifest.json + 可清缓存；磁盘足迹 KB 级，比 .git 轻一个量级），无 ~/.banyan 全局注册表（`BANYAN_SERVER` 环境变量仅为无工作区时 `repo ls` 的服务器地址回退）。补齐 .git 同款语义：**向上工作区发现**——任意子目录调用命令都会沿目录树向上找到 `.banyan/config.json` 锚点，子目录 status/commit 作用于整个工作区（与 git 子目录行为一致）；工作区之外报明确错误（exit 2）。
 ```
 
 - 薄工作区天然无历史：log/blame/diff/show 永远问服务端，从不下载提交闭包；
