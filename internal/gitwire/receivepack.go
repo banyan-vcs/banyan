@@ -281,6 +281,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	// post-receive: the applied set only, best-effort after every CAS won
 	// (git semantics — the push is already applied; failures are logged).
 	if len(applied) > 0 {
+		pushAccepted.Add(1)
 		_ = s.fireHooks(ctx, vr, id.User, hookBytes, "post-receive", hookUpdates(applied), true)
 	}
 

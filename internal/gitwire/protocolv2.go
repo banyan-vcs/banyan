@@ -431,6 +431,7 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 	}
 	encodeStart := time.Now()
 	served := s.serveClosurePack(ctx, sb, vr, fa.wants, blobs, trees, commits, tags, cacheable, fa.ofsDelta, plan)
+	countServeRung(served)
 	_ = WriteFlush(out)
 	log.Printf("v2 fetch %s%s: %d wants → %d commits, %d trees, %d blobs (have-subtracted %d, filter %s, closure %s, serve %s/%s)",
 		vr.Repo, vr.Sub, len(fa.wants), len(commits), len(trees), len(blobs), len(excluded), filterSpecName(fa.filter),
