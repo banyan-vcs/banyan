@@ -19,6 +19,7 @@ import (
 // incremental fetches against client-held bases.
 var (
 	fetchExactPackStream = expvar.NewInt("banyan_fetch_exact_pack_stream") // clone-shaped fast path (closure skipped)
+	fetchStreamed        = expvar.NewInt("banyan_fetch_streamed")          // multi-pack closure, streaming encode (closure skipped)
 	fetchVerbatimPack    = expvar.NewInt("banyan_fetch_verbatim_pack")     // post-closure exact-pack hit
 	fetchThin            = expvar.NewInt("banyan_fetch_thin")
 	fetchClosureCache    = expvar.NewInt("banyan_fetch_closure_cache")

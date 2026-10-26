@@ -221,6 +221,13 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 			log.Printf("upload-pack %s%s: %d wants → %s (closure skipped)", vr.Repo, vr.Sub, len(st.wants), served)
 			return
 		}
+		// Multi-pack closure: streaming encode (docs/03 §3) — nothing beyond
+		// the current object resident, small repos fall back to the closure
+		// ladder below.
+		if s.tryStreamingServe(ctx, out, vr, st.wants, st.clientOfsDelta) {
+			_ = out.Flush()
+			return
+		}
 	}
 
 	closureStart := time.Now()
@@ -349,18 +356,21 @@ func filterSpecName(f *FilterSpec) string {
 	return f.Spec()
 }
 
-// enumerateClosure walks the want closure collecting OIDs only (docs/03 §5,
-// the streaming-serve probe) — type-directed, so object bodies never enter
-// memory: commits and trees resolve through the metadata indexes, tree
-// entries classify their children by mode (dir → subtree, gitlink → a
-// commit in another repo this store does not hold, everything else → blob
-// leaf), and only wants/tags the index cannot type pay one Raw (tags are
-// small; a blob/tree want is not clone-shaped but stays correct). The
-// resulting set equals what closure() yields for the same clone-shaped
-// request (no haves/depth/filter/shallow) — at a fraction of the memory.
-func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []model.OID) (map[model.OID]bool, error) {
+// enumerateClosure walks the want closure collecting OIDs and their types
+// only (docs/03 §5, the streaming-serve enumeration) — type-directed, so
+// object bodies never enter memory: commits and trees resolve through the
+// metadata indexes, tree entries classify their children by mode (dir →
+// subtree, gitlink → a commit in another repo this store does not hold,
+// everything else → blob leaf), and only wants/tags the index cannot type
+// pay one Raw (tags are small; a blob/tree want is not clone-shaped but
+// stays correct). The resulting set equals what closure() yields for the
+// same clone-shaped request (no haves/depth/filter/shallow) — at a fraction
+// of the memory. The types feed both the exact-pack probe and the
+// streaming encoder (pack entries need the type bits; re-reading each
+// object through Raw re-derives them as the authoritative check).
+func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []model.OID) (map[model.OID]model.ObjectType, error) {
 	s.Objects.Prefetch(ctx, vr.Repo, wants)
-	set := make(map[model.OID]bool, 1024)
+	types := make(map[model.OID]model.ObjectType, 1024)
 	type item struct {
 		oid model.OID
 		t   model.ObjectType
@@ -387,10 +397,10 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 	for len(queue) > 0 {
 		it := queue[0]
 		queue = queue[1:]
-		if set[it.oid] {
+		if _, done := types[it.oid]; done {
 			continue
 		}
-		set[it.oid] = true
+		types[it.oid] = it.t
 		switch it.t {
 		case model.BlobType: // leaf: bytes stay wherever they are stored
 		case model.CommitType:
@@ -416,7 +426,7 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 					children = append(children, e.Target)
 					queue = append(queue, item{e.Target, model.TreeType})
 				} else {
-					set[e.Target] = true // blob leaf, no bytes fetched
+					types[e.Target] = model.BlobType // blob leaf, no bytes fetched
 				}
 			}
 			s.Objects.Prefetch(ctx, vr.Repo, children)
@@ -434,16 +444,17 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 			return nil, fmt.Errorf("closure walk: unsupported object type %q for %s", it.t, it.oid)
 		}
 	}
-	return set, nil
+	return types, nil
 }
 
 // tryExactPackStream is the clone-shaped fast path (docs/03 §5): enumerate
-// the wanted set (OIDs only), probe for a stored pack with exactly that
+// the wanted set (OIDs + types), probe for a stored pack with exactly that
 // object set, and stream the pack verbatim — node disk → network →
 // response in one small window, the closure's object bytes never resident
-// in gateway memory. Any miss before the first byte falls back to the full
-// closure path; a break MID-copy is terminal (bytes are already on the
-// wire, same as any dropped response).
+// in gateway memory. Any miss before the first byte falls back (streaming
+// encode for multi-pack closures, then the full closure path); a break
+// MID-copy is terminal (bytes are already on the wire, same as any dropped
+// response).
 func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID) (string, bool) {
 	oids, err := s.enumerateClosure(ctx, vr, wants)
 	if err != nil {
@@ -468,6 +479,117 @@ func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr Virtu
 	return "exact-pack-stream " + string(packOID), true
 }
 
+// streamServeMinPackBytes is the small-repo cutoff for the streaming
+// encode: below it the closure path's maps are bounded and its response
+// cache keeps repeat clones cheap, so the old ladder stays. Above it the
+// O(closure) maps are exactly the hazard the streaming rung exists to
+// avoid. Aligns with storage's packMemoMaxBytes (the same "small enough to
+// hold" judgment the memoize ladder makes).
+const streamServeMinPackBytes = 32 << 20
+
+// tryStreamingServe is the multi-pack clone-shaped rung (docs/03 §3, the
+// "way in is the way out" fix for streamed imports): the exact-pack fast
+// path missed because the closure spans packs, and no stored pack equals
+// the set. Three stages, none of which holds the closure:
+//
+//  1. clone-shaped response cache (docs/11 P2-2) — checked BEFORE any
+//     enumeration; the old path paid the full closure computation even on
+//     a cache hit, this one answers a repeat clone of the same wants with
+//     zero walking.
+//  2. type-directed enumeration (enumerateClosure) — OIDs + types through
+//     the metadata indexes, object bytes never touched.
+//  3. streaming encode: objects grouped by pack (Placements; groups and
+//     members sorted for determinism, unplaced/synthetic first) so the
+//     read ladder touches each pack once — LRU contiguity on the cluster
+//     wire, page-cache contiguity locally — then one delta-free pack
+//     written entry by entry (StreamEncodePack: hash + zlib on the fly).
+//
+// Small repositories (pack-group bytes below streamServeMinPackBytes)
+// return false and keep the closure+encode+cache ladder. A miss before the
+// first byte falls back to the closure path; a break mid-encode is
+// terminal like any dropped response.
+func (s *Server) tryStreamingServe(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID, ofsDelta bool) bool {
+	if raw, ok := s.Objects.CachedResponsePack(vr.Repo, vr.Sub, wants, ofsDelta); ok {
+		if _, werr := out.Write(raw); werr == nil {
+			countServeRung("closure-cache")
+			log.Printf("upload-pack %s%s: %d wants → closure-cache (closure skipped)", vr.Repo, vr.Sub, len(wants))
+			return true
+		}
+	}
+	typed, err := s.enumerateClosure(ctx, vr, wants)
+	if err != nil || len(typed) == 0 {
+		return false // the closure path reports enumeration errors with referrer context
+	}
+	oids := make([]model.OID, 0, len(typed))
+	for oid := range typed {
+		oids = append(oids, oid)
+	}
+	sort.Slice(oids, func(i, j int) bool { return oids[i] < oids[j] })
+	packs := s.Objects.Placements(ctx, vr.Repo, oids)
+	byPack := make(map[model.OID][]model.OID)
+	total, known := int64(0), true
+	for _, oid := range oids {
+		p := packs[oid]
+		if p != "" { // the zero OID is the synthetic/unplaced group, not a pack
+			if _, seen := byPack[p]; !seen {
+				if size := s.Objects.CachedPackSize(ctx, vr.Repo, p); size >= 0 {
+					total += size
+				} else {
+					known = false // old node: assume big, memory discipline wins
+				}
+			}
+		}
+		byPack[p] = append(byPack[p], oid)
+	}
+	if known && total < streamServeMinPackBytes {
+		return false // small repo: the closure ladder keeps its response cache
+	}
+	groups := make([]model.OID, 0, len(byPack))
+	for p := range byPack {
+		groups = append(groups, p)
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i] < groups[j] })
+	order := make([]model.OID, 0, len(typed))
+	for _, p := range groups {
+		order = append(order, byPack[p]...)
+	}
+
+	// Peek the first object before committing the pack header: a missing
+	// object here falls back to the closure path, whose error reporting is
+	// strictly better. After the header we are on the wire.
+	firstType, firstBody, perr := s.Objects.Raw(ctx, vr.Repo, order[0])
+	if perr != nil {
+		return false
+	}
+	i := 0
+	start := time.Now()
+	encErr := storage.StreamEncodePack(out, s.Objects.Algo, len(order), func(int) (model.ObjectType, []byte, error) {
+		if i == 0 {
+			t, b := firstType, firstBody
+			i++
+			return t, b, nil
+		}
+		t, data, rerr := s.Objects.Raw(ctx, vr.Repo, order[i])
+		i++
+		return t, data, rerr
+	})
+	fetchStreamed.Add(1)
+	if encErr != nil {
+		log.Printf("upload-pack %s%s: stream encode broke after %d/%d objects: %v (terminal, bytes on the wire)",
+			vr.Repo, vr.Sub, i, len(order), encErr)
+		return true
+	}
+	npacks := 0
+	for _, p := range groups {
+		if p != "" {
+			npacks++
+		}
+	}
+	log.Printf("upload-pack %s%s: %d wants → %d objects streamed from %d packs, %.1f MiB packs (closure skipped, %s)",
+		vr.Repo, vr.Sub, len(wants), len(order), npacks, float64(total)/(1<<20), time.Since(start).Round(time.Millisecond))
+	return true
+}
+
 // serveClosurePack writes the response pack for a computed closure:
 //
 //	thin (client-held bases, only when requested) → whole-pack verbatim →
@@ -488,18 +610,18 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 		}
 		return "thin"
 	}
-	wanted := make(map[model.OID]bool, len(commits)+len(trees)+len(blobs)+len(tags))
+	wanted := make(map[model.OID]model.ObjectType, len(commits)+len(trees)+len(blobs)+len(tags))
 	for oid := range commits {
-		wanted[oid] = true
+		wanted[oid] = model.CommitType
 	}
 	for oid := range trees {
-		wanted[oid] = true
+		wanted[oid] = model.TreeType
 	}
 	for oid := range blobs {
-		wanted[oid] = true
+		wanted[oid] = model.BlobType
 	}
 	for oid := range tags {
-		wanted[oid] = true
+		wanted[oid] = model.TagType
 	}
 	if packOID, ok := s.Objects.ExactPackHit(vr.Repo, wanted); ok {
 		if rc, _, oerr := s.Objects.OpenPackStream(ctx, vr.Repo, packOID); oerr == nil {

@@ -412,6 +412,13 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 			log.Printf("v2 fetch %s%s: %d wants → %s (closure skipped)", vr.Repo, vr.Sub, len(fa.wants), fast)
 			return
 		}
+		// Multi-pack closure: streaming encode (docs/03 §3) — the response
+		// cache answers repeat clones without walking, the first one streams
+		// entry by entry; small repos fall back to the closure ladder.
+		if s.tryStreamingServe(ctx, sb, vr, fa.wants, fa.ofsDelta) {
+			_ = WriteFlush(out)
+			return
+		}
 	}
 
 	closureStart := time.Now()
