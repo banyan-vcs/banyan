@@ -50,6 +50,14 @@ type ShardBackend interface {
 	// whole pack — the wire carries one object, not megabytes. Errors fall
 	// back to the whole-pack path at the caller.
 	GetObject(ctx context.Context, repo string, packOID, oid model.OID, holders []string, algo model.HashAlgo) (model.ObjectType, []byte, error)
+	// PrefersWholePack reports whether batched single-object reads should
+	// escalate to one whole-pack fetch + decode + memoize. The cluster wire
+	// answers true — every GetObject there is an RPC round trip, so a
+	// closure walk of a pack the gateway already holds on disk (CheapPack)
+	// pays one fetch instead of thousands. The local backend answers false:
+	// extraction is a file read, and escalating would park the entire pack
+	// in memory for what sparse reads need.
+	PrefersWholePack() bool
 	// DeletePack removes the pack from the given holders (repack old-shard
 	// cleanup / replica trim). Missing files are tolerated.
 	DeletePack(ctx context.Context, repo string, packOID model.OID, holders []string)
@@ -114,6 +122,11 @@ func (b *LocalBackend) CheapPack(_ context.Context, _ string, _ model.OID, _ []s
 func (b *LocalBackend) GetObject(_ context.Context, repo string, packOID, oid model.OID, _ []string, algo model.HashAlgo) (model.ObjectType, []byte, error) {
 	return b.Local.GetObject(repo, packOID, oid, algo)
 }
+
+// PrefersWholePack is false: single-object idx extraction is already
+// network-free here (see CheapPack), so escalation would only park the
+// whole pack in memory.
+func (b *LocalBackend) PrefersWholePack() bool { return false }
 
 func (b *LocalBackend) DeletePack(_ context.Context, repo string, packOID model.OID, _ []string) {
 	b.Local.DeletePack(repo, packOID)

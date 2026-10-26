@@ -573,13 +573,21 @@ func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid mod
 		}
 		return t, data, nil
 	}
-	if !s.ampRead(repo, loc.PackOID) {
+	// Single-object extraction first. Escalation to the whole-pack fetch +
+	// memoize below is cluster-only (PrefersWholePack): there each read is
+	// an RPC round trip and one fetch beats a closure walk of them. The
+	// local backend never escalates — extraction is a file read, and the
+	// escalation would park the pack in memory for nothing (the T50
+	// observation: a clone-shaped probe decoding a 20 MiB pack whole to
+	// learn three tree shapes).
+	if !s.Backend.PrefersWholePack() || !s.ampRead(repo, loc.PackOID) {
 		if t, data, err := s.Backend.GetObject(ctx, key, loc.PackOID, oid, holders, s.Algo); err == nil {
 			return t, data, nil
 		}
 	}
-	// Amplified (a closure walk) or single-object failed: one whole-pack
-	// fetch memoizes everything and lands in the gateway disk cache.
+	// Amplified on the cluster wire (a closure walk: one whole-pack fetch
+	// memoizes everything and lands in the gateway disk cache), or local
+	// extraction failed (idx-less pack, old node): whole-pack fallback.
 	raw, err := s.Backend.GetPack(ctx, key, loc.PackOID, holders)
 	if err != nil {
 		return "", nil, err

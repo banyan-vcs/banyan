@@ -344,6 +344,11 @@ func (s *ScatteredStore) PutPack(ctx context.Context, repo string, packOID model
 	return putPackStreamFromBytes(ctx, s, repo, packOID, packBytes, idxBytes)
 }
 
+// PrefersWholePack is true on the cluster wire: each GetObject is an RPC
+// round trip, so an amplified closure walk takes ONE whole-pack fetch +
+// decode + memoize over thousands of per-object round trips.
+func (s *ScatteredStore) PrefersWholePack() bool { return true }
+
 // PutPackStream fans the pack out to R healthy nodes in parallel, each
 // writer drawing its own reader of the same bytes (the spooled push file) —
 // the pack never sits whole in gateway memory.
