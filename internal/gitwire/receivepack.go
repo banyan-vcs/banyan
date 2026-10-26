@@ -388,7 +388,9 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 		return err
 	}
 	if curTip.IsZero() {
-		return fmt.Errorf("subtree view %s unavailable (root has no commits)", vr.Sub)
+		// Zero tip covers both an unborn root branch and a path with no
+		// history in it — worded so neither case claims the other.
+		return fmt.Errorf("subtree view %s unavailable (no commits visible at this path)", vr.Sub)
 	}
 	// Content-level staleness guard, both sides (docs/02 §13):
 	//   local side — old must match the combined view tip X-content

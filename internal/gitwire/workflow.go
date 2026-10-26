@@ -107,7 +107,7 @@ func (s *Server) adoptOrConverge(ctx context.Context, j *subtreeJob) jobResult {
 		return jobResult{err: err}
 	}
 	if curTip.IsZero() {
-		return jobResult{err: fmt.Errorf("subtree view %s unavailable (root has no commits)", j.vr.Sub)}
+		return jobResult{err: fmt.Errorf("subtree view %s unavailable (no commits visible at this path)", j.vr.Sub)}
 	}
 	if j.old.IsZero() || s.sameXView(j.vr, j.old, curTip) {
 		if err := s.adoptSubtreePush(ctx, j.vr, j.branch, j.old, j.newHead); err != nil {
