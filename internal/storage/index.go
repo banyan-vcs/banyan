@@ -96,6 +96,33 @@ func (s *ObjectService) buildIndex(repo string, dp *DecodedPack) {
 	}
 }
 
+// IndexTypeOf answers an object's type from the in-memory views only — the
+// synthetic table and the push-built commit/tree indexes. No IO: a miss
+// (blob, tag, or a cold process before any push) simply reports unknown and
+// the caller falls back to a real read. The clone-shaped enumeration probe
+// (docs/03 §5) uses this to type want tips without inflating object bodies.
+func (s *ObjectService) IndexTypeOf(repo string, oid model.OID) (model.ObjectType, bool) {
+	s.synthMu.Lock()
+	if so, ok := s.synth[repo][oid]; ok {
+		s.synthMu.Unlock()
+		return so.Type, true
+	}
+	s.synthMu.Unlock()
+	s.idxMu.Lock()
+	defer s.idxMu.Unlock()
+	ri := s.idx[repo]
+	if ri == nil {
+		return "", false
+	}
+	if _, ok := ri.commits[oid]; ok {
+		return model.CommitType, true
+	}
+	if _, ok := ri.trees[oid]; ok {
+		return model.TreeType, true
+	}
+	return "", false
+}
+
 // CommitIndexStats returns lightweight commit index stats (commits / unique bmsgs / render failures).
 func (s *ObjectService) CommitIndexStats(repo string) (commits, uniqueMsgs, renderFails int) {
 	s.idxMu.Lock()
