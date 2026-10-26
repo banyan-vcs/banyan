@@ -34,6 +34,14 @@ func commitRoot(t *testing.T, s *Service, repo string, files map[string]string) 
 	return res.Head, res.Tree
 }
 
+func byStatus(d *DiffResult) map[string]string {
+	out := map[string]string{}
+	for _, f := range d.Files {
+		out[f.Path] = f.Status
+	}
+	return out
+}
+
 func changesFor(files map[string]string) []Change {
 	var cs []Change
 	for path, content := range files {
@@ -202,4 +210,77 @@ func TestPutObjectsHashVerify(t *testing.T) {
 	require.Error(t, err, "内容与 OID 不符必须拒绝")
 	code, _ := Translate(err)
 	assert.Equal(t, "INVALID_ARG", code)
+}
+
+// Diff: two refs of one (subtree) view → added/deleted/modified by path.
+// Covers the review surface's core contract (docs/05 M2, docs/17 §review).
+func TestDiffTwoRefs(t *testing.T) {
+	s := newService(t)
+	ctx := context.Background()
+	seed := map[string]string{
+		"README.md":          "v1\n",
+		"services/auth/a.go": "package auth\n",
+		"services/auth/b.go": "b\n",
+		"services/db/x.go":   "package db\n",
+	}
+	commitRoot(t, s, "r", seed)
+
+	// The "feature" branch state: modify one file, add one, delete one,
+	// leave the sibling subtree untouched.
+	feat := map[string]string{
+		"README.md":            "v2\n",           // modified
+		"services/auth/a.go":   "package auth\n", // unchanged
+		"services/auth/new.go": "new\n",          // added
+		"services/db/x.go":     "package db\n",   // unchanged
+		// services/auth/b.go deleted
+	}
+	putFiles(t, s, "r", feat)
+	res, err := s.CreateCommit(ctx, CommitRequest{
+		Repo: "r", Base: "", Branch: "feat", Message: "feature",
+		Changes: changesFor(feat),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, res.Head)
+
+	// Root-scope diff.
+	d, err := s.Diff(ctx, DiffRequest{Repo: "r", Base: "main", Head: "feat"})
+	require.NoError(t, err)
+	byPath := map[string]string{}
+	for _, f := range d.Files {
+		byPath[f.Path] = f.Status
+	}
+	assert.Equal(t, map[string]string{
+		"README.md":            "modified",
+		"services/auth/b.go":   "deleted",
+		"services/auth/new.go": "added",
+	}, byPath)
+
+	// Anchor-scope diff: the same feature seen from services/auth — only
+	// that subtree's files appear, README is out of scope.
+	d, err = s.Diff(ctx, DiffRequest{Repo: "r", Sub: "/services/auth", Base: "main", Head: "feat"})
+	require.NoError(t, err)
+	byPath = map[string]string{}
+	for _, f := range d.Files {
+		byPath[f.Path] = f.Status
+	}
+	assert.Equal(t, map[string]string{
+		"b.go":   "deleted",
+		"new.go": "added",
+	}, byPath)
+
+	// Identical refs → empty diff.
+	d, err = s.Diff(ctx, DiffRequest{Repo: "r", Base: "main", Head: "main"})
+	require.NoError(t, err)
+	assert.Empty(t, d.Files)
+
+	// Unknown ref follows diff-against-empty semantics; callers detect it
+	// via the zero head OID (review creation relies on this signal).
+	d, err = s.Diff(ctx, DiffRequest{Repo: "r", Base: "main", Head: "nope"})
+	require.NoError(t, err)
+	require.True(t, d.HeadHead.IsZero())
+	assert.Equal(t, "deleted", byStatus(d)["README.md"])
+
+	d, err = s.Diff(ctx, DiffRequest{Repo: "r", Base: "main", Head: "feat"})
+	require.NoError(t, err)
+	require.False(t, d.HeadHead.IsZero())
 }

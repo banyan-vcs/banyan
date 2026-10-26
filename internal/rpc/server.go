@@ -45,6 +45,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/log", s.authn(s.handleLog))
 	mux.HandleFunc("/api/v1/repack", s.authn(s.handleRepack))
 	mux.HandleFunc("/api/v1/fetch-trees", s.authn(s.handleFetchTrees))
+	mux.HandleFunc("/api/v1/diff", s.authn(s.handleDiff))
 	mux.HandleFunc("/api/v1/commit", s.authn(s.handleCommit))
 	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
@@ -298,6 +299,21 @@ func (s *Server) handleFetchTrees(w http.ResponseWriter, r *http.Request) {
 		if err := writeFetchBinary(w, res, s.Algo); err != nil {
 			log.Printf("fetch-trees %s: binary encode: %v", req.Repo, err)
 		}
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// --- POST /api/v1/diff: path-level reference diff (review surface) ---
+
+func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
+	var req service.DiffRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	res, err := s.Svc.Diff(r.Context(), req)
+	if err != nil {
+		writeServiceErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
