@@ -139,6 +139,25 @@ func (s *Server) visibleRefs(id auth.Identity, repo string, refs []Ref) []Ref {
 // Register registers routes (docs/04 §1 endpoint table).
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/r/", s.handleRepo)
+	// Cluster-internal face: the console kicks this after policy-affecting
+	// mutations so the next decision re-syncs snapshot v2 immediately
+	// (docs/17 §5) instead of waiting out the sync TTL.
+	mux.HandleFunc("/internal/authz/refresh", s.handleAuthzRefresh)
+}
+
+// policyRefresher is implemented by upstream-backed auth services whose
+// snapshot can be invalidated on demand.
+type policyRefresher interface{ Refresh() }
+
+func (s *Server) handleAuthzRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if ref, ok := s.Auth.(policyRefresher); ok {
+		ref.Refresh()
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
