@@ -349,52 +349,88 @@ func filterSpecName(f *FilterSpec) string {
 }
 
 // enumerateClosure walks the want closure collecting OIDs only (docs/03 §5,
-// the streaming-serve probe): commits and trees are read through the
-// metadata indexes (transient bytes, nothing retained beyond per-object
-// metadata), blobs are resolved for type but their bytes are never kept.
-// The resulting set equals what closure() yields for the same clone-shaped
+// the streaming-serve probe) — type-directed, so object bodies never enter
+// memory: commits and trees resolve through the metadata indexes, tree
+// entries classify their children by mode (dir → subtree, gitlink → a
+// commit in another repo this store does not hold, everything else → blob
+// leaf), and only wants/tags the index cannot type pay one Raw (tags are
+// small; a blob/tree want is not clone-shaped but stays correct). The
+// resulting set equals what closure() yields for the same clone-shaped
 // request (no haves/depth/filter/shallow) — at a fraction of the memory.
 func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []model.OID) (map[model.OID]bool, error) {
 	s.Objects.Prefetch(ctx, vr.Repo, wants)
 	set := make(map[model.OID]bool, 1024)
-	queue := append([]model.OID(nil), wants...)
-	for len(queue) > 0 {
-		oid := queue[0]
-		queue = queue[1:]
-		if set[oid] {
+	type item struct {
+		oid model.OID
+		t   model.ObjectType
+	}
+	queue := make([]item, 0, len(wants))
+	for _, w := range wants {
+		if t, ok := s.Objects.IndexTypeOf(vr.Repo, w); ok {
+			queue = append(queue, item{w, t})
 			continue
 		}
-		set[oid] = true
-		t, raw, err := s.Objects.Raw(ctx, vr.Repo, oid)
+		t, raw, err := s.Objects.Raw(ctx, vr.Repo, w)
 		if err != nil {
 			return nil, err
 		}
-		switch t {
+		queue = append(queue, item{w, t})
+		if t == model.TagType { // peel annotated tags: git's closure does
+			tg, terr := model.DecodeTag(raw)
+			if terr != nil {
+				return nil, terr
+			}
+			queue = append(queue, item{tg.Object, tg.Type})
+		}
+	}
+	for len(queue) > 0 {
+		it := queue[0]
+		queue = queue[1:]
+		if set[it.oid] {
+			continue
+		}
+		set[it.oid] = true
+		switch it.t {
+		case model.BlobType: // leaf: bytes stay wherever they are stored
 		case model.CommitType:
-			ci, err := s.Objects.CommitInfo(vr.Repo, oid)
+			ci, err := s.Objects.CommitInfo(vr.Repo, it.oid)
 			if err != nil {
 				return nil, err
 			}
-			queue = append(queue, ci.Tree)
-			queue = append(queue, ci.Parents...)
+			queue = append(queue, item{ci.Tree, model.TreeType})
+			for _, p := range ci.Parents {
+				queue = append(queue, item{p, model.CommitType})
+			}
 		case model.TreeType:
-			entries, err := s.Objects.TreeEntries(vr.Repo, oid)
+			entries, err := s.Objects.TreeEntries(vr.Repo, it.oid)
 			if err != nil {
 				return nil, err
 			}
 			children := make([]model.OID, 0, len(entries))
 			for _, e := range entries {
-				children = append(children, e.Target)
+				if e.Mode == "160000" {
+					continue // gitlink: never part of this repo's packs
+				}
+				if e.IsDir {
+					children = append(children, e.Target)
+					queue = append(queue, item{e.Target, model.TreeType})
+				} else {
+					set[e.Target] = true // blob leaf, no bytes fetched
+				}
 			}
 			s.Objects.Prefetch(ctx, vr.Repo, children)
-			queue = append(queue, children...)
-		case model.TagType:
+		case model.TagType: // tag → tag chains: rare, small, not indexed
+			_, raw, err := s.Objects.Raw(ctx, vr.Repo, it.oid)
+			if err != nil {
+				return nil, err
+			}
 			tg, terr := model.DecodeTag(raw)
 			if terr != nil {
 				return nil, terr
 			}
-			queue = append(queue, tg.Object)
-		case model.BlobType: // leaf: bytes discarded, only the OID matters
+			queue = append(queue, item{tg.Object, tg.Type})
+		default:
+			return nil, fmt.Errorf("closure walk: unsupported object type %q for %s", it.t, it.oid)
 		}
 	}
 	return set, nil
