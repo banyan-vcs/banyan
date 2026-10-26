@@ -43,6 +43,12 @@ type Config struct {
 		// against the policy snapshot synced from the refs service
 		// (docs/07 §4).
 		Remote bool
+		// Upstream selects console-fronted mode (docs/17): the banyans
+		// control plane authenticates clients and vouches for them via the
+		// signed identity header; rules arrive as policy snapshot v2. The
+		// user table and credentials never reach this process.
+		Upstream       string `yaml:"upstream"`        // console base URL
+		UpstreamSecret string `yaml:"upstream_secret"` // shared HMAC key
 		// Users enables the demo authorization policy (docs/07): HTTP Basic
 		// against this static table; absent = authorization off.
 		Users  map[string]string `yaml:"users"`
@@ -243,6 +249,18 @@ func (c *Config) normalize() error {
 	}
 	if c.DefaultR < 1 {
 		c.DefaultR = 1
+	}
+	if c.Auth.Upstream != "" {
+		if c.Auth.Remote {
+			return fmt.Errorf("config: auth.upstream and auth.remote are mutually exclusive")
+		}
+		if len(c.Auth.Users) > 0 {
+			return fmt.Errorf("config: auth.upstream and the demo auth.users table are mutually exclusive")
+		}
+		if c.Auth.UpstreamSecret == "" {
+			return fmt.Errorf("config: auth.upstream requires auth.upstream_secret")
+		}
+		c.Auth.Upstream = withScheme(c.Auth.Upstream)
 	}
 	switch c.Role {
 	case "gateway":

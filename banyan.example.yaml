@@ -76,6 +76,13 @@ meta: "mem"
 # gateway 角色：决策走 refs 服务同步的策略快照（集群模式的策略源）
 #  remote: true
 
+# console 前置模式（docs/17）：banyans 产品端认证并以签名身份头背书
+# （X-Banyan-Identity），规则以快照 v2 同步——用户表与凭据不下放本进程。
+# 与 remote/users 互斥。
+#auth:
+#  upstream: "http://banyans:8081"
+#  upstream_secret: "change-me"
+
 # --- 存储寻址模式（docs/03 §6；缺省 named） ---
 # named:  磁盘目录=仓库名（可读）；rename/迁移需在所有持有节点上移动数据
 # hashed: 磁盘目录=@hashed/<xx>/<yy>/<sha256(storage_id)>（不可读）；rename 仅
