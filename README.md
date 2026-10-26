@@ -91,6 +91,8 @@ directory timelines align both boundaries at the same granularity.
 | Shallow clone (depth / deepen / unshallow) | ✅ |
 | Incremental fetch with have subtraction | ✅ |
 | Repack: fragment merge + delta encoding | ✅ |
+| Bounded-memory serving at any repo size: verbatim exact-pack streams, multi-pack clones via typed enumeration + per-object windowed encode | ✅ (T53/T55; docs/03 §3) |
+| Ops plane: pprof family, runtime snapshot, serve-path counters (`debug.pprof_addr`) | ✅ (T54) |
 | Tags and arbitrary `refs/<ns>` namespaces | ✅ |
 | SQLite metadata persistence + YAML config | ✅ |
 | Service layer + JSON API (`/api/v1/*`, error envelope) | ✅ |
@@ -100,7 +102,7 @@ directory timelines align both boundaries at the same granularity.
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
 | Gitaly gRPC frontend (act as GitLab's storage node) | 🚧 planned (docs/05 §4) |
 
-43 integration cases pin the behavior with the **real git CLI** as the client
+63 integration cases pin the behavior with the **real git CLI** as the client
 ([docs/13](docs/13-testing.md)) — the thin-CLI commit path is cross-verified
 by fresh git clones plus `fsck`.
 

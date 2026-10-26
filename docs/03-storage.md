@@ -132,6 +132,13 @@ wants = 客户端协商所得对象集合
          该 pack 流式直传（节点盘 → 网络 → 响应，256KiB 窗口；
          网关磁盘缓存命中则盘 → 响应，未命中边流边写穿缓存）
        ——闭包（对象字节驻留）完全跳过
+  ⓪' 多 pack clone 形态（精确命中 miss，docs/03 §3a 流式编码）：
+       响应缓存前置（同 wants 重复克隆免走查——旧路径命中缓存
+       仍要付全量 closure 计算）→ 类型化枚举（⓪ 同款）→
+       Placements 按 pack 分组（组内/组间排序定序，合成对象居首）
+       → StreamEncodePack 逐条目写（边哈希边 zlib，delta-free），
+       对象经读取梯子逐个窗口读——除当前对象外零驻留；
+       pack 组总字节 < 32MiB 的小仓回退 ⑤（保响应缓存收益）
   ① 快路径未命中 → 全局索引批量定位：oid → (pack_oid, node_id)
   ② 本地 pack cache（LRU，按 pack_oid 键）命中检查
   ③ 未命中的对象：单对象区间读取（idx 偏移 + 文件窗口解压，
@@ -164,9 +171,23 @@ wants = 客户端协商所得对象集合
 alloc profile 占 93.8%）、网关 `GetPack` 整包拉取 + closure 全图驻留。
 窗口化后各环节内存 ∝ 窗口（64KiB~256KiB）+ 对象数元数据，与包大小无关。
 
-仍为 O(闭包/段) 的已知路径（开放项）：非 clone 形态 fetch 的在线编码
-（closure 全图；其 verbatim 精确命中已流式化、超缓存上限的响应免整包
-缓冲直发）。已窗口化的配套路径（2026-10-25 二轮审查）：reconciler 副本
+### 3a. 多 pack clone 形态流式编码（2026-10-27，T55）——"进得去、出不来"关闭
+
+分批流式导入（§4）天然产多 pack 大仓，其完整 clone 的闭包不等于任何
+单 pack——精确命中必 miss，旧路径落进 closure() 的 O(闭包) 对象图
+（72MiB 仓在 64MiB 软限制下不可能完成）。三段流水线修复（§3 ⓪'）：
+**类型化枚举**（OID+类型，元数据索引，零对象字节）→ **按 pack 分组**
+（Placements 批量定位；组内组间排序定序输出，合成对象居首——集群线
+上 LRU 连续性防解码缓存抖动，本地线上即页缓存友好）→ **逐条目流式
+写出**（StreamEncodePack：pack 头带对象数故先枚举后写体；边哈希边
+zlib；delta-free——用 wire 尺寸换内存纪律，增量收益归 thin/在线
+delta 路径）。响应缓存前置：同 wants 重复克隆连枚举都免（旧路径
+命中缓存仍付全量 closure 计算）。实测 T55：**72MiB / 3 pack 完整
+clone 在 64MiB 软限制下完成，峰值堆 12.3MiB**（0.17×仓）。
+
+仍为 O(闭包/段) 的已知路径（开放项，已收窄）：**非 clone 形态**
+fetch 的在线编码（closure 全图——增量 fetch 经 have 扣除通常很小，
+真大的是 unshallow/deepen 大历史这类形态）。已窗口化的配套路径（2026-10-25 二轮审查）：reconciler 副本
 修复（源流式校验 + 目标各自流式拉取，节点落地二次校验）、repack 合并
 （组输入字节上限 256MiB + spool 编码 + 流式入册，不再双重解码）、
 decoded-pack memoize（总量 LRU 上限 256MiB，单包 32MiB 闸门之上再封顶）、
