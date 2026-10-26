@@ -898,9 +898,10 @@ func (s *ObjectService) OpenPackStream(ctx context.Context, repo string, packOID
 }
 
 // RepoBytes reports the repo's total pack bytes — the scale statistic
-// behind the full-clone budget (docs/11 §6) and the BANYAN_REPO_BYTES hook
-// env. Sizes are content-immutable and probe-cached (ingest primes them),
-// so after the first ask this is map lookups over the pack registry.
+// behind the full-clone budget (docs/11 §6) and the hook payload's
+// repo_bytes field (docs/04 §7). Sizes are content-immutable and
+// probe-cached (ingest primes them), so after the first ask this is map
+// lookups over the pack registry.
 func (s *ObjectService) RepoBytes(ctx context.Context, repo string) (int64, error) {
 	packs, err := s.Meta.ListPacks(ctx, repo)
 	if err != nil {

@@ -127,9 +127,40 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		}
 	}
 
+	// ①½ receive hooks (docs/04 §7): metadata-plane registry, HTTP
+	// callbacks. pre-receive sees every update before any ref moves
+	// (declined = the whole push dies); update runs per ref below;
+	// post-receive gets the applied set. Matching + payload live in
+	// hooks.go.
+	var hookBytes int64
+	if b, berr := s.Objects.RepoBytes(ctx, vr.Repo); berr == nil {
+		hookBytes = b
+	}
+	hookUpdates := func(list []refUpdate) []hookUpdateInfo {
+		out := make([]hookUpdateInfo, 0, len(list))
+		for _, u := range list {
+			out = append(out, hookUpdateInfo{
+				Old: hookOID(u.Old, s.Algo), New: hookOID(u.New, s.Algo), Ref: u.Name,
+			})
+		}
+		return out
+	}
+	if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "pre-receive", hookUpdates(updates), false); herr != nil {
+		// Wire shape mirrors receive-pack.c: "unpack ok", then every ref
+		// declined with the hook's first output line.
+		reason := strings.ReplaceAll(herr.Error(), "\n", " ")
+		_ = WritePacket(out, []byte("unpack ok\n"))
+		for _, u := range updates {
+			_ = WritePacket(out, []byte("ng "+u.Name+" "+reason+"\n"))
+		}
+		_ = WriteFlush(out)
+		return nil
+	}
+
 	// ②③ per-ref validation + head CAS. report-status mandates the order:
 	// the first pkt is "unpack ok", followed by per-ref statuses (mirrors receive-pack.c).
 	_ = WritePacket(out, []byte("unpack ok\n"))
+	var applied []refUpdate
 	for _, u := range updates {
 		// Ref namespaces: refs/heads/* are branch timelines (weave on read);
 		// any other refs/<ns>/<name> (tags, notes, custom) is an auxiliary
@@ -143,7 +174,13 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 				_ = WritePacket(out, []byte("ng "+u.Name+" permission denied\n"))
 				continue
 			}
-			s.handleAuxRefUpdate(ctx, out, vr, u.Old, u.New, u.Name)
+			if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "update", hookUpdates([]refUpdate{u}), false); herr != nil {
+				_ = WritePacket(out, []byte("ng "+u.Name+" "+strings.ReplaceAll(herr.Error(), "\n", " ")+"\n"))
+				continue
+			}
+			if s.handleAuxRefUpdate(ctx, out, vr, u.Old, u.New, u.Name) {
+				applied = append(applied, u)
+			}
 			continue
 		}
 		name := strings.TrimPrefix(u.Name, "refs/heads/")
@@ -153,6 +190,10 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		}
 		if name == "" {
 			_ = WritePacket(out, []byte("ng "+u.Name+" empty branch name\n"))
+			continue
+		}
+		if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "update", hookUpdates([]refUpdate{u}), false); herr != nil {
+			_ = WritePacket(out, []byte("ng "+u.Name+" "+strings.ReplaceAll(herr.Error(), "\n", " ")+"\n"))
 			continue
 		}
 		if u.New.IsZero() {
@@ -171,6 +212,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 				continue
 			}
 			_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
+			applied = append(applied, u)
 			continue
 		}
 		// The new head must exist (this pack just ingested it, or it is an
@@ -194,6 +236,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 					continue
 				}
 				_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
+				applied = append(applied, u)
 				s.warmView(vr.Repo, vr.Sub, name)
 				continue
 			}
@@ -202,6 +245,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 				continue
 			}
 			_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
+			applied = append(applied, u)
 			s.warmView(vr.Repo, vr.Sub, name)
 			continue
 		}
@@ -229,8 +273,15 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			continue
 		}
 		_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
+		applied = append(applied, u)
 		s.warmView(vr.Repo, model.RootAnchor, name)
 		log.Printf("receive-pack %s: /%s → %s", vr.Repo, name, u.New)
+	}
+
+	// post-receive: the applied set only, best-effort after every CAS won
+	// (git semantics — the push is already applied; failures are logged).
+	if len(applied) > 0 {
+		_ = s.fireHooks(ctx, vr, id.User, hookBytes, "post-receive", hookUpdates(applied), true)
 	}
 
 	_ = WriteFlush(out)
@@ -293,10 +344,10 @@ func (s *Server) warmView(repo string, sub model.AnchorPath, branch string) {
 // timeline name IS the full ref name; the head is the raw OID with no
 // derived-view semantics; deletion mirrors the branch path's expected
 // mapping (the advertised value equals the stored head).
-func (s *Server) handleAuxRefUpdate(ctx context.Context, out *bufWriter, vr VirtualRepo, old, newHead model.OID, refName string) {
+func (s *Server) handleAuxRefUpdate(ctx context.Context, out *bufWriter, vr VirtualRepo, old, newHead model.OID, refName string) bool {
 	if !vr.Sub.IsRoot() {
 		_ = WritePacket(out, []byte("ng "+refName+" auxiliary refs only supported in the root repo\n"))
-		return
+		return false
 	}
 	if !newHead.IsZero() {
 		// Any object type is a valid target (unlike branch heads): resolved
@@ -304,7 +355,7 @@ func (s *Server) handleAuxRefUpdate(ctx context.Context, out *bufWriter, vr Virt
 		// already-stored object).
 		if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, newHead); rerr != nil {
 			_ = WritePacket(out, []byte("ng "+refName+" target object missing\n"))
-			return
+			return false
 		}
 	}
 	tl := model.Timeline{Repo: vr.Repo, Anchor: model.RootAnchor, Name: refName}
@@ -314,10 +365,11 @@ func (s *Server) handleAuxRefUpdate(ctx context.Context, out *bufWriter, vr Virt
 	}
 	if err := s.Meta.CASHead(ctx, tl, expected, newHead); err != nil {
 		_ = WritePacket(out, []byte("ng "+refName+" "+err.Error()+"\n"))
-		return
+		return false
 	}
 	_ = WritePacket(out, []byte("ok "+refName+"\n"))
 	log.Printf("receive-pack %s: %s → %s", vr.Repo, refName, newHead)
+	return true
 }
 
 // adoptSubtreePush is the v5 write path for subtree pushes (docs/02 ÃÂ§13):

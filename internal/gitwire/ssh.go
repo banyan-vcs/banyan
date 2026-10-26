@@ -1,4 +1,4 @@
-// git-over-SSH transport (docs/04 §8): the native git transport shape — one
+// git-over-SSH transport (docs/04 §7b): the native git transport shape — one
 // connection authenticates with a public key (mapped to a user at the
 // auth.Service seam, docs/07 §7), then execs a git service over a session
 // channel:

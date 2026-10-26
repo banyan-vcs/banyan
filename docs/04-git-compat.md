@@ -188,9 +188,42 @@ T43 钉住（四种回滚形态拒绝 + 拒后 rebase 恢复路线 + 根视图�
 增量折叠（内容正确、历史混有旧织入体），下次重置/重启收敛。reset 失败
 仅记日志不回滚 CAS（回滚本身已落地）。
 
-## 7. hooks / 策略点
+## 7. hooks / 策略点（2026-10-25 落地，同日改为注册表模型，T47）
 
-`receive-pack.c` 的 pre-receive/post-receive/update 钩子在 banyan 中抽象为 `Policy` 接口（M1 仅日志策略）：push 校验、组装前准入（M4 合并队列的挂点）、CI 触发。
+`receive-pack.c` 的三钩子（pre-receive / update / post-receive）映射为
+**HTTP 回调**：注册表存于元数据面（refs 服务，SQLite 持久化），网关在
+push 时按注册表逐个回调——**多网关部署下所有网关评估同一份钩子，无任何
+网关本地状态**（首版为各网关本地文件树，因"网关不是单机服务"当日重构）。
+
+管理面：`/api/v1/repos/<repo>/hooks`（GET 列表 / PUT 按 ID upsert /
+DELETE?id=；字段 `{id, dir, events[], url, secret?, timeout_ms?}`，
+校验事件名与 URL 形态）。回调契约：POST JSON：
+
+```json
+{
+  "event": "pre-receive | update | post-receive",
+  "repo": "monorepo", "directory": "lib/nested", "user": "dev",
+  "repo_bytes": 123456,
+  "updates": [{"old": "<40 零或 OID>", "new": "<OID 或 40 零>", "ref": "refs/heads/main"}]
+}
+```
+
+- **2xx 放行；其他状态码/超时/不可达一律拒绝（fail-closed）**——策略端点
+  失联不能变成默认放行；拒绝时响应体首行回传客户端（git hook stderr 的
+  对应物）。
+- pre-receive 带**全部**更新（拒 = 整个 push 死，wire 形态同 receive-pack.c：
+  `unpack ok` + 每 ref `ng … hook declined`）；update 带单个被审 ref
+  （拒 = 只拒该 ref）；post-receive 带**已应用**集（尽力而为，失败仅记日志）。
+- **目录级作用域（banyan 扩展）**：`dir` 为 `""`（仓库级，匹配一切推送）
+  或目录路径（`lib`、`lib/nested`——匹配该目录及其子目录的子树推送）。
+  匹配的全部钩子按**最具体优先**逐个执行，任一拒绝即拒绝；根仓库推送
+  只匹配仓库级钩子。
+- 每钩子可配超时（默认 10s）与 `X-Banyan-Hook-Secret` 头；`repo_bytes`
+  是实时规模统计（pack 在 pre-receive 前已摄入）——规模策略可直接写进
+  回调服务。
+
+M1 设想的进程内 `Policy` 挂点（push 校验、CI 触发）复用同一注册表与
+payload 契约。
 
 ## 7b. SSH 传输（git-over-SSH，2026-10-25）
 

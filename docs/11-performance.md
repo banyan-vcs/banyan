@@ -249,7 +249,8 @@ repack 写放大与维护（限速已设计）、对象级保留缺失（远期�
   （段后 ERR 会被解析成 sideband 帧位——"bad band #N"教训）。
 - 豁免形态：增量 fetch（有 haves）、浅化（depth）、partial lazy 单对象
   fetch（want 非 tip）、子树视图 clone（天然有界）。
-- 统计失败 fail-open（规模查不到不阻断 fetch）。
+- 统计失败 fail-open（规模查不到不阻断 fetch）；`repo_bytes`
+  同值注入 hook 回调 payload（docs/04 §7），规模策略可写在回调服务里。
 
 动机：多 pack 大仓的完整 clone 走 O(闭包) 在线编码路径（docs/03 §3.1
 开放项）——预算闸门先于该路径把最坏情况挡在门外。

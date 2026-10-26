@@ -87,6 +87,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/list-repos", s.hListRepos)
 	meta.HandleFunc("/internal/meta/rename-repo", s.hRenameRepo)
 	meta.HandleFunc("/internal/meta/set-force-push", s.hSetForcePush)
+	meta.HandleFunc("/internal/meta/hooks", s.hHooks)
+	meta.HandleFunc("/internal/meta/hooks/delete", s.hDeleteHook)
 	meta.HandleFunc("/internal/meta/timeline", s.hTimeline)
 	meta.HandleFunc("/internal/meta/cas-head", s.hCASHead)
 	meta.HandleFunc("/internal/meta/ensure-timeline", s.hEnsureTimeline)
@@ -371,6 +373,47 @@ func (s *Server) hSetForcePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Meta.SetForcePush(r.Context(), req.Repo, req.Enabled); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// hHooks serves the receive-hook registry (docs/04 §7): a request with a
+// hook upserts it; without one it lists (the gateway's per-push lookup).
+func (s *Server) hHooks(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Repo string           `json:"repo"`
+		Hook *storage.HookInfo `json:"hook"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if req.Hook == nil {
+		hooks, err := s.Meta.ListHooks(r.Context(), req.Repo)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"hooks": hooks})
+		return
+	}
+	if err := s.Meta.SetHook(r.Context(), req.Repo, *req.Hook); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) hDeleteHook(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Repo string `json:"repo"`
+		ID   string `json:"id"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.DeleteHook(r.Context(), req.Repo, req.ID); err != nil {
 		writeErr(w, err)
 		return
 	}

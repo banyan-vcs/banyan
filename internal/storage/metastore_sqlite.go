@@ -62,6 +62,16 @@ CREATE TABLE IF NOT EXISTS placement(
 	repo     TEXT PRIMARY KEY,
 	replicas INTEGER NOT NULL DEFAULT 0    -- 0 = cluster default (docs/10 §3)
 );
+CREATE TABLE IF NOT EXISTS hooks(
+	repo       TEXT NOT NULL,
+	id         TEXT NOT NULL,
+	dir        TEXT NOT NULL DEFAULT '',   -- scope: '' = repo level, else directory path
+	events     TEXT NOT NULL,             -- comma-separated event names
+	url        TEXT NOT NULL,
+	secret     TEXT NOT NULL DEFAULT '',
+	timeout_ms INTEGER NOT NULL DEFAULT 0, -- 0 = gateway default
+	PRIMARY KEY(repo, id)
+) WITHOUT ROWID;
 `
 
 // sqliteDSN builds the connection string. Pragmas must ride the DSN:
@@ -204,6 +214,47 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func (s *SQLiteMetaStore) ListHooks(ctx context.Context, repo string) ([]HookInfo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, dir, events, url, secret, timeout_ms FROM hooks WHERE repo=? ORDER BY id", repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HookInfo
+	for rows.Next() {
+		var h HookInfo
+		var events string
+		if err := rows.Scan(&h.ID, &h.Dir, &events, &h.URL, &h.Secret, &h.TimeoutMS); err != nil {
+			return nil, err
+		}
+		h.Events = strings.Split(events, ",")
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteMetaStore) SetHook(ctx context.Context, repo string, h HookInfo) error {
+	if err := h.validate(); err != nil {
+		return err
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM repos WHERE name=?", repo).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO hooks(repo, id, dir, events, url, secret, timeout_ms)
+		VALUES(?,?,?,?,?,?,?)`, repo, h.ID, h.Dir, strings.Join(h.Events, ","), h.URL, h.Secret, h.TimeoutMS)
+	return err
+}
+
+func (s *SQLiteMetaStore) DeleteHook(ctx context.Context, repo, id string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM hooks WHERE repo=? AND id=?", repo, id)
+	return err
 }
 
 func (s *SQLiteMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {

@@ -386,8 +386,47 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
-	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size") {
-		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size)"}})
+	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks") {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks)"}})
+		return
+	}
+	if parts[1] == "hooks" {
+		// Receive-hook registry (docs/04 §7): registrations live in the
+		// metadata plane so every gateway evaluates the same hooks. Same
+		// authentication gate as repo administration.
+		repo := parts[0]
+		switch r.Method {
+		case http.MethodGet:
+			hooks, err := s.Meta.ListHooks(r.Context(), repo)
+			if err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "hooks": hooks})
+		case http.MethodPut:
+			var hook storage.HookInfo
+			if !decodeBody(w, r, &hook) {
+				return
+			}
+			if err := s.Meta.SetHook(r.Context(), repo, hook); err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		case http.MethodDelete:
+			id := r.URL.Query().Get("id")
+			if id == "" {
+				writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "id query parameter required"}})
+				return
+			}
+			if err := s.Meta.DeleteHook(r.Context(), repo, id); err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET, PUT or DELETE"}})
+		}
 		return
 	}
 	if parts[1] == "size" {

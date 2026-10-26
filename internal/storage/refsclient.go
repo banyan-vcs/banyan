@@ -183,6 +183,28 @@ func (m *RemoteMeta) SetForcePush(ctx context.Context, repo string, enabled bool
 		map[string]any{"repo": repo, "enabled": enabled}, nil)
 }
 
+// ListHooks fetches the repo's receive-hook registry (docs/04 §7).
+func (m *RemoteMeta) ListHooks(ctx context.Context, repo string) ([]HookInfo, error) {
+	var out struct {
+		Hooks []HookInfo `json:"hooks"`
+	}
+	if err := m.Refs.call(ctx, "/internal/meta/hooks",
+		map[string]string{"repo": repo}, &out); err != nil {
+		return nil, err
+	}
+	return out.Hooks, nil
+}
+
+func (m *RemoteMeta) SetHook(ctx context.Context, repo string, h HookInfo) error {
+	body := map[string]any{"repo": repo, "hook": h}
+	return m.Refs.call(ctx, "/internal/meta/hooks", body, nil)
+}
+
+func (m *RemoteMeta) DeleteHook(ctx context.Context, repo, id string) error {
+	return m.Refs.call(ctx, "/internal/meta/hooks/delete",
+		map[string]string{"repo": repo, "id": id}, nil)
+}
+
 func (m *RemoteMeta) PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {
 	oids := make([]string, len(objects))
 	for i, o := range objects {

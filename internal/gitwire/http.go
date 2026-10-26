@@ -73,7 +73,7 @@ type Server struct {
 	// passes through it. Wired by cmd/banyand per role.
 	Auth auth.Service
 	// SSHHostKey signs the git-over-SSH transport's server key exchange
-	// (docs/04 §8); wired by cmd/banyand (generated/persisted host key).
+	// (docs/04 §7b); wired by cmd/banyand (generated/persisted host key).
 	SSHHostKey ssh.Signer
 
 	// Convergence enables the M4 workflow semantics (docs/15): same-
@@ -83,6 +83,11 @@ type Server struct {
 	// reject-and-rebase behavior; cmd/banyand turns it on via config.
 	Convergence bool
 
+	// Hooks overrides the webhook client used to evaluate registered
+	// receive hooks (docs/04 §7) — nil uses the default. Hook
+	// REGISTRATIONS live in the metadata plane (multi-gateway consistent);
+	// this field only swaps the delivery transport (tests inject one).
+	Hooks *WebhookRunner
 	// FullCloneMaxBytes is the repo-size budget for clone-shaped fetches
 	// (docs/11 §6): at or above it the gateway rejects full clones and
 	// points the client at partial/shallow clones. 0 = the 100 GiB default;

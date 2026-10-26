@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/model"
@@ -19,6 +20,58 @@ type MetaStore interface {
 	ObjectIndex
 	TimelineStore
 	PlacementStore
+	HookRegistry
+}
+
+// HookInfo is one registered receive hook (docs/04 §7): an HTTP callback
+// evaluated by the serving gateway at push time. Configuration lives in the
+// metadata plane so every gateway sees the same hooks — no gateway-local
+// state in multi-gateway deployments.
+type HookInfo struct {
+	ID     string   `json:"id"`      // operator-chosen stable key (upsert by it)
+	Dir    string   `json:"dir"`     // scope: "" = repo level, "lib" = directory subtree
+	Events []string `json:"events"`  // pre-receive | update | post-receive
+	URL    string   `json:"url"`     // callback target (2xx = allow)
+	Secret string   `json:"secret,omitempty"`  // sent as X-Banyan-Hook-Secret
+	TimeoutMS int   `json:"timeout_ms,omitempty"` // 0 = default 10s
+}
+
+// Valid hook event names.
+var HookEvents = map[string]bool{"pre-receive": true, "update": true, "post-receive": true}
+
+type HookRegistry interface {
+	// ListHooks returns the repo's registered hooks (docs/04 §7).
+	ListHooks(ctx context.Context, repo string) ([]HookInfo, error)
+	// SetHook upserts one hook by ID. Validates events/ID shape.
+	SetHook(ctx context.Context, repo string, h HookInfo) error
+	// DeleteHook removes one hook by ID (missing = no-op).
+	DeleteHook(ctx context.Context, repo, id string) error
+}
+
+func (h HookInfo) validate() error {
+	if h.ID == "" || strings.ContainsAny(h.ID, "/\\ ") {
+		return fmt.Errorf("hook id must be a non-empty single token")
+	}
+	if h.URL == "" || !strings.HasPrefix(h.URL, "http://") && !strings.HasPrefix(h.URL, "https://") {
+		return fmt.Errorf("hook url must be http(s)")
+	}
+	for _, seg := range strings.FieldsFunc(h.Dir, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("hook dir must be a clean directory path")
+		}
+	}
+	if strings.ContainsAny(h.Dir, "\\") || strings.HasPrefix(h.Dir, "/") || strings.HasSuffix(h.Dir, "/") {
+		return fmt.Errorf("hook dir must be a clean directory path (no leading/trailing slash)")
+	}
+	if len(h.Events) == 0 {
+		return fmt.Errorf("hook needs at least one event")
+	}
+	for _, e := range h.Events {
+		if !HookEvents[e] {
+			return fmt.Errorf("unknown hook event %q", e)
+		}
+	}
+	return nil
 }
 
 // RepoRegistry is the repo table.
@@ -135,7 +188,8 @@ type MemoryMetaStore struct {
 	packObjs   map[string]map[model.OID][]model.OID // repo → packOID → objects
 	index      map[string]map[model.OID]ObjectLocation
 	timelines  map[string]map[model.Timeline]model.TimelineState
-	placements map[string]int // repo → replica target (0 = cluster default)
+	placements map[string]int             // repo → replica target (0 = cluster default)
+	hooks      map[string]map[string]HookInfo // repo → hook ID → registration
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
@@ -146,6 +200,7 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 		index:      map[string]map[model.OID]ObjectLocation{},
 		timelines:  map[string]map[model.Timeline]model.TimelineState{},
 		placements: map[string]int{},
+		hooks:      map[string]map[string]HookInfo{},
 	}
 }
 
@@ -216,6 +271,42 @@ func (m *MemoryMetaStore) SetForcePush(_ context.Context, repo string, enabled b
 	}
 	info.ForcePush = enabled
 	m.repos[repo] = info
+	return nil
+}
+
+func (m *MemoryMetaStore) ListHooks(_ context.Context, repo string) ([]HookInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []HookInfo
+	for _, h := range m.hooks[repo] {
+		out = append(out, h)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (m *MemoryMetaStore) SetHook(_ context.Context, repo string, h HookInfo) error {
+	if err := h.validate(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.repos[repo]; !ok {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	if m.hooks[repo] == nil {
+		m.hooks[repo] = map[string]HookInfo{}
+	}
+	m.hooks[repo][h.ID] = h
+	return nil
+}
+
+func (m *MemoryMetaStore) DeleteHook(_ context.Context, repo, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.hooks[repo] != nil {
+		delete(m.hooks[repo], id)
+	}
 	return nil
 }
 
