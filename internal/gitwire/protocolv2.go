@@ -421,6 +421,16 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 		}
 	}
 
+	// Deepen-shaped (docs/03 §3): shallow clone / deepen / unshallow — the
+	// shallow-info section is already written; the pack streams like a
+	// clone, with the same depth/graft/have pruning the ladder applies.
+	if fa.filter == nil && (fa.depth > 0 || len(fa.clientShallow) > 0) {
+		if s.tryDeepenServe(ctx, sb, vr, fa.wants, fa.depth, fa.clientShallow, fa.haves) {
+			_ = WriteFlush(out)
+			return
+		}
+	}
+
 	closureStart := time.Now()
 	blobs, trees, commits, tags, excluded, cerr := s.closure(ctx, vr, fa.wants, fa.depth, fa.clientShallow, fa.haves, fa.filter)
 	if cerr != nil {
