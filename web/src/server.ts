@@ -13,6 +13,7 @@ import { URL } from "url";
 import * as crypto from "crypto";
 import * as banyan from "./banyan";
 import * as render from "./render";
+import { AVATAR_PNG } from "./avatar";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const BANYAN = process.env.BANYAN_URL || "http://127.0.0.1:8080";
@@ -75,6 +76,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   const sess = sessionOf(req);
 
   try {
+    // ---- static: the project avatar (favicon + header brand) ----
+    if (path === "/avatar.png") {
+      res.writeHead(200, {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=86400",
+      });
+      res.end(AVATAR_PNG);
+      return;
+    }
+
     // ---- session lifecycle ----
     if (path === "/login" && req.method === "GET") {
       return send(res, render.loginPage());

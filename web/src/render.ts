@@ -14,7 +14,7 @@ export function esc(s: string): string {
 
 function layout(title: string, user: string, body: string): string {
   return `<!doctype html>
-<html><head><meta charset="utf-8"><title>${esc(title)} · banyan</title>
+<html><head><meta charset="utf-8"><link rel="icon" href="/avatar.png" type="image/png"><title>${esc(title)} · banyan</title>
 <style>
  body{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;background:#f6f7f9;color:#1c2430}
  header{background:#16351f;color:#fff;padding:10px 20px;display:flex;align-items:center;gap:16px}
@@ -32,7 +32,7 @@ function layout(title: string, user: string, body: string): string {
  .crumbs a{color:#16351f}
  form.inline{display:inline}
 </style></head><body>
-<header><span class="brand">&#127795; banyan</span>
+<header><span class="brand"><img src="/avatar.png" alt="" style="width:22px;height:22px;border-radius:5px;vertical-align:-5px"> banyan</span>
  <a href="/">repositories</a>
  <span style="flex:1"></span>
  ${user ? `<span class="pill">${esc(user)}</span><form class="inline" method="post" action="/logout"><button class="btn" style="background:#2c5e3d">log out</button></form>` : `<a href="/login">log in</a>`}
