@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,8 +23,27 @@ type NodeClient struct {
 	HTTP *http.Client
 }
 
+// Node request timeouts are layered (docs/10 §3): connection setup and
+// response headers get fixed transport budgets — the only phases with no
+// progress signal — while body streaming is governed by the caller's ctx
+// alone. A whole-client Timeout would cap every body read: a multi-GB pack
+// transfer would die at the 5-minute mark regardless of steady progress,
+// and a stalled small read would wait the full budget for nothing.
+var (
+	nodeDialTimeout         = 10 * time.Second
+	nodeResponseHeaderWait  = 60 * time.Second
+	nodeTLSHandshakeTimeout = 10 * time.Second
+)
+
 func NewNodeClient(addr string) *NodeClient {
-	return &NodeClient{Addr: addr, HTTP: &http.Client{Timeout: 5 * time.Minute}}
+	return &NodeClient{Addr: addr, HTTP: &http.Client{
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: nodeDialTimeout, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   nodeTLSHandshakeTimeout,
+			ResponseHeaderTimeout: nodeResponseHeaderWait,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}}
 }
 
 func (n *NodeClient) packURL(repo string, packOID model.OID) string {
