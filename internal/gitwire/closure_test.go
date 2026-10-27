@@ -138,7 +138,7 @@ func TestEnumerateClosureTypeZoo(t *testing.T) {
 	z, srv := ingestZoo(t)
 	vr := VirtualRepo{Repo: "r"}
 
-	typed, err := srv.enumerateClosure(t.Context(), vr, []model.OID{z.tag})
+	typed, err := srv.enumerateClosure(t.Context(), vr, []model.OID{z.tag}, enumerateOpts{})
 	require.NoError(t, err)
 
 	// The annotated tag itself belongs to the served set (git clones the
@@ -158,11 +158,98 @@ func TestEnumerateClosureTypeZoo(t *testing.T) {
 	assert.False(t, hasGitlink, "gitlink points into another repo — never part of this store's packs")
 
 	// A branch-shaped want carries no tag object.
-	typed, err = srv.enumerateClosure(t.Context(), vr, []model.OID{z.commit2})
+	typed, err = srv.enumerateClosure(t.Context(), vr, []model.OID{z.commit2}, enumerateOpts{})
 	require.NoError(t, err)
 	_, hasTag := typed[z.tag]
 	assert.False(t, hasTag)
 	assert.Len(t, typed, 9)
+}
+
+// TestEnumerateClosureDepth pins the deepen semantics of the typed
+// enumeration: depth bounds the commit walk, boundary commits keep their
+// tree closures, parents below the cut stay out (the client grafts).
+func TestEnumerateClosureDepth(t *testing.T) {
+	z, srv := ingestZoo(t)
+	vr := VirtualRepo{Repo: "r"}
+
+	// depth=1: the tip commit, its two trees and four blobs — no parents.
+	typed, err := srv.enumerateClosure(t.Context(), vr, []model.OID{z.commit2}, enumerateOpts{depth: 1})
+	require.NoError(t, err)
+	assert.Len(t, typed, 7, "commit + 2 trees + 4 blobs")
+	assert.Contains(t, typed, z.commit2)
+	assert.Contains(t, typed, z.tree2)
+	assert.Contains(t, typed, z.subTree)
+	assert.NotContains(t, typed, z.commit1, "parent below the depth cut stays out")
+	assert.NotContains(t, typed, z.tree1)
+
+	// depth=2 reaches the root commit; its tree shares the same blobs.
+	typed, err = srv.enumerateClosure(t.Context(), vr, []model.OID{z.commit2}, enumerateOpts{depth: 2})
+	require.NoError(t, err)
+	assert.Len(t, typed, 9, "both commits + 3 trees + 4 shared blobs")
+	assert.Contains(t, typed, z.commit1)
+	assert.Contains(t, typed, z.tree1)
+
+	// An unshallow-shaped request (huge depth, graft at the tip, tip held):
+	// the held commit's tree closure is excluded (client has it), but the
+	// want itself is never excluded (closure() parity — a degenerate client
+	// that wants what it has must still receive it), and the walk traverses
+	// through the graft into the ancestry below.
+	typed, err = srv.enumerateClosure(t.Context(), vr, []model.OID{z.commit2},
+		enumerateOpts{depth: 2147483647, clientShallow: []model.OID{z.commit2}, haves: []model.OID{z.commit2}})
+	require.NoError(t, err)
+	assert.Equal(t, map[model.OID]model.ObjectType{
+		z.commit2: model.CommitType,
+		z.commit1: model.CommitType,
+		z.tree1:   model.TreeType,
+	}, typed, "unshallow sends the want, its ancestry below the graft, and only the trees the client lacks")
+}
+
+// TestEnumerateClosureEquivalence is the contract that keeps the streaming
+// rung honest: for every fetch shape, the typed enumeration and the ladder's
+// closure() must produce the same object SET (the ladder carries bytes, the
+// enumeration carries types — one object off and the streamed pack is
+// wrong). Combinations cover clone-shaped, every depth cut, plain fetch
+// from a shallow client, deepen-with-haves and unshallow.
+func TestEnumerateClosureEquivalence(t *testing.T) {
+	z, srv := ingestZoo(t)
+	vr := VirtualRepo{Repo: "r"}
+
+	cases := []struct {
+		name          string
+		depth         int
+		clientShallow []model.OID
+		haves         []model.OID
+	}{
+		{"clone-shaped", 0, nil, nil},
+		{"depth-1", 1, nil, nil},
+		{"depth-2", 2, nil, nil},
+		{"depth-beyond-history", 1000000, nil, nil},
+		{"plain-fetch-shallow-client", 0, []model.OID{z.commit1}, nil},
+		{"plain-fetch-shallow-client-with-have", 0, []model.OID{z.commit1}, []model.OID{z.commit2}},
+		{"deepen-with-have", 2, nil, []model.OID{z.commit1}},
+		{"unshallow", 2147483647, []model.OID{z.commit2}, []model.OID{z.commit2}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blobs, trees, commits, tags, _, err := srv.closure(t.Context(), vr, []model.OID{z.commit2}, tc.depth, tc.clientShallow, tc.haves, nil)
+			require.NoError(t, err, "ladder closure: %s", tc.name)
+			want := map[model.OID]bool{}
+			for _, m := range []map[model.OID][]byte{blobs, trees, commits, tags} {
+				for oid := range m {
+					want[oid] = true
+				}
+			}
+
+			typed, err := srv.enumerateClosure(t.Context(), vr, []model.OID{z.commit2},
+				enumerateOpts{depth: tc.depth, clientShallow: tc.clientShallow, haves: tc.haves})
+			require.NoError(t, err, "typed enumeration: %s", tc.name)
+			got := map[model.OID]bool{}
+			for oid := range typed {
+				got[oid] = true
+			}
+			assert.Equal(t, want, got, "typed enumeration must equal the ladder's object set")
+		})
+	}
 }
 
 func TestCountServeRungClassification(t *testing.T) {

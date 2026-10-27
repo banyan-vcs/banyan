@@ -230,6 +230,17 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 		}
 	}
 
+	// Deepen-shaped (docs/03 §3): shallow clone / deepen / unshallow carry
+	// depth/shallow state — the ladder's closure would materialize every
+	// object body, the streaming rung carries the same depth/graft/have
+	// pruning typed (the shallow section is already on the wire above).
+	if st.filter == nil && (st.depth > 0 || len(st.clientShallow) > 0) {
+		if s.tryDeepenServe(ctx, out, vr, st.wants, st.depth, st.clientShallow, st.haves) {
+			_ = out.Flush()
+			return
+		}
+	}
+
 	closureStart := time.Now()
 	blobs, trees, commits, tags, exclude, err := s.closure(ctx, vr, st.wants, st.depth, st.clientShallow, st.haves, st.filter)
 	closureDur := time.Since(closureStart)
@@ -356,6 +367,20 @@ func filterSpecName(f *FilterSpec) string {
 	return f.Spec()
 }
 
+// enumerateOpts carries the non-clone-shaped fetch state into the typed
+// enumeration. Zero value = clone-shaped (the original semantics). The
+// pruning mirrors closure() exactly — the two must stay set-equivalent
+// (pinned by TestEnumerateClosureEquivalence): depth bounds the commit walk
+// (boundary commits are included with their trees, parents pruned; the
+// client grafts via .git/shallow), and haves bound the exclusion set with
+// the walk traversing THROUGH client-shallow grafts (what sits below an
+// excluded commit may still be wanted by deepen/unshallow).
+type enumerateOpts struct {
+	depth         int         // >0: deepen/shallow fetch — parent chains prune at the shallow boundary
+	clientShallow []model.OID // the client's graft points (deepen/unshallow reports)
+	haves         []model.OID // client-held tips; their closure (bounded by clientShallow) is excluded
+}
+
 // enumerateClosure walks the want closure collecting OIDs and their types
 // only (docs/03 §5, the streaming-serve enumeration) — type-directed, so
 // object bodies never enter memory: commits and trees resolve through the
@@ -363,13 +388,31 @@ func filterSpecName(f *FilterSpec) string {
 // subtree, gitlink → a commit in another repo this store does not hold,
 // everything else → blob leaf), and only wants/tags the index cannot type
 // pay one Raw (tags are small; a blob/tree want is not clone-shaped but
-// stays correct). The resulting set equals what closure() yields for the
-// same clone-shaped request (no haves/depth/filter/shallow) — at a fraction
-// of the memory. The types feed both the exact-pack probe and the
-// streaming encoder (pack entries need the type bits; re-reading each
-// object through Raw re-derives them as the authoritative check).
-func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []model.OID) (map[model.OID]model.ObjectType, error) {
-	s.Objects.Prefetch(ctx, vr.Repo, wants)
+// stays correct). With zero opts the set equals what closure() yields for
+// the same clone-shaped request; with depth/shallow/haves it equals the
+// ladder's deepen/have-subtracted set — at a fraction of the memory (no
+// object bytes). The types feed both the exact-pack probe and the streaming
+// encoder (pack entries need the type bits; re-reading each object through
+// Raw re-derives them as the authoritative check).
+func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []model.OID, opts enumerateOpts) (map[model.OID]model.ObjectType, error) {
+	s.Objects.Prefetch(ctx, vr.Repo, append(append(append([]model.OID{}, wants...), opts.haves...), opts.clientShallow...))
+	exclude := map[model.OID]bool{}
+	if len(opts.haves) > 0 {
+		exclude = s.haveClosure(ctx, vr.Repo, opts.haves, opts.clientShallow)
+		for _, w := range wants {
+			delete(exclude, w) // a degenerate client that wants what it has must still receive it
+		}
+	}
+	var boundary map[model.OID]bool
+	switch {
+	case opts.depth > 0:
+		_, boundary = s.shallowCut(vr.Repo, wants, opts.depth)
+	case len(opts.clientShallow) > 0:
+		boundary = map[model.OID]bool{}
+		for _, oid := range opts.clientShallow {
+			boundary[oid] = true
+		}
+	}
 	types := make(map[model.OID]model.ObjectType, 1024)
 	type item struct {
 		oid model.OID
@@ -394,10 +437,26 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 			queue = append(queue, item{tg.Object, tg.Type})
 		}
 	}
+	seen := map[model.OID]bool{}
 	for len(queue) > 0 {
 		it := queue[0]
 		queue = queue[1:]
-		if _, done := types[it.oid]; done {
+		if seen[it.oid] {
+			continue
+		}
+		seen[it.oid] = true
+		if exclude[it.oid] {
+			// The client provably has it (reachable from haves, bounded by
+			// its grafts) — same traverse-through rule as closure(): a
+			// shallow client's history is grafted at the boundary, and what
+			// sits BELOW an excluded commit may still be wanted.
+			if len(opts.clientShallow) > 0 && !boundary[it.oid] {
+				if ci, err := s.Objects.CommitInfo(vr.Repo, it.oid); err == nil {
+					for _, p := range ci.Parents {
+						queue = append(queue, item{p, model.CommitType})
+					}
+				}
+			}
 			continue
 		}
 		types[it.oid] = it.t
@@ -409,8 +468,10 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 				return nil, err
 			}
 			queue = append(queue, item{ci.Tree, model.TreeType})
-			for _, p := range ci.Parents {
-				queue = append(queue, item{p, model.CommitType})
+			if !boundary[it.oid] { // boundary commits: parents stay out, client grafts
+				for _, p := range ci.Parents {
+					queue = append(queue, item{p, model.CommitType})
+				}
 			}
 		case model.TreeType:
 			entries, err := s.Objects.TreeEntries(vr.Repo, it.oid)
@@ -421,6 +482,9 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 			for _, e := range entries {
 				if e.Mode == "160000" {
 					continue // gitlink: never part of this repo's packs
+				}
+				if exclude[e.Target] {
+					continue // the walk never visits excluded objects (closure() parity)
 				}
 				if e.IsDir {
 					children = append(children, e.Target)
@@ -456,7 +520,7 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 // MID-copy is terminal (bytes are already on the wire, same as any dropped
 // response).
 func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID) (string, bool) {
-	oids, err := s.enumerateClosure(ctx, vr, wants)
+	oids, err := s.enumerateClosure(ctx, vr, wants, enumerateOpts{})
 	if err != nil {
 		return "", false
 	}
@@ -516,10 +580,45 @@ func (s *Server) tryStreamingServe(ctx context.Context, out io.Writer, vr Virtua
 			return true
 		}
 	}
-	typed, err := s.enumerateClosure(ctx, vr, wants)
+	typed, err := s.enumerateClosure(ctx, vr, wants, enumerateOpts{})
 	if err != nil || len(typed) == 0 {
 		return false // the closure path reports enumeration errors with referrer context
 	}
+	return s.streamTypedPack(ctx, out, vr, typed, "clone", len(wants))
+}
+
+// tryDeepenServe is the deepen-shaped streaming rung (docs/03 §3): shallow
+// clones, deepen and unshallow carry depth/shallow state instead of plain
+// clone shape, and the ladder's closure materializes every object body —
+// the last O(closure bytes) serving hazard. The typed enumeration carries
+// the same depth boundaries, grafts and have exclusions as closure()
+// (set-equivalence pinned by unit test), so unshallowing a multi-pack
+// repository streams entry by entry under the same small window as a
+// clone. The shallow section itself is protocol-level and already on the
+// wire (v1 writeShallowSection / v2 shallow-info); this rung only produces
+// the pack. Thin packs and filtered fetches stay on the ladder (bases
+// outside the pack / bounded sets by construction).
+func (s *Server) tryDeepenServe(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID, depth int, clientShallow, haves []model.OID) bool {
+	typed, err := s.enumerateClosure(ctx, vr, wants, enumerateOpts{depth: depth, clientShallow: clientShallow, haves: haves})
+	if err != nil || len(typed) == 0 {
+		return false // the ladder reports enumeration errors with referrer context
+	}
+	return s.streamTypedPack(ctx, out, vr, typed, "deepen", len(wants))
+}
+
+// streamTypedPack stages 2-3 of the streaming rung shared by the clone and
+// deepen shapes: objects grouped by pack (Placements; groups and members
+// sorted for determinism, unplaced/synthetic first) so the read ladder
+// touches each pack once — LRU contiguity on the cluster wire, page-cache
+// contiguity locally — then one delta-free pack written entry by entry
+// (StreamEncodePack: hash + zlib on the fly; the type bits come from the
+// enumeration, Raw re-derives them as the authoritative check).
+//
+// Small repositories (pack-group bytes below streamServeMinPackBytes)
+// return false and keep the closure+encode+cache ladder. A miss before the
+// first byte falls back to the closure path; a break mid-encode is
+// terminal like any dropped response.
+func (s *Server) streamTypedPack(ctx context.Context, out io.Writer, vr VirtualRepo, typed map[model.OID]model.ObjectType, shape string, nwants int) bool {
 	oids := make([]model.OID, 0, len(typed))
 	for oid := range typed {
 		oids = append(oids, oid)
@@ -585,8 +684,8 @@ func (s *Server) tryStreamingServe(ctx context.Context, out io.Writer, vr Virtua
 			npacks++
 		}
 	}
-	log.Printf("upload-pack %s%s: %d wants → %d objects streamed from %d packs, %.1f MiB packs (closure skipped, %s)",
-		vr.Repo, vr.Sub, len(wants), len(order), npacks, float64(total)/(1<<20), time.Since(start).Round(time.Millisecond))
+	log.Printf("upload-pack %s%s: %d wants → %d objects streamed from %d packs, %.1f MiB packs (%s, closure skipped, %s)",
+		vr.Repo, vr.Sub, nwants, len(order), npacks, float64(total)/(1<<20), shape, time.Since(start).Round(time.Millisecond))
 	return true
 }
 
@@ -854,10 +953,16 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			// count falls from O(objects) to O(trees).
 			children := make([]model.OID, 0, len(entries))
 			for _, e := range entries {
+				if e.Mode == "160000" {
+					continue // gitlink: a commit in another repo — never part of this store's packs (T53 parity)
+				}
 				children = append(children, e.Target)
 			}
 			s.Objects.Prefetch(ctx, vr.Repo, children)
 			for _, e := range entries {
+				if e.Mode == "160000" {
+					continue
+				}
 				enq(e.Target)
 			}
 		case model.BlobType:
