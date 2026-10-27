@@ -102,7 +102,7 @@ directory timelines align both boundaries at the same granularity.
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
 | Gitaly gRPC frontend (act as GitLab's storage node) | 🚧 planned (docs/05 §4) |
 
-63 integration cases pin the behavior with the **real git CLI** as the client
+64 integration cases pin the behavior with the **real git CLI** as the client
 ([docs/13](docs/13-testing.md)) — the thin-CLI commit path is cross-verified
 by fresh git clones plus `fsck`.
 

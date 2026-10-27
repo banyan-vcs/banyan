@@ -70,7 +70,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | token 认证 + 建仓收紧、diff/blame RPC | 🚧 下一步（M5 / M2–M3） |
 | Gitaly gRPC 前端（作为 GitLab 底层存储节点） | 🚧 规划中（docs/05 §4） |
 
-63 个集成用例以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
+64 个集成用例以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证。
 
 ## 代码结构
