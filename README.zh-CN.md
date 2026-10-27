@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/avatar.png" width="120" alt="banyan" /></p>
+
 # Banyan（榕树）
 
 [English](README.md) | **简体中文**

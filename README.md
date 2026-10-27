@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/avatar.png" width="120" alt="banyan" /></p>
+
 # Banyan
 
 **English** | [简体中文](README.zh-CN.md)
