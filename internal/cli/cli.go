@@ -26,6 +26,8 @@ workspace commands (run inside a clone — any subdirectory — or with -C):
   fetch-objects <oid>...                                      backfill objects into the cache
   branch | tag                                                list remote refs
   repo ls                                                     list server repos (needs a workspace or BANYAN_SERVER)
+  import <repo> <url> [--branch b] [--segment-bytes 3G] [--dry-run]
+                                                              bulk-migrate a local git repo, segment by segment
 
 exit codes: 0 ok · 1 conflict · 2 server/usage error · 3 network`
 
@@ -66,6 +68,8 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return runRefsList(wsRoot, rest, stdout, stderr, "refs/tags/")
 	case "repo":
 		return runRepo(wsRoot, rest, stdout, stderr)
+	case "import":
+		return runImport(wsRoot, rest, stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usageText)
 		return 0
