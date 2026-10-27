@@ -110,9 +110,10 @@ type MetaStore      interface { 上述全部 }                              // c
 
 **结论：M2 选关系型（SQLite 起步，MySQL/PG 平滑接替）；KV 不作整体首选**——其优势区（亿级 insert-only 点查）目前仅 objects 一张表，且已通过接口隔离预留迁移路径；把 ref-map 的 CAS 与枚举塞进 KV 是用短板换长板。
 
-### 2.3 SQLite 实现要点
+### 2.3 SQL 后端实现要点（SQLite 单机 / MySQL、PostgreSQL 集群）
 
 - 驱动 `modernc.org/sqlite`（纯 Go、无 cgo——OS 无关，见 AGENTS.md）。
+- 方言层（2026-10-27，HA-2）：MySQL（go-sql-driver）/PG（pgx）共享一套 schema 与全部语句，分歧点=DLL 类型与索引长度/OR IGNORE 与 UPSERT 拼写/占位符 rebind（?→$N）/唯一冲突判定（1062/23505）；CAS 在 MVCC 后端改为 SELECT...FOR UPDATE + 插入竞态按 PK 冲突归 ErrNonFastForward；conformance 矩阵四后端同一套（env 门控 BANYAN_TEST_{MYSQL,POSTGRES}_DSN）。
 - PRAGMA：`journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=5000`。
 - `objects` 表 `WITHOUT ROWID`（主键聚簇，点查即索引扫描）；插入按 500 行/事务分块。
 - CAS：`BEGIN IMMEDIATE` 内 SELECT-比-UPDATE/DELETE，失败回滚映射 `ErrNonFastForward`（与 git push 语义一致，docs/02 §4.3）。
