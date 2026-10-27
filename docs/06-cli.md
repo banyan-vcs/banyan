@@ -164,3 +164,17 @@ banyan 不隐藏 git：`--git` 仓内 `git status` / IDE 全部可用；薄工�
 `internal/cli` + `cmd/banyan`，T22/T22b 以真 git 客户端交叉验证（fresh clone +
 fsck + 逐字节内容断言）。薄工作区语义即 §2/§4 设计原样：无 .git、无历史下载、
 commit 即发布（changeset 服务端组装 + 目录时间线 CAS）、冲突退出码 1。
+
+### 3.6 批量导入（2026-10-27 落地，T59）
+
+```
+banyan import <local-repo> <url> [--branch main] [--segment-bytes 3G] [--dry-run]
+```
+
+存量大仓迁移工具（docs/03 §5 分批导入的编排层）：把本地 git 仓库按拓扑序
+切成字节预算内的段、逐段 `git push` 到 banyan——每段一次快进，服务端流式
+摄入、内存 ∝ 段大小而非仓大小；碎片在多 pack 模型下是一等公民（不 repack）。
+断点续传天然成立：重跑从远端已有 tip 起算（分叉则明确拒绝）；远端不存在
+即全新导入（首推自动建仓）。段规划用 `rev-list --objects | cat-file
+--batch-check` 度量排他对象字节、指数探测扩张（实现细节：batch-check 不带
+`%(rest)` 时整行即对象名，树/blob 行须裁到首字段）。源仓只读不改。
