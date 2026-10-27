@@ -23,7 +23,7 @@ type Config struct {
 	Listen      string `yaml:"listen"`    // HTTP listen address (external for gateway/all-in-one, internal for refs/storage)
 	Root        string `yaml:"root"`      // local shard storage root
 	InitRepo    string `yaml:"init_repo"` // repo created at startup (optional)
-	MetaBackend string `yaml:"meta"`      // "mem" | "sqlite"
+	MetaBackend string `yaml:"meta"`      // "mem" | "sqlite" | "mysql" | "postgres"
 	DBPath      string `yaml:"db"`        // sqlite path; defaults to <root>/banyan.db
 
 	Role          string `yaml:"role"`             // all-in-one (default) | gateway | refs | storage
@@ -145,7 +145,7 @@ func Load(args []string) (*Config, error) {
 	listen := fs.String("listen", defaults.Listen, "HTTP listen address")
 	root := fs.String("root", defaults.Root, "local shard storage root")
 	initRepo := fs.String("init-repo", defaults.InitRepo, "repo name to create at startup (optional)")
-	metaBackend := fs.String("meta", defaults.MetaBackend, `metadata backend: "mem" (in-memory) or "sqlite" (persistent)`)
+	metaBackend := fs.String("meta", defaults.MetaBackend, `metadata backend: "mem", "sqlite" (file), "mysql"/"postgres" (cluster DSN in -db)`)
 	dbPath := fs.String("db", defaults.DBPath, "sqlite database path for -meta sqlite (default <root>/banyan.db)")
 	role := fs.String("role", defaults.Role, `deployment role: all-in-one (default) | gateway | refs | storage (docs/10)`)
 	nodeID := fs.String("node-id", defaults.NodeID, "storage role: cluster node identity")
@@ -215,9 +215,9 @@ func (c *Config) normalize() error {
 		c.MetaBackend = "mem"
 	}
 	switch c.MetaBackend {
-	case "mem", "sqlite":
+	case "mem", "sqlite", "mysql", "postgres":
 	default:
-		return fmt.Errorf("config: meta %q: want mem|sqlite", c.MetaBackend)
+		return fmt.Errorf("config: meta %q: want mem|sqlite|mysql|postgres", c.MetaBackend)
 	}
 	if c.Role == "" {
 		c.Role = "all-in-one"
@@ -235,6 +235,9 @@ func (c *Config) normalize() error {
 	}
 	if c.MetaBackend == "sqlite" && c.DBPath == "" {
 		c.DBPath = filepath.Join(c.Root, "banyan.db")
+	}
+	if (c.MetaBackend == "mysql" || c.MetaBackend == "postgres") && c.DBPath == "" {
+		return fmt.Errorf("config: meta %s requires db (the driver DSN)", c.MetaBackend)
 	}
 	switch c.WriteAcks {
 	case "quorum", "all", "one":
