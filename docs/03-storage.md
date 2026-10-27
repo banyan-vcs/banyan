@@ -139,6 +139,12 @@ wants = 客户端协商所得对象集合
        → StreamEncodePack 逐条目写（边哈希边 zlib，delta-free），
        对象经读取梯子逐个窗口读——除当前对象外零驻留；
        pack 组总字节 < 32MiB 的小仓回退 ⑤（保响应缓存收益）
+  ⓪'' deepen 形态（depth>0 或携带 shallow：shallow clone / deepen /
+       unshallow，2026-10-27）：同一流式 rung，枚举带上深度边界
+       （shallowCut 裁剪：边界提交含其树、父链止步）、客户端嫁接点
+       （穿透排除提交继续走）与 have 排除（haveClosure，与 ⑤ ladder
+       集合等价、单测钉死）；浅化段是协议层、早已上线（v1
+       writeShallowSection / v2 shallow-info），rung 只产 pack。
   ① 快路径未命中 → 全局索引批量定位：oid → (pack_oid, node_id)
   ② 本地 pack cache（LRU，按 pack_oid 键）命中检查
   ③ 未命中的对象：单对象区间读取（idx 偏移 + 文件窗口解压，
@@ -185,13 +191,16 @@ delta 路径）。响应缓存前置：同 wants 重复克隆连枚举都免（�
 命中缓存仍付全量 closure 计算）。实测 T55：**72MiB / 3 pack 完整
 clone 在 64MiB 软限制下完成，峰值堆 12.3MiB**（0.17×仓）。
 
-仍为 O(闭包/段) 的已知路径（开放项，已收窄）：**非 clone 形态**
-fetch 的在线编码（closure 全图——增量 fetch 经 have 扣除通常很小，
-真大的是 unshallow/deepen 大历史这类形态）。已窗口化的配套路径（2026-10-25 二轮审查）：reconciler 副本
-修复（源流式校验 + 目标各自流式拉取，节点落地二次校验）、repack 合并
-（组输入字节上限 256MiB + spool 编码 + 流式入册，不再双重解码）、
-decoded-pack memoize（总量 LRU 上限 256MiB，单包 32MiB 闸门之上再封顶）、
-repack 丢弃路径的存储键修正（hashed 寻址下旧分片此前删不到）。
+仍为 O(闭包/段) 的已知路径（开放项，2026-10-27 再收窄）：**带 haves
+的增量 fetch** 走 closure 阶梯（结果集 = 增量、通常天然有界；极端
+形态——客户端无公共提交——等价全量 clone 且不受预算闸门保护，闸门
+只认 clone 形态）。deepen/unshallow 已流式化（⓪''，T58：54MiB 三
+pack 仓 unshallow 峰值 12.2MiB）。已窗口化的配套路径（2026-10-25
+二轮审查）：reconciler 副本修复（源流式校验 + 目标各自流式拉取，
+节点落地二次校验）、repack 合并（组输入字节上限 256MiB + spool
+编码 + 流式入册，不再双重解码）、decoded-pack memoize（总量 LRU
+上限 256MiB，单包 32MiB 闸门之上再封顶）、repack 丢弃路径的存储键
+修正（hashed 寻址下旧分片此前删不到）。
 
 ## 4. 写路径（服务一次 push，2026-10-25 起流式化）
 
