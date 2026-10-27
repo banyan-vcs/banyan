@@ -238,7 +238,7 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
 | [docs/15-workflow.md](docs/15-workflow.md) | M4 design: per-directory commit queue + convergence (merge train) |
 | [docs/16-benchmark-report.md](docs/16-benchmark-report.md) | Measured benchmark report vs git http-backend (multi-run, drift forensics) |
-
+| [docs/18-gitaly.md](docs/18-gitaly.md) | Gitaly integration plan (phased, research) |
 **Operations & evolution**:
 
 | Doc | Contents |
