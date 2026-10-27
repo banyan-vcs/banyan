@@ -16,11 +16,15 @@ listen: ":8080"
 # 本地分片存储根目录（pack + idx 落盘位置；storage/all-in-one 使用）
 root: "./data"
 
-# 元数据后端：mem（内存态，重启即失）| sqlite（持久化，docs/03 §2）
-# 集群 refs 角色应使用 sqlite（refs 重启状态零丢失，docs/10 §8/T26）
+# 元数据后端：mem（内存态，重启即失）| sqlite（单机持久化，docs/03 §2）
+# | mysql | postgres（集群形态：HA 交数据库生态，docs/10 §4）
+# 集群 refs 角色应使用持久化后端（refs 重启状态零丢失，docs/10 §8/T26）
 meta: "mem"
 
-# SQLite 数据库路径（meta: sqlite 时生效；默认 <root>/banyan.db）
+# sqlite：数据库文件路径（默认 <root>/banyan.db）
+# mysql/postgres：驱动 DSN（数据库须已存在；schema 自动建），
+#   例 "user:pass@tcp(db:3306)/banyan?charset=utf8mb4"
+#   或 "postgres://user:pass@db:5432/banyan?sslmode=disable"
 # db: "./data/banyan.db"
 
 # 启动时创建的仓库名（可选）

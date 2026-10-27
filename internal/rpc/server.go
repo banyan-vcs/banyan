@@ -50,6 +50,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
 	mux.HandleFunc("/api/v1/repos/", s.authn(s.handleRepoSub)) // /api/v1/repos/<repo>/placement
 	mux.HandleFunc("/api/v1/cluster/nodes", s.authn(s.handleClusterNodes))
+	mux.HandleFunc("/api/v1/meta/backup", s.authn(s.handleMetaBackup))
 	mux.HandleFunc("/api/v1/resolve", s.authn(s.handleResolve))
 	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
 	// TODO(M2): /api/v1/diff  /api/v1/file-history
@@ -557,4 +558,35 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// handleMetaBackup: POST /api/v1/meta/backup {"path": "..."} — online
+// snapshot of the SQLite metadata plane (VACUUM INTO: readers and the
+// single writer keep running; docs/10 §8.4). Cluster backends answer 409:
+// their backups belong to the database ecosystem's own tooling.
+func (s *Server) handleMetaBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "POST only"}})
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if req.Path == "" {
+		writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "path required"}})
+		return
+	}
+	sql, ok := s.Meta.(*storage.SQLMetaStore)
+	if !ok {
+		writeJSON(w, http.StatusConflict, errEnvelope{Error: errBody{Code: "CONFLICT", Message: "metadata backend does not support in-process backup"}})
+		return
+	}
+	if err := sql.Backup(req.Path); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errEnvelope{Error: errBody{Code: "INTERNAL", Message: err.Error()}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "path": req.Path})
 }

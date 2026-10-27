@@ -67,6 +67,12 @@ func openMeta(cfg *config.Config) storage.MetaStore {
 			log.Fatalf("open sqlite meta store %s: %v", cfg.DBPath, err)
 		}
 		return ms
+	case "mysql", "postgres":
+		ms, err := storage.NewSQLMetaStore(cfg.MetaBackend, cfg.DBPath)
+		if err != nil {
+			log.Fatalf("open %s meta store: %v", cfg.MetaBackend, err)
+		}
+		return ms
 	default:
 		return storage.NewMemoryMetaStore()
 	}
@@ -193,8 +199,8 @@ func runGateway(cfg *config.Config) {
 // the reconciler (single writer; HA story in docs/10 §4).
 func runRefs(cfg *config.Config) {
 	meta := openMeta(cfg)
-	if cfg.MetaBackend != "sqlite" {
-		log.Printf("refs role with meta=%s: metadata is NOT durable across restarts (use -meta sqlite)", cfg.MetaBackend)
+	if cfg.MetaBackend == "mem" {
+		log.Printf("refs role with meta=%s: metadata is NOT durable across restarts (use -meta sqlite/mysql/postgres)", cfg.MetaBackend)
 	}
 	srv := refs.NewServer(meta, refs.Options{
 		DefaultReplicas:  cfg.DefaultR,

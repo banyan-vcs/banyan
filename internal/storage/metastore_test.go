@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +18,12 @@ import (
 // behavioral parity is the contract that makes the backend swappable
 // (docs/03 §2.1). The concurrent-CAS case doubles as the SQLite
 // busy/WAL serialization exercise.
+//
+// The cluster backends (mysql, postgres) join the matrix when their DSN is
+// provided — locally via Docker (docs/10), in CI via service containers:
+//
+//	BANYAN_TEST_MYSQL_DSN="root:banyan@tcp(127.0.0.1:3306)/banyan?charset=utf8mb4"
+//	BANYAN_TEST_POSTGRES_DSN="postgres://postgres:banyan@127.0.0.1:5432/banyan?sslmode=disable"
 func TestMetaStoreConformance(t *testing.T) {
 	open := map[string]func(*testing.T) (MetaStore, func()){
 		"mem": func(*testing.T) (MetaStore, func()) {
@@ -29,12 +37,43 @@ func TestMetaStoreConformance(t *testing.T) {
 			return s, func() { s.Close() }
 		},
 	}
+	for backend, env := range map[string]string{
+		"mysql":    "BANYAN_TEST_MYSQL_DSN",
+		"postgres": "BANYAN_TEST_POSTGRES_DSN",
+	} {
+		dsn := os.Getenv(env)
+		if dsn == "" {
+			continue
+		}
+		open[backend] = func(t *testing.T) (MetaStore, func()) {
+			s, err := NewSQLMetaStore(backend, dsn)
+			if err != nil {
+				t.Fatalf("open %s: %v", backend, err)
+			}
+			dropAllTables(t, s)
+			if err := s.applySchema(t.Context()); err != nil {
+				t.Fatalf("reschema %s: %v", backend, err)
+			}
+			return s, func() { s.Close() }
+		}
+	}
 	for name, o := range open {
 		t.Run(name, func(t *testing.T) {
 			m, done := o(t)
 			defer done()
 			runMetaConformance(t, m)
 		})
+	}
+}
+
+// dropAllTables wipes the schema on a shared cluster database so each
+// conformance run starts empty (the file backends get a fresh file).
+func dropAllTables(t *testing.T, s *SQLMetaStore) {
+	t.Helper()
+	for _, table := range []string{"hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos"} {
+		if _, err := s.db.Exec("DROP TABLE IF EXISTS " + table); err != nil {
+			t.Fatalf("drop %s: %v", table, err)
+		}
 	}
 }
 
@@ -176,5 +215,56 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 	wg.Wait()
 	if wins.Load() != 1 {
 		t.Fatalf("concurrent CAS winners = %d, want 1", wins.Load())
+	}
+}
+
+// TestSQLiteBackupRestore pins the online backup contract: VACUUM INTO
+// while the store keeps working, then reopen the snapshot and every piece
+// of state survives (the ops path for single-binary deployments, docs/10).
+func TestSQLiteBackupRestore(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewSQLiteMetaStore(filepath.Join(dir, "meta.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+	ctx := t.Context()
+	root := model.Timeline{Repo: "bk", Anchor: "/", Name: "main"}
+	if err := s.CreateRepo(ctx, "bk", model.SHA1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutPack(ctx, "bk", model.OID(strings.Repeat("a", 40)), []model.OID{model.OID(strings.Repeat("b", 40))}, []string{"n1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CASHead(ctx, root, "", model.OID(strings.Repeat("c", 40))); err != nil {
+		t.Fatal(err)
+	}
+
+	bakPath := filepath.Join(dir, "backup.db")
+	if err := s.Backup(bakPath); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	if err := s.Backup(bakPath); err == nil {
+		t.Fatal("backup onto an existing file must refuse")
+	}
+
+	r, err := NewSQLiteMetaStore(bakPath)
+	if err != nil {
+		t.Fatalf("reopen backup: %v", err)
+	}
+	defer r.Close()
+	if _, err := r.GetRepo(ctx, "bk"); err != nil {
+		t.Fatalf("repo lost: %v", err)
+	}
+	if _, err := r.GetPack(ctx, "bk", model.OID(strings.Repeat("a", 40))); err != nil {
+		t.Fatalf("pack lost: %v", err)
+	}
+	st, err := r.Timeline(ctx, root)
+	if err != nil || st.Head != model.OID(strings.Repeat("c", 40)) {
+		t.Fatalf("timeline lost: %v %+v", err, st)
+	}
+	// The source keeps serving after the snapshot.
+	if err := s.CASHead(ctx, root, model.OID(strings.Repeat("c", 40)), model.OID(strings.Repeat("d", 40))); err != nil {
+		t.Fatal(err)
 	}
 }
