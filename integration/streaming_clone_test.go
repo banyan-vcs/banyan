@@ -107,6 +107,15 @@ func TestStreamingCloneMultiPack(t *testing.T) {
 	files := strings.Fields(git(t, filepath.Join(dst, "r"), "ls-files"))
 	require.Len(t, files, 36, "all three rounds' blobs present: %v", files)
 
+	// The v1 wire (protocol.version=0) must take the same streaming rung:
+	// finishFetch's clone-shaped block feeds the identical serve (and the
+	// streaming rung never primes the response cache, so the counter moves).
+	v0dst := t.TempDir()
+	git(t, v0dst, "-c", "protocol.version=0", "clone", srv.repoURL("t55"), "r")
+	require.Equal(t, streamed0+2, counter("banyan_fetch_streamed"),
+		"v0-wire clone of the fragmented repo also streams")
+	require.Len(t, strings.Fields(git(t, filepath.Join(v0dst, "r"), "ls-files")), 36)
+
 	t.Logf("streaming clone: 72 MiB across 3 packs under the 64 MiB soft limit, peak heap %.1f MiB",
 		float64(peak.Load())/(1<<20))
 }
