@@ -72,6 +72,26 @@ func (n *NodeClient) RenameRepo(ctx context.Context, from, to string) error {
 	return nil
 }
 
+// DeleteRepo asks a node to drop a repo's whole storage directory.
+func (n *NodeClient) DeleteRepo(ctx context.Context, repo string) error {
+	body := []byte(`{"repo":` + strconv.Quote(repo) + `}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.Addr+"/internal/pack/delete-repo", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("storage %s delete %s: status %d", n.Addr, repo, resp.StatusCode)
+	}
+	return nil
+}
+
 func (n *NodeClient) PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, n.packURL(repo, packOID), bytes.NewReader(packBytes))
 	if err != nil {
@@ -609,6 +629,30 @@ func (s *ScatteredStore) RenameRepo(ctx context.Context, from, to string) error 
 		go func(addr string) {
 			defer wg.Done()
 			if err := s.client(addr).RenameRepo(ctx, from, to); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("node %s: %w", addr, err)
+				}
+				mu.Unlock()
+			}
+		}(n.Addr)
+	}
+	wg.Wait()
+	return firstErr
+}
+
+// DeleteRepo fans a storage-key drop out to every node in the current health
+// view. Same contract as RenameRepo: idempotent per node, any refusal aborts
+// before the registry drop at the caller.
+func (s *ScatteredStore) DeleteRepo(ctx context.Context, repo string) error {
+	var firstErr error
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, n := range s.healthyNodes(ctx) {
+		wg.Add(1)
+		go func(addr string) {
+			defer wg.Done()
+			if err := s.client(addr).DeleteRepo(ctx, repo); err != nil {
 				mu.Lock()
 				if firstErr == nil {
 					firstErr = fmt.Errorf("node %s: %w", addr, err)

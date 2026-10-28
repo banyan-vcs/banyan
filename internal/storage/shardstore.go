@@ -1008,6 +1008,19 @@ func (s *ObjectService) RenameRepo(ctx context.Context, from, to string) error {
 	return s.Meta.RenameRepo(ctx, from, to)
 }
 
+// DeleteRepo reclaims the repo's storage bytes and drops every registry row
+// (repository deletion, gitaly RemoveRepository). Hashed addressing keeps the
+// immutable storage key — only the registry rows go; a later repo of the same
+// name starts clean (its old key is unreachable garbage until fleet GC).
+func (s *ObjectService) DeleteRepo(ctx context.Context, repo string) error {
+	if s.Addressing == nil || s.Addressing.Mode != "hashed" {
+		if err := s.Backend.DeleteRepo(ctx, repo); err != nil {
+			return err
+		}
+	}
+	return s.Meta.DeleteRepo(ctx, repo)
+}
+
 // storeKey resolves the repo's storage key (addressing modes, docs/03 §6);
 // the identity mapping unless hashed addressing is wired.
 func (s *ObjectService) storeKey(ctx context.Context, repo string) (string, error) {
@@ -1264,6 +1277,15 @@ func (l *LocalShardStore) RenameRepo(from, to string) error {
 		return err
 	}
 	return os.Rename(src, dst)
+}
+
+// DeleteRepo removes the repo's whole storage directory. A missing directory
+// is a successful no-op (deletion is idempotent by contract).
+func (l *LocalShardStore) DeleteRepo(repo string) error {
+	if strings.ContainsAny(repo, `/\`) {
+		return fmt.Errorf("delete %s: repo must be a single path segment", repo)
+	}
+	return os.RemoveAll(filepath.Join(l.Root, repo))
 }
 
 // GetDecoded reads back and decodes a pack (miss path; object bodies then stay in cache).

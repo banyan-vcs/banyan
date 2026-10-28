@@ -45,6 +45,7 @@ func New(nodeID, root, refsAddr, advertise string) *Server {
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/internal/pack", s.hPack)
 	mux.HandleFunc("/internal/pack/rename", s.hRename)
+	mux.HandleFunc("/internal/pack/delete-repo", s.hDeleteRepo)
 	mux.HandleFunc("/internal/object", s.hObject)
 	mux.HandleFunc("/internal/status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -70,6 +71,28 @@ func (s *Server) hRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.local.RenameRepo(req.From, req.To); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// hDeleteRepo drops a repo's whole storage directory. Missing = OK
+// (deletion is idempotent by contract).
+func (s *Server) hDeleteRepo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Repo string `json:"repo"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Repo == "" ||
+		strings.ContainsAny(req.Repo, `/\`) {
+		http.Error(w, "repo required (single path segment)", http.StatusBadRequest)
+		return
+	}
+	if err := s.local.DeleteRepo(req.Repo); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}

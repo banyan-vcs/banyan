@@ -66,6 +66,10 @@ type ShardBackend interface {
 	// a holder without the source answers OK. The registry flip happens at
 	// the caller AFTER this succeeds.
 	RenameRepo(ctx context.Context, from, to string) error
+	// DeleteRepo removes every pack of one storage key (repository
+	// deletion). Idempotent per node: a holder without the key answers OK;
+	// the registry drop at the caller happens AFTER this succeeds.
+	DeleteRepo(ctx context.Context, repo string) error
 }
 
 // putPackStreamFromBytes adapts an in-memory pack to the streaming interface
@@ -134,6 +138,10 @@ func (b *LocalBackend) DeletePack(_ context.Context, repo string, packOID model.
 
 func (b *LocalBackend) RenameRepo(_ context.Context, from, to string) error {
 	return b.Local.RenameRepo(from, to)
+}
+
+func (b *LocalBackend) DeleteRepo(_ context.Context, repo string) error {
+	return b.Local.DeleteRepo(repo)
 }
 
 // nodeClientFor adapts a holder address to a NodeClient (ScatteredStore and
