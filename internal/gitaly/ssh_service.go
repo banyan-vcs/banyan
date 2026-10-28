@@ -2,7 +2,11 @@ package gitaly
 
 import (
 	"bufio"
+	"context"
 	"io"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
 )
@@ -10,11 +14,33 @@ import (
 // sshService implements gitaly.SSHService's streamable RPCs: git's SSH
 // services run as bidirectional sessions — stdin chunks stream in, stdout
 // chunks stream back out, the exit status rides the final message (the
-// workhorse git-over-SSH shape). The sidechannel upload variants share the
-// yamux transport slice (docs/19 §5).
+// workhorse git-over-SSH shape). The sidechannel upload variant moves the
+// session onto a yamux stream (docs/19 §5).
 type sshService struct {
 	gitalypb.UnimplementedSSHServiceServer
 	s *Server
+}
+
+// SSHUploadPackWithSidechannel runs the interactive upload-pack session over
+// a yamux stream dialed back to the client: advertisement, negotiation
+// rounds, pack — the raw session bytes, no gRPC message framing.
+func (ss *sshService) SSHUploadPackWithSidechannel(ctx context.Context, req *gitalypb.SSHUploadPackWithSidechannelRequest) (*gitalypb.SSHUploadPackWithSidechannelResponse, error) {
+	name, err := ss.s.existingRepo(ctx, req.GetRepository())
+	if err != nil {
+		return nil, err
+	}
+	raw, err := openSidechannel(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conn := newFramedConn(raw)
+	defer conn.Close()
+	code := ss.s.git.ServeSSHSession(ctx, "git-upload-pack", "/r/"+name, req.GetGitProtocol(),
+		bufio.NewReaderSize(conn, 64<<10), conn)
+	if code != 0 {
+		return nil, status.Errorf(codes.Internal, "gitaly: upload-pack session exited %d", code)
+	}
+	return &gitalypb.SSHUploadPackWithSidechannelResponse{}, nil
 }
 
 // sshSendWriter forwards session stdout as response chunks.
