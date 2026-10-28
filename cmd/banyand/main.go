@@ -133,9 +133,11 @@ func startGitaly(cfg *config.Config, meta storage.MetaStore, objects *storage.Ob
 		log.Printf("gitaly: WARNING no token set — the frontend accepts unauthenticated gRPC (development only)")
 	}
 	gs := gitaly.NewServer(meta, objects, model.SHA1, gitaly.Options{
-		Token:           cfg.Gitaly.Token,
-		StorageName:     cfg.Gitaly.StorageName,
-		ReportedVersion: cfg.Gitaly.ReportedVersion,
+		Token:            cfg.Gitaly.Token,
+		StorageName:      cfg.Gitaly.StorageName,
+		ReportedVersion:  cfg.Gitaly.ReportedVersion,
+		Convergence:      cfg.Workflow.Convergence == "auto",
+		FullCloneMaxByte: cfg.FullCloneMaxBytes,
 	})
 	go func() {
 		log.Printf("gitaly: serving %s (storage=%s, protocol %s)", cfg.Gitaly.Listen, cfg.Gitaly.StorageName, gitaly.ProtoVersion)
