@@ -102,6 +102,16 @@ meta: "mem"
 #workflow:
 #  convergence: auto
 
+# --- Gitaly 协议前端（docs/19；缺省关闭，仅 all-in-one/gateway 角色生效） ---
+# 开启后本进程以 gitaly gRPC 协议（v19.5.2）对外服务：GitLab Rails/workhorse
+# 可把 gitaly 节点直接替换为本进程（storage_name 须与 GitLab gitaly.yml 一致，
+# relative_path 原样作为 banyan 仓库名，@hashed 寻址零转换）。
+#gitaly:
+#  listen: "unix:/var/lib/banyan/gitaly.socket"   # 或 "0.0.0.0:9999"
+#  token: "change-me"                             # Bearer 鉴权；空=不鉴权（仅开发）
+#  storage_name: "default"                        # 对外宣称的虚拟存储名
+#  reported_version: "19.5.2"                     # ServerInfo 上报的版本（缺省=协议版本）
+
 # --- 运维面（docs/05 §5a；缺省整层关闭） ---
 # 独立辅助监听（四个角色通用），不搭公开 git/API 端口：
 #   /debug/pprof/*   pprof 全家（heap/allocs/goroutine/block/mutex/trace/…）

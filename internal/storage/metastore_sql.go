@@ -522,6 +522,17 @@ func (s *SQLMetaStore) SetForcePush(ctx context.Context, repo string, enabled bo
 	return nil
 }
 
+func (s *SQLMetaStore) SetDefaultBranch(ctx context.Context, repo string, branch string) error {
+	// MySQL reports an unchanged UPDATE as 0 affected rows, so existence is
+	// probed explicitly rather than inferred from the write.
+	var one int
+	if err := s.db.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), repo).Scan(&one); err != nil {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	_, err := s.db.ExecContext(ctx, s.q("UPDATE repos SET default_branch=? WHERE name=?"), branch, repo)
+	return err
+}
+
 func boolInt(b bool) int {
 	if b {
 		return 1

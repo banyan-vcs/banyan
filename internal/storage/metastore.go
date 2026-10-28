@@ -89,6 +89,9 @@ type RepoRegistry interface {
 	// off (default) keeps the rollback guard; on, a rewind-shaped subtree
 	// update lands and rebuilds the woven views from the new source chains.
 	SetForcePush(ctx context.Context, repo string, enabled bool) error
+	// SetDefaultBranch changes the advertised HEAD symref target (gitaly
+	// CreateRepository default-branch semantics).
+	SetDefaultBranch(ctx context.Context, repo string, branch string) error
 }
 
 // PackRegistry is the central pack table: pack → replica nodes. Packs are
@@ -270,6 +273,18 @@ func (m *MemoryMetaStore) SetForcePush(_ context.Context, repo string, enabled b
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
 	info.ForcePush = enabled
+	m.repos[repo] = info
+	return nil
+}
+
+func (m *MemoryMetaStore) SetDefaultBranch(_ context.Context, repo string, branch string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	info, ok := m.repos[repo]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	info.DefaultBranch = branch
 	m.repos[repo] = info
 	return nil
 }
