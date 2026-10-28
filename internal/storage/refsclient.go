@@ -177,6 +177,13 @@ func (m *RemoteMeta) RenameRepo(ctx context.Context, from, to string) error {
 		map[string]string{"from": from, "to": to}, nil)
 }
 
+// DeleteRepo drops every repo-keyed registry row on the refs service.
+// Storage bytes have already been reclaimed at the caller.
+func (m *RemoteMeta) DeleteRepo(ctx context.Context, repo string) error {
+	return m.Refs.call(ctx, "/internal/meta/delete-repo",
+		map[string]string{"repo": repo}, nil)
+}
+
 // SetForcePush toggles the repo-level force-push switch (docs/04 §6a).
 func (m *RemoteMeta) SetForcePush(ctx context.Context, repo string, enabled bool) error {
 	return m.Refs.call(ctx, "/internal/meta/set-force-push",

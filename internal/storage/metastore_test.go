@@ -216,6 +216,36 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 	if wins.Load() != 1 {
 		t.Fatalf("concurrent CAS winners = %d, want 1", wins.Load())
 	}
+
+	// --- rename carries hooks; delete drops every repo-keyed row ---
+	if err := m.SetHook(ctx, "r1", HookInfo{ID: "notify", Events: []string{"pre-receive"}, URL: "http://h"}); err != nil {
+		t.Fatalf("set hook: %v", err)
+	}
+	if err := m.RenameRepo(ctx, "r1", "r2"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if hs, err := m.ListHooks(ctx, "r2"); err != nil || len(hs) != 1 || hs[0].ID != "notify" {
+		t.Fatalf("hooks lost across rename: %v, %v", hs, err)
+	}
+	if err := m.DeleteRepo(ctx, "r2"); err != nil {
+		t.Fatalf("delete repo: %v", err)
+	}
+	if _, err := m.GetRepo(ctx, "r2"); !errors.Is(err, ErrRepoNotFound) {
+		t.Fatalf("deleted repo get = %v, want ErrRepoNotFound", err)
+	}
+	if _, err := m.GetPack(ctx, "r2", "p1"); err == nil {
+		t.Fatal("pack must be gone after repo deletion")
+	}
+	if tls, err := m.ListAllTimelines(ctx, "r2"); err != nil || len(tls) != 0 {
+		t.Fatalf("deleted timelines = %v, %v", tls, err)
+	}
+	if hs, err := m.ListHooks(ctx, "r2"); err != nil || len(hs) != 0 {
+		t.Fatalf("deleted hooks = %v, %v", hs, err)
+	}
+	// Deletion is idempotent.
+	if err := m.DeleteRepo(ctx, "r2"); err != nil {
+		t.Fatalf("delete again: %v", err)
+	}
 }
 
 // TestSQLiteBackupRestore pins the online backup contract: VACUUM INTO
