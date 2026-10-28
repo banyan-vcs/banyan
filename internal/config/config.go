@@ -89,6 +89,17 @@ type Config struct {
 		Convergence string `yaml:"convergence"`
 	} `yaml:"workflow"`
 
+	// Gitaly configures the gitaly-protocol gRPC frontend (docs/19): a
+	// GitLab Rails/workhorse stack pointed at this node instead of a stock
+	// gitaly. Absent listen keeps the frontend off; the token is the shared
+	// bearer credential frontends authenticate with.
+	Gitaly struct {
+		Listen          string `yaml:"listen"`           // "host:port" or "unix:<path>"; empty = off
+		Token           string `yaml:"token"`            // Bearer token; empty = unauthenticated (development only)
+		StorageName     string `yaml:"storage_name"`     // virtual storage this node answers as; default "default"
+		ReportedVersion string `yaml:"reported_version"` // ServerInfo server_version; default the vendored protocol (19.5.2)
+	} `yaml:"gitaly"`
+
 	Cache struct {
 		// PackDir enables the gateway's on-disk pack cache (docs/11 P2-1):
 		// packs fetched from storage nodes persist across gateway restarts.
@@ -305,6 +316,16 @@ func (c *Config) normalize() error {
 		// with the plane off is a config mistake, not a mode.
 		return fmt.Errorf("config: debug.mutex_profile_fraction/block_profile_rate_ns require debug.pprof_addr")
 	}
+	if c.Gitaly.Listen != "" {
+		if c.Role != "all-in-one" && c.Role != "gateway" {
+			// The frontend serves git-shaped reads over the local object
+			// plane; refs/storage roles never own that surface.
+			return fmt.Errorf("config: gitaly.listen is only meaningful for role all-in-one|gateway")
+		}
+		if c.Gitaly.StorageName == "" {
+			c.Gitaly.StorageName = "default"
+		}
+	}
 	return nil
 }
 
@@ -324,6 +345,6 @@ func withScheme(addr string) string {
 
 // Describe renders the effective configuration for startup logging.
 func (c *Config) Describe() string {
-	return fmt.Sprintf("role=%s listen=%s root=%s meta=%s db=%q init_repo=%q refs_addr=%q node_id=%q advertise=%q default_replicas=%d write_acks=%s cache_pack_dir=%q debug_pprof=%q",
-		c.Role, c.Listen, c.Root, c.MetaBackend, c.DBPath, c.InitRepo, c.RefsAddr, c.NodeID, c.Advertise, c.DefaultR, c.WriteAcks, c.Cache.PackDir, c.Debug.PprofAddr)
+	return fmt.Sprintf("role=%s listen=%s root=%s meta=%s db=%q init_repo=%q refs_addr=%q node_id=%q advertise=%q default_replicas=%d write_acks=%s cache_pack_dir=%q debug_pprof=%q gitaly_listen=%q",
+		c.Role, c.Listen, c.Root, c.MetaBackend, c.DBPath, c.InitRepo, c.RefsAddr, c.NodeID, c.Advertise, c.DefaultR, c.WriteAcks, c.Cache.PackDir, c.Debug.PprofAddr, c.Gitaly.Listen)
 }
