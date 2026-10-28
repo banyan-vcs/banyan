@@ -45,6 +45,20 @@ func (os *operationService) timelineHead(ctx context.Context, repo string, tl mo
 	return st.Head, !st.Head.IsZero(), nil
 }
 
+// branchState reads a branch's dual identity: advertised (the woven view
+// every read and advertisement shows) and raw (the timeline head writes
+// CAS against). Linear chains make them equal; merge commits linearize on
+// the woven side (banyan's root-view model), so client expectations arrive
+// as advertised OIDs while the CAS runs on the raw head.
+func (os *operationService) branchState(ctx context.Context, repo, branch string) (advertised, raw model.OID, ok bool) {
+	if tip, err := os.s.Svc.Views.RootTip(ctx, repo, branch); err == nil && !tip.IsZero() {
+		advertised = tip
+	}
+	raw, hasRaw, _ := os.timelineHead(ctx, repo, branchTimeline(repo, branch))
+	ok = !advertised.IsZero() || hasRaw
+	return advertised, raw, ok
+}
+
 // validBranchName enforces git's refname rules (check-ref-format subset).
 func validBranchName(name string) bool {
 	if name == "" || name == "HEAD" || strings.HasPrefix(name, "-") || strings.HasPrefix(name, ".") {
@@ -168,7 +182,7 @@ func (os *operationService) UserDeleteBranch(ctx context.Context, req *gitalypb.
 		return nil, status.Error(codes.InvalidArgument, "branch name invalid")
 	}
 	tl := branchTimeline(name, branch)
-	head, ok, _ := os.timelineHead(ctx, name, tl)
+	raw, ok, _ := os.timelineHead(ctx, name, tl)
 	if !ok {
 		return nil, status.Errorf(codes.FailedPrecondition, "branch not found: %q", branch)
 	}
@@ -177,11 +191,14 @@ func (os *operationService) UserDeleteBranch(ctx context.Context, req *gitalypb.
 		if err != nil {
 			return nil, err
 		}
-		if want != head {
-			return nil, status.Error(codes.FailedPrecondition, "reference update failed")
+		if want != raw {
+			advertised, _, _ := os.branchState(ctx, name, branch)
+			if want != advertised {
+				return nil, status.Error(codes.FailedPrecondition, "reference update failed")
+			}
 		}
 	}
-	if err := os.casRef(ctx, name, tl, head, model.OID("")); err != nil {
+	if err := os.casRef(ctx, name, tl, raw, model.OID("")); err != nil {
 		return nil, err
 	}
 	return &gitalypb.UserDeleteBranchResponse{}, nil
@@ -202,7 +219,7 @@ func (os *operationService) UserUpdateBranch(ctx context.Context, req *gitalypb.
 		return nil, status.Error(codes.Internal, "could not parse newrev")
 	}
 	tl := branchTimeline(name, branch)
-	head, ok, _ := os.timelineHead(ctx, name, tl)
+	raw, ok, _ := os.timelineHead(ctx, name, tl)
 	if !ok {
 		return nil, status.Errorf(codes.FailedPrecondition, "Could not update %s. Please refresh and try again.", branch)
 	}
@@ -210,11 +227,14 @@ func (os *operationService) UserUpdateBranch(ctx context.Context, req *gitalypb.
 		if !isHexOID(old) {
 			return nil, status.Error(codes.Internal, "could not parse oldrev")
 		}
-		if model.OID(old) != head {
-			return nil, status.Errorf(codes.FailedPrecondition, "Could not update %s. Please refresh and try again.", branch)
+		if model.OID(old) != raw {
+			advertised, _, _ := os.branchState(ctx, name, branch)
+			if model.OID(old) != advertised {
+				return nil, status.Errorf(codes.FailedPrecondition, "Could not update %s. Please refresh and try again.", branch)
+			}
 		}
 	}
-	if err := os.casRef(ctx, name, tl, head, model.OID(newrev)); err != nil {
+	if err := os.casRef(ctx, name, tl, raw, model.OID(newrev)); err != nil {
 		return nil, err
 	}
 	return &gitalypb.UserUpdateBranchResponse{}, nil
@@ -341,8 +361,7 @@ func (os *operationService) UserFFBranch(ctx context.Context, req *gitalypb.User
 	if !isHexOID(commitID) {
 		return nil, status.Error(codes.InvalidArgument, "cannot parse commit ID")
 	}
-	tl := branchTimeline(name, branch)
-	head, ok, _ := os.timelineHead(ctx, name, tl)
+	advertised, raw, ok := os.branchState(ctx, name, branch)
 	if !ok {
 		return nil, status.Errorf(codes.InvalidArgument, "reference not found: refs/heads/%s", branch)
 	}
@@ -351,21 +370,31 @@ func (os *operationService) UserFFBranch(ctx context.Context, req *gitalypb.User
 		if err != nil {
 			return nil, err
 		}
-		if want != head {
+		if want != raw && want != advertised {
 			return nil, status.Error(codes.FailedPrecondition, "reference update failed")
 		}
 	}
 	if _, err := os.s.commitRecord(ctx, name, model.OID(commitID)); err != nil {
 		return nil, status.Errorf(codes.NotFound, "gitaly: commit %s not found", commitID)
 	}
-	anc, err := os.s.isAncestor(ctx, name, head, model.OID(commitID))
+	// Fast-forward against either identity: the raw head (the chain the CAS
+	// moves) or the advertised tip (what the client last read — a previous
+	// merge's linearized twin is a valid ancestor view too).
+	ancFromRaw, err := os.s.isAncestor(ctx, name, raw, model.OID(commitID))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "checking for ancestry: %v", err)
+	}
+	anc := ancFromRaw
+	if !anc && advertised != raw {
+		anc, err = os.s.isAncestor(ctx, name, advertised, model.OID(commitID))
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "checking for ancestry: %v", err)
+		}
 	}
 	if !anc {
 		return nil, status.Error(codes.FailedPrecondition, "not fast forward")
 	}
-	if err := os.casRef(ctx, name, tl, head, model.OID(commitID)); err != nil {
+	if err := os.casRef(ctx, name, branchTimeline(name, branch), raw, model.OID(commitID)); err != nil {
 		return nil, err
 	}
 	return &gitalypb.UserFFBranchResponse{
