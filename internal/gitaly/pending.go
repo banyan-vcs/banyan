@@ -7,11 +7,6 @@ import "github.com/banyan-vcs/banyan/internal/gitalypb"
 // frontend sees a stable contract (clean per-RPC Unimplemented, never a
 // connection failure). Coverage lands slice by slice — docs/19 tracks it.
 
-type operationService struct {
-	gitalypb.UnimplementedOperationServiceServer
-	s *Server
-}
-
 type hookService struct {
 	gitalypb.UnimplementedHookServiceServer
 	s *Server
