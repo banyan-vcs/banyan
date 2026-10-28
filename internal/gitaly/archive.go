@@ -221,7 +221,29 @@ func octal(n int64, width int) []byte {
 
 func (t *tarWriter) header(name string, mode int64, size int64, mtime int64, typeflag byte, linkname string) error {
 	h := make([]byte, tarRecordSize)
-	copy(h[0:], name)
+	if len(name) > 100 {
+		// ustar split: the last '/' that leaves a ≤155 prefix and a ≤100
+		// name (get_path_prefix, archive-tar.c). Longer names are not
+		// served — git would fall back to a pax path record.
+		split := -1
+		top := 155
+		if len(name)-1 < top {
+			top = len(name) - 1
+		}
+		for i := top; i >= 1 && i >= len(name)-101; i-- {
+			if name[i] == '/' {
+				split = i
+				break
+			}
+		}
+		if split < 0 || len(name)-split-1 > 100 {
+			return fmt.Errorf("gitaly: archive path too long for ustar: %s", name)
+		}
+		copy(h[345:], name[:split])
+		copy(h[0:], name[split+1:])
+	} else {
+		copy(h[0:], name)
+	}
 	copy(h[100:], octal(mode, 7))
 	copy(h[108:], []byte("0000000\x00")) // uid
 	copy(h[116:], []byte("0000000\x00")) // gid
@@ -244,10 +266,7 @@ func (t *tarWriter) header(name string, mode int64, size int64, mtime int64, typ
 	for _, b := range h {
 		chksum += int(b)
 	}
-	sum := fmt.Sprintf("%06o", chksum)
-	copy(h[148:], sum)
-	h[154] = 0
-	h[155] = ' '
+	copy(h[148:], octal(int64(chksum), 7)) // 7 octal digits + NUL, git's %07o
 	return t.write(h)
 }
 
@@ -364,9 +383,9 @@ func writeZipArchive(w io.Writer, entries []archiveEntry, prefix string, when ti
 	}
 	if prefix != "" {
 		root := strings.TrimSuffix(prefix, "/") + "/"
-		fh := &zip.FileHeader{Name: root, Modified: when}
+		fh := &zip.FileHeader{Name: root, Modified: when, Method: zip.Store}
 		fh.SetMode(0o755 | 0x80000000) // ModeDir
-		if _, err := zw.CreateRaw(fh); err != nil {
+		if _, err := zw.CreateHeader(fh); err != nil {
 			return err
 		}
 	}
@@ -375,9 +394,9 @@ func writeZipArchive(w io.Writer, entries []archiveEntry, prefix string, when ti
 		name := full(e.path)
 		switch {
 		case e.isDir:
-			fh := &zip.FileHeader{Name: name, Modified: when}
+			fh := &zip.FileHeader{Name: name, Modified: when, Method: zip.Store}
 			fh.SetMode(0o755 | 0x80000000)
-			if _, err := zw.CreateRaw(fh); err != nil {
+			if _, err := zw.CreateHeader(fh); err != nil {
 				return err
 			}
 		case e.mode == "120000":

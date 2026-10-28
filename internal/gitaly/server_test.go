@@ -229,7 +229,16 @@ func TestGitalyRefAndCommitSurface(t *testing.T) {
 			assert.NotEmpty(t, c.GetCommit().GetSubject())
 			assert.Equal(t, "second", string(c.GetCommit().GetSubject()))
 		}
-		c, err := cs.FindCommit(ctx, &gitalypb.FindCommitRequest{Repository: repo, Revision: []byte("refs/heads/ghost")})
+		// ~N walks first parents (regression: the suffix parser once read
+		// "~1" as eleven hops).
+		c, err := cs.FindCommit(ctx, &gitalypb.FindCommitRequest{Repository: repo, Revision: []byte("main~1")})
+		require.NoError(t, err)
+		require.NotNil(t, c.GetCommit())
+		assert.Equal(t, c1Of(t, svc, repoName, head), c.GetCommit().GetId())
+		c, err = cs.FindCommit(ctx, &gitalypb.FindCommitRequest{Repository: repo, Revision: []byte("main~2")})
+		require.NoError(t, err)
+		assert.Nil(t, c.GetCommit(), "~2 walks past the root commit")
+		c, err = cs.FindCommit(ctx, &gitalypb.FindCommitRequest{Repository: repo, Revision: []byte("refs/heads/ghost")})
 		require.NoError(t, err)
 		assert.Nil(t, c.GetCommit())
 	})
