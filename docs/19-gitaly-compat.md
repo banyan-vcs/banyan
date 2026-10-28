@@ -56,10 +56,13 @@ gitaly:
 ### ServerService 4/4 ✅
 ServerInfo ✅ · ReadinessCheck ✅ · ServerSignature ✅ · DiskStatistics ✅（字节数留待卷探测）
 
-### RepositoryService 4/42
+### RepositoryService 8/42
 RepositoryExists ✅ · CreateRepository ✅（default_branch 落 repos 表，
-SHA1；ObjectFormat 校验） · ObjectFormat ✅ · HasLocalBranches ✅ · ⬜ 其余
-（Delete/Rename/Size/Bundle/Fork/Repack/Fsck/…维护与导入面，后切片）
+SHA1；ObjectFormat 校验） · ObjectFormat ✅ · HasLocalBranches ✅ ·
+RepositorySize/GetObjectDirectorySize ✅（= /repos/<repo>/size 同源） ·
+WriteRef ✅ · FindMergeBase ✅（两 rev 单基形式：A 祖先集 + B 时间序走查
+首命中） · ⬜ 其余（Delete/Rename/Bundle/Fork/Repack/Fsck/Checksum/…
+维护与导入面，后切片）
 
 ### RefService 13/16
 FindDefaultBranchName ✅ · FindBranch ✅ · RefExists ✅ · FindAllBranches ✅
@@ -79,25 +82,30 @@ ListFiles ✅ · ListCommitsByOid ✅ · GetCommitMessages ✅ ·
 CheckObjectsExist ✅（bidi） · ⬜ 12 个（diff/blame/签名/语言/LastCommitForPath/
 ListCommitsByRefName/FindCommits 等）
 
-### BlobService 1/7
-GetBlob ✅（oid+limit，1MiB 分块） · ⬜ GetBlobs/ListBlobs/ListAllBlobs/
-LFSPointer 系
+### BlobService 4/7
+GetBlob ✅（oid+limit） · GetBlobs ✅（revision:path 批量，miss 答空消息）
+· ListBlobs ✅（revisions 树走查按 OID 去重，bytes_limit 内带内容） ·
+ListAllBlobs ✅（全分支头并集） · ⬜ GetLFSPointers/ListLFSPointers/
+ListAllLFSPointers（指针解析后挂同一枚举）
 
-### SmartHTTPService 3/5
+### SmartHTTPService 4/5
 InfoRefsUploadPack ✅ · InfoRefsReceivePack ✅ · PostReceivePack ✅
 （bidi：body 流入 mux 桥、响应流回；工作方式 = 内建 gitwire mux +
 recorder，一次 HTTP 交换一条 gRPC 消息流，stateless-rpc 契约） ·
-⬜ PostUploadPackWithSidechannel / AdvertiseBundleURI —— **sidechannel 是
-fetch 通路的下一阻塞点**：协议 = 整条 TCP 连接 yamux 复用（客户端拨号即
-yamux；gRPC 走流 1，服务端反向开短命流承载 HTTP-over-stream 大块传输；
-`gitaly-sidechannel-id` 元数据配对；见上游 doc/sidechannel.md）。落地
-时传输层需嗅探 yamux vs h2 preface。
+**PostUploadPackWithSidechannel ✅（fetch 通路解锁）**——sidechannel 传输
+（internal/gitaly/muxcreds.go + sidechannel.go）：连接首字节 "backchannel"
+魔数 → yamux 会话（gRPC 走流 1）→ 服务端反向开流，魔数 "sidechannel"+BE
+int64 id+"ok" 确认交换；**数据相位非对称帧**（客户端→服务端 pkt-line 分帧
+≤65531B/帧、裸 "0000" 帧模拟半关闭；服务端→客户端裸字节）。同一监听器经
+TransportCredentials 嗅探兼容普通 gRPC 客户端（listenmux 同构）。 ·
+⬜ AdvertiseBundleURI
 
-### SSHService 1/3
+### SSHService 2/3
 SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-status
 末条；复用 gitwire.ServeSSHSession——从 serveGitExec 抽出的 io 流会话核
-心，docs/04 §7b 的无守护进程形态） · ⬜ SSHUploadPackWithSidechannel /
-SSHUploadArchive（sidechannel/归档面）
+心，docs/04 §7b 的无守护进程形态） · **SSHUploadPackWithSidechannel ✅**
+（交互式 upload 会话整体跑在 sidechannel 上——广告/协商/包字节） ·
+⬜ SSHUploadArchive
 
 ### 其余服务 ⬜（全部已注册）
 DiffService(10) · OperationService(16) · HookService(7) · ConflictsService(2)
@@ -105,22 +113,20 @@ DiffService(10) · OperationService(16) · HookService(7) · ConflictsService(2)
 InternalGitaly(5) · BackupService(2) · PartitionService(2) ·
 AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 
-**小计：36/163。**
+**小计：45/163。**
 
 ## 5. 切片路线（续）
 
-1. **sidechannel 传输**（P0，fetch 通路的阻塞点）：yamux 复用 + HTTP-over-
-   stream——解锁 PostUploadPackWithSidechannel / SSHUploadPackWithSidechannel
-   （clone/fetch 走 workhorse 的唯一路径）与 PackObjectsHookWithSidechannel。
-2. **Diff + Commit 补全**：CommitDiff/DiffStats/LastCommitForPath/
-   ListLastCommitsForTree/FindCommits（范围 rev-list）。
-3. **Blob 补全**：GetBlobs/ListBlobs/LFS pointers。
-4. **OperationService**：user 系 merge/rebase/revert/squash/cherry-pick
+1. **Diff + Commit 补全**：CommitDiff/DiffStats/LastCommitForPath/
+   ListLastCommitsForTree/FindCommits（范围 rev-list）——diff 机械可复用
+   M6.5 的服务层 path-diff 与 merge 包的行级 diff。
+2. **LFS pointer 面**：解析 pointer blob（文本头解析）挂 GetBlobs 枚举。
+3. **OperationService**：user 系 merge/rebase/revert/squash/cherry-pick
    ——复用 merge-ort 子集与 service.CreateCommit 服务端提交路径。
-5. **Repo 维护面**：DeleteRepository（需散存 pack GC 设计）/
-   RepositorySize/GetArchive/Fsck。
-6. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）。
-7. **Praefect 面**（可选）：PraefectInfoService/RefTransaction——仅当
+4. **Repo 维护面**：DeleteRepository（需散存 pack GC 设计）/
+   GetArchive/Fsck/CalculateChecksum。
+5. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）。
+6. **Praefect 面**（可选）：PraefectInfoService/RefTransaction——仅当
    目标拓扑含 praefect；单节点形态明确不做。
 
 ## 6. 已知语义差异（诚实清单）
@@ -145,3 +151,12 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
   InfoRefs 广告与原生端点逐字节相等；SSHReceivePack 广告会话 +
   exit-status；存储名错误在流上以 NotFound 冒出（服务端流式 RPC 的错误
   面契约）。
+- T62（integration）：**sidechannel 全链路**——mini-workhorse（连接带
+  "backchannel" 魔数 + yamux 客户端 + 回调注册表）上，真 git clone 经
+  PostUploadPackWithSidechannel 完成（内容/fsck 与源仓对拍）；SSH 上传
+  会话经 sidechannel 跑通（v0 最小 fetch：广告→want/flush/done→NAK+PACK）；
+  同一监听器上普通 gRPC 客户端照常工作（嗅探透传），无 sidechannel 元数据
+  的调用被拒绝。
+- 单测（blob/repo 面新增）：GetBlobs 三形态（命中两枚逐字节/miss 空消息）、
+  ListBlobs 预算内带内容、ListAllBlobs 全头并集、FindMergeBase、WriteRef
+  写回 FindBranch 可见、RepositorySize>0。
