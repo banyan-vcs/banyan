@@ -634,12 +634,31 @@ func (s *SQLMetaStore) RenameRepo(ctx context.Context, from, to string) error {
 	} else if err != sql.ErrNoRows {
 		return err
 	}
-	for _, table := range []string{"timelines", "packs", "pack_nodes", "objects", "placement"} {
+	for _, table := range []string{"timelines", "packs", "pack_nodes", "objects", "placement", "hooks"} {
 		if _, err := tx.ExecContext(ctx, s.q("UPDATE "+table+" SET repo=? WHERE repo=?"), to, from); err != nil {
 			return err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET name=? WHERE name=?"), to, from); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteRepo drops every repo-keyed row in one transaction. Missing = no-op
+// (idempotent). Storage bytes are reclaimed via ObjectService.DeleteRepo.
+func (s *SQLMetaStore) DeleteRepo(ctx context.Context, repo string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"objects", "pack_nodes", "packs", "timelines", "placement", "hooks"} {
+		if _, err := tx.ExecContext(ctx, s.q("DELETE FROM "+table+" WHERE repo=?"), repo); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM repos WHERE name=?"), repo); err != nil {
 		return err
 	}
 	return tx.Commit()

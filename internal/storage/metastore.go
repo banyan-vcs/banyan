@@ -85,6 +85,11 @@ type RepoRegistry interface {
 	// rides along untouched. Storage-layer moves (named addressing) happen
 	// BEFORE this call — see ObjectService.RenameRepo.
 	RenameRepo(ctx context.Context, from, to string) error
+	// DeleteRepo drops every repo-keyed row (repos, timelines, packs,
+	// pack_nodes, objects, placement, hooks) in one transaction. Storage
+	// bytes are reclaimed separately via ObjectService.DeleteRepo. A missing
+	// repo is a successful no-op — deletion is idempotent by contract.
+	DeleteRepo(ctx context.Context, repo string) error
 	// SetForcePush toggles the repo-level force-push switch (docs/04 §6a):
 	// off (default) keeps the rollback guard; on, a rewind-shaped subtree
 	// update lands and rebuilds the woven views from the new source chains.
@@ -251,6 +256,24 @@ func (m *MemoryMetaStore) RenameRepo(_ context.Context, from, to string) error {
 		m.placements[to] = p
 		delete(m.placements, from)
 	}
+	if h, ok := m.hooks[from]; ok {
+		m.hooks[to] = h
+		delete(m.hooks, from)
+	}
+	return nil
+}
+
+// DeleteRepo drops every repo-keyed row. Missing = no-op (idempotent).
+func (m *MemoryMetaStore) DeleteRepo(_ context.Context, repo string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.repos, repo)
+	delete(m.packs, repo)
+	delete(m.packObjs, repo)
+	delete(m.index, repo)
+	delete(m.timelines, repo)
+	delete(m.placements, repo)
+	delete(m.hooks, repo)
 	return nil
 }
 
