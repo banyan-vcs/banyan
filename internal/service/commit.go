@@ -38,7 +38,13 @@ type CommitRequest struct {
 	Base    model.OID `json:"base"`             // the client's manifest commit; must equal the current head
 	Message string    `json:"message"`
 	Author  *Identity `json:"author,omitempty"`
-	Changes []Change  `json:"changes"`
+	// Committer overrides the commit's committer identity (gitaly web-edit
+	// flow: author = the editor, committer = the acting user). Defaults to Author.
+	Committer *Identity `json:"committer,omitempty"`
+	// When fixes the commit timestamp (unix seconds); 0 = now with the
+	// monotonic same-second bump below.
+	When    int64    `json:"when,omitempty"`
+	Changes []Change `json:"changes"`
 }
 
 type CommitResult struct {
@@ -92,8 +98,17 @@ func (s *Service) CreateCommit(ctx context.Context, req CommitRequest) (*CommitR
 		}
 		id = *req.Author
 	}
+	committer := id
+	if req.Committer != nil && req.Committer.Name != "" {
+		committer = *req.Committer
+		if committer.Email == "" {
+			committer.Email = "banyan@local"
+		}
+	}
 	when := time.Now()
-	if !head.IsZero() {
+	if req.When > 0 {
+		when = time.Unix(req.When, 0)
+	} else if !head.IsZero() {
 		if ci, cierr := s.Objects.CommitInfo(req.Repo, head); cierr == nil && when.Unix() <= ci.When {
 			// Monotonic timestamps keep the weave's (time, …) ordering stable
 			// even for same-second commit bursts (pitfall: timestamp ties).
@@ -108,7 +123,7 @@ func (s *Service) CreateCommit(ctx context.Context, req CommitRequest) (*CommitR
 		Anchor:    model.RootAnchor, // plain git commit: no anchor header, verbatim like a pushed chain
 		TreeOID:   newTree,
 		Author:    model.Identity{Name: id.Name, Email: id.Email, When: when},
-		Committer: model.Identity{Name: id.Name, Email: id.Email, When: when},
+		Committer: model.Identity{Name: committer.Name, Email: committer.Email, When: when},
 		Message:   msg,
 	}
 	if !head.IsZero() {
