@@ -81,11 +81,14 @@ ListAllCommits ✅ · CountCommits ✅ · GetTreeEntries ✅（recursive） ·
 ListFiles ✅ · ListCommitsByOid ✅ · GetCommitMessages ✅ ·
 CheckObjectsExist ✅（bidi） · **FindCommits ✅**（pathspec 过滤历史=pathTouched 对首父树比较） · **CommitStats ✅** · **TreeEntry ✅**（单条目+内容分块） · **CommitsByMessage ✅**（消息子串） · **LastCommitForPath ✅** · **ListLastCommitsForTree ✅**（树首层逐条目） · ⬜ 6 个（RawBlame/CommitLanguages/签名×2/ListCommitsByRefName/TreeEntry 特性位）
 
-### BlobService 4/7
-GetBlob ✅（oid+limit） · GetBlobs ✅（revision:path 批量，miss 答空消息）
-· ListBlobs ✅（revisions 树走查按 OID 去重，bytes_limit 内带内容） ·
-ListAllBlobs ✅（全分支头并集） · ⬜ GetLFSPointers/ListLFSPointers/
-ListAllLFSPointers（指针解析后挂同一枚举）
+### BlobService 7/7 ✅
+GetBlob ✅（oid+limit） · GetBlobs ✅（revision:path 批量，miss 答空消息） ·
+ListBlobs ✅（**全历史**走查 rev-list --objects 语义：树 memo + blob OID
+去重，tip 已删除文件仍应答；bytes_limit 内带内容） · ListAllBlobs ✅
+（**全对象库**枚举 batch-all-objects 语义：ListPacks∪PackObjects，OID
+序） · GetLFSPointers ✅（200B 门 + 上游同构正则解析；非 pointer 对象
+静默过滤，缺对象报错） · ListLFSPointers ✅（历史走查 + limit） ·
+ListAllLFSPointers ✅（全对象库）
 
 ### SmartHTTPService 4/5
 InfoRefsUploadPack ✅ · InfoRefsReceivePack ✅ · PostReceivePack ✅
@@ -109,23 +112,38 @@ SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-stat
 ### DiffService 8/10
 CommitDiff ✅ · CommitDelta ✅ · RawDiff ✅（**与 git diff 逐字节一致**，T63） · RawPatch ✅（同 RawDiff 体） · DiffStats ✅ · DiffBlobs ✅（字节对直评） · GetPatchID ✅（SHA-1 over patch，best-effort） · FindChangedPaths ✅（Tree/Commit 双形态） · ⬜ RangeDiff/RawRangeDiff（范围互比，后切片）。底层=treeDiff（树递归对比）+unifiedPatch（go-diff 行级 + git 格式头：diff --git/index 行/@@ 计数=1 省略/dev-null 语义）。
 
+### OperationService 7/16
+UserCreateBranch ✅（start point 解析+peel；已存在=FailedPrecondition） ·
+UserDeleteBranch ✅（ExpectedOldOid CAS） · UserUpdateBranch ✅ ·
+UserCreateTag ✅（annotated=自建 tag 对象经 PutObjects 落盘+peel 校验；
+lightweight 直指 commit；已存在=AlreadyExists） · UserDeleteTag ✅ ·
+UserFFBranch ✅（isAncestor 前置检查，非 FF=FailedPrecondition "not fast
+forward"） · UserCommitFiles ✅（bidi：header+actions 流 → PutObjects +
+service.CreateCommit 同一发布路径；CREATE/UPDATE/DELETE/MOVE（InferContent
+内容拷贝）/CHMOD/CREATE_DIR(.gitkeep)；author=header、committer=user、
+同一时间戳；start_branch 隐式建支） · ⬜ 9 个（UserMergeBranch/
+MergeToRef/RebaseToRef/RebaseConfirmable/Squash/CherryPick/Revert/
+ApplyPatch/UpdateSubmodule——3-way 合并引擎切片）
+
 ### 其余服务 ⬜（全部已注册）
-OperationService(16) · HookService(7) · ConflictsService(2)
+OperationService 余量(9) · HookService(7) · ConflictsService(2)
 · RemoteService(3) · CleanupService(2) · ObjectPoolService(6) ·
 InternalGitaly(5) · BackupService(2) · PartitionService(2) ·
 AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 
-**小计：59/163。**
+**小计：69/163。**
 
 ## 5. 切片路线（续）
 
-1. **LFS pointer 面**：解析 pointer blob（文本头解析）挂 GetBlobs 枚举。
-2. **OperationService**：user 系 merge/rebase/revert/squash/cherry-pick
-   ——复用 merge-ort 子集与 service.CreateCommit 服务端提交路径。
-4. **Repo 维护面**：DeleteRepository（需散存 pack GC 设计）/
+1. ~~LFS pointer 面~~ ✅（本切片，随 BlobService 全绿）。
+2. **OperationService 合并三件套**：UserMergeBranch/UserMergeToRef/
+   UserSquash——需 3-way 树合并 + 内容级 diff3（纯 Go，基于 treeDiff 与
+   go-diff；重命名检测=git 默认下的诚实子集），产物走 CreateCommit
+   发布路径。随后 cherry-pick/revert（单提交 3-way apply）与 rebase 系。
+3. **Repo 维护面**：DeleteRepository（需散存 pack GC 设计）/
    GetArchive/Fsck/CalculateChecksum。
-5. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）。
-6. **Praefect 面**（可选）：PraefectInfoService/RefTransaction——仅当
+4. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）。
+5. **Praefect 面**（可选）：PraefectInfoService/RefTransaction——仅当
    目标拓扑含 praefect；单节点形态明确不做。
 
 ## 6. 已知语义差异（诚实清单）
@@ -136,6 +154,18 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 - `git_version` 为常量声明（纯 Go 实现无 git 二进制可询）。
 - CountCommits 的 path 过滤未实现（history simplification 需树 diff，
   后续接 view 引擎；当前按全历史计数 + 时间窗）。
+- **hooks 是空操作**：OperationService 的 user 系 RPC 不执行 pre/post
+  receive hooks（`PreReceiveError` 恒空）——banyan 的钩子面在网关
+  （docs/04 §7），gitaly 面继承上游"token 后全信"模型，授权与钩子
+  归前端。
+- UserCommitFiles 的 `start_repository`（跨仓库 fork 编辑）不支持
+  （InvalidArgument）；同仓 `start_branch_name` 完整支持（含隐式建支）。
+- UserCommitFiles 空仓+零动作（空树提交）拒绝（InvalidArgument）；上游
+  会写出空树提交——GitLab 不发送该形态。
+- GetLFSPointers 缺失对象 = NotFound（上游经 cat-file 管道为 Internal
+  系错误）；UserFFBranch 目标 commit 缺失 = NotFound（上游 Internal）。
+  均为更精确的错误码偏移，消息可辨。
+- UserUpdateBranch 的 newrev/oldrev 非全 hex 时按上游 Internal 报错。
 
 ## 7. 测试
 
@@ -159,3 +189,17 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 - 单测（blob/repo 面新增）：GetBlobs 三形态（命中两枚逐字节/miss 空消息）、
   ListBlobs 预算内带内容、ListAllBlobs 全头并集、FindMergeBase、WriteRef
   写回 FindBranch 可见、RepositorySize>0。
+- 单测（operations/LFS 面，operations_test.go）：LFS 三件套（历史内已删
+  pointer 仍列出；混型对象静默过滤；空 BlobIds/Revisions=InvalidArgument）；
+  分支生命周期（建/已存在/缺 start point/错旧值 CAS/删/再删）；annotated
+  tag（对象可解析+peel 回目标）与 lightweight；FF（非 FF="not fast
+  forward"）与 UserUpdateBranch 陈旧 oldrev 拒绝；UserCommitFiles 全动作
+  流（CREATE 执行位/MOVE InferContent/DELETE/CREATE_DIR=.gitkeep）后逐
+  字段核对提交对象（author/committer/时间戳/parent）。
+- T64（integration）：真 git push 含 LFS pointer 与已删文件的仓库，
+  gRPC 读写与 git oracle 对拍——ListLFSPointers 命中 pointer（FileOid/
+  FileSize/Data 与 cat-file 一致）；分支/tag 经 gRPC 建删后 ls-remote
+  可见性一致，annotated tag fetch 回源仓 `cat-file -p` 全字段核对；
+  UserFFBranch 前后 ls-remote OID 对拍；UserCommitFiles 产物 git fetch
+  回源仓，`git show` 核对 author/committer/消息/树内容（含 MOVE 保留
+  pointer 原文与 DELETE 生效）。
