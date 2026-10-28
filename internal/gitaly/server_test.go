@@ -357,3 +357,123 @@ func c1Of(t *testing.T, svc *service.Service, repo string, head model.OID) strin
 	require.NotEmpty(t, ci.Parents)
 	return ci.Parents[0].String()
 }
+
+func TestGitalyBlobAndRepoExtras(t *testing.T) {
+	_, _, _, svc, addr := startServer(t)
+	ctx := context.Background()
+	conn, err := Dial(addr, testToken)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	repoName := "proj-x"
+	head, _ := seedHistory(t, svc, repoName,
+		map[string]string{"hello.txt": "hello gitaly\n", "docs/guide.md": "guide"},
+		map[string]string{"docs/guide.md": "guide v2", "src/main.go": "package main"})
+	repo := &gitalypb.Repository{StorageName: "default", RelativePath: repoName}
+	bs := gitalypb.NewBlobServiceClient(conn)
+	rs := gitalypb.NewRepositoryServiceClient(conn)
+
+	t.Run("get blobs by path", func(t *testing.T) {
+		stream, err := bs.GetBlobs(ctx, &gitalypb.GetBlobsRequest{Repository: repo,
+			RevisionPaths: []*gitalypb.GetBlobsRequest_RevisionPath{
+				{Revision: "main", Path: []byte("hello.txt")},
+				{Revision: "main", Path: []byte("src/main.go")},
+				{Revision: "main", Path: []byte("missing.txt")},
+			}})
+		require.NoError(t, err)
+		type blob struct {
+			path string
+			oid  string
+			size int64
+			data []byte
+		}
+		var blobs []blob
+		var cur *blob
+		flush := func() {
+			if cur != nil {
+				blobs = append(blobs, *cur)
+				cur = nil
+			}
+		}
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				break
+			}
+			if len(resp.GetPath()) > 0 {
+				flush()
+				cur = &blob{path: string(resp.GetPath()), oid: resp.GetOid(), size: resp.GetSize()}
+			}
+			if cur == nil {
+				continue
+			}
+			cur.data = append(cur.data, resp.GetData()...)
+			if cur.size > 0 && int64(len(cur.data)) == cur.size {
+				flush()
+			}
+		}
+		flush()
+		require.Len(t, blobs, 3)
+		assert.Equal(t, "hello gitaly\n", string(blobs[0].data))
+		assert.Equal(t, "package main", string(blobs[1].data))
+		assert.Empty(t, blobs[2].oid) // miss answers an empty message
+	})
+
+	t.Run("list blobs with budgets", func(t *testing.T) {
+		stream, err := bs.ListBlobs(ctx, &gitalypb.ListBlobsRequest{
+			Repository: repo, Revisions: []string{"main"}, BytesLimit: 4096, WithPaths: true})
+		require.NoError(t, err)
+		var oids []string
+		contents := map[string]string{}
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				break
+			}
+			for _, b := range resp.GetBlobs() {
+				oids = append(oids, b.GetOid())
+				if len(b.GetData()) > 0 {
+					contents[string(b.GetPath())] = string(b.GetData())
+				}
+			}
+		}
+		assert.Len(t, oids, 3) // hello.txt + guide.md (v2) + main.go — the walk sees the tip snapshot
+		assert.Equal(t, "guide v2", contents["docs/guide.md"])
+	})
+
+	t.Run("list all blobs across heads", func(t *testing.T) {
+		stream, err := bs.ListAllBlobs(ctx, &gitalypb.ListAllBlobsRequest{Repository: repo, BytesLimit: 4096})
+		require.NoError(t, err)
+		n := 0
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				break
+			}
+			n += len(resp.GetBlobs())
+		}
+		assert.Equal(t, 3, n)
+	})
+
+	t.Run("find merge base", func(t *testing.T) {
+		c1 := c1Of(t, svc, repoName, head)
+		out, err := rs.FindMergeBase(ctx, &gitalypb.FindMergeBaseRequest{
+			Repository: repo, Revisions: [][]byte{[]byte("main"), []byte(c1)}})
+		require.NoError(t, err)
+		assert.Equal(t, c1, out.GetBase())
+	})
+
+	t.Run("write ref and repository size", func(t *testing.T) {
+		_, err := rs.WriteRef(ctx, &gitalypb.WriteRefRequest{
+			Repository: repo, Ref: []byte("refs/heads/deploy"), Revision: []byte("main")})
+		require.NoError(t, err)
+		b, err := gitalypb.NewRefServiceClient(conn).FindBranch(ctx, &gitalypb.FindBranchRequest{
+			Repository: repo, Name: []byte("deploy")})
+		require.NoError(t, err)
+		assert.Equal(t, head.String(), b.GetBranch().GetTargetCommit().GetId())
+
+		sz, err := rs.RepositorySize(ctx, &gitalypb.RepositorySizeRequest{Repository: repo})
+		require.NoError(t, err)
+		assert.Greater(t, sz.GetSize(), int64(0))
+	})
+}

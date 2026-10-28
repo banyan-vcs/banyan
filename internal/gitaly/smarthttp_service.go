@@ -16,14 +16,49 @@ import (
 // smartHTTPService bridges workhorse's git-HTTP traffic onto gitwire: the
 // same handlers the /r/ endpoints run, invoked through an internal mux with
 // recorded responses — one HTTP exchange per gRPC message exchange, the
-// stateless-rpc contract both sides speak.
-//
-// PostUploadPackWithSidechannel (and the SSH sidechannel variants) need the
-// yamux multiplexing transport — next slice, docs/19 §5.
+// stateless-rpc contract both sides speak. The sidechannel variant moves
+// the pack bytes onto a yamux stream instead of gRPC messages.
 type smartHTTPService struct {
 	gitalypb.UnimplementedSmartHTTPServiceServer
 	s *Server
 }
+
+// PostUploadPackWithSidechannel runs the fetch exchange over a yamux stream
+// dialed back to the client (docs/19 §5): the request body arrives on the
+// sidechannel (the client half-closes after it), the pack response returns
+// over the same stream. The gRPC response itself carries only statistics.
+func (sh *smartHTTPService) PostUploadPackWithSidechannel(ctx context.Context, req *gitalypb.PostUploadPackWithSidechannelRequest) (*gitalypb.PostUploadPackWithSidechannelResponse, error) {
+	name, err := sh.s.existingRepo(ctx, req.GetRepository())
+	if err != nil {
+		return nil, err
+	}
+	raw, err := openSidechannel(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conn := newFramedConn(raw)
+	defer conn.Close()
+	body, err := io.ReadAll(conn) // the client's flush frame ends the request
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "gitaly: read fetch request: %v", err)
+	}
+	rec, err := sh.s.httpExchange(http.MethodPost, mappedPath(name)+"/git-upload-pack",
+		"application/x-git-upload-pack-request", req.GetGitProtocol(), body)
+	if err != nil {
+		return nil, err
+	}
+	if rec.Code != http.StatusOK {
+		return nil, status.Errorf(codes.Internal, "gitaly: upload-pack failed: %s", rec.Body.String())
+	}
+	if _, err := conn.Write(rec.Body.Bytes()); err != nil {
+		return nil, status.Errorf(codes.Internal, "gitaly: write pack response: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		return nil, status.Errorf(codes.Internal, "gitaly: close sidechannel: %v", err)
+	}
+	return &gitalypb.PostUploadPackWithSidechannelResponse{}, nil
+}
+
 
 // httpExchange runs one request against the internal gitwire mux.
 func (s *Server) httpExchange(method, urlPath, contentType, gitProtocol string, body []byte) (*httptest.ResponseRecorder, error) {
