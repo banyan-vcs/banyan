@@ -102,13 +102,13 @@ directory timelines align both boundaries at the same granularity.
 | HA cluster: gateway + refs service + scattered multi-replica pack storage, node failure recovery, dynamic per-repo replicas | ✅ core (local-disk cluster, T23-T26; MySQL/raft refs backend → HA-2) |
 | Product-side console (`banyans`): `{group}/{project}[/path]` routing, PAT auth, subtree-scoped member roles with prefix-chain inheritance (docs/17) | ✅ M6.1/M6.2 (HTTP; SSH/web → M6.3/M6.4) |
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
-| Gitaly gRPC frontend (replace GitLab's gitaly node; protocol v19.5.2, 36/163 RPCs live) | 🚧 slices 1–2 ([docs/19](docs/19-gitaly-compat.md)) |
+| Gitaly gRPC frontend (replace GitLab's gitaly node; protocol v19.5.2, 45/163 RPCs live — clone/push transport incl. sidechannel) | 🚧 slices 1–3 ([docs/19](docs/19-gitaly-compat.md)) |
 
-68 integration cases pin the behavior with the **real git CLI** as the client
+69 integration cases pin the behavior with the **real git CLI** as the client
 ([docs/13](docs/13-testing.md)) — the thin-CLI commit path is cross-verified
 by fresh git clones plus `fsck`; the gitaly frontend is cross-verified
-against git's own answers (T60) and a workhorse-shaped gRPC transport
-emulator (T61).
+against git's own answers (T60), a workhorse-shaped gRPC transport emulator
+(T61), and the multiplexed sidechannel transport real clones ride (T62).
 
 ## Repository layout
 
