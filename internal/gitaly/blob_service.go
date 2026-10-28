@@ -1,6 +1,10 @@
 package gitaly
 
 import (
+	"context"
+	"errors"
+	"strings"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -9,15 +13,13 @@ import (
 )
 
 // blobService implements gitaly.BlobService's read slice: GetBlob streams a
-// single blob; the enumeration RPCs (ListBlobs, LFS pointers) are later
-// slices over the same object plane.
+// single blob; GetBlobs resolves revision:path pairs; ListBlobs/ListAllBlobs
+// enumerate a revision's (or every head's) blobs. LFS-pointer RPCs ride the
+// same enumeration once pointer parsing lands (docs/19).
 type blobService struct {
 	gitalypb.UnimplementedBlobServiceServer
 	s *Server
 }
-
-// blobChunk is the wire chunking upstream clients accept for blob data.
-const blobChunk = 1 << 20
 
 func (bs *blobService) GetBlob(req *gitalypb.GetBlobRequest, stream gitalypb.BlobService_GetBlobServer) error {
 	ctx := stream.Context()
@@ -39,12 +41,229 @@ func (bs *blobService) GetBlob(req *gitalypb.GetBlobRequest, stream gitalypb.Blo
 	if err := stream.Send(&gitalypb.GetBlobResponse{Oid: req.GetOid(), Size: int64(len(raw))}); err != nil {
 		return err
 	}
-	for off := 0; off < len(data); off += blobChunk {
-		end := off + blobChunk
-		if end > len(data) {
-			end = len(data)
+	return streamBytes(data, func(b []byte) error {
+		return stream.Send(&gitalypb.GetBlobResponse{Data: b})
+	})
+}
+
+// GetBlobs answers revision:path pairs with each blob's metadata and
+// chunked content; misses answer with an empty message.
+func (bs *blobService) GetBlobs(req *gitalypb.GetBlobsRequest, stream gitalypb.BlobService_GetBlobsServer) error {
+	ctx := stream.Context()
+	name, err := bs.s.existingRepo(ctx, req.GetRepository())
+	if err != nil {
+		return err
+	}
+	for _, rp := range req.GetRevisionPaths() {
+		if err := bs.sendBlobAt(ctx, stream, name, rp, req.GetLimit()); err != nil {
+			return err
 		}
-		if err := stream.Send(&gitalypb.GetBlobResponse{Data: data[off:end]}); err != nil {
+	}
+	return nil
+}
+
+func (bs *blobService) sendBlobAt(ctx context.Context, stream gitalypb.BlobService_GetBlobsServer, repo string, rp *gitalypb.GetBlobsRequest_RevisionPath, limit int64) error {
+	out := &gitalypb.GetBlobsResponse{Path: rp.GetPath()}
+	oid, err := bs.s.resolveRevision(ctx, repo, string(rp.GetRevision()))
+	if err != nil {
+		return stream.Send(out)
+	}
+	rec, err := bs.s.commitRecord(ctx, repo, oid)
+	if err != nil {
+		return stream.Send(out)
+	}
+	tree := rec.Tree
+	lookup := bs.s.Objects.Lookup(repo)
+	var entry *model.TreeEntry
+	for _, seg := range splitPath(string(rp.GetPath())) {
+		t, err := lookup.Tree(tree)
+		if err != nil {
+			return stream.Send(out)
+		}
+		entry = nil
+		for i := range t.Entries {
+			if t.Entries[i].Name == seg {
+				entry = &t.Entries[i]
+				break
+			}
+		}
+		if entry == nil {
+			return stream.Send(out)
+		}
+		if !entry.IsDir {
+			break
+		}
+		tree = entry.Target
+	}
+	if entry == nil {
+		return stream.Send(out)
+	}
+	if entry.Mode == "160000" {
+		out.IsSubmodule = true
+		out.Oid = entry.Target.String()
+		return stream.Send(out)
+	}
+	if entry.IsDir {
+		return stream.Send(out)
+	}
+	typ, raw, err := bs.s.Objects.Raw(ctx, repo, entry.Target)
+	if err != nil || typ != model.BlobType {
+		return stream.Send(out)
+	}
+	data := raw
+	if limit > 0 && int64(len(raw)) > limit {
+		data = raw[:limit]
+	}
+	out.Oid = entry.Target.String()
+	out.Size = int64(len(raw))
+	out.Mode = modeValue(entry.Mode)
+	if err := stream.Send(out); err != nil {
+		return err
+	}
+	return streamBytes(data, func(b []byte) error {
+		return stream.Send(&gitalypb.GetBlobsResponse{Data: b})
+	})
+}
+
+// splitPath splits a slash path into clean segments.
+func splitPath(p string) []string {
+	var out []string
+	for _, seg := range strings.Split(strings.Trim(p, "/"), "/") {
+		if seg != "" && seg != "." {
+			out = append(out, seg)
+		}
+	}
+	return out
+}
+
+// listedBlob is one enumerated blob (dedup key = OID).
+type listedBlob struct {
+	oid  model.OID
+	path string
+	size int64
+}
+
+// walkBlobs enumerates blobs under each revision's tree, deduped by OID.
+func (bs *blobService) walkBlobs(ctx context.Context, repo string, revisions []string, limit uint32) ([]listedBlob, error) {
+	lookup := bs.s.Objects.Lookup(repo)
+	seen := map[model.OID]bool{}
+	var out []listedBlob
+	var emit func(tree model.OID, prefix string) error
+	emit = func(tree model.OID, prefix string) error {
+		t, err := lookup.Tree(tree)
+		if err != nil {
+			return nil // unreadable subtree: report what is readable
+		}
+		for _, e := range t.Entries {
+			switch {
+			case e.IsDir:
+				if err := emit(e.Target, prefix+e.Name+"/"); err != nil {
+					return err
+				}
+			case e.Mode == "160000":
+				continue
+			default:
+				if seen[e.Target] {
+					continue
+				}
+				seen[e.Target] = true
+				size := int64(0)
+				if typ, raw, err := bs.s.Objects.Raw(ctx, repo, e.Target); err == nil && typ == model.BlobType {
+					size = int64(len(raw))
+				}
+				out = append(out, listedBlob{oid: e.Target, path: prefix + e.Name, size: size})
+				if limit > 0 && uint32(len(out)) >= limit {
+					return errBlobLimitReached
+				}
+			}
+		}
+		return nil
+	}
+	for _, rev := range revisions {
+		oid, err := bs.s.resolveRevision(ctx, repo, rev)
+		if err != nil {
+			continue
+		}
+		rec, err := bs.s.commitRecord(ctx, repo, oid)
+		if err != nil {
+			continue
+		}
+		if err := emit(rec.Tree, ""); err != nil {
+			if err == errBlobLimitReached {
+				break
+			}
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// errBlobLimitReached is the walkBlobs early-stop sentinel.
+var errBlobLimitReached = errors.New("blob limit reached")
+
+// ListBlobs enumerates blobs reachable from the given revisions. Contents
+// stream when the blob fits the byte budget; larger blobs carry metadata
+// only (clients fetching them do so via GetBlob).
+func (bs *blobService) ListBlobs(req *gitalypb.ListBlobsRequest, stream gitalypb.BlobService_ListBlobsServer) error {
+	ctx := stream.Context()
+	name, err := bs.s.existingRepo(ctx, req.GetRepository())
+	if err != nil {
+		return err
+	}
+	blobs, err := bs.walkBlobs(ctx, name, req.GetRevisions(), req.GetLimit())
+	if err != nil {
+		return err
+	}
+	return bs.sendListed(ctx, name, blobs, req.GetBytesLimit(), req.GetWithPaths(),
+		func(oid, path string, size int64, data []byte) error {
+			return stream.Send(&gitalypb.ListBlobsResponse{Blobs: []*gitalypb.ListBlobsResponse_Blob{{
+				Oid: oid, Size: size, Data: data, Path: []byte(path),
+			}}})
+		})
+}
+
+// ListAllBlobs enumerates every blob reachable from any branch head.
+func (bs *blobService) ListAllBlobs(req *gitalypb.ListAllBlobsRequest, stream gitalypb.BlobService_ListAllBlobsServer) error {
+	ctx := stream.Context()
+	name, err := bs.s.existingRepo(ctx, req.GetRepository())
+	if err != nil {
+		return err
+	}
+	refs, err := bs.s.listRefs(ctx, name)
+	if err != nil {
+		return err
+	}
+	var revs []string
+	for _, r := range refs {
+		if strings.HasPrefix(r.Name, "refs/heads/") {
+			revs = append(revs, r.Name)
+		}
+	}
+	blobs, err := bs.walkBlobs(ctx, name, revs, req.GetLimit())
+	if err != nil {
+		return err
+	}
+	return bs.sendListed(ctx, name, blobs, req.GetBytesLimit(), false,
+		func(oid, path string, size int64, data []byte) error {
+			return stream.Send(&gitalypb.ListAllBlobsResponse{Blobs: []*gitalypb.ListAllBlobsResponse_Blob{{
+				Oid: oid, Size: size, Data: data,
+			}}})
+		})
+}
+
+func (bs *blobService) sendListed(ctx context.Context, repo string, blobs []listedBlob, bytesLimit int64, withPaths bool, send func(oid, path string, size int64, data []byte) error) error {
+	for _, b := range blobs {
+		var data []byte
+		if bytesLimit > 0 && b.size <= bytesLimit {
+			if typ, raw, err := bs.s.Objects.Raw(ctx, repo, b.oid); err == nil && typ == model.BlobType {
+				data = raw
+			}
+		}
+		path := ""
+		if withPaths {
+			path = b.path
+		}
+		if err := send(b.oid.String(), path, b.size, data); err != nil {
 			return err
 		}
 	}
