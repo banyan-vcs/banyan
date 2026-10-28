@@ -83,19 +83,35 @@ ListCommitsByRefName/FindCommits 等）
 GetBlob ✅（oid+limit，1MiB 分块） · ⬜ GetBlobs/ListBlobs/ListAllBlobs/
 LFSPointer 系
 
-### 其余服务 ⬜（全部已注册）
-DiffService(10) · SmartHTTPService(5) · SSHService(3) · OperationService(16)
-· HookService(7) · ConflictsService(2) · RemoteService(3) · CleanupService(2)
-· ObjectPoolService(6) · InternalGitaly(5) · BackupService(2) ·
-PartitionService(2) · AnalysisService(1) · PraefectInfoService(6) ·
-RefTransaction(2)
+### SmartHTTPService 3/5
+InfoRefsUploadPack ✅ · InfoRefsReceivePack ✅ · PostReceivePack ✅
+（bidi：body 流入 mux 桥、响应流回；工作方式 = 内建 gitwire mux +
+recorder，一次 HTTP 交换一条 gRPC 消息流，stateless-rpc 契约） ·
+⬜ PostUploadPackWithSidechannel / AdvertiseBundleURI —— **sidechannel 是
+fetch 通路的下一阻塞点**：协议 = 整条 TCP 连接 yamux 复用（客户端拨号即
+yamux；gRPC 走流 1，服务端反向开短命流承载 HTTP-over-stream 大块传输；
+`gitaly-sidechannel-id` 元数据配对；见上游 doc/sidechannel.md）。落地
+时传输层需嗅探 yamux vs h2 preface。
 
-**小计：32/163。**
+### SSHService 1/3
+SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-status
+末条；复用 gitwire.ServeSSHSession——从 serveGitExec 抽出的 io 流会话核
+心，docs/04 §7b 的无守护进程形态） · ⬜ SSHUploadPackWithSidechannel /
+SSHUploadArchive（sidechannel/归档面）
+
+### 其余服务 ⬜（全部已注册）
+DiffService(10) · OperationService(16) · HookService(7) · ConflictsService(2)
+· RemoteService(3) · CleanupService(2) · ObjectPoolService(6) ·
+InternalGitaly(5) · BackupService(2) · PartitionService(2) ·
+AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
+
+**小计：36/163。**
 
 ## 5. 切片路线（续）
 
-1. **传输面**（P0）：SmartHTTPService + SSHService——gitwire 的
-   upload-pack/receive-pack 直接挂接，GitLab 走 workhorse 的 git HTTP/SSH。
+1. **sidechannel 传输**（P0，fetch 通路的阻塞点）：yamux 复用 + HTTP-over-
+   stream——解锁 PostUploadPackWithSidechannel / SSHUploadPackWithSidechannel
+   （clone/fetch 走 workhorse 的唯一路径）与 PackObjectsHookWithSidechannel。
 2. **Diff + Commit 补全**：CommitDiff/DiffStats/LastCommitForPath/
    ListLastCommitsForTree/FindCommits（范围 rev-list）。
 3. **Blob 补全**：GetBlobs/ListBlobs/LFS pointers。
@@ -124,3 +140,8 @@ RefTransaction(2)
   **逐项对拍 git 本地答案**（ls-remote/rev-parse/rev-list/ls-tree/
   cat-file），UpdateReferences 写回 git 可见；@hashed 建仓后经 gitwire
   push、gRPC 读回。oracle = git 本身。
+- T61（integration）：**workhorse 模拟器**（HTTP 入 → gRPC 流 → gitwire
+  mux）承载真 git push 全链路；推送内容经原生 /r/ 面 clone+fsck 对拍；
+  InfoRefs 广告与原生端点逐字节相等；SSHReceivePack 广告会话 +
+  exit-status；存储名错误在流上以 NotFound 冒出（服务端流式 RPC 的错误
+  面契约）。
