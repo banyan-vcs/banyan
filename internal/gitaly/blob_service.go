@@ -2,7 +2,6 @@ package gitaly
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"google.golang.org/grpc/codes"
@@ -12,10 +11,11 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// blobService implements gitaly.BlobService's read slice: GetBlob streams a
-// single blob; GetBlobs resolves revision:path pairs; ListBlobs/ListAllBlobs
-// enumerate a revision's (or every head's) blobs. LFS-pointer RPCs ride the
-// same enumeration once pointer parsing lands (docs/19).
+// blobService implements gitaly.BlobService: GetBlob streams a single blob;
+// GetBlobs resolves revision:path pairs; ListBlobs/ListAllBlobs enumerate a
+// revision's full-history blobs (rev-list --objects) or the whole object
+// database (batch-all-objects); the LFS-pointer trio rides the same
+// enumeration with pointer parsing (lfs.go).
 type blobService struct {
 	gitalypb.UnimplementedBlobServiceServer
 	s *Server
@@ -143,63 +143,66 @@ type listedBlob struct {
 	size int64
 }
 
-// walkBlobs enumerates blobs under each revision's tree, deduped by OID.
-func (bs *blobService) walkBlobs(ctx context.Context, repo string, revisions []string, limit uint32) ([]listedBlob, error) {
+// walkHistoryBlobs enumerates every blob reachable from the revisions' full
+// commit history (rev-list --objects semantics): shared subtrees are walked
+// once (tree memo) and each blob answers at its first occurrence, so files
+// deleted at the tip still list. Unresolvable revisions error out — callers
+// decide the wire code.
+func (bs *blobService) walkHistoryBlobs(ctx context.Context, repo string, revisions []string, limit int32) ([]listedBlob, error) {
+	var heads []model.OID
+	for _, rev := range revisions {
+		oid, err := bs.s.resolveRevision(ctx, repo, rev)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "gitaly: revision %q not found", rev)
+		}
+		heads = append(heads, oid)
+	}
 	lookup := bs.s.Objects.Lookup(repo)
-	seen := map[model.OID]bool{}
-	var out []listedBlob
-	var emit func(tree model.OID, prefix string) error
-	emit = func(tree model.OID, prefix string) error {
+	seenBlobs := map[model.OID]bool{}
+	seenTrees := map[model.OID]bool{}
+	out := []listedBlob{}
+	var emit func(tree model.OID, prefix string)
+	emit = func(tree model.OID, prefix string) {
+		if seenTrees[tree] {
+			return
+		}
+		seenTrees[tree] = true
 		t, err := lookup.Tree(tree)
 		if err != nil {
-			return nil // unreadable subtree: report what is readable
+			return // unreadable subtree: report what is readable
 		}
 		for _, e := range t.Entries {
 			switch {
 			case e.IsDir:
-				if err := emit(e.Target, prefix+e.Name+"/"); err != nil {
-					return err
-				}
+				emit(e.Target, prefix+e.Name+"/")
 			case e.Mode == "160000":
 				continue
 			default:
-				if seen[e.Target] {
+				if seenBlobs[e.Target] {
 					continue
 				}
-				seen[e.Target] = true
+				seenBlobs[e.Target] = true
 				size := int64(0)
 				if typ, raw, err := bs.s.Objects.Raw(ctx, repo, e.Target); err == nil && typ == model.BlobType {
 					size = int64(len(raw))
 				}
 				out = append(out, listedBlob{oid: e.Target, path: prefix + e.Name, size: size})
-				if limit > 0 && uint32(len(out)) >= limit {
-					return errBlobLimitReached
-				}
 			}
 		}
-		return nil
 	}
-	for _, rev := range revisions {
-		oid, err := bs.s.resolveRevision(ctx, repo, rev)
-		if err != nil {
-			continue
-		}
-		rec, err := bs.s.commitRecord(ctx, repo, oid)
-		if err != nil {
-			continue
-		}
-		if err := emit(rec.Tree, ""); err != nil {
-			if err == errBlobLimitReached {
-				break
-			}
-			return nil, err
-		}
+	var walkErr error
+	err := bs.s.walkHistory(ctx, repo, heads, func(_ model.OID, rec *commitRecord) bool {
+		emit(rec.Tree, "")
+		return !(limit > 0 && int32(len(out)) >= limit)
+	})
+	if err != nil {
+		walkErr = status.Errorf(codes.Internal, "gitaly: walking history: %v", err)
 	}
-	return out, nil
+	if limit > 0 && int32(len(out)) >= limit {
+		out = out[:limit]
+	}
+	return out, walkErr
 }
-
-// errBlobLimitReached is the walkBlobs early-stop sentinel.
-var errBlobLimitReached = errors.New("blob limit reached")
 
 // ListBlobs enumerates blobs reachable from the given revisions. Contents
 // stream when the blob fits the byte budget; larger blobs carry metadata
@@ -210,7 +213,10 @@ func (bs *blobService) ListBlobs(req *gitalypb.ListBlobsRequest, stream gitalypb
 	if err != nil {
 		return err
 	}
-	blobs, err := bs.walkBlobs(ctx, name, req.GetRevisions(), req.GetLimit())
+	if len(req.GetRevisions()) == 0 {
+		return status.Error(codes.InvalidArgument, "gitaly: revisions is empty")
+	}
+	blobs, err := bs.walkHistoryBlobs(ctx, name, req.GetRevisions(), int32(req.GetLimit()))
 	if err != nil {
 		return err
 	}
@@ -222,26 +228,28 @@ func (bs *blobService) ListBlobs(req *gitalypb.ListBlobsRequest, stream gitalypb
 		})
 }
 
-// ListAllBlobs enumerates every blob reachable from any branch head.
+// ListAllBlobs enumerates every blob in the repository — including
+// unreachable ones (cat-file --batch-all-objects semantics), OID-sorted.
 func (bs *blobService) ListAllBlobs(req *gitalypb.ListAllBlobsRequest, stream gitalypb.BlobService_ListAllBlobsServer) error {
 	ctx := stream.Context()
 	name, err := bs.s.existingRepo(ctx, req.GetRepository())
 	if err != nil {
 		return err
 	}
-	refs, err := bs.s.listRefs(ctx, name)
+	oids, err := bs.allObjectOIDs(ctx, name)
 	if err != nil {
 		return err
 	}
-	var revs []string
-	for _, r := range refs {
-		if strings.HasPrefix(r.Name, "refs/heads/") {
-			revs = append(revs, r.Name)
+	blobs := make([]listedBlob, 0, len(oids))
+	for _, oid := range oids {
+		if req.GetLimit() > 0 && uint32(len(blobs)) >= req.GetLimit() {
+			break
 		}
-	}
-	blobs, err := bs.walkBlobs(ctx, name, revs, req.GetLimit())
-	if err != nil {
-		return err
+		typ, raw, err := bs.s.Objects.Raw(ctx, name, oid)
+		if err != nil || typ != model.BlobType {
+			continue
+		}
+		blobs = append(blobs, listedBlob{oid: oid, size: int64(len(raw))})
 	}
 	return bs.sendListed(ctx, name, blobs, req.GetBytesLimit(), false,
 		func(oid, path string, size int64, data []byte) error {

@@ -424,7 +424,7 @@ func TestGitalyBlobAndRepoExtras(t *testing.T) {
 			Repository: repo, Revisions: []string{"main"}, BytesLimit: 4096, WithPaths: true})
 		require.NoError(t, err)
 		var oids []string
-		contents := map[string]string{}
+		contents := map[string]bool{}
 		for {
 			resp, err := stream.Recv()
 			if err != nil {
@@ -433,12 +433,15 @@ func TestGitalyBlobAndRepoExtras(t *testing.T) {
 			for _, b := range resp.GetBlobs() {
 				oids = append(oids, b.GetOid())
 				if len(b.GetData()) > 0 {
-					contents[string(b.GetPath())] = string(b.GetData())
+					contents[string(b.GetData())] = true
 				}
 			}
 		}
-		assert.Len(t, oids, 3) // hello.txt + guide.md (v2) + main.go — the walk sees the tip snapshot
-		assert.Equal(t, "guide v2", contents["docs/guide.md"])
+		// Full-history semantics (rev-list --objects): guide.md v1 still
+		// answers even though the tip carries v2.
+		assert.Len(t, oids, 4)
+		assert.True(t, contents["guide"] && contents["guide v2"] &&
+			contents["hello gitaly\n"] && contents["package main"])
 	})
 
 	t.Run("list all blobs across heads", func(t *testing.T) {
@@ -452,7 +455,7 @@ func TestGitalyBlobAndRepoExtras(t *testing.T) {
 			}
 			n += len(resp.GetBlobs())
 		}
-		assert.Equal(t, 3, n)
+		assert.Equal(t, 4, n)
 	})
 
 	t.Run("find merge base", func(t *testing.T) {
