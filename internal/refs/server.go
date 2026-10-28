@@ -87,6 +87,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/list-repos", s.hListRepos)
 	meta.HandleFunc("/internal/meta/rename-repo", s.hRenameRepo)
 	meta.HandleFunc("/internal/meta/set-force-push", s.hSetForcePush)
+	meta.HandleFunc("/internal/meta/set-default-branch", s.hSetDefaultBranch)
 	meta.HandleFunc("/internal/meta/hooks", s.hHooks)
 	meta.HandleFunc("/internal/meta/hooks/delete", s.hDeleteHook)
 	meta.HandleFunc("/internal/meta/timeline", s.hTimeline)
@@ -373,6 +374,23 @@ func (s *Server) hSetForcePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Meta.SetForcePush(r.Context(), req.Repo, req.Enabled); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// hSetDefaultBranch changes the advertised HEAD symref target (gitaly
+// CreateRepository default-branch semantics).
+func (s *Server) hSetDefaultBranch(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Repo   string `json:"repo"`
+		Branch string `json:"branch"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.SetDefaultBranch(r.Context(), req.Repo, req.Branch); err != nil {
 		writeErr(w, err)
 		return
 	}

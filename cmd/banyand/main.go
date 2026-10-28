@@ -23,6 +23,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/config"
 	"github.com/banyan-vcs/banyan/internal/debug"
+	"github.com/banyan-vcs/banyan/internal/gitaly"
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/refs"
@@ -114,12 +115,35 @@ func runAllInOne(cfg *config.Config) {
 	gw.Register(mux)
 	api.Register(mux)
 	root(mux)
+	startGitaly(cfg, meta, objects)
 	if err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw); err != nil {
 		log.Fatalf("ssh: %v", err)
 	}
 	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
 }
 
+// startGitaly serves the gitaly-protocol gRPC frontend (docs/19) when
+// gitaly.listen is configured: a GitLab Rails/workhorse stack can replace
+// its stock gitaly node with this process.
+func startGitaly(cfg *config.Config, meta storage.MetaStore, objects *storage.ObjectService) {
+	if cfg.Gitaly.Listen == "" {
+		return
+	}
+	if cfg.Gitaly.Token == "" {
+		log.Printf("gitaly: WARNING no token set — the frontend accepts unauthenticated gRPC (development only)")
+	}
+	gs := gitaly.NewServer(meta, objects, model.SHA1, gitaly.Options{
+		Token:           cfg.Gitaly.Token,
+		StorageName:     cfg.Gitaly.StorageName,
+		ReportedVersion: cfg.Gitaly.ReportedVersion,
+	})
+	go func() {
+		log.Printf("gitaly: serving %s (storage=%s, protocol %s)", cfg.Gitaly.Listen, cfg.Gitaly.StorageName, gitaly.ProtoVersion)
+		if err := gs.ListenAndServe(cfg.Gitaly.Listen); err != nil {
+			log.Fatalf("gitaly: %v", err)
+		}
+	}()
+}
 // staticPolicy builds the demo authorization policy from config (docs/07
 // §2): nil when the auth section is absent — authorization off.
 func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
@@ -187,6 +211,7 @@ func runGateway(cfg *config.Config) {
 	gw.Register(mux)
 	api.Register(mux)
 	root(mux)
+	startGitaly(cfg, meta, objects)
 	// Same transport wiring as all-in-one: the gateway decides access
 	// against the synced policy snapshot (keys ride along, docs/07 §4/§7).
 	if err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw); err != nil {

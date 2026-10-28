@@ -43,6 +43,14 @@ type server struct {
 
 func newServer(t *testing.T) *server {
 	t.Helper()
+	s, _, _ := newServerPlane(t)
+	return s
+}
+
+// newServerPlane is newServer with the underlying object plane exposed —
+// auxiliary frontends (the gitaly gRPC server) serve the same plane.
+func newServerPlane(t *testing.T) (*server, storage.MetaStore, *storage.ObjectService) {
+	t.Helper()
 	meta := storage.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(t.TempDir())
 	nodes := []storage.Node{{ID: "t1", Local: true}}
@@ -52,7 +60,7 @@ func newServer(t *testing.T) *server {
 	rpc.NewServer(meta, objects, model.SHA1).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &server{Server: srv}
+	return &server{Server: srv}, meta, objects
 }
 
 func (s *server) repoURL(name string) string { return s.URL + "/r/" + name + ".git" }

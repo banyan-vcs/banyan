@@ -183,6 +183,13 @@ func (m *RemoteMeta) SetForcePush(ctx context.Context, repo string, enabled bool
 		map[string]any{"repo": repo, "enabled": enabled}, nil)
 }
 
+// SetDefaultBranch changes the advertised HEAD symref target (gitaly
+// CreateRepository default-branch semantics).
+func (m *RemoteMeta) SetDefaultBranch(ctx context.Context, repo string, branch string) error {
+	return m.Refs.call(ctx, "/internal/meta/set-default-branch",
+		map[string]any{"repo": repo, "branch": branch}, nil)
+}
+
 // ListHooks fetches the repo's receive-hook registry (docs/04 §7).
 func (m *RemoteMeta) ListHooks(ctx context.Context, repo string) ([]HookInfo, error) {
 	var out struct {
