@@ -74,13 +74,12 @@ remote-tracking refs） · ListRefs ✅（patterns glob/head/peel/pointing_at/
 Old OID 为咨询性——banyan ref 面写者串行化，竞争按最后写赢） · DeleteRefs ✅
 · ⬜ GetTagSignatures / GetTagMessages（tag 正文解析扩展后补）
 
-### CommitService 10/22
+### CommitService 16/22
 FindCommit ✅（rev 缺失返回空 commit，同上游契约） · CommitIsAncestor ✅ ·
 ListCommits ✅（^排除/first-parent/max_parents/after/before/author/分页） ·
 ListAllCommits ✅ · CountCommits ✅ · GetTreeEntries ✅（recursive） ·
 ListFiles ✅ · ListCommitsByOid ✅ · GetCommitMessages ✅ ·
-CheckObjectsExist ✅（bidi） · ⬜ 12 个（diff/blame/签名/语言/LastCommitForPath/
-ListCommitsByRefName/FindCommits 等）
+CheckObjectsExist ✅（bidi） · **FindCommits ✅**（pathspec 过滤历史=pathTouched 对首父树比较） · **CommitStats ✅** · **TreeEntry ✅**（单条目+内容分块） · **CommitsByMessage ✅**（消息子串） · **LastCommitForPath ✅** · **ListLastCommitsForTree ✅**（树首层逐条目） · ⬜ 6 个（RawBlame/CommitLanguages/签名×2/ListCommitsByRefName/TreeEntry 特性位）
 
 ### BlobService 4/7
 GetBlob ✅（oid+limit） · GetBlobs ✅（revision:path 批量，miss 答空消息）
@@ -107,21 +106,21 @@ SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-stat
 （交互式 upload 会话整体跑在 sidechannel 上——广告/协商/包字节） ·
 ⬜ SSHUploadArchive
 
+### DiffService 8/10
+CommitDiff ✅ · CommitDelta ✅ · RawDiff ✅（**与 git diff 逐字节一致**，T63） · RawPatch ✅（同 RawDiff 体） · DiffStats ✅ · DiffBlobs ✅（字节对直评） · GetPatchID ✅（SHA-1 over patch，best-effort） · FindChangedPaths ✅（Tree/Commit 双形态） · ⬜ RangeDiff/RawRangeDiff（范围互比，后切片）。底层=treeDiff（树递归对比）+unifiedPatch（go-diff 行级 + git 格式头：diff --git/index 行/@@ 计数=1 省略/dev-null 语义）。
+
 ### 其余服务 ⬜（全部已注册）
-DiffService(10) · OperationService(16) · HookService(7) · ConflictsService(2)
+OperationService(16) · HookService(7) · ConflictsService(2)
 · RemoteService(3) · CleanupService(2) · ObjectPoolService(6) ·
 InternalGitaly(5) · BackupService(2) · PartitionService(2) ·
 AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 
-**小计：45/163。**
+**小计：59/163。**
 
 ## 5. 切片路线（续）
 
-1. **Diff + Commit 补全**：CommitDiff/DiffStats/LastCommitForPath/
-   ListLastCommitsForTree/FindCommits（范围 rev-list）——diff 机械可复用
-   M6.5 的服务层 path-diff 与 merge 包的行级 diff。
-2. **LFS pointer 面**：解析 pointer blob（文本头解析）挂 GetBlobs 枚举。
-3. **OperationService**：user 系 merge/rebase/revert/squash/cherry-pick
+1. **LFS pointer 面**：解析 pointer blob（文本头解析）挂 GetBlobs 枚举。
+2. **OperationService**：user 系 merge/rebase/revert/squash/cherry-pick
    ——复用 merge-ort 子集与 service.CreateCommit 服务端提交路径。
 4. **Repo 维护面**：DeleteRepository（需散存 pack GC 设计）/
    GetArchive/Fsck/CalculateChecksum。
