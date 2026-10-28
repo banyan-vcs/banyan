@@ -164,12 +164,24 @@ func looksBinary(b []byte) bool {
 
 // patchStats counts additions/deletions between two contents.
 func patchStats(oldContent, newContent []byte) (added, removed int32) {
+	// A trailing chunk without a newline is still a line (git --numstat
+	// semantics); counting only "\n" misses files with no trailing newline.
+	count := func(text string) int32 {
+		if text == "" {
+			return 0
+		}
+		n := int32(strings.Count(text, "\n"))
+		if !strings.HasSuffix(text, "\n") {
+			n++
+		}
+		return n
+	}
 	for _, d := range lineDiffOps(string(oldContent), string(newContent)) {
 		switch d.Type {
 		case diffmatchpatch.DiffInsert:
-			added += int32(strings.Count(d.Text, "\n"))
+			added += count(d.Text)
 		case diffmatchpatch.DiffDelete:
-			removed += int32(strings.Count(d.Text, "\n"))
+			removed += count(d.Text)
 		}
 	}
 	return added, removed
