@@ -219,6 +219,25 @@ func (m *RemoteMeta) DeleteHook(ctx context.Context, repo, id string) error {
 		map[string]string{"repo": repo, "id": id}, nil)
 }
 
+func (m *RemoteMeta) SetRepoBlob(ctx context.Context, repo, key string, data []byte) error {
+	return m.Refs.call(ctx, "/internal/meta/repo-blob",
+		map[string]any{"repo": repo, "key": key, "data": data}, nil)
+}
+
+func (m *RemoteMeta) GetRepoBlob(ctx context.Context, repo, key string) ([]byte, bool, error) {
+	var out struct {
+		Data []byte `json:"data"`
+	}
+	if err := m.Refs.call(ctx, "/internal/meta/repo-blob/get",
+		map[string]string{"repo": repo, "key": key}, &out); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return out.Data, true, nil
+}
+
 func (m *RemoteMeta) PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {
 	oids := make([]string, len(objects))
 	for i, o := range objects {

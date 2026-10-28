@@ -238,6 +238,12 @@ func ddlSQLite() []string {
 	timeout_ms INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY(repo, id)
 ) WITHOUT ROWID`,
+		`CREATE TABLE IF NOT EXISTS repo_blobs(
+	repo TEXT NOT NULL,
+	key  TEXT NOT NULL,
+	data BLOB NOT NULL,
+	PRIMARY KEY(repo, key)
+) WITHOUT ROWID`,
 	}
 }
 
@@ -291,6 +297,12 @@ func ddlMySQL() []string {
 	timeout_ms INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY(repo, id)
 )`,
+		`CREATE TABLE IF NOT EXISTS repo_blobs(
+	repo VARCHAR(190) NOT NULL,
+	key  VARCHAR(120) NOT NULL,
+	data LONGBLOB NOT NULL,
+	PRIMARY KEY(repo, key)
+)`,
 	}
 }
 
@@ -343,6 +355,12 @@ func ddlPostgres() []string {
 	secret     TEXT NOT NULL DEFAULT '',
 	timeout_ms INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY(repo, id)
+)`,
+		`CREATE TABLE IF NOT EXISTS repo_blobs(
+	repo VARCHAR(190) NOT NULL,
+	key  VARCHAR(120) NOT NULL,
+	data BYTEA NOT NULL,
+	PRIMARY KEY(repo, key)
 )`,
 	}
 }
@@ -592,6 +610,29 @@ func (s *SQLMetaStore) DeleteHook(ctx context.Context, repo, id string) error {
 	return err
 }
 
+func (s *SQLMetaStore) SetRepoBlob(ctx context.Context, repo, key string, data []byte) error {
+	suffix := " ON CONFLICT(repo, key) DO UPDATE SET data=excluded.data"
+	if s.d.name == "mysql" {
+		suffix = " ON DUPLICATE KEY UPDATE data=VALUES(data)"
+	}
+	_, err := s.db.ExecContext(ctx,
+		s.q("INSERT INTO repo_blobs(repo, key, data) VALUES(?,?,?)"+suffix), repo, key, data)
+	return err
+}
+
+func (s *SQLMetaStore) GetRepoBlob(ctx context.Context, repo, key string) ([]byte, bool, error) {
+	var data []byte
+	err := s.db.QueryRowContext(ctx,
+		s.q("SELECT data FROM repo_blobs WHERE repo=? AND key=?"), repo, key).Scan(&data)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
 func (s *SQLMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(
 		"SELECT name, algo, default_branch, storage_id, force_push FROM repos ORDER BY name"))
@@ -634,7 +675,7 @@ func (s *SQLMetaStore) RenameRepo(ctx context.Context, from, to string) error {
 	} else if err != sql.ErrNoRows {
 		return err
 	}
-	for _, table := range []string{"timelines", "packs", "pack_nodes", "objects", "placement", "hooks"} {
+	for _, table := range []string{"timelines", "packs", "pack_nodes", "objects", "placement", "hooks", "repo_blobs"} {
 		if _, err := tx.ExecContext(ctx, s.q("UPDATE "+table+" SET repo=? WHERE repo=?"), to, from); err != nil {
 			return err
 		}
@@ -653,7 +694,7 @@ func (s *SQLMetaStore) DeleteRepo(ctx context.Context, repo string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"objects", "pack_nodes", "packs", "timelines", "placement", "hooks"} {
+	for _, table := range []string{"objects", "pack_nodes", "packs", "timelines", "placement", "hooks", "repo_blobs"} {
 		if _, err := tx.ExecContext(ctx, s.q("DELETE FROM "+table+" WHERE repo=?"), repo); err != nil {
 			return err
 		}
