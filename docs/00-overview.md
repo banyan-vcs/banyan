@@ -80,7 +80,7 @@ git wire 协议语义，服务端内部自由重构。
 | **总** | [00-overview](00-overview.md) · [01-big-picture](01-big-picture.md) | banyan 是什么；站在哪里（通用代码存储层 + 平台集成拓扑） |
 | **核心设计**（自底向上） | [02-data-model](02-data-model.md) · [03-storage](03-storage.md) · [04-git-compat](04-git-compat.md) · [05-service-api](05-service-api.md) · [06-cli](06-cli.md) | 目录锚定时间线 → 分片 pack 存储 → git 兼容层（HTTP+SSH）→ 服务层与前端 → 薄客户端 |
 | **横切能力** | [07-authorization](07-authorization.md) · [08-derived-data](08-derived-data.md) · [09-indexing-packing](09-indexing-packing.md) · [15-workflow](15-workflow.md) | 授权与个人分支可见性；派生数据；索引与打包；目录级高并发工作流（M4） |
-| **运行与演进** | [10-ha](10-ha.md) · [11-performance](11-performance.md) · [12-docker-demo](12-docker-demo.md) · [13-testing](13-testing.md) · [14-roadmap](14-roadmap.md) · [16-benchmark-report](16-benchmark-report.md) · [18-gitaly](18-gitaly.md) | 高可用集群；性能与基准门；demo 走查；测试矩阵；里程碑；性能实测报告；Gitaly 集成方案 |
+| **运行与演进** | [10-ha](10-ha.md) · [11-performance](11-performance.md) · [12-docker-demo](12-docker-demo.md) · [13-testing](13-testing.md) · [14-roadmap](14-roadmap.md) · [16-benchmark-report](16-benchmark-report.md) · [18-gitaly](18-gitaly.md) · [19-gitaly-compat](19-gitaly-compat.md) | 高可用集群；性能与基准门；demo 走查；测试矩阵；里程碑；性能实测报告；Gitaly 集成方案；Gitaly 协议兼容层实现账本 |
 
 ## 基座选型：go-git
 
