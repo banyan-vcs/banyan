@@ -120,7 +120,12 @@ func (os *operationService) resolveExpectedOld(ctx context.Context, repo, hex st
 	return model.OID(hex), nil
 }
 
-// casRef performs one compare-and-swap on the timeline behind a ref.
+// casRef performs one compare-and-swap on the timeline behind a ref. A
+// root-branch move that is not a fast-forward (a rebase replacing the
+// chain, a revert landing on the advertised twin) additionally resets the
+// branch's woven view — otherwise materialization appends the new chain to
+// the retired one instead of replacing it (the force-push semantics,
+// docs/04 §6a).
 func (os *operationService) casRef(ctx context.Context, repo string, tl model.Timeline, expected, next model.OID) error {
 	if !next.IsZero() {
 		if _, _, err := os.s.Objects.Raw(ctx, repo, next); err != nil {
@@ -129,6 +134,12 @@ func (os *operationService) casRef(ctx context.Context, repo string, tl model.Ti
 	}
 	if err := os.s.Meta.CASHead(ctx, tl, expected, next); err != nil {
 		return status.Error(codes.FailedPrecondition, "reference update failed")
+	}
+	if tl.Anchor == model.RootAnchor && !strings.HasPrefix(tl.Name, "refs/") &&
+		!expected.IsZero() && !next.IsZero() {
+		if anc, err := os.s.isAncestor(ctx, repo, expected, next); err == nil && !anc {
+			_ = os.s.Svc.Views.ResetWoven(ctx, repo, tl.Name)
+		}
 	}
 	return nil
 }
