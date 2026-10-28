@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"net"
+	"net/http"
 	"strings"
 
 
@@ -28,6 +29,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
+	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
 	"github.com/banyan-vcs/banyan/internal/storage"
@@ -54,7 +56,16 @@ type Options struct {
 	// ReportedVersion overrides ProtoVersion in ServerInfo (rare; e.g.
 	// impersonating an older node).
 	ReportedVersion string
+	// Convergence and FullCloneMaxBytes mirror the node's workflow/budget
+	// knobs onto the internal gitwire instance (push semantics + the
+	// clone-budget gate apply to gitaly traffic exactly as to /r/).
+	Convergence      bool
+	FullCloneMaxByte int64
 }
+
+// maxWireMsg matches upstream's large-message posture: a fetch response or
+// push body rides in few/one protobuf messages, not 4MiB defaults.
+const maxWireMsg = 1 << 30
 
 // Server is the gitaly-protocol frontend over banyan storage.
 type Server struct {
@@ -63,6 +74,11 @@ type Server struct {
 	Algo    model.HashAlgo
 	Svc     *service.Service
 	Opts    Options
+
+	// git/mux: an internal gitwire instance serving the git wire protocol;
+	// smart-HTTP/SSH RPCs bridge onto it (docs/19 §1).
+	git *gitwire.Server
+	mux *http.ServeMux
 
 	signingKey ed25519.PrivateKey
 	grpcSrv    *grpc.Server
@@ -87,9 +103,16 @@ func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo mode
 		Opts:       opts,
 		signingKey: priv,
 	}
+	s.git = gitwire.NewServer(meta, objects, algo)
+	s.git.Convergence = opts.Convergence
+	s.git.FullCloneMaxBytes = opts.FullCloneMaxByte
+	s.mux = http.NewServeMux()
+	s.git.Register(s.mux)
 	s.grpcSrv = grpc.NewServer(
 		grpc.ChainUnaryInterceptor(s.authUnary),
 		grpc.ChainStreamInterceptor(s.authStream),
+		grpc.MaxRecvMsgSize(maxWireMsg),
+		grpc.MaxSendMsgSize(maxWireMsg),
 	)
 	gitalypb.RegisterServerServiceServer(s.grpcSrv, &serverService{s: s})
 	gitalypb.RegisterRepositoryServiceServer(s.grpcSrv, &repositoryService{s: s})

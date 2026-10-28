@@ -12,16 +12,6 @@ type diffService struct {
 	s *Server
 }
 
-type smartHTTPService struct {
-	gitalypb.UnimplementedSmartHTTPServiceServer
-	s *Server
-}
-
-type sshService struct {
-	gitalypb.UnimplementedSSHServiceServer
-	s *Server
-}
-
 type operationService struct {
 	gitalypb.UnimplementedOperationServiceServer
 	s *Server
