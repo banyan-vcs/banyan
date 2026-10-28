@@ -112,7 +112,7 @@ SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-stat
 ### DiffService 8/10
 CommitDiff ✅ · CommitDelta ✅ · RawDiff ✅（**与 git diff 逐字节一致**，T63） · RawPatch ✅（同 RawDiff 体） · DiffStats ✅ · DiffBlobs ✅（字节对直评） · GetPatchID ✅（SHA-1 over patch，best-effort） · FindChangedPaths ✅（Tree/Commit 双形态） · ⬜ RangeDiff/RawRangeDiff（范围互比，后切片）。底层=treeDiff（树递归对比）+unifiedPatch（go-diff 行级 + git 格式头：diff --git/index 行/@@ 计数=1 省略/dev-null 语义）。
 
-### OperationService 12/16
+### OperationService 16/16 ✅
 UserCreateBranch ✅（start point 解析+peel；已存在=FailedPrecondition） ·
 UserDeleteBranch ✅（ExpectedOldOid CAS） · UserUpdateBranch ✅ ·
 UserCreateTag ✅（annotated=自建 tag 对象经 PutObjects 落盘+peel 校验；
@@ -132,8 +132,27 @@ client"；CAS 竞态="unexpected old value"+ReferenceUpdateError detail） ·
 父为基、revert 反相（父为 theirs、被撤提交为基，根提交对空树）；
 空结果=ChangesAlreadyApplied、分叉=TargetBranchDiverged/NotAncestor
 detail；DryRun 不动 ref；pick 保留源作者、revert 以操作者为作者） ·
-⬜ 4 个（UserRebaseToRef/UserRebaseConfirmable/UserApplyPatch/
-UserUpdateSubmodule）
+**UserRebaseToRef ✅**（SourceSha 重放到 FirstParentRef 上、落
+refs/merge-requests/* 目标；冲突=FailedPrecondition） ·
+**UserRebaseConfirmable ✅**（两阶段 bidi：header（BranchSha 被重放支+
+RemoteBranch 落点，同仓限定）→ RebaseSha → apply 确认 CAS 上分支 /
+中止；冲突 detail 同形） · **UserApplyPatch ✅**（bidi：header 后为
+mbox 字节流；**纯 Go mbox 解析 + 统一 diff 应用器**（patchapply.go：
+mails From-行切分/RFC-822 头/[PATCH] 前缀剥除；hunk 上下文匹配+前后
+偏移搜索；二进制与 rename/copy 显式拒绝）；逐 mail 一提交（作者来自
+邮件头、消息=subject+body）；上下文不匹配="Patch failed at %04d"
+FailedPrecondition（git am 冲突同形）） · **UserUpdateSubmodule ✅**
+（gitlink 改写走 CreateCommit（service 层 160000 免 blob 校验）；
+already-at / 非子模块路径=InvalidArgument+PathError detail）
+
+**rebase 引擎**（operations_rebase.go）：todo 列表=branch-only 提交
+（可达闭包差集）、丢 merge、**patch 等价剔除**（--cherry-pick 语义：
+对 treeDiff 变更集 (path,OID 对,mode) 做 SHA-1 签名，与 upstream-only
+签名集比对——内容级等价的诚实近似）、最老优先重放；逐提交 3-way
+（基=该提交首父）；变空丢弃/原本空保留（--empty=drop）；作者与消息
+保留、committer=操作者。**根分支非快进 CAS 触发 ResetWoven**（casRef
+内置：rebase 换链/落在广告孪生上的提交使织入 prevWoven 追加锚失效——
+复用 force-push 的视图重建语义，docs/04 §6a）。
 
 **合并引擎**：internal/merge 树条目 3-way + 内容 diff3（git merge-file
 oracle 既测）经合成对象层驱动；applyMerge 单批（BeginSynthBatch→
@@ -148,20 +167,19 @@ theirs=短 OID；重命名不检测（git 关闭检测时的诚实子集）。
 cherry-pick/revert/commit 落在广告 tip 上则两视图收敛回同一 OID。
 
 ### 其余服务 ⬜（全部已注册）
-OperationService 余量(4) · HookService(7) · ConflictsService(2)
+HookService(7) · ConflictsService(2)
 · RemoteService(3) · CleanupService(2) · ObjectPoolService(6) ·
 InternalGitaly(5) · BackupService(2) · PartitionService(2) ·
 AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 
-**小计：74/163。**
+**小计：78/163。**
 
 ## 5. 切片路线（续）
 
 1. ~~LFS pointer 面~~ ✅（切片五，随 BlobService 全绿）。
-2. ~~合并三件套 + cherry-pick/revert~~ ✅（切片六，74/163）。
-3. **rebase 系**：UserRebaseToRef/UserRebaseConfirmable（逐提交重放，
-   复用 applyMerge 单提交 3-way）+ UserApplyPatch（mbox/补丁应用）+
-   UserUpdateSubmodule（树指针改写——Change 列表即可）。
+2. ~~合并三件套 + cherry-pick/revert~~ ✅（切片六）。
+3. ~~rebase 系 + ApplyPatch + UpdateSubmodule~~ ✅（切片七——
+   **OperationService 16/16 收满**）。
 4. **Repo 维护面**：DeleteRepository（需散存 pack GC 设计）/
    GetArchive/Fsck/CalculateChecksum。
 5. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）。
@@ -199,6 +217,19 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
   （docs/15 §5 git_deviations：相邻行触碰融合等三形态与 git 有系统性
   偏差；重命名不检测）。T65 用 merge-tree/cherry-pick/revert 对拍覆盖
   干净与非重叠冲突形态。
+- **rebase 的 patch 等价剔除为近似**：上游 rev-list --cherry-pick 用
+  git patch-id（diff 文本规范化哈希）；banyan 对 treeDiff 变更集
+  (path, OID 对, mode) 做 SHA-1——blob OID 即内容身份，语义等价
+  （同改动同哈希/异改动异哈希），但对"同路径同内容、不同 hunk 边界"
+  的极端形态不做 diff 文本级归一。
+- **UserApplyPatch 的应用器为统一 diff 子集**：上下文匹配+偏移搜索；
+  二进制补丁（GIT binary patch）与 rename/copy 显式拒绝（InvalidArgument）
+  而非误用；quoted 路径与模式变更（old mode/new mode 无内容 hunks）未
+  支持——GitLab web 流的 format-patch 形态（T66 以真 format-patch 产出
+  对拍 git am）覆盖增/改/删。
+- mbox 邮件解析为必要子集：From-行切分、From/Date/Subject 头、
+  [PATCH n/m] 前缀剥除；Content-Transfer-Encoding 与内嵌 MIME 未处理
+  （8-bit 干净补丁为 web 流常态）。
 
 ## 7. 测试
 
@@ -248,3 +279,16 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
   空集）；cherry-pick 在干净克隆中与 `git cherry-pick` **树相等**且源
   作者保留、`git revert` 对拍树相等且作者=操作用户；合并后的 FF 收敛
   （ls-remote 主分支=目标 tip，fetch 复核）。
+- 单测（rebase/patch/submodule 面，operations_rebase_test.go）：rebase
+  链形状（重放坐在 main tip 上、消息保留、committer=操作者、目标 ref
+  广告）；confirmable 两阶段（apply 移支 / 中止不动）；apply patch
+  系列（多文件 hunk 应用、作者/消息来自邮件、内容逐字节）与上下文
+  冲突（"Patch failed at 0001"）；submodule 指针（gitlink 模式保持、
+  already-at / 非子模块路径拒绝）。
+- T66（integration）：**git rebase / format-patch+am 作 oracle**——
+  UserRebaseToRef 与 UserRebaseConfirmable 的重放树均与本地
+  `git rebase` **逐字节相等**（log 逐条核对 subject+committer）；
+  UserApplyPatch 吃真 `git format-patch` 产出的双补丁 mbox，树与
+  本地 `git am` **逐字节相等**（作者/主题保留）；冲突补丁
+  FailedPrecondition 干净失败；UserUpdateSubmodule 前后 `ls-tree`
+  核对 gitlink 模式与目标 OID。
