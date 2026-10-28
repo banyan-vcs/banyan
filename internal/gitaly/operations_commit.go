@@ -81,16 +81,16 @@ func (os *operationService) UserCommitFiles(stream gitalypb.OperationService_Use
 		return status.Errorf(codes.Internal, "checking branches: %v", err)
 	}
 
-	// Parent: the target branch tip, or the same-repo start branch. When the
-	// target branch is unborn but a start branch is given, the branch is
-	// created at the start tip first — CreateCommit builds its tree relative
-	// to the branch head, mirroring git's implicit branch-on-commit.
-	head, ok, _ := os.timelineHead(ctx, name, branchTimeline(name, branch))
-	if !ok {
-		head = model.OID("")
+	// Parent: the target branch's advertised tip (the view CreateCommit and
+	// every read share), or the same-repo start branch. When the target
+	// branch is unborn but a start branch is given, the branch is created at
+	// the start tip first — mirroring git's implicit branch-on-commit.
+	advertised, raw, hasBranch := os.branchState(ctx, name, branch)
+	branchWasUnborn := !hasBranch
+	parent := advertised
+	if parent.IsZero() {
+		parent = raw
 	}
-	branchWasUnborn := head.IsZero()
-	parent := head
 	if start := string(header.GetStartBranchName()); start != "" {
 		rev, err := os.s.resolveRevision(ctx, name, "refs/heads/"+start)
 		if err != nil {
@@ -100,11 +100,10 @@ func (os *operationService) UserCommitFiles(stream gitalypb.OperationService_Use
 		if err != nil {
 			return status.Error(codes.InvalidArgument, "start branch does not point at a commit")
 		}
-		if head.IsZero() && !parent.IsZero() {
+		if !hasBranch && !parent.IsZero() {
 			if err := os.casRef(ctx, name, branchTimeline(name, branch), model.OID(""), parent); err != nil {
 				return err
 			}
-			head = parent
 		}
 	}
 	if old := header.GetExpectedOldOid(); old != "" {
