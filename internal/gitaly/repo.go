@@ -194,9 +194,12 @@ func walkAncestors(ctx context.Context, s *Server, repo string, oid model.OID, t
 			}
 		case '~':
 			n := 1
-			for i < len(tail) && tail[i] >= '0' && tail[i] <= '9' {
-				n = n*10 + int(tail[i]-'0')
-				i++
+			if i < len(tail) && tail[i] >= '0' && tail[i] <= '9' {
+				n = 0
+				for i < len(tail) && tail[i] >= '0' && tail[i] <= '9' {
+					n = n*10 + int(tail[i]-'0')
+					i++
+				}
 			}
 			for k := 0; k < n; k++ {
 				var err error
