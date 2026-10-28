@@ -21,6 +21,7 @@ type MetaStore interface {
 	TimelineStore
 	PlacementStore
 	HookRegistry
+	RepoBlobStore
 }
 
 // HookInfo is one registered receive hook (docs/04 §7): an HTTP callback
@@ -45,7 +46,16 @@ type HookRegistry interface {
 	// SetHook upserts one hook by ID. Validates events/ID shape.
 	SetHook(ctx context.Context, repo string, h HookInfo) error
 	// DeleteHook removes one hook by ID (missing = no-op).
-	DeleteHook(ctx context.Context, repo, id string) error
+	DeleteHook(ctx context.Context, repo string, id string) error
+}
+
+// RepoBlobStore holds opaque per-repo blobs (the gitaly custom-hooks
+// tarballs: banyan's hook plane is the HTTP callback registry, but the
+// tarball round-trip keeps backup/restore portable).
+type RepoBlobStore interface {
+	SetRepoBlob(ctx context.Context, repo, key string, data []byte) error
+	// GetRepoBlob answers the stored blob; missing = (nil, false, nil).
+	GetRepoBlob(ctx context.Context, repo, key string) ([]byte, bool, error)
 }
 
 func (h HookInfo) validate() error {
@@ -198,6 +208,7 @@ type MemoryMetaStore struct {
 	timelines  map[string]map[model.Timeline]model.TimelineState
 	placements map[string]int             // repo → replica target (0 = cluster default)
 	hooks      map[string]map[string]HookInfo // repo → hook ID → registration
+	repoBlobs  map[string]map[string][]byte  // repo → blob key → bytes (gitaly custom-hooks)
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
@@ -208,6 +219,7 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 		index:      map[string]map[model.OID]ObjectLocation{},
 		timelines:  map[string]map[model.Timeline]model.TimelineState{},
 		placements: map[string]int{},
+		repoBlobs:  map[string]map[string][]byte{},
 		hooks:      map[string]map[string]HookInfo{},
 	}
 }
@@ -260,6 +272,10 @@ func (m *MemoryMetaStore) RenameRepo(_ context.Context, from, to string) error {
 		m.hooks[to] = h
 		delete(m.hooks, from)
 	}
+	if b, ok := m.repoBlobs[from]; ok {
+		m.repoBlobs[to] = b
+		delete(m.repoBlobs, from)
+	}
 	return nil
 }
 
@@ -274,6 +290,7 @@ func (m *MemoryMetaStore) DeleteRepo(_ context.Context, repo string) error {
 	delete(m.timelines, repo)
 	delete(m.placements, repo)
 	delete(m.hooks, repo)
+	delete(m.repoBlobs, repo)
 	return nil
 }
 
@@ -346,6 +363,26 @@ func (m *MemoryMetaStore) DeleteHook(_ context.Context, repo, id string) error {
 		delete(m.hooks[repo], id)
 	}
 	return nil
+}
+
+func (m *MemoryMetaStore) SetRepoBlob(_ context.Context, repo, key string, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.repoBlobs[repo] == nil {
+		m.repoBlobs[repo] = map[string][]byte{}
+	}
+	m.repoBlobs[repo][key] = append([]byte(nil), data...)
+	return nil
+}
+
+func (m *MemoryMetaStore) GetRepoBlob(_ context.Context, repo, key string) ([]byte, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, ok := m.repoBlobs[repo][key]
+	if !ok {
+		return nil, false, nil
+	}
+	return append([]byte(nil), data...), true, nil
 }
 
 func (m *MemoryMetaStore) PutPack(_ context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {

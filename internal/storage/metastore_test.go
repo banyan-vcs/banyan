@@ -217,6 +217,20 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 		t.Fatalf("concurrent CAS winners = %d, want 1", wins.Load())
 	}
 
+	// --- repo blobs round-trip and ride rename/delete ---
+	if err := m.SetRepoBlob(ctx, "r1", "custom-hooks.tar", []byte("tarball")); err != nil {
+		t.Fatalf("set blob: %v", err)
+	}
+	if err := m.SetRepoBlob(ctx, "r1", "custom-hooks.tar", []byte("tarball-v2")); err != nil {
+		t.Fatalf("upsert blob: %v", err)
+	}
+	if b, ok, err := m.GetRepoBlob(ctx, "r1", "custom-hooks.tar"); err != nil || !ok || string(b) != "tarball-v2" {
+		t.Fatalf("blob = %q %v %v, want tarball-v2 true", b, ok, err)
+	}
+	if _, ok, _ := m.GetRepoBlob(ctx, "r1", "missing"); ok {
+		t.Fatal("missing blob must answer not-found")
+	}
+
 	// --- rename carries hooks; delete drops every repo-keyed row ---
 	if err := m.SetHook(ctx, "r1", HookInfo{ID: "notify", Events: []string{"pre-receive"}, URL: "http://h"}); err != nil {
 		t.Fatalf("set hook: %v", err)

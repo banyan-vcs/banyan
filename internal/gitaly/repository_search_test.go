@@ -144,3 +144,37 @@ func TestGitalySearchSurface(t *testing.T) {
 		assert.Empty(t, out.GetLicenseShortName())
 	})
 }
+
+func TestGitalyCustomHooksRoundTrip(t *testing.T) {
+	_, _, _, svc, addr := startServer(t)
+	ctx := context.Background()
+	conn, err := Dial(addr, testToken)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	seedHistory(t, svc, "proj-hooks", map[string]string{"a.txt": "a"}, map[string]string{"a.txt": "b"})
+	repo := &gitalypb.Repository{StorageName: "default", RelativePath: "proj-hooks"}
+	rs := gitalypb.NewRepositoryServiceClient(conn)
+
+	// No hooks yet: an empty stream is the honest answer.
+	stream, err := rs.GetCustomHooks(ctx, &gitalypb.GetCustomHooksRequest{Repository: repo})
+	require.NoError(t, err)
+	assert.Empty(t, drain(t, stream))
+
+	tarball := []byte("custom_hooks/\x00custom_hooks/pre-receive\x00some shell script\x00")
+	setStream, err := rs.SetCustomHooks(ctx)
+	require.NoError(t, err)
+	require.NoError(t, setStream.Send(&gitalypb.SetCustomHooksRequest{Repository: repo}))
+	require.NoError(t, setStream.Send(&gitalypb.SetCustomHooksRequest{Data: tarball[:10]}))
+	require.NoError(t, setStream.Send(&gitalypb.SetCustomHooksRequest{Data: tarball[10:]}))
+	_, err = setStream.CloseAndRecv()
+	require.NoError(t, err)
+
+	stream, err = rs.GetCustomHooks(ctx, &gitalypb.GetCustomHooksRequest{Repository: repo})
+	require.NoError(t, err)
+	var got []byte
+	for _, resp := range drain(t, stream) {
+		got = append(got, resp.GetData()...)
+	}
+	assert.Equal(t, string(tarball), string(got))
+}

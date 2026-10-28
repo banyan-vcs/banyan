@@ -91,6 +91,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/set-default-branch", s.hSetDefaultBranch)
 	meta.HandleFunc("/internal/meta/hooks", s.hHooks)
 	meta.HandleFunc("/internal/meta/hooks/delete", s.hDeleteHook)
+	meta.HandleFunc("/internal/meta/repo-blob", s.hSetRepoBlob)
+	meta.HandleFunc("/internal/meta/repo-blob/get", s.hGetRepoBlob)
 	meta.HandleFunc("/internal/meta/timeline", s.hTimeline)
 	meta.HandleFunc("/internal/meta/cas-head", s.hCASHead)
 	meta.HandleFunc("/internal/meta/ensure-timeline", s.hEnsureTimeline)
@@ -451,6 +453,42 @@ func (s *Server) hDeleteHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) hSetRepoBlob(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Repo string `json:"repo"`
+		Key  string `json:"key"`
+		Data []byte `json:"data"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.SetRepoBlob(r.Context(), req.Repo, req.Key, req.Data); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) hGetRepoBlob(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Repo string `json:"repo"`
+		Key  string `json:"key"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	data, found, err := s.Meta.GetRepoBlob(r.Context(), req.Repo, req.Key)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{"data": data})
 }
 
 func (s *Server) hListRepos(w http.ResponseWriter, r *http.Request) {
