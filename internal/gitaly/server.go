@@ -109,6 +109,7 @@ func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo mode
 	s.mux = http.NewServeMux()
 	s.git.Register(s.mux)
 	s.grpcSrv = grpc.NewServer(
+		grpc.Creds(muxCredentials{}),
 		grpc.ChainUnaryInterceptor(s.authUnary),
 		grpc.ChainStreamInterceptor(s.authStream),
 		grpc.MaxRecvMsgSize(maxWireMsg),
