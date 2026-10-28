@@ -102,9 +102,9 @@ directory timelines align both boundaries at the same granularity.
 | HA cluster: gateway + refs service + scattered multi-replica pack storage, node failure recovery, dynamic per-repo replicas | ✅ core (local-disk cluster, T23-T26; MySQL/raft refs backend → HA-2) |
 | Product-side console (`banyans`): `{group}/{project}[/path]` routing, PAT auth, subtree-scoped member roles with prefix-chain inheritance (docs/17) | ✅ M6.1/M6.2 (HTTP; SSH/web → M6.3/M6.4) |
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
-| Gitaly gRPC frontend (replace GitLab's gitaly node; protocol v19.5.2, 78/163 RPCs live — full OperationService (merge/rebase/cherry-pick/revert/squash/apply-patch/submodule), transport incl. sidechannel, diff/history, LFS pointers) | 🚧 slices 1–7 ([docs/19](docs/19-gitaly-compat.md)) |
+| Gitaly gRPC frontend (replace GitLab's gitaly node; protocol v19.5.2, 89/163 RPCs live — full OperationService (merge/rebase/cherry-pick/revert/squash/apply-patch/submodule), transport incl. sidechannel, diff/history, LFS pointers, maintenance incl. byte-identical git-archive) | 🚧 slices 1–8 ([docs/19](docs/19-gitaly-compat.md)) |
 
-73 integration cases pin the behavior with the **real git CLI** as the client
+80 integration cases pin the behavior with the **real git CLI** as the client
 ([docs/13](docs/13-testing.md)) — the thin-CLI commit path is cross-verified
 by fresh git clones plus `fsck`; the gitaly frontend is cross-verified
 against git's own answers (T60), a workhorse-shaped gRPC transport emulator

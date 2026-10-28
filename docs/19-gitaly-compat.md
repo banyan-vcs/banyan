@@ -56,13 +56,29 @@ gitaly:
 ### ServerService 4/4 ✅
 ServerInfo ✅ · ReadinessCheck ✅ · ServerSignature ✅ · DiskStatistics ✅（字节数留待卷探测）
 
-### RepositoryService 8/42
+### RepositoryService 19/42
 RepositoryExists ✅ · CreateRepository ✅（default_branch 落 repos 表，
 SHA1；ObjectFormat 校验） · ObjectFormat ✅ · HasLocalBranches ✅ ·
 RepositorySize/GetObjectDirectorySize ✅（= /repos/<repo>/size 同源） ·
 WriteRef ✅ · FindMergeBase ✅（两 rev 单基形式：A 祖先集 + B 时间序走查
-首命中） · ⬜ 其余（Delete/Rename/Bundle/Fork/Repack/Fsck/Checksum/…
-维护与导入面，后切片）
+首命中） · **RemoveRepository ✅**（存储层删除路径：meta 六表事务删行 +
+shard 目录回收，字节先行注册后删，幂等；hashed 寻址键不可变——旧键留
+待 fleet GC） · **CalculateChecksum ✅**（上游同构：show-ref --head 行集
+逐行 SHA-1 后 XOR，顺序无关；空仓=40×0） · **Fsck ✅**（全 ref 可达闭包
+走查：commit 可解析、树可读、blob 可取，问题行进 response.Error——连通
+性子集，无 dangling 面） · **GetArchive ✅**（tar 与 `git archive`
+**逐字节相等**——pax_global_header comment、uname/gname=root、
+tar_umask=002 的 mode、10240B 记录；tar.gz=gzip -n 包同一 payload；zip
+条目级等价；path/elide_path/exclude + ArchivePathNotFound/
+EmptyRootTree/ExcludePathNotFound 结构化 detail） · **RepositoryInfo ✅**
+（单一对象平面映射：Size/LooseCount/pack 数；子集） · **ObjectsSize ✅**
+（bidi；rev-list --objects 闭包求和——报告**未压缩**对象字节） ·
+**GetRawChanges ✅**（git diff --raw 首父形态；A/D/M、blob OID/size） ·
+**GetInfoAttributes ✅**（tip 树 .gitattributes；无则空流） ·
+**GetConfig ✅**（恒空流——无 git config 面） · **OptimizeRepository ✅** /
+**PruneUnreachableObjects ✅**（对象平面恒 compact——诚实空操作；
+offloading 对与上游同形 Unimplemented） · ⬜ 其余 23（bundle/fork/
+snapshot/backup/search/license/attributes/…，后切片）
 
 ### RefService 13/16
 FindDefaultBranchName ✅ · FindBranch ✅ · RefExists ✅ · FindAllBranches ✅
@@ -172,7 +188,7 @@ HookService(7) · ConflictsService(2)
 InternalGitaly(5) · BackupService(2) · PartitionService(2) ·
 AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 
-**小计：78/163。**
+**小计：89/163。**
 
 ## 5. 切片路线（续）
 
@@ -180,9 +196,11 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 2. ~~合并三件套 + cherry-pick/revert~~ ✅（切片六）。
 3. ~~rebase 系 + ApplyPatch + UpdateSubmodule~~ ✅（切片七——
    **OperationService 16/16 收满**）。
-4. **Repo 维护面**：DeleteRepository（需散存 pack GC 设计）/
-   GetArchive/Fsck/CalculateChecksum。
-5. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）。
+4. ~~Repo 维护面~~ ✅（切片八——删仓/校验和/fsck/archive/raw-changes/
+   housekeeping，RepositoryService 19/42）。
+5. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）、
+   FetchRemote/FetchSourceBranch、SearchFiles×2、GetFileAttributes、
+   FindLicense、FastExport、CustomHooks×3。
 6. **Praefect 面**（可选）：PraefectInfoService/RefTransaction——仅当
    目标拓扑含 praefect；单节点形态明确不做。
 
@@ -230,6 +248,25 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 - mbox 邮件解析为必要子集：From-行切分、From/Date/Subject 头、
   [PATCH n/m] 前缀剥除；Content-Transfer-Encoding 与内嵌 MIME 未处理
   （8-bit 干净补丁为 web 流常态）。
+- **GetArchive 的 tar 与 `git archive` 逐字节相等**（T67：双提交+嵌套
+  目录+可执行位夹具）；tar.gz 为 gzip -n 容器包**同一 payload**（deflate
+  流是 zlib 与 Go 的实现差异，逐字节无意义）；zip 为**条目级**等价
+  （名/大小/mtime/内容/目录条目；zip 结构头与 extra 字段随标准库）。
+  tar.bz2 无标准库压缩器（Unimplemented）；include_lfs_blobs 无 smudge
+  平面（Unimplemented）；放不进 ustar prefix 的超长路径显式拒绝
+  （git 会落 pax path 记录）。
+- ObjectsSize 报告**未压缩**对象字节和（banyan 对象在 pack 内，per-object
+  盘上字节是布局细节）；上游 --disk-usage 是压缩后口径。
+- RepositoryInfo 为单一对象平面的诚实映射（Size 与 RepositorySize 同源、
+  pack 数真值、LooseCount=ref 数、后端恒 FILES；commit-graph/bitmap/
+  alternates 字段不填）。
+- GetConfig 恒空流、OptimizeRepository/PruneUnreachableObjects 恒成功空
+  操作（对象平面无 loose 漂移与 unreachable 概念）；offloading 策略与
+  上游同形 Unimplemented。
+- Fsck 为连通性走查（ref→commit→tree→blob 可达即解析），非 git fsck 全
+  面（无 dangling/unreachable 报告面——散存对象本身不存在）。
+- CalculateChecksum 与上游算法同构（逐行 SHA-1 XOR）；banyan 无 packed
+  refs，全 ref 视作 loose。
 
 ## 7. 测试
 
@@ -292,3 +329,23 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
   本地 `git am` **逐字节相等**（作者/主题保留）；冲突补丁
   FailedPrecondition 干净失败；UserUpdateSubmodule 前后 `ls-tree`
   核对 gitlink 模式与目标 OID。
+- 覆盖补测（2026-10 审计）：16 个已实现但无直接调用的 RPC 补齐
+  （DiskStatistics/GetObjectDirectorySize/FindAllBranches/FindAllTags/
+  FindAllRemoteBranches/List{Branch,Tag}NamesContainingCommit/
+  ListAllCommits/ListFiles/ListCommitsByOid/GetCommitMessages/
+  CheckObjectsExist/ListLastCommitsForTree/CommitDiff/RawPatch/DiffBlobs）；
+  审计击落三枚实现 bug：patchStats 无尾换行漏计（git --numstat 语义）、
+  revision `~N` 后缀把 "~1" 读成 11 跳、RenameRepo 丢 hooks 行。
+- 单测（维护面，repository_maintenance_test.go）：checksum 手工 XOR 复算
+  与空仓 40×0；fsck 健康仓净；repo info 字段映射；housekeeping 空操作与
+  offloading 拒；ObjectsSize bidi（后续带 repository 拒/缺 revision 拒）；
+  raw changes A/D/M 形状；archive tar 结构（pax_global_header/mode/
+  typeflag/10240 对齐）+ tar.gz 同 payload + zip 条目 + path/elide +
+  bz2/LFS 显式拒。
+- T67（integration）：**git archive / show-ref / diff --raw 作 oracle**——
+  GetArchive 的 tar 输出与 `git archive --format=tar --prefix=…` **逐字节
+  相等**（含 exec 位与嵌套目录）；tar.gz 解包 payload 与 git tar 相等
+  （gzip 头无 name/mtime）；zip 条目逐项对拍；CalculateChecksum 从
+  `git show-ref --head` 行集复算相等；Fsck 净；GetRawChanges 的 blob
+  OID/size/mode 与 `git diff --raw` + rev-parse 一致；RemoveRepository
+  后 ls-remote 失败且幂等。
