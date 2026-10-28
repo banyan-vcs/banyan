@@ -73,8 +73,10 @@ func (s *Service) CreateCommit(ctx context.Context, req CommitRequest) (*CommitR
 	}
 
 	// Referenced blobs must already be uploaded (PutObjects) and be blobs.
+	// Gitlinks (mode 160000) are exempt: they point at commits that live
+	// in the submodule's repository, not this one.
 	for _, ch := range req.Changes {
-		if ch.Delete {
+		if ch.Delete || ch.Mode == "160000" {
 			continue
 		}
 		t, _, rerr := s.Objects.Raw(ctx, req.Repo, ch.Blob)
