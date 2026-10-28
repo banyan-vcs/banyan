@@ -1,7 +1,7 @@
 # 18 · Gitaly 集成方案（研究稿）
 
 > 状态：**实施中——首切片已落地**（协议 v19.5.2 vendored、鉴权/@hashed
-> 寻址/Server+Repo+Ref+Commit+Blob 读面与传输面 36/163 RPC，见
+> 寻址/读面与传输面（含 sidechannel 复用传输）45/163 RPC，见
 > [19-gitaly-compat](19-gitaly-compat.md) 实现账本与覆盖矩阵）。本文保留
 > 方案与研究结论：banyan 以什么形态接入 GitLab 生态、分几步、每步做什么
 > 不做什么、风险在哪、工程量多大。立场沿用既定决策（docs/05 服务层）：
