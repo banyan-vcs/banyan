@@ -221,7 +221,7 @@ func TestGitalyMergeSurface(t *testing.T) {
 
 		out, err := op.UserCherryPick(ctx, &gitalypb.UserCherryPickRequest{
 			Repository: repo, User: user, BranchName: []byte("main"),
-			Commit: &gitalypb.GitCommit{Id: picked.String()},
+			Commit:  &gitalypb.GitCommit{Id: picked.String()},
 			Message: []byte("cherry: picked work\n"), Timestamp: ts,
 		})
 		require.NoError(t, err)
@@ -239,7 +239,7 @@ func TestGitalyMergeSurface(t *testing.T) {
 		// Picking it again changes nothing: the empty-result error.
 		_, err = op.UserCherryPick(ctx, &gitalypb.UserCherryPickRequest{
 			Repository: repo, User: user, BranchName: []byte("main"),
-			Commit: &gitalypb.GitCommit{Id: picked.String()},
+			Commit:  &gitalypb.GitCommit{Id: picked.String()},
 			Message: []byte("cherry: again\n"), Timestamp: ts,
 		})
 		require.Error(t, err)
@@ -255,7 +255,7 @@ func TestGitalyMergeSurface(t *testing.T) {
 
 		rev, err := op.UserRevert(ctx, &gitalypb.UserRevertRequest{
 			Repository: repo, User: user, BranchName: []byte("main"),
-			Commit: &gitalypb.GitCommit{Id: newOID.String()},
+			Commit:  &gitalypb.GitCommit{Id: newOID.String()},
 			Message: []byte("Revert \"cherry: picked work\"\n"), Timestamp: ts,
 		})
 		require.NoError(t, err)
