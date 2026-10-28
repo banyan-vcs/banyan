@@ -112,7 +112,7 @@ SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-stat
 ### DiffService 8/10
 CommitDiff ✅ · CommitDelta ✅ · RawDiff ✅（**与 git diff 逐字节一致**，T63） · RawPatch ✅（同 RawDiff 体） · DiffStats ✅ · DiffBlobs ✅（字节对直评） · GetPatchID ✅（SHA-1 over patch，best-effort） · FindChangedPaths ✅（Tree/Commit 双形态） · ⬜ RangeDiff/RawRangeDiff（范围互比，后切片）。底层=treeDiff（树递归对比）+unifiedPatch（go-diff 行级 + git 格式头：diff --git/index 行/@@ 计数=1 省略/dev-null 语义）。
 
-### OperationService 7/16
+### OperationService 12/16
 UserCreateBranch ✅（start point 解析+peel；已存在=FailedPrecondition） ·
 UserDeleteBranch ✅（ExpectedOldOid CAS） · UserUpdateBranch ✅ ·
 UserCreateTag ✅（annotated=自建 tag 对象经 PutObjects 落盘+peel 校验；
@@ -121,29 +121,51 @@ UserFFBranch ✅（isAncestor 前置检查，非 FF=FailedPrecondition "not fast
 forward"） · UserCommitFiles ✅（bidi：header+actions 流 → PutObjects +
 service.CreateCommit 同一发布路径；CREATE/UPDATE/DELETE/MOVE（InferContent
 内容拷贝）/CHMOD/CREATE_DIR(.gitkeep)；author=header、committer=user、
-同一时间戳；start_branch 隐式建支） · ⬜ 9 个（UserMergeBranch/
-MergeToRef/RebaseToRef/RebaseConfirmable/Squash/CherryPick/Revert/
-ApplyPatch/UpdateSubmodule——3-way 合并引擎切片）
+同一时间戳；start_branch 隐式建支） · **UserMergeBranch ✅**（两阶段 bidi：
+apply 算合并提交答 OID → 客户端确认 CAS 上分支；冲突=FailedPrecondition+
+UserMergeBranchError{MergeConflict} 结构化 detail；中止="merge aborted by
+client"；CAS 竞态="unexpected old value"+ReferenceUpdateError detail） ·
+**UserMergeToRef ✅**（refs/merge-requests/* 目标 ref 原样广告两父合并提交
+——merge train 形态） · **UserSquash ✅**（start..end 折叠单亲提交，
+不写 ref，答 SquashSha；ResolveRevision/RebaseConflict detail） ·
+**UserCherryPick ✅ / UserRevert ✅**（单提交 3-way：pick 以被拾提交的
+父为基、revert 反相（父为 theirs、被撤提交为基，根提交对空树）；
+空结果=ChangesAlreadyApplied、分叉=TargetBranchDiverged/NotAncestor
+detail；DryRun 不动 ref；pick 保留源作者、revert 以操作者为作者） ·
+⬜ 4 个（UserRebaseToRef/UserRebaseConfirmable/UserApplyPatch/
+UserUpdateSubmodule）
+
+**合并引擎**：internal/merge 树条目 3-way + 内容 diff3（git merge-file
+oracle 既测）经合成对象层驱动；applyMerge 单批（BeginSynthBatch→
+FlushSynthBatch 持久化点在任何 ref CAS 前）；冲突标签 ours=HEAD/
+theirs=短 OID；重命名不检测（git 关闭检测时的诚实子集）。
+
+**双视图规则（gitaly 面统一约定）**：读与期望值说**广告视图 OID**
+（织入视图——所有读面/广告的形态）；写翻译为**原始 timeline CAS**。
+线性历史上两者相等；合并提交在广告侧被织入引擎线性化为**树全同的
+孪生提交**（banyan 根视图线性模型）。期望值（expected_old_oid 等）
+对广告 tip 或 raw head 任一匹配即过，CAS 恒对 raw head 执行；
+cherry-pick/revert/commit 落在广告 tip 上则两视图收敛回同一 OID。
 
 ### 其余服务 ⬜（全部已注册）
-OperationService 余量(9) · HookService(7) · ConflictsService(2)
+OperationService 余量(4) · HookService(7) · ConflictsService(2)
 · RemoteService(3) · CleanupService(2) · ObjectPoolService(6) ·
 InternalGitaly(5) · BackupService(2) · PartitionService(2) ·
 AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 
-**小计：69/163。**
+**小计：74/163。**
 
 ## 5. 切片路线（续）
 
-1. ~~LFS pointer 面~~ ✅（本切片，随 BlobService 全绿）。
-2. **OperationService 合并三件套**：UserMergeBranch/UserMergeToRef/
-   UserSquash——需 3-way 树合并 + 内容级 diff3（纯 Go，基于 treeDiff 与
-   go-diff；重命名检测=git 默认下的诚实子集），产物走 CreateCommit
-   发布路径。随后 cherry-pick/revert（单提交 3-way apply）与 rebase 系。
-3. **Repo 维护面**：DeleteRepository（需散存 pack GC 设计）/
+1. ~~LFS pointer 面~~ ✅（切片五，随 BlobService 全绿）。
+2. ~~合并三件套 + cherry-pick/revert~~ ✅（切片六，74/163）。
+3. **rebase 系**：UserRebaseToRef/UserRebaseConfirmable（逐提交重放，
+   复用 applyMerge 单提交 3-way）+ UserApplyPatch（mbox/补丁应用）+
+   UserUpdateSubmodule（树指针改写——Change 列表即可）。
+4. **Repo 维护面**：DeleteRepository（需散存 pack GC 设计）/
    GetArchive/Fsck/CalculateChecksum。
-4. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）。
-5. **Praefect 面**（可选）：PraefectInfoService/RefTransaction——仅当
+5. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）。
+6. **Praefect 面**（可选）：PraefectInfoService/RefTransaction——仅当
    目标拓扑含 praefect；单节点形态明确不做。
 
 ## 6. 已知语义差异（诚实清单）
@@ -166,6 +188,17 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
   系错误）；UserFFBranch 目标 commit 缺失 = NotFound（上游 Internal）。
   均为更精确的错误码偏移，消息可辨。
 - UserUpdateBranch 的 newrev/oldrev 非全 hex 时按上游 Internal 报错。
+- **合并提交的线性化孪生（双视图）**：UserMergeBranch 落地的两父合并
+  提交在广告侧被织入引擎线性化为树全同的孪生提交（根视图线性模型，
+  docs/02 §13）。BranchUpdate 答原始合并 OID（FindCommit 可读、MR
+  merge_commit_sha 链接有效）；分支 tip 读取显示孪生（fetch 主分支
+  看到线性历史）。**按合并 OID 的协议级 fetch** 不可用（孪生不可达
+  该 OID）——GetBlob/FindCommit 等 RPC 直读不受影响。UserMergeToRef
+  目标 ref 原样广告（aux ref 不织入），两父形态对 git 完整可见。
+- 合并/cherry-pick/revert 的冲突语义为 internal/merge 的诚实子集
+  （docs/15 §5 git_deviations：相邻行触碰融合等三形态与 git 有系统性
+  偏差；重命名不检测）。T65 用 merge-tree/cherry-pick/revert 对拍覆盖
+  干净与非重叠冲突形态。
 
 ## 7. 测试
 
@@ -203,3 +236,15 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
   UserFFBranch 前后 ls-remote OID 对拍；UserCommitFiles 产物 git fetch
   回源仓，`git show` 核对 author/committer/消息/树内容（含 MOVE 保留
   pointer 原文与 DELETE 生效）。
+- 单测（合并面，operations_merge_test.go）：干净合并（两亲/树内容/
+  消息/作者）、冲突 detail（ConflictingFiles+ConflictingCommitIds）、
+  客户端中止、MergeToRef（目标 ref 落位 + 非 merge-requests 前缀拒绝）、
+  squash（单亲/尾换行/end 树等）、cherry-pick（作者保留 + 二次拾取
+  ChangesAlreadyApplied）与 revert（作者=操作者 + 变更撤销）。
+- T65（integration）：**git 自家合并机械作 oracle**——干净合并的树与
+  `git merge-tree --write-tree` **逐字节相等**；冲突判定与 git 一致
+  （同文件双改，ConflictingFiles=alpha.txt）；MergeToRef 的两父合并提交
+  fetch 回源 `--format=%P` 验证；squash 树与 end 提交树等（CommitDelta
+  空集）；cherry-pick 在干净克隆中与 `git cherry-pick` **树相等**且源
+  作者保留、`git revert` 对拍树相等且作者=操作用户；合并后的 FF 收敛
+  （ls-remote 主分支=目标 tip，fetch 复核）。
