@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -74,6 +75,11 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	for !sawFlush {
 		line, flush, err := ReadPacketText(br)
 		if err != nil {
+			if err == io.EOF && len(updates) == 0 {
+				// Client hung up before commanding anything — receive-pack(1)
+				// exits cleanly on the no-op session; so do we.
+				return nil
+			}
 			return fmt.Errorf("read ref commands: %w", err)
 		}
 		if flush {

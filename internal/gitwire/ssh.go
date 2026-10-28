@@ -24,6 +24,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"strings"
@@ -159,59 +160,79 @@ func (s *Server) serveGitExec(ch ssh.Channel, id auth.Identity, protocol, payloa
 		fmt.Fprintf(ch, "ERR %v\n", err)
 		return 1
 	}
-	vr, err := ParseVirtualRepo(path)
-	if err != nil {
-		fmt.Fprintf(ch, "ERR %v\n", err)
-		return 1
-	}
-	ctx := context.Background()
 	br := bufio.NewReaderSize(ch, 64*1024)
 	out := newBufWriter(ch)
+	code := s.serveSessionCore(context.Background(), service, path, protocol, br, out, id)
+	_ = out.Flush()
+	return code
+}
+
+// ServeSSHSession runs one git service session over plain byte streams — the
+// exec-payload-free form frontends without an SSH daemon use (gitaly
+// SSHService, docs/19). path is the repository path as the exec payload
+// would carry it ("<repo>[.git][/tree/…]"); gitProtocol mirrors the
+// GIT_PROTOCOL env ("version=2" selects protocol v2).
+func (s *Server) ServeSSHSession(ctx context.Context, service, path, gitProtocol string, in *bufio.Reader, out io.Writer) int {
+	bw := newBufWriter(out)
+	code := s.serveSessionCore(ctx, service, path, gitProtocol, in, bw, auth.Identity{})
+	_ = bw.Flush()
+	return code
+}
+
+// serveSessionCore is the shared session body behind the SSH channel and the
+// stream-only frontends: errors are written as "ERR" lines onto the session
+// output (git prints them verbatim).
+func (s *Server) serveSessionCore(ctx context.Context, service, path, protocol string, br *bufio.Reader, out *bufWriter, id auth.Identity) int {
+	vr, err := ParseVirtualRepo(path)
+	if err != nil {
+		fmt.Fprintf(out, "ERR %v\n", err)
+		return 1
+	}
 
 	switch service {
 	case "git-upload-pack":
 		if _, err := s.Meta.GetRepo(ctx, vr.Repo); err != nil {
-			fmt.Fprintf(ch, "ERR repository not found: %s\n", vr.Repo)
+			fmt.Fprintf(out, "ERR repository not found: %s\n", vr.Repo)
 			return 1
 		}
 		if strings.Contains(protocol, "version=2") {
-			return s.serveSSHUploadV2(ctx, ch, br, out, vr, id)
+			return s.serveSSHUploadV2(ctx, br, out, vr, id)
 		}
-		return s.serveSSHUploadV0(ctx, ch, br, out, vr, id)
+		return s.serveSSHUploadV0(ctx, br, out, vr, id)
 	case "git-receive-pack":
 		// Demo-friendly auto-create, gated by the push permission — same
-		// rule as the HTTP discovery endpoint.
+		// rule as the HTTP discovery endpoint. Stream frontends run with
+		// no auth service (trusted after the transport's own gate): the
+		// nil policy keeps the HTTP nil-means-open semantics.
 		if _, err := s.Meta.GetRepo(ctx, vr.Repo); err != nil {
-			if !s.Auth.CanPush(id, vr.Repo, string(vr.Sub), "") {
-				fmt.Fprintf(ch, "ERR permission denied\n")
+			if s.Auth != nil && !s.Auth.CanPush(id, vr.Repo, string(vr.Sub), "") {
+				fmt.Fprintf(out, "ERR permission denied\n")
 				return 1
 			}
 			if err := s.Meta.CreateRepo(ctx, vr.Repo, s.Algo); err != nil {
-				fmt.Fprintf(ch, "ERR create repo: %v\n", err)
+				fmt.Fprintf(out, "ERR create repo: %v\n", err)
 				return 1
 			}
 			log.Printf("ssh receive-pack: auto-created repo %q", vr.Repo)
 		}
 		if err := s.writeRefAdvertisement(ctx, out, vr, id, service); err != nil {
-			_ = out.Flush()
 			return 1
 		}
 		_ = out.Flush()
 		if err := s.finishPush(ctx, id, br, out, vr); err != nil {
-			fmt.Fprintf(ch, "ERR %v\n", err)
+			fmt.Fprintf(out, "ERR %v\n", err)
 			return 1
 		}
-		_ = out.Flush()
 		return 0
 	default:
-		fmt.Fprintf(ch, "ERR unsupported service %q\n", service)
+		fmt.Fprintf(out, "ERR unsupported service %q\n", service)
 		return 1
 	}
 }
 
 // serveSSHUploadV2: one advertisement, then a command loop until the client
 // ends the session (serve.c protocol_v2_serve_loop).
-func (s *Server) serveSSHUploadV2(ctx context.Context, ch ssh.Channel, br *bufio.Reader, out *bufWriter, vr VirtualRepo, id auth.Identity) int {
+func (s *Server) serveSSHUploadV2(ctx context.Context, br *bufio.Reader, out *bufWriter, vr VirtualRepo, id auth.Identity) int {
 	s.advertiseV2Packets(out)
 	_ = out.Flush()
 	for {
@@ -254,7 +275,7 @@ func (s *Server) serveSSHUploadV2(ctx context.Context, ch ssh.Channel, br *bufio
 //   - deepen requests answer the shallow section right after the wants
 //     flush (send_shallow in upload-pack.c — the stateful client blocks
 //     reading it before sending haves).
-func (s *Server) serveSSHUploadV0(ctx context.Context, ch ssh.Channel, br *bufio.Reader, out *bufWriter, vr VirtualRepo, id auth.Identity) int {
+func (s *Server) serveSSHUploadV0(ctx context.Context, br *bufio.Reader, out *bufWriter, vr VirtualRepo, id auth.Identity) int {
 	if err := s.writeRefAdvertisement(ctx, out, vr, id, "git-upload-pack"); err != nil {
 		_ = out.Flush()
 		return 1
