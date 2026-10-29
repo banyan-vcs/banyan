@@ -351,9 +351,8 @@ func TestGitalyRefAndCommitSurface(t *testing.T) {
 	})
 
 	t.Run("unimplemented rpc answers unimplemented", func(t *testing.T) {
-		stream, err := gitalypb.NewDiffServiceClient(conn).RawRangeDiff(ctx, &gitalypb.RawRangeDiffRequest{})
-		require.NoError(t, err) // dial succeeds; the failure surfaces on Recv
-		_, err = stream.Recv()
+		_, err := gitalypb.NewPraefectInfoServiceClient(conn).RepositoryReplicas(ctx,
+			&gitalypb.RepositoryReplicasRequest{})
 		assert.Equal(t, codes.Unimplemented, status.Code(err))
 	})
 }

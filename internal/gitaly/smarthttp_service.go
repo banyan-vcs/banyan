@@ -159,3 +159,13 @@ func (sh *smartHTTPService) PostReceivePack(stream gitalypb.SmartHTTPService_Pos
 		return stream.Send(&gitalypb.PostReceivePackResponse{Data: b})
 	})
 }
+
+// AdvertiseBundleURI: banyan runs no bundle-URI CDN, so the advertisement
+// is empty — the same shape upstream serves when the bundle-uri feature is
+// unconfigured (clients never learn a URI and fall back to normal fetches).
+func (sh *smartHTTPService) AdvertiseBundleURI(ctx context.Context, req *gitalypb.AdvertiseBundleURIRequest) (*gitalypb.AdvertiseBundleURIResponse, error) {
+	if _, err := sh.s.existingRepo(ctx, req.GetRepository()); err != nil {
+		return nil, err
+	}
+	return &gitalypb.AdvertiseBundleURIResponse{}, nil
+}
