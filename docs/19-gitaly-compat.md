@@ -56,7 +56,7 @@ gitaly:
 ### ServerService 4/4 ✅
 ServerInfo ✅ · ReadinessCheck ✅ · ServerSignature ✅ · DiskStatistics ✅（字节数留待卷探测）
 
-### RepositoryService 19/42
+### RepositoryService 33/42
 RepositoryExists ✅ · CreateRepository ✅（default_branch 落 repos 表，
 SHA1；ObjectFormat 校验） · ObjectFormat ✅ · HasLocalBranches ✅ ·
 RepositorySize/GetObjectDirectorySize ✅（= /repos/<repo>/size 同源） ·
@@ -77,8 +77,7 @@ EmptyRootTree/ExcludePathNotFound 结构化 detail） · **RepositoryInfo ✅**
 **GetInfoAttributes ✅**（tip 树 .gitattributes；无则空流） ·
 **GetConfig ✅**（恒空流——无 git config 面） · **OptimizeRepository ✅** /
 **PruneUnreachableObjects ✅**（对象平面恒 compact——诚实空操作；
-offloading 对与上游同形 Unimplemented） · ⬜ 其余 23（bundle/fork/
-snapshot/backup/search/license/attributes/…，后切片）
+offloading 对与上游同形 Unimplemented） · **SearchFilesByName ✅**（pathspec glob+filter 正则+offset/limit） · **SearchFilesByContent ✅**（git-grep 形态块：NUL 分隔路径/: 与 - 的匹配上下文标记/±2 行/相邻融合/二进制跳过/不区分大小写） · **GetFileAttributes ✅**（根 .gitattributes：后行胜出/basename vs 路径模式/set-unset-value-unspecified；子集=仅根文件、负模式跳过） · **FindLicense ✅**（根 LICENSE*/COPYING* 候选 × 手工特征指纹=SPDX 库子集） · **CreateBundle ✅**（v2 头含尾部 HEAD 行——git bundle create --all 同形，clone 靠它猜默认分支；pack=闭包流式编码） · **CreateBundleFromRefList ✅**（bidi patterns glob 过滤） · **FetchBundle ✅**（头解析/prerequisite 校验/pack spool+整包摄入/refs force-set；流为全内存子集） · **CreateRepositoryFromBundle ✅**（建仓+种子+HEAD→默认分支+失败回滚） · **GetCustomHooks ✅ / SetCustomHooks ✅ / RestoreCustomHooks ✅**（tarball 经 meta RepoBlobStore 逐字往返——可执行钩子面仍是 HTTP 回调注册表，tarball 保备份移植性；无存档=空流） · **FetchSourceBranch ✅**（同对象平面仓对仓：源闭包逐对象拷贝+目标 ref CAS，expected-old 语义；新 ref 原样 OID） · **FetchRemote ✅**（go-git smart-HTTP 客户端——既有依赖零新增；一次 upload-pack 换包/整包摄入/refs force-set；Authorization 头原样注入；ssh 远端 Unimplemented） · **CreateRepositoryFromURL ✅**（建仓+拉取+失败回滚） · ⬜ 其余 9（backup/restore/snapshot/replicate/fork/fast-export/bundle-uri/…）
 
 ### RefService 13/16
 FindDefaultBranchName ✅ · FindBranch ✅ · RefExists ✅ · FindAllBranches ✅
@@ -188,7 +187,7 @@ HookService(7) · ConflictsService(2)
 InternalGitaly(5) · BackupService(2) · PartitionService(2) ·
 AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 
-**小计：89/163。**
+**小计：103/163。**
 
 ## 5. 切片路线（续）
 
@@ -198,9 +197,8 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
    **OperationService 16/16 收满**）。
 4. ~~Repo 维护面~~ ✅（切片八——删仓/校验和/fsck/archive/raw-changes/
    housekeeping，RepositoryService 19/42）。
-5. **Import/Remote 面**：CreateRepositoryFromURL/Bundle（import 工具编排）、
-   FetchRemote/FetchSourceBranch、SearchFiles×2、GetFileAttributes、
-   FindLicense、FastExport、CustomHooks×3。
+5. ~~Import/Remote 面~~ ✅（切片九——检索/bundle/hooks/远端 14 RPC，
+   RepositoryService 33/42；FastExport 留下片）。
 6. **Praefect 面**（可选）：PraefectInfoService/RefTransaction——仅当
    目标拓扑含 praefect；单节点形态明确不做。
 
@@ -267,6 +265,20 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
   面（无 dangling/unreachable 报告面——散存对象本身不存在）。
 - CalculateChecksum 与上游算法同构（逐行 SHA-1 XOR）；banyan 无 packed
   refs，全 ref 视作 loose。
+- **检索面**：SearchFilesByContent 的正则为 Go RE2（上游 --perl-regexp 的
+  语法子集）；匹配块形态与 git grep 对齐（上下文/分隔符/行号标记）。
+  GetFileAttributes 只读根 .gitattributes（子目录级与负模式 !pattern 不
+  解析）。FindLicense 为手工特征指纹子集（上游嵌 SPDX 全库），命中报
+  SPDX id、低置信形态答空。
+- **bundle 面**：v2 bundle（v3 capabilities/filters 显式拒绝）；FetchBundle
+  收流为全内存形态（GB 级 bundle 的流式化留后）；CreateBundle 的对象集=
+  广告视图闭包（织入 OID 原样——克隆侧逐字节可用，T68 实证）。
+- **custom hooks**：可执行钩子面=banyan HTTP 回调注册表（docs/04 §7），
+  文件树钩子不执行；tarball 仅经 RepoBlobStore 往返保备份移植。
+- **远端面**：FetchRemote/CreateRepositoryFromURL 仅 smart-HTTP（go-git
+  transport，模块既有依赖）；ssh 远端（ssh_key/known_hosts）Unimplemented。
+  force 覆盖已有分支 tip 触发织入重建（孪生树全同，OID 变化=双视图规则
+  §6）；FetchSourceBranch 新建 ref 原样 OID、覆盖已有 ref 同孪生规则。
 
 ## 7. 测试
 
@@ -349,3 +361,14 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
   `git show-ref --head` 行集复算相等；Fsck 净；GetRawChanges 的 blob
   OID/size/mode 与 `git diff --raw` + rev-parse 一致；RemoveRepository
   后 ls-remote 失败且幂等。
+- 单测（检索面，repository_search_test.go）：pathspec+filter+分页；grep 块形态
+  （NUL 前缀/行号/上下文/EndOfMatch）；attributes 四态与 basename/路径模式；
+  MIT 指纹与无候选空答；校验错误在 Recv 冒出（流式 RPC 契约）。
+- 单测（custom hooks 往返 + meta conformance repo_blobs 段）：tarball 分块
+  流入/流出逐字节、upsert 覆盖、missing 答空、rename 携带/delete 清除。
+- T68（integration）：**git bundle 双向 oracle**——banyan 产的 bundle 过
+  `git bundle verify` 且 clone 内容逐字节；`git bundle create --all` 产物
+  经 FetchBundle/CreateRepositoryFromBundle 摄入 banyan，clone 对拍。
+- T69（integration）：**FetchRemote 以 go-git 客户端拉 banyan 自身
+  smart-HTTP 面**（跨实现互操作）；FetchSourceBranch 仓对仓 raw OID 原样；
+  force 覆盖分支断言内容级（双视图孪生）。
