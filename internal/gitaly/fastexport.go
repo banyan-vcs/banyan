@@ -43,7 +43,23 @@ func (rs *repositoryService) CreateFork(ctx context.Context, req *gitalypb.Creat
 		if !strings.HasPrefix(r.ref, "refs/") || r.ref == "HEAD" {
 			continue
 		}
-		if err := rs.copyClosure(ctx, source, forkName, r.oid); err != nil {
+		// Annotated tags carry a tag object: copy it too, and walk the
+		// peeled commit for the closure.
+		if typ, _, err := rs.s.Objects.Raw(ctx, source, r.oid); err == nil && typ == model.TagType {
+			if _, raw, err := rs.s.Objects.Raw(ctx, source, r.oid); err == nil {
+				tagOID := model.ObjectOID(model.TagType, raw, rs.s.Algo)
+				_ = rs.s.Svc.PutObjects(ctx, forkName, []service.PutObject{{
+					OID: tagOID, Type: "tag", Data: raw}})
+				_ = tagOID
+			}
+		}
+		tip := r.oid
+		if typ, _, err := rs.s.Objects.Raw(ctx, source, r.oid); err == nil && typ == model.TagType {
+			if peeled, perr := rs.s.peelToCommit(ctx, source, r.oid); perr == nil {
+				tip = peeled
+			}
+		}
+		if err := rs.copyClosure(ctx, source, forkName, tip); err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 		if err := rs.s.Svc.UpdateRef(ctx, service.RefUpdate{
@@ -147,10 +163,19 @@ func (rs *repositoryService) writeFastExport(ctx context.Context, repo string, r
 		if len(oids) == 0 {
 			continue
 		}
-		fmt.Fprintf(w, "reset %s\nfrom :0\n", ref.ref)
+		fmt.Fprintf(w, "reset %s\n", ref.ref)
 		// walkParents yields newest-first; fast-export wants oldest-first.
+		// Blob commands must precede the commit they belong to (fast-import
+		// rejects blobs interleaved into a commit's filemodify run), so each
+		// commit emits its new blobs first, then the command itself.
 		for i := len(oids) - 1; i >= 0; i-- {
 			c := bodies[i]
+			var mEntries []string
+			treeEntries(ctx, rs.s, repo, c.TreeOID, func(path, mode string, oid model.OID) {
+				if emitBlob(oid) {
+					mEntries = append(mEntries, fmt.Sprintf("M %s :%d %s\n", mode, blobMarks[oid], path))
+				}
+			})
 			commitMarks[oids[i]] = nextMark
 			mark := nextMark
 			nextMark++
@@ -160,23 +185,19 @@ func (rs *repositoryService) writeFastExport(ctx context.Context, repo string, r
 			fmt.Fprintf(w, "committer %s <%s> %d %s\n",
 				c.Committer.Name, c.Committer.Email, c.Committer.When.Unix(), c.Committer.When.Format("-0700"))
 			dataBlock(c.Message)
-			switch {
-			case len(c.Parents) == 0:
-				fmt.Fprintf(w, "from :0\n")
-			case i < len(oids)-1:
-				fmt.Fprintf(w, "from :%d\n", mark-1)
-			default:
+			// Root commits and foreign bases carry no from line; in-chain
+			// commits reference the previous (older) mark, and the newest
+			// commit of a later ref references its already-streamed parent.
+			if len(c.Parents) > 0 {
 				if pm, ok := commitMarks[c.Parents[0]]; ok {
 					fmt.Fprintf(w, "from :%d\n", pm)
-				} else {
-					fmt.Fprintf(w, "from :0\n")
+				} else if i < len(oids)-1 {
+					fmt.Fprintf(w, "from :%d\n", mark-1)
 				}
 			}
-			treeEntries(ctx, rs.s, repo, c.TreeOID, func(path, mode string, oid model.OID) {
-				if emitBlob(oid) {
-					fmt.Fprintf(w, "M %s :%d %s\n", mode, blobMarks[oid], path)
-				}
-			})
+			for _, m := range mEntries {
+				io.WriteString(w, m)
+			}
 		}
 	}
 	return nil
