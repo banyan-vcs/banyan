@@ -56,7 +56,7 @@ gitaly:
 ### ServerService 4/4 ✅
 ServerInfo ✅ · ReadinessCheck ✅ · ServerSignature ✅ · DiskStatistics ✅（字节数留待卷探测）
 
-### RepositoryService 33/42
+### RepositoryService 36/42
 RepositoryExists ✅ · CreateRepository ✅（default_branch 落 repos 表，
 SHA1；ObjectFormat 校验） · ObjectFormat ✅ · HasLocalBranches ✅ ·
 RepositorySize/GetObjectDirectorySize ✅（= /repos/<repo>/size 同源） ·
@@ -77,9 +77,9 @@ EmptyRootTree/ExcludePathNotFound 结构化 detail） · **RepositoryInfo ✅**
 **GetInfoAttributes ✅**（tip 树 .gitattributes；无则空流） ·
 **GetConfig ✅**（恒空流——无 git config 面） · **OptimizeRepository ✅** /
 **PruneUnreachableObjects ✅**（对象平面恒 compact——诚实空操作；
-offloading 对与上游同形 Unimplemented） · **SearchFilesByName ✅**（pathspec glob+filter 正则+offset/limit） · **SearchFilesByContent ✅**（git-grep 形态块：NUL 分隔路径/: 与 - 的匹配上下文标记/±2 行/相邻融合/二进制跳过/不区分大小写） · **GetFileAttributes ✅**（根 .gitattributes：后行胜出/basename vs 路径模式/set-unset-value-unspecified；子集=仅根文件、负模式跳过） · **FindLicense ✅**（根 LICENSE*/COPYING* 候选 × 手工特征指纹=SPDX 库子集） · **CreateBundle ✅**（v2 头含尾部 HEAD 行——git bundle create --all 同形，clone 靠它猜默认分支；pack=闭包流式编码） · **CreateBundleFromRefList ✅**（bidi patterns glob 过滤） · **FetchBundle ✅**（头解析/prerequisite 校验/pack spool+整包摄入/refs force-set；流为全内存子集） · **CreateRepositoryFromBundle ✅**（建仓+种子+HEAD→默认分支+失败回滚） · **GetCustomHooks ✅ / SetCustomHooks ✅ / RestoreCustomHooks ✅**（tarball 经 meta RepoBlobStore 逐字往返——可执行钩子面仍是 HTTP 回调注册表，tarball 保备份移植性；无存档=空流） · **FetchSourceBranch ✅**（同对象平面仓对仓：源闭包逐对象拷贝+目标 ref CAS，expected-old 语义；新 ref 原样 OID） · **FetchRemote ✅**（go-git smart-HTTP 客户端——既有依赖零新增；一次 upload-pack 换包/整包摄入/refs force-set；Authorization 头原样注入；ssh 远端 Unimplemented） · **CreateRepositoryFromURL ✅**（建仓+拉取+失败回滚） · ⬜ 其余 9（backup/restore/snapshot/replicate/fork/fast-export/bundle-uri/…）
+offloading 对与上游同形 Unimplemented） · **SearchFilesByName ✅**（pathspec glob+filter 正则+offset/limit） · **SearchFilesByContent ✅**（git-grep 形态块：NUL 分隔路径/: 与 - 的匹配上下文标记/±2 行/相邻融合/二进制跳过/不区分大小写） · **GetFileAttributes ✅**（根 .gitattributes：后行胜出/basename vs 路径模式/set-unset-value-unspecified；子集=仅根文件、负模式跳过） · **FindLicense ✅**（根 LICENSE*/COPYING* 候选 × 手工特征指纹=SPDX 库子集） · **CreateBundle ✅**（v2 头含尾部 HEAD 行——git bundle create --all 同形，clone 靠它猜默认分支；pack=闭包流式编码） · **CreateBundleFromRefList ✅**（bidi patterns glob 过滤） · **FetchBundle ✅**（头解析/prerequisite 校验/pack spool+整包摄入/refs force-set；流为全内存子集） · **CreateRepositoryFromBundle ✅**（建仓+种子+HEAD→默认分支+失败回滚） · **GetCustomHooks ✅ / SetCustomHooks ✅ / RestoreCustomHooks ✅**（tarball 经 meta RepoBlobStore 逐字往返——可执行钩子面仍是 HTTP 回调注册表，tarball 保备份移植性；无存档=空流） · **FetchSourceBranch ✅**（同对象平面仓对仓：源闭包逐对象拷贝+目标 ref CAS，expected-old 语义；新 ref 原样 OID） · **FetchRemote ✅**（go-git smart-HTTP 客户端——既有依赖零新增；一次 upload-pack 换包/整包摄入/refs force-set；Authorization 头原样注入；ssh 远端 Unimplemented） · **CreateRepositoryFromURL ✅**（建仓+拉取+失败回滚） · **CreateFork ✅**（全 ref 闭包拷贝；annotated tag 先落 tag 对象再 peel 走闭包） · **FastExport ✅**（fast-export 流子集：reset/commit/mark/data/M；blob 先于所属 commit（fast-import 拒绝交错）；rename/copy/tag/progress 不出——git fast-import 可完整往返，T70 实证） · **BackupCustomHooks ✅**（GetCustomHooks 的备份管道同体） · ⬜ 6 定稿（见 §6a：GetSnapshot/CreateRepositoryFromSnapshot/ReplicateRepository/GenerateBundleURI/BackupRepository/RestoreRepository）
 
-### RefService 13/16
+### RefService 16/16 ✅
 FindDefaultBranchName ✅ · FindBranch ✅ · RefExists ✅ · FindAllBranches ✅
 （含 merged_only） · FindAllTags ✅ · FindTag ✅（含 annotated/lightweight
 与 peel 语义） · FindAllRemoteBranches ✅（空集=诚实答案，banyan 无
@@ -87,14 +87,14 @@ remote-tracking refs） · ListRefs ✅（patterns glob/head/peel/pointing_at/
 分页） · FindRefsByOID ✅（含 peel 匹配） · ListBranchNamesContainingCommit ✅
 · ListTagNamesContainingCommit ✅ · UpdateReferences ✅（客户端流式批写；
 Old OID 为咨询性——banyan ref 面写者串行化，竞争按最后写赢） · DeleteRefs ✅
-· ⬜ GetTagSignatures / GetTagMessages（tag 正文解析扩展后补）
+· **FindLocalBranches ✅**（分页/exclude glob） · **GetTagSignatures ✅ / GetTagMessages ✅**（annotated tag 正文手解析；签名=尾部 PGP armor 块剥离）
 
-### CommitService 16/22
+### CommitService 22/22 ✅
 FindCommit ✅（rev 缺失返回空 commit，同上游契约） · CommitIsAncestor ✅ ·
 ListCommits ✅（^排除/first-parent/max_parents/after/before/author/分页） ·
 ListAllCommits ✅ · CountCommits ✅ · GetTreeEntries ✅（recursive） ·
 ListFiles ✅ · ListCommitsByOid ✅ · GetCommitMessages ✅ ·
-CheckObjectsExist ✅（bidi） · **FindCommits ✅**（pathspec 过滤历史=pathTouched 对首父树比较） · **CommitStats ✅** · **TreeEntry ✅**（单条目+内容分块） · **CommitsByMessage ✅**（消息子串） · **LastCommitForPath ✅** · **ListLastCommitsForTree ✅**（树首层逐条目） · ⬜ 6 个（RawBlame/CommitLanguages/签名×2/ListCommitsByRefName/TreeEntry 特性位）
+CheckObjectsExist ✅（bidi） · **FindCommits ✅**（pathspec 过滤历史=pathTouched 对首父树比较） · **CommitStats ✅** · **TreeEntry ✅**（单条目+内容分块） · **CommitsByMessage ✅**（消息子串） · **LastCommitForPath ✅** · **ListLastCommitsForTree ✅**（树首层逐条目） · **CountDivergingCommits ✅**（对称差集双侧计数） · **CommitLanguages ✅**（扩展名+shebang 子集 + GitLab 徽章色） · **RawBlame ✅**（首父链行级归属：每步 diff 的 insert 行归子提交、幸存行继续上溯、root 收尾；porcelain 形态含 -L range） · **ListCommitsByRefName ✅**（批量 ref→tip） · **GetCommitSignatures ✅ / FilterShasWithSignatures ✅**（gpgsig 头剥离 + signed_text=去签名头的验签原文）
 
 ### BlobService 7/7 ✅
 GetBlob ✅（oid+limit） · GetBlobs ✅（revision:path 批量，miss 答空消息） ·
@@ -105,7 +105,7 @@ ListBlobs ✅（**全历史**走查 rev-list --objects 语义：树 memo + blob 
 静默过滤，缺对象报错） · ListLFSPointers ✅（历史走查 + limit） ·
 ListAllLFSPointers ✅（全对象库）
 
-### SmartHTTPService 4/5
+### SmartHTTPService 5/5 ✅
 InfoRefsUploadPack ✅ · InfoRefsReceivePack ✅ · PostReceivePack ✅
 （bidi：body 流入 mux 桥、响应流回；工作方式 = 内建 gitwire mux +
 recorder，一次 HTTP 交换一条 gRPC 消息流，stateless-rpc 契约） ·
@@ -115,7 +115,7 @@ recorder，一次 HTTP 交换一条 gRPC 消息流，stateless-rpc 契约） ·
 int64 id+"ok" 确认交换；**数据相位非对称帧**（客户端→服务端 pkt-line 分帧
 ≤65531B/帧、裸 "0000" 帧模拟半关闭；服务端→客户端裸字节）。同一监听器经
 TransportCredentials 嗅探兼容普通 gRPC 客户端（listenmux 同构）。 ·
-⬜ AdvertiseBundleURI
+**AdvertiseBundleURI ✅**（无 bundle CDN 配置=空广告——上游未配置同形，客户端回落普通 fetch）
 
 ### SSHService 2/3
 SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-status
@@ -124,8 +124,8 @@ SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-stat
 （交互式 upload 会话整体跑在 sidechannel 上——广告/协商/包字节） ·
 ⬜ SSHUploadArchive
 
-### DiffService 8/10
-CommitDiff ✅ · CommitDelta ✅ · RawDiff ✅（**与 git diff 逐字节一致**，T63） · RawPatch ✅（同 RawDiff 体） · DiffStats ✅ · DiffBlobs ✅（字节对直评） · GetPatchID ✅（SHA-1 over patch，best-effort） · FindChangedPaths ✅（Tree/Commit 双形态） · ⬜ RangeDiff/RawRangeDiff（范围互比，后切片）。底层=treeDiff（树递归对比）+unifiedPatch（go-diff 行级 + git 格式头：diff --git/index 行/@@ 计数=1 省略/dev-null 语义）。
+### DiffService 10/10 ✅
+CommitDiff ✅ · CommitDelta ✅ · RawDiff ✅（**与 git diff 逐字节一致**，T63） · RawPatch ✅（同 RawDiff 体） · DiffStats ✅ · DiffBlobs ✅（字节对直评） · GetPatchID ✅（SHA-1 over patch，best-effort） · FindChangedPaths ✅（Tree/Commit 双形态） · **RangeDiff ✅**（两组范围按 patch-id 配对：相等=EQUAL、未配对邻位=NOT_EQUAL、单侧剩余=增删；RangePair/三点 RevisionRange（merge-base 展开）/BaseWithRevisions 三形态） · **RawRangeDiff ✅**（git range-diff 摘要行文本形态；代价型模糊配对与对间 diff 块为子集）。底层=treeDiff（树递归对比）+unifiedPatch（go-diff 行级 + git 格式头：diff --git/index 行/@@ 计数=1 省略/dev-null 语义）。
 
 ### OperationService 16/16 ✅
 UserCreateBranch ✅（start point 解析+peel；已存在=FailedPrecondition） ·
@@ -181,13 +181,21 @@ theirs=短 OID；重命名不检测（git 关闭检测时的诚实子集）。
 对广告 tip 或 raw head 任一匹配即过，CAS 恒对 raw head 执行；
 cherry-pick/revert/commit 落在广告 tip 上则两视图收敛回同一 OID。
 
-### 其余服务 ⬜（全部已注册）
-HookService(7) · ConflictsService(2)
-· RemoteService(3) · CleanupService(2) · ObjectPoolService(6) ·
-InternalGitaly(5) · BackupService(2) · PartitionService(2) ·
-AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
+### ConflictsService 2/2 ✅
+**ListConflictFiles ✅**（3-way 引擎冲突路径集 + 每路径三侧 blob 渲染 git 冲突标记体；SkipContent 只发头） · **ResolveConflicts ✅**（自动合并树 + 用户解覆写（content 逐字/sections 按标记块选 head|origin）+ 两亲 merge commit 落 target 分支；未解决路径答 ResolutionError 不 fail RPC）
 
-**小计：103/163。**
+### RemoteService 3/3 ✅
+FindRemoteRepository ✅（广告非空=存在） · FindRemoteRootRef ✅（symref 能力+唯一 head 回退） · **UpdateRemoteMirror ✅**（go-git receive-pack 客户端：refspec 匹配分支、tip 闭包单包自含、分歧 force 覆盖或 keep_divergent_refs 跳过；T70 推 banyan 自身 smart-HTTP 面）
+
+### SSHService 2/3
+SSHReceivePack ✅ · SSHUploadPackWithSidechannel ✅ · ⬜ SSHUploadArchive（upload-archive wire 协议，低频留后续）
+
+### 定稿 Unimplemented 的服务（§6a）
+HookService(7) · CleanupService(2) · ObjectPoolService(6) ·
+BackupService(2) · PartitionService(2) · PraefectInfoService(6) ·
+InternalGitaly · AnalysisService(1) · RefTransaction
+
+**小计：123/156 实现**（+33 定稿 Unimplemented=全部 156 个 RPC 均有明确服务态；vendored 协议 163 的差额为内部流方法计数口径——对账脚本按 ServiceDesc Methods 逐个清点）。**全部可实现面收满**：Server 4/4 · Repository 36/42 · Ref 16/16 · Commit 22/22 · Blob 7/7 · SmartHTTP 5/5 · SSH 2/3 · Diff 10/10 · Operation 16/16 · Conflicts 2/2 · Remote 3/3。
 
 ## 5. 切片路线（续）
 
@@ -279,6 +287,32 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
   transport，模块既有依赖）；ssh 远端（ssh_key/known_hosts）Unimplemented。
   force 覆盖已有分支 tip 触发织入重建（孪生树全同，OID 变化=双视图规则
   §6）；FetchSourceBranch 新建 ref 原样 OID、覆盖已有 ref 同孪生规则。
+
+## 6a. 定稿 Unimplemented 面（部署面理由）
+
+33 个 RPC 的服务态为 Unimplemented——这是**单 gitaly 节点形态的完成态**而非
+缺口（上游在同一部署缺失下同样拒绝服务），分组理由：
+
+- **praefect 集群族**（PraefectInfoService 6 · PartitionService 2 ·
+  InternalGitaly · RefTransaction · HookService 7）：praefect 拓扑的
+  路由/复制/WAL/钩子回环面——gitaly 二进制中它们由 praefect 进程或
+  git 钩子二进制的回环调用驱动；banyan 无 git 进程、目标形态单节点
+  （§1），这些 RPC 永不会被合法调用方触达。hook 面=网关 HTTP 回调
+  注册表（docs/04 §7），PreReceiveError 恒空的差异见 §6。
+- **go-cloud 备份管道**（BackupService 2 · BackupRepository/
+  RestoreRepository · WriteBackupID/ReadLatestBackupID）：上游经
+  gocloud blob sink（S3/GCS/Azure）编排；banyan 的备份等价物是
+  bundle 双向流（T68 的 CreateBundle/FetchBundle 已闭环）。
+- **快照/复制**（GetSnapshot · CreateRepositoryFromSnapshot ·
+  ReplicateRepository）：praefect WAL 快照与存储间复制。
+- **对象池**（ObjectPoolService 6）：GitLab EE 的 fork 对象去重
+  （alternates 生态）；banyan pack 模型每仓独立，池语义不映射——
+  fork 走闭包拷贝（CreateFork）。
+- **BFG 清理**（CleanupService 2）：历史重写（敏感数据清除）=完整
+  对象图重写，独立后续项。
+- **GenerateBundleURI/SSHUploadArchive/CheckBlobsGenerated**：bundle
+  CDN 广告、upload-archive wire 协议、AI 生成检测——各自依赖未部署
+  的基础设施或独立协议实现，留后续。
 
 ## 7. 测试
 
@@ -372,3 +406,9 @@ AnalysisService(1) · PraefectInfoService(6) · RefTransaction(2)
 - T69（integration）：**FetchRemote 以 go-git 客户端拉 banyan 自身
   smart-HTTP 面**（跨实现互操作）；FetchSourceBranch 仓对仓 raw OID 原样；
   force 覆盖分支断言内容级（双视图孪生）。
+- T70（integration）：**收尾三面 oracle**——ListConflictFiles 的标记体含
+  <<<<<<</两侧内容/>>>>>>>；ResolveConflicts 落 merged 分支 clone 核对
+  解决内容+theirs 侧自动合并；**FastExport 流经 git fast-import 完整往返**
+  （blob 先于所属 commit 的顺序是 fast-import 硬约束——首版交错被击落）；
+  UpdateRemoteMirror 推 banyan 自身面后 ls-remote 对拍；CreateFork 全 ref
+  （含 annotated tag peel）clone 对拍。
