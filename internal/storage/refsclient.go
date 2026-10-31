@@ -238,6 +238,43 @@ func (m *RemoteMeta) GetRepoBlob(ctx context.Context, repo, key string) ([]byte,
 	return out.Data, true, nil
 }
 
+func (m *RemoteMeta) LinkPool(ctx context.Context, member, pool string, upstream bool) error {
+	return m.Refs.call(ctx, "/internal/meta/pool/link",
+		map[string]any{"member": member, "pool": pool, "upstream": upstream}, nil)
+}
+
+func (m *RemoteMeta) UnlinkPool(ctx context.Context, member string) error {
+	return m.Refs.call(ctx, "/internal/meta/pool/unlink",
+		map[string]string{"member": member}, nil)
+}
+
+func (m *RemoteMeta) PoolOf(ctx context.Context, member string) (string, bool, error) {
+	var out struct {
+		Pool   string `json:"pool"`
+		Linked bool   `json:"linked"`
+	}
+	if err := m.Refs.call(ctx, "/internal/meta/pool/of",
+		map[string]string{"member": member}, &out); err != nil {
+		return "", false, err
+	}
+	return out.Pool, out.Linked, nil
+}
+
+func (m *RemoteMeta) ListPoolMembers(ctx context.Context) ([]PoolInfo, error) {
+	var out struct {
+		Members []PoolInfo `json:"members"`
+	}
+	if err := m.Refs.call(ctx, "/internal/meta/pool/list", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Members, nil
+}
+
+func (m *RemoteMeta) DeletePoolRecords(ctx context.Context, pool string) error {
+	return m.Refs.call(ctx, "/internal/meta/pool/delete",
+		map[string]string{"pool": pool}, nil)
+}
+
 func (m *RemoteMeta) PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {
 	oids := make([]string, len(objects))
 	for i, o := range objects {

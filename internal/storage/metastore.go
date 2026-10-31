@@ -22,6 +22,7 @@ type MetaStore interface {
 	PlacementStore
 	HookRegistry
 	RepoBlobStore
+	PoolRegistry
 }
 
 // HookInfo is one registered receive hook (docs/04 §7): an HTTP callback
@@ -56,6 +57,32 @@ type RepoBlobStore interface {
 	SetRepoBlob(ctx context.Context, repo, key string, data []byte) error
 	// GetRepoBlob answers the stored blob; missing = (nil, false, nil).
 	GetRepoBlob(ctx context.Context, repo, key string) ([]byte, bool, error)
+}
+
+// PoolInfo records one repository↔object-pool relationship (docs/19). A
+// repository is a member of at most one pool; the member that seeded the
+// pool carries Upstream — the pool's origin in GitLab's fork dedup flow.
+type PoolInfo struct {
+	Member   string // repository name linked to the pool
+	Pool     string // pool repository name (an @pools/ relative path)
+	Upstream bool   // member is the pool's origin repository
+}
+
+// PoolRegistry tracks object-pool membership (gitaly ObjectPoolService).
+// banyan has no alternates: linking materializes shared objects into the
+// member, and this registry is the durable record of the relationship.
+type PoolRegistry interface {
+	// LinkPool upserts the member's pool record (one pool per member).
+	LinkPool(ctx context.Context, member, pool string, upstream bool) error
+	// UnlinkPool drops the member's pool record; missing = no-op.
+	UnlinkPool(ctx context.Context, member string) error
+	// PoolOf answers the member's pool; ("", false, nil) when unlinked.
+	PoolOf(ctx context.Context, member string) (string, bool, error)
+	// ListPoolMembers returns every membership record, member-sorted.
+	ListPoolMembers(ctx context.Context) ([]PoolInfo, error)
+	// DeletePoolRecords drops every record referencing the pool (member
+	// records pointing at it and the pool's own upstream entry).
+	DeletePoolRecords(ctx context.Context, pool string) error
 }
 
 func (h HookInfo) validate() error {
@@ -209,6 +236,7 @@ type MemoryMetaStore struct {
 	placements map[string]int             // repo → replica target (0 = cluster default)
 	hooks      map[string]map[string]HookInfo // repo → hook ID → registration
 	repoBlobs  map[string]map[string][]byte  // repo → blob key → bytes (gitaly custom-hooks)
+	pools      map[string]PoolInfo          // member repo → pool record
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
@@ -221,6 +249,7 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 		placements: map[string]int{},
 		repoBlobs:  map[string]map[string][]byte{},
 		hooks:      map[string]map[string]HookInfo{},
+		pools:      map[string]PoolInfo{},
 	}
 }
 
@@ -276,6 +305,11 @@ func (m *MemoryMetaStore) RenameRepo(_ context.Context, from, to string) error {
 		m.repoBlobs[to] = b
 		delete(m.repoBlobs, from)
 	}
+	if p, ok := m.pools[from]; ok {
+		p.Member = to
+		m.pools[to] = p
+		delete(m.pools, from)
+	}
 	return nil
 }
 
@@ -291,6 +325,14 @@ func (m *MemoryMetaStore) DeleteRepo(_ context.Context, repo string) error {
 	delete(m.placements, repo)
 	delete(m.hooks, repo)
 	delete(m.repoBlobs, repo)
+	// A deleted repo leaves its pool (as member) and takes its pool records
+	// with it (as pool): members of a vanished pool become unlinked.
+	delete(m.pools, repo)
+	for member, p := range m.pools {
+		if p.Pool == repo {
+			delete(m.pools, member)
+		}
+	}
 	return nil
 }
 
@@ -383,6 +425,49 @@ func (m *MemoryMetaStore) GetRepoBlob(_ context.Context, repo, key string) ([]by
 		return nil, false, nil
 	}
 	return append([]byte(nil), data...), true, nil
+}
+
+func (m *MemoryMetaStore) LinkPool(_ context.Context, member, pool string, upstream bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pools[member] = PoolInfo{Member: member, Pool: pool, Upstream: upstream}
+	return nil
+}
+
+func (m *MemoryMetaStore) UnlinkPool(_ context.Context, member string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.pools, member)
+	return nil
+}
+
+func (m *MemoryMetaStore) PoolOf(_ context.Context, member string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.pools[member]
+	return p.Pool, ok, nil
+}
+
+func (m *MemoryMetaStore) ListPoolMembers(_ context.Context) ([]PoolInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]PoolInfo, 0, len(m.pools))
+	for _, p := range m.pools {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Member < out[j].Member })
+	return out, nil
+}
+
+func (m *MemoryMetaStore) DeletePoolRecords(_ context.Context, pool string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for member, p := range m.pools {
+		if p.Pool == pool {
+			delete(m.pools, member)
+		}
+	}
+	return nil
 }
 
 func (m *MemoryMetaStore) PutPack(_ context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {

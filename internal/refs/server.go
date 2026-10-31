@@ -93,6 +93,11 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/hooks/delete", s.hDeleteHook)
 	meta.HandleFunc("/internal/meta/repo-blob", s.hSetRepoBlob)
 	meta.HandleFunc("/internal/meta/repo-blob/get", s.hGetRepoBlob)
+	meta.HandleFunc("/internal/meta/pool/link", s.hLinkPool)
+	meta.HandleFunc("/internal/meta/pool/unlink", s.hUnlinkPool)
+	meta.HandleFunc("/internal/meta/pool/of", s.hPoolOf)
+	meta.HandleFunc("/internal/meta/pool/list", s.hListPoolMembers)
+	meta.HandleFunc("/internal/meta/pool/delete", s.hDeletePoolRecords)
 	meta.HandleFunc("/internal/meta/timeline", s.hTimeline)
 	meta.HandleFunc("/internal/meta/cas-head", s.hCASHead)
 	meta.HandleFunc("/internal/meta/ensure-timeline", s.hEnsureTimeline)
@@ -489,6 +494,74 @@ func (s *Server) hGetRepoBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"data": data})
+}
+
+func (s *Server) hLinkPool(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Member   string `json:"member"`
+		Pool     string `json:"pool"`
+		Upstream bool   `json:"upstream"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.LinkPool(r.Context(), req.Member, req.Pool, req.Upstream); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) hUnlinkPool(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Member string `json:"member"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.UnlinkPool(r.Context(), req.Member); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) hPoolOf(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Member string `json:"member"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	pool, ok, err := s.Meta.PoolOf(r.Context(), req.Member)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"pool": pool, "linked": ok})
+}
+
+func (s *Server) hListPoolMembers(w http.ResponseWriter, r *http.Request) {
+	members, err := s.Meta.ListPoolMembers(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"members": members})
+}
+
+func (s *Server) hDeletePoolRecords(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Pool string `json:"pool"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.DeletePoolRecords(r.Context(), req.Pool); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) hListRepos(w http.ResponseWriter, r *http.Request) {

@@ -244,6 +244,11 @@ func ddlSQLite() []string {
 	data BLOB NOT NULL,
 	PRIMARY KEY(repo, key)
 ) WITHOUT ROWID`,
+		`CREATE TABLE IF NOT EXISTS repo_pools(
+	member   TEXT NOT NULL PRIMARY KEY,
+	pool     TEXT NOT NULL,
+	upstream INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID`,
 	}
 }
 
@@ -303,6 +308,11 @@ func ddlMySQL() []string {
 	data LONGBLOB NOT NULL,
 	PRIMARY KEY(repo, key)
 )`,
+		`CREATE TABLE IF NOT EXISTS repo_pools(
+	member   VARCHAR(190) NOT NULL PRIMARY KEY,
+	pool     VARCHAR(190) NOT NULL,
+	upstream TINYINT NOT NULL DEFAULT 0
+)`,
 	}
 }
 
@@ -361,6 +371,11 @@ func ddlPostgres() []string {
 	key  VARCHAR(120) NOT NULL,
 	data BYTEA NOT NULL,
 	PRIMARY KEY(repo, key)
+)`,
+		`CREATE TABLE IF NOT EXISTS repo_pools(
+	member   TEXT NOT NULL PRIMARY KEY,
+	pool     TEXT NOT NULL,
+	upstream INTEGER NOT NULL DEFAULT 0
 )`,
 	}
 }
@@ -633,6 +648,60 @@ func (s *SQLMetaStore) GetRepoBlob(ctx context.Context, repo, key string) ([]byt
 	return data, true, nil
 }
 
+func (s *SQLMetaStore) LinkPool(ctx context.Context, member, pool string, upstream bool) error {
+	suffix := " ON CONFLICT(member) DO UPDATE SET pool=excluded.pool, upstream=excluded.upstream"
+	if s.d.name == "mysql" {
+		suffix = " ON DUPLICATE KEY UPDATE pool=VALUES(pool), upstream=VALUES(upstream)"
+	}
+	_, err := s.db.ExecContext(ctx,
+		s.q("INSERT INTO repo_pools(member, pool, upstream) VALUES(?,?,?)"+suffix),
+		member, pool, boolInt(upstream))
+	return err
+}
+
+func (s *SQLMetaStore) UnlinkPool(ctx context.Context, member string) error {
+	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM repo_pools WHERE member=?"), member)
+	return err
+}
+
+func (s *SQLMetaStore) PoolOf(ctx context.Context, member string) (string, bool, error) {
+	var pool string
+	err := s.db.QueryRowContext(ctx,
+		s.q("SELECT pool FROM repo_pools WHERE member=?"), member).Scan(&pool)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return pool, true, nil
+}
+
+func (s *SQLMetaStore) ListPoolMembers(ctx context.Context) ([]PoolInfo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		s.q("SELECT member, pool, upstream FROM repo_pools ORDER BY member"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PoolInfo
+	for rows.Next() {
+		var p PoolInfo
+		var upstream int
+		if err := rows.Scan(&p.Member, &p.Pool, &upstream); err != nil {
+			return nil, err
+		}
+		p.Upstream = upstream != 0
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLMetaStore) DeletePoolRecords(ctx context.Context, pool string) error {
+	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM repo_pools WHERE pool=?"), pool)
+	return err
+}
+
 func (s *SQLMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(
 		"SELECT name, algo, default_branch, storage_id, force_push FROM repos ORDER BY name"))
@@ -680,6 +749,11 @@ func (s *SQLMetaStore) RenameRepo(ctx context.Context, from, to string) error {
 			return err
 		}
 	}
+	// repo_pools keys by member, not repo: rename the membership side; the
+	// pool side keeps pointing at the (unchanged) pool repository.
+	if _, err := tx.ExecContext(ctx, s.q("UPDATE repo_pools SET member=? WHERE member=?"), to, from); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET name=? WHERE name=?"), to, from); err != nil {
 		return err
 	}
@@ -698,6 +772,11 @@ func (s *SQLMetaStore) DeleteRepo(ctx context.Context, repo string) error {
 		if _, err := tx.ExecContext(ctx, s.q("DELETE FROM "+table+" WHERE repo=?"), repo); err != nil {
 			return err
 		}
+	}
+	// The repo leaves its pool (member row) and, when it was a pool, every
+	// membership record pointing at it goes too.
+	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM repo_pools WHERE member=? OR pool=?"), repo, repo); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM repos WHERE name=?"), repo); err != nil {
 		return err
