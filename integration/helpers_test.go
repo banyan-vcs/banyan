@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"archive/tar"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -191,4 +193,37 @@ func countInPack(t *testing.T, dir string) int {
 	}
 	require.NotZero(t, total, "count-objects 解析失败:\n%s", out)
 	return total
+}
+
+// untar extracts an in-memory TAR into dir (snapshot round trips).
+func untar(t *testing.T, data []byte, dir string) error {
+	t.Helper()
+	tr := tar.NewReader(bytes.NewReader(data))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dir, filepath.FromSlash(hdr.Name))
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			body, err := io.ReadAll(tr)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(target, body, 0o644); err != nil {
+				return err
+			}
+		}
+	}
 }
