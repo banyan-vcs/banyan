@@ -2,10 +2,12 @@ package gitaly
 
 import "github.com/banyan-vcs/banyan/internal/gitalypb"
 
-// Pending services. Every gitaly service is registered from day one; the
-// structs below answer codes.Unimplemented for RPCs not yet built, so a
-// frontend sees a stable contract (clean per-RPC Unimplemented, never a
-// connection failure). Coverage lands slice by slice — docs/19 tracks it.
+// Service structs. Every gitaly service is registered from day one; the
+// UnimplementedXServer embeds are the compile-time completeness net — an
+// RPC added by a future protocol bump surfaces as a clean per-RPC
+// Unimplemented instead of a connection failure. The implementations live
+// in the sibling files; docs/19 tracks the coverage ledger (163/163 live
+// against vendored v19.5.2).
 
 type conflictsService struct {
 	gitalypb.UnimplementedConflictsServiceServer

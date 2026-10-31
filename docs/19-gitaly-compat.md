@@ -48,10 +48,10 @@ gitaly:
   storage_name: "default"   # 须与 GitLab gitaly.yml 一致
 ```
 
-## 4. 覆盖矩阵（163 RPC / 20 服务）
+## 4. 覆盖矩阵（163 RPC / 20 服务 — 全部落地 ✅）
 
-图例：✅ 本切片已实现并测试 · ⬜ 未实现（返回 `codes.Unimplemented`，
-注册即生效——前端看到的是稳定契约而非连接失败）
+图例：✅ 已实现并测试（163/163；服务态种类见 §6a——单节点诚实语义
+映射取代了此前的定稿 Unimplemented）
 
 ### ServerService 4/4 ✅
 ServerInfo ✅ · ReadinessCheck ✅ · ServerSignature ✅ · DiskStatistics ✅（字节数留待卷探测）
@@ -117,12 +117,14 @@ int64 id+"ok" 确认交换；**数据相位非对称帧**（客户端→服务�
 TransportCredentials 嗅探兼容普通 gRPC 客户端（listenmux 同构）。 ·
 **AdvertiseBundleURI ✅**（无 bundle CDN 配置=空广告——上游未配置同形，客户端回落普通 fetch）
 
-### SSHService 2/3
+### SSHService 3/3 ✅
 SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-status
 末条；复用 gitwire.ServeSSHSession——从 serveGitExec 抽出的 io 流会话核
 心，docs/04 §7b 的无守护进程形态） · **SSHUploadPackWithSidechannel ✅**
 （交互式 upload 会话整体跑在 sidechannel 上——广告/协商/包字节） ·
-⬜ SSHUploadArchive
+**SSHUploadArchive ✅**（git upload-archive wire 协议：argument pkt-line
+流→ACK+flush→sideband 1 归档字节/3 错误→终 flush；载荷与 `git archive`
+逐字节一致，T76；参数错=NACK 形态）
 
 ### DiffService 10/10 ✅
 CommitDiff ✅ · CommitDelta ✅ · RawDiff ✅（**与 git diff 逐字节一致**，T63） · RawPatch ✅（同 RawDiff 体） · DiffStats ✅ · DiffBlobs ✅（字节对直评） · GetPatchID ✅（SHA-1 over patch，best-effort） · FindChangedPaths ✅（Tree/Commit 双形态） · **RangeDiff ✅**（两组范围按 patch-id 配对：相等=EQUAL、未配对邻位=NOT_EQUAL、单侧剩余=增删；RangePair/三点 RevisionRange（merge-base 展开）/BaseWithRevisions 三形态） · **RawRangeDiff ✅**（git range-diff 摘要行文本形态；代价型模糊配对与对间 diff 块为子集）。底层=treeDiff（树递归对比）+unifiedPatch（go-diff 行级 + git 格式头：diff --git/index 行/@@ 计数=1 省略/dev-null 语义）。
@@ -187,15 +189,16 @@ cherry-pick/revert/commit 落在广告 tip 上则两视图收敛回同一 OID。
 ### RemoteService 3/3 ✅
 FindRemoteRepository ✅（广告非空=存在） · FindRemoteRootRef ✅（symref 能力+唯一 head 回退） · **UpdateRemoteMirror ✅**（go-git receive-pack 客户端：refspec 匹配分支、tip 闭包单包自含、分歧 force 覆盖或 keep_divergent_refs 跳过；T70 推 banyan 自身 smart-HTTP 面）
 
-### SSHService 2/3
-SSHReceivePack ✅ · SSHUploadPackWithSidechannel ✅ · ⬜ SSHUploadArchive（upload-archive wire 协议，低频留后续）
+### SSHService 3/3 ✅
+（见上文同节）SSHUploadArchive 的 wire 详注亦见上文。
 
-### 定稿 Unimplemented 的服务（§6a）
-HookService(7) · CleanupService(2) · ObjectPoolService(6) ·
-BackupService(2) · PartitionService(2) · PraefectInfoService(6) ·
-InternalGitaly · AnalysisService(1) · RefTransaction
+### 其余 17 个服务（11 全勾，见上文各行）
+**RepositoryService 42/42 ✅**（切片十一补齐：GetSnapshot/CreateRepositoryFromSnapshot/ReplicateRepository/BackupRepository/RestoreRepository/GenerateBundleURI——语义映射见 §6a）· **HookService 7/7 ✅** · **CleanupService 2/2 ✅** · **ObjectPoolService 6/6 ✅** · **BackupService 2/2 ✅** · **PartitionService 2/2 ✅** · **PraefectInfoService 6/6 ✅** · **InternalGitaly 5/5 ✅** · **AnalysisService 1/1 ✅** · **RefTransaction 2/2 ✅** · **ConflictsService 2/2 ✅**
 
-**小计：123/156 实现**（+33 定稿 Unimplemented=全部 156 个 RPC 均有明确服务态；vendored 协议 163 的差额为内部流方法计数口径——对账脚本按 ServiceDesc Methods 逐个清点）。**全部可实现面收满**：Server 4/4 · Repository 36/42 · Ref 16/16 · Commit 22/22 · Blob 7/7 · SmartHTTP 5/5 · SSH 2/3 · Diff 10/10 · Operation 16/16 · Conflicts 2/2 · Remote 3/3。
+**总账：163/163 全部落地。** vendored 协议 v19.5.2 的 20 服务 163 个
+RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十一把
+此前的 33 个定稿 Unimplemented + Repository 尾 6 + SSH 尾 1 全部按
+§6a 的单节点诚实语义实现并配 T71–T76 集成面。
 
 ## 5. 切片路线（续）
 
@@ -207,8 +210,10 @@ InternalGitaly · AnalysisService(1) · RefTransaction
    housekeeping，RepositoryService 19/42）。
 5. ~~Import/Remote 面~~ ✅（切片九——检索/bundle/hooks/远端 14 RPC，
    RepositoryService 33/42；FastExport 留下片）。
-6. **Praefect 面**（可选）：PraefectInfoService/RefTransaction——仅当
-   目标拓扑含 praefect；单节点形态明确不做。
+6. ~~读面/Repo 尾/Conflicts/Remote 收满~~ ✅（切片十，123/156+33 定稿）。
+7. ~~收尾 40 面：praefect 族/backup/快照/池/hook/清理/分析/archive-wire~~
+   ✅（切片十一——**163/163 全落地**；33 个定稿 Unimplemented 改为
+   §6a 的诚实语义实现）。
 
 ## 6. 已知语义差异（诚实清单）
 
@@ -287,32 +292,77 @@ InternalGitaly · AnalysisService(1) · RefTransaction
   transport，模块既有依赖）；ssh 远端（ssh_key/known_hosts）Unimplemented。
   force 覆盖已有分支 tip 触发织入重建（孪生树全同，OID 变化=双视图规则
   §6）；FetchSourceBranch 新建 ref 原样 OID、覆盖已有 ref 同孪生规则。
+- **切片十一形态差**（详注 §6a）：备份 sink=本地目录（非 gocloud 云端，
+  键位同形）；对象池=物化拷贝（非 alternates 读穿透，物理不省空间）；
+  praefect 族=cluster-of-one 自洽回答（多数值 id 平面不存在→NotFound、
+  generation=pack 计数）；RewriteHistory 旧对象保留待 GC（上游同义）；
+  PackObjectsHookWithSidechannel=FailedPrecondition 门（无 git 进程回环
+  方）；GenerateBundleURI 不做协议 v2 bundle-uri 能力广告（广告面仍由
+  git config 驱动，上游同形）；CheckBlobsGenerated 依赖 go-enry（纯 Go
+  新依赖，cgo 版 oniguruma 不编译进来）。
 
-## 6a. 定稿 Unimplemented 面（部署面理由）
+## 6a. 收尾 40 面的实现语义（切片十一，原定稿 Unimplemented 组）
 
-33 个 RPC 的服务态为 Unimplemented——这是**单 gitaly 节点形态的完成态**而非
-缺口（上游在同一部署缺失下同样拒绝服务），分组理由：
+此前 33 个定稿 Unimplemented + Repository 尾 6 + SSH 尾 1 在切片十一
+全部落地。每组都给**单节点诚实语义**——行为可测、与上游同形处同形，
+形态差异显式列出（§6 汇总）：
 
-- **praefect 集群族**（PraefectInfoService 6 · PartitionService 2 ·
-  InternalGitaly · RefTransaction · HookService 7）：praefect 拓扑的
-  路由/复制/WAL/钩子回环面——gitaly 二进制中它们由 praefect 进程或
-  git 钩子二进制的回环调用驱动；banyan 无 git 进程、目标形态单节点
-  （§1），这些 RPC 永不会被合法调用方触达。hook 面=网关 HTTP 回调
-  注册表（docs/04 §7），PreReceiveError 恒空的差异见 §6。
-- **go-cloud 备份管道**（BackupService 2 · BackupRepository/
-  RestoreRepository · WriteBackupID/ReadLatestBackupID）：上游经
-  gocloud blob sink（S3/GCS/Azure）编排；banyan 的备份等价物是
-  bundle 双向流（T68 的 CreateBundle/FetchBundle 已闭环）。
-- **快照/复制**（GetSnapshot · CreateRepositoryFromSnapshot ·
-  ReplicateRepository）：praefect WAL 快照与存储间复制。
-- **对象池**（ObjectPoolService 6）：GitLab EE 的 fork 对象去重
-  （alternates 生态）；banyan pack 模型每仓独立，池语义不映射——
-  fork 走闭包拷贝（CreateFork）。
-- **BFG 清理**（CleanupService 2）：历史重写（敏感数据清除）=完整
-  对象图重写，独立后续项。
-- **GenerateBundleURI/SSHUploadArchive/CheckBlobsGenerated**：bundle
-  CDN 广告、upload-archive wire 协议、AI 生成检测——各自依赖未部署
-  的基础设施或独立协议实现，留后续。
+- **CleanupService 2（历史重写）**：纯 Go 重写引擎——按 OID 剥 blob、
+  literal/regex redaction→`***REMOVED***`（git-filter-repo
+  --replace-text 子集），逐提交重编码（树重写+父映射+tag 对象 object
+  行改写），全部 ref 落新链。**disjoint 广告历史**：ref 重建走删时间线
+  +重建+ResetWoven（织入视图从新源链重织，docs/04 §6a 的 force-push
+  视图重建），旧提交不再可达——T71 clone 断言 `rev-list --all` 只含
+  新链。旧对象留在存储（上游同语义：GC 另行）。ApplyBfgObjectMapStream
+  按 old→new 映射删内部 ref（environments/keep-around/merge-requests/
+  pipelines/remotes——上游 InternalRefPrefixes 同表）并流出 entry 批。
+- **Backup 面 4**（BackupRepository/RestoreRepository + WriteBackupID/
+  ReadLatestBackupID）：本地目录 sink，**键位与上游 gocloud 布局同形**
+  （`<prefix>/<storage>/<path>/<id>/NNN.bundle|.refs|.custom_hooks.tar` +
+  `manifests/.../<id>.toml` + `backup_ids/<id>` 标记）；manifest 是上游
+  TOML 形状的读写子集；增量=steps 堆栈+对象差集 bundle（boundary 为
+  prerequisite 行，ingestBundle 校验闭环）；refs 文件=show-ref 行、
+  restore 权威重置（含多余 ref 删除）+HEAD 复原+hooks 回灌。未配置
+  BackupDir=FailedPrecondition（上游未配置同形）。分区备份（§Praefect）
+  复用快照 TAR，键名用 checksum 充当 LSN——未变更分区重备份=
+  AlreadyExists（上游按 LSN 去重同义）。
+- **快照/复制 3**（GetSnapshot/CreateRepositoryFromSnapshot/
+  ReplicateRepository）：快照=**真 bare 仓 TAR**（HEAD symref/
+  packed-refs 含 `^<oid>` 剥离行/pack+**手写 idx v2**（fanout/排序名/
+  crc32/32 位偏移/pack 尾校验和命名/idx 自校验））——git 直接 clone 该
+  TAR（T73 oracle，含 fsck --strict 全量 crc 验证）；FromSnapshot=
+  HTTP 拉取（Authorization 头透传）+pack 摄入+refs/HEAD 重建，失败
+  回滚；Replicate=目标删后全闭包+refs+HEAD+hooks 镜像。
+- **ObjectPoolService 6 + InternalGitaly 5**：池=独立仓（@pools/
+  <h2>/<h2>/<hex64> 映射成 pools-<hex64> 存储键，repo.go 的既有折叠）
+  +repo_pools 注册表（storage 层新表，三方言+memory+remote-meta 端点）。
+  **物化即 alternates**：link 把池对象拷入成员（banyan pack 每仓独立
+  的诚实等价物——成员从空仓变可解析池对象，T74 行为断言）；物理去重
+  不做。池元数据 4 RPC 与 WalkRepos 走同一注册表（pool_disk_path 记
+  gitaly 原始路径）。
+- **HookService 7**：桥接 docs/04 §7 的 HTTP 回调注册表（新导出
+  gitwire.FireRepoHooks）。pre-receive/update **fail-closed**：回调
+  拒绝=exit 1+首行错误上 stderr（T75 httptest 对拍）；post-receive/
+  ReceiveReportHook best-effort 投递；ReferenceTransactionHook 恒 0
+  （写者原子，无事务相事件）；**PackObjectsHookWithSidechannel/
+  SignalPostReceiveReady 为 FailedPrecondition/确认门**——banyan 无
+  git 进程，sidechannel 回环方不存在（与上游"备份未配置"同形的
+  诚实拒绝，非静默）。
+- **Praefect/Partition/RefTransaction 10**：**cluster-of-one**——本
+  storage 即 primary 即唯一健康副本：RepositoryReplicas 答
+  primary+checksum（XOR 校验和复用）；SetAuthoritativeStorage 只接受
+  本 storage；SetReplicationFactor>1=InvalidArgument（storages=1）；
+  MarkUnverified=0；Dataloss 空流；GetRepositoryMetadata 按 path 查询
+  （generation=pack 计数；数值 id 平面不存在→NotFound）；分区=每仓一
+  分区（ListPartitions 分页）；事务恒 COMMIT（单投票者）。
+- **AnalysisService 1**：CheckBlobsGenerated=go-enry IsGenerated（纯
+  Go）对每 blob 前 2KiB+路径判定；支持 `<rev>:<path>` 路径定界
+  revision（上游 AllowPathScopedRevision 同义）；T76 断言
+  package-lock.json=generated、main.go=not。
+- **GenerateBundleURI**：向 sink 的 `<storage>/<path>/uri/default.bundle`
+  写全量 bundle（上游 sink 键形；每次覆盖）——响应为空与上游一致，
+  URI 由 sink/CDN 侧发现；v2 bundle-uri 能力广告仍不在 upload-pack 面
+  （协议 v2 专属特性，§6）。
 
 ## 7. 测试
 
@@ -412,3 +462,37 @@ InternalGitaly · AnalysisService(1) · RefTransaction
   （blob 先于所属 commit 的顺序是 fast-import 硬约束——首版交错被击落）；
   UpdateRemoteMirror 推 banyan 自身面后 ls-remote 对拍；CreateFork 全 ref
   （含 annotated tag peel）clone 对拍。
+- 单测（清理/praefect 面）：RewriteHistory 内容级断言（strip/redact/
+  副本 ref 全部落新链/历史可走）+ 校验面（空规则/坏 OID/换行 pattern/
+  二发 repository 拒绝）；ApplyBfgObjectMapStream 内部 ref 删除+entry
+  流；praefect 族 cluster-of-one 全断言（replicas/authoritative/rf
+  边界/metadata/分区/事务 COMMIT）。
+- T71（integration）：**历史重写 oracle=clone**——strip+redact 后 clone
+  断言 `rev-list --all` 只含新链（disjoint：旧链不可达——首版仅 force
+  改写会织入旧链为祖先，删时间线+ResetWoven 后击落）、被剥路径全历史
+  消失、secret 全历史→`***REMOVED***`；BFG map 删 keep-around ref。
+- T72（integration）：**备份/恢复 oracle=clone**——sink 键位核对（bundle/
+  refs/hooks/manifest 上游同形）；删仓→恢复→clone 与源仓逐 OID 对拍
+  （含 annotated tag subject）；hooks tarball 经 sink 往返；增量 run-2
+  manifest 堆叠 002 步+previous_ref_path、恢复重放全 steps；ID 注册表
+  latest 按标记 mtime 排序；未配置 sink=FailedPrecondition。
+- T73（integration）：**快照 oracle=git clone 裸目录**——手写 idx v2 经
+  git clone+fsck --strict 全量验证（首版三败击落：pack 名须取尾部
+  checksum 而非全文件 SHA、idx 校验和字段同源、packed-refs 剥离行是
+  `^<oid>` 独立行、bare 骨架需 refs/ 目录条目）；FromSnapshot 经 HTTP
+  往返（Authorization 断言）；Replicate 到已有仓替换后 clone 对拍；
+  GenerateBundleURI 的 bundle 过 `git bundle verify`。
+- T74（integration）：**对象池行为面**——建池/二次建=FailedPrecondition/
+  非 @pools 路径拒绝；空 fork link 后可解析池对象（物化=alternates 的
+  行为等价）；registry 全 RPC（GetObjectPool/Scan/List/Upstreams/
+  WalkRepos）对拍；FetchIntoObjectPool 扩池；断开后物化对象仍在；
+  DeletePool 连带成员解链。
+- T75（integration）：**hook 回调对拍**——httptest 回调 allow/decline 两
+  态：pre-receive exit 0/1+stderr 首行、update 同 fail-closed、
+  post-receive/ReceiveReport best-effort 投递计数、事务 hook 恒 0、
+  sidechannel 面 FailedPrecondition。
+- T76（integration）：**收尾双面 oracle**——CheckBlobsGenerated（go-enry：
+  package-lock.json=generated、main.go=not，`HEAD:<path>` 定界）；SSH
+  upload-archive wire：band-1 重组载荷与 `git archive --format=tar HEAD`
+  **逐字节相等**，坏参数=NACK+exit 1（首版 ACK+sideband 混帧被 oracle
+  击落）。
