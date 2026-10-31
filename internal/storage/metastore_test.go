@@ -231,12 +231,50 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 		t.Fatal("missing blob must answer not-found")
 	}
 
+	// --- pool registry: link, upsert, list, unlink, delete-repo side effects ---
+	if err := m.LinkPool(ctx, "r1", "@pools/1/pool", true); err != nil {
+		t.Fatalf("link pool: %v", err)
+	}
+	if err := m.LinkPool(ctx, "r-fork", "@pools/1/pool", false); err != nil {
+		t.Fatalf("link fork: %v", err)
+	}
+	if err := m.LinkPool(ctx, "r1", "@pools/2/pool", true); err != nil { // upsert moves member
+		t.Fatalf("relink pool: %v", err)
+	}
+	if p, ok, err := m.PoolOf(ctx, "r1"); err != nil || !ok || p != "@pools/2/pool" {
+		t.Fatalf("pool of r1 = %q %v %v, want @pools/2/pool", p, ok, err)
+	}
+	if _, ok, _ := m.PoolOf(ctx, "unlinked"); ok {
+		t.Fatal("unlinked repo must answer no pool")
+	}
+	if err := m.UnlinkPool(ctx, "r-fork"); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+	if _, ok, _ := m.PoolOf(ctx, "r-fork"); ok {
+		t.Fatal("unlinked repo must stay unlinked")
+	}
+	if err := m.LinkPool(ctx, "r-fork", "@pools/2/pool", false); err != nil {
+		t.Fatalf("relink fork: %v", err)
+	}
+	if err := m.DeletePoolRecords(ctx, "@pools/2/pool"); err != nil {
+		t.Fatalf("delete pool records: %v", err)
+	}
+	if _, ok, _ := m.PoolOf(ctx, "r-fork"); ok {
+		t.Fatal("member of deleted pool must be unlinked")
+	}
+
 	// --- rename carries hooks; delete drops every repo-keyed row ---
 	if err := m.SetHook(ctx, "r1", HookInfo{ID: "notify", Events: []string{"pre-receive"}, URL: "http://h"}); err != nil {
 		t.Fatalf("set hook: %v", err)
 	}
+	if err := m.LinkPool(ctx, "r1", "@pools/carry/pool", false); err != nil {
+		t.Fatalf("link before rename: %v", err)
+	}
 	if err := m.RenameRepo(ctx, "r1", "r2"); err != nil {
 		t.Fatalf("rename: %v", err)
+	}
+	if p, ok, err := m.PoolOf(ctx, "r2"); err != nil || !ok || p != "@pools/carry/pool" {
+		t.Fatalf("pool lost across rename: %q %v %v", p, ok, err)
 	}
 	if hs, err := m.ListHooks(ctx, "r2"); err != nil || len(hs) != 1 || hs[0].ID != "notify" {
 		t.Fatalf("hooks lost across rename: %v, %v", hs, err)
