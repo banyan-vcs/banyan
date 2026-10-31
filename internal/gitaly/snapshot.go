@@ -116,6 +116,14 @@ func (rs *repositoryService) GetSnapshot(req *gitalypb.GetSnapshotRequest, strea
 	if err != nil {
 		return err
 	}
+	return rs.writeSnapshot(ctx, name, &chunkWriter{send: func(p []byte) error {
+		return stream.Send(&gitalypb.GetSnapshotResponse{Data: p})
+	}})
+}
+
+// writeSnapshot renders the bare-repo TAR (HEAD, packed-refs, pack + idx)
+// to w — the shared core of GetSnapshot and the partition backup.
+func (rs *repositoryService) writeSnapshot(ctx context.Context, name string, w io.Writer) error {
 	refs, err := rs.s.listRefs(ctx, name)
 	if err != nil {
 		return err
@@ -172,9 +180,7 @@ func (rs *repositoryService) GetSnapshot(req *gitalypb.GetSnapshotRequest, strea
 		refRows.WriteString(row.peel)
 	}
 
-	tw := tar.NewWriter(&chunkWriter{send: func(p []byte) error {
-		return stream.Send(&gitalypb.GetSnapshotResponse{Data: p})
-	}})
+	tw := tar.NewWriter(w)
 	addFile := func(path string, body []byte) {
 		_ = tw.WriteHeader(&tar.Header{
 			Name: path, Mode: 0o644, Size: int64(len(body)),

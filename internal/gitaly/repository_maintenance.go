@@ -34,9 +34,15 @@ func (rs *repositoryService) CalculateChecksum(ctx context.Context, req *gitalyp
 	if err != nil {
 		return nil, err
 	}
-	refs, err := rs.s.listRefs(ctx, name)
+	return &gitalypb.CalculateChecksumResponse{Checksum: repoChecksum(ctx, rs.s, name)}, nil
+}
+
+// repoChecksum is the show-ref --head XOR over the allowed ref set — the
+// same value praefect's replica checksums compare (docs/19).
+func repoChecksum(ctx context.Context, s *Server, name string) string {
+	refs, err := s.listRefs(ctx, name)
 	if err != nil {
-		return nil, err
+		return ""
 	}
 	var sum big.Int
 	for _, r := range refs {
@@ -52,11 +58,10 @@ func (rs *repositoryService) CalculateChecksum(ctx context.Context, req *gitalyp
 			sum.Xor(&sum, &one)
 		}
 	}
-	out := "0000000000000000000000000000000000000000"
-	if sum.BitLen() != 0 {
-		out = hex.EncodeToString(sum.Bytes())
+	if sum.BitLen() == 0 {
+		return strings.Repeat("0", 40)
 	}
-	return &gitalypb.CalculateChecksumResponse{Checksum: out}, nil
+	return hex.EncodeToString(sum.Bytes())
 }
 
 // Fsck walks every reference's reachable object closure and reports the
