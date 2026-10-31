@@ -36,6 +36,13 @@ func TestStreamingUnshallowMultiPack(t *testing.T) {
 	rdebug.SetMemoryLimit(64 << 20)
 
 	var peak atomic.Int64
+	// Baseline the heap before any traffic: package-init data (go-enry's
+	// generated tables ride the test binary since the analysis service
+	// landed) is a constant, not streaming behavior — the budget below
+	// guards the delta.
+	var ms0 runtime.MemStats
+	runtime.ReadMemStats(&ms0)
+	baseline := int64(ms0.HeapAlloc)
 	stop := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(20 * time.Millisecond)
@@ -121,8 +128,8 @@ func TestStreamingUnshallowMultiPack(t *testing.T) {
 		require.Equal(t, want, got, "round %d blob round-trips byte-for-byte", round)
 	}
 
-	require.Less(t, peak.Load(), int64(32<<20),
-		"peak heap must stay below any ladder outcome (resident bodies alone exceed 32 MiB)")
-	t.Logf("streaming unshallow: 54 MiB across 3 packs under the 64 MiB soft limit, peak heap %.1f MiB",
-		float64(peak.Load())/(1<<20))
+	require.Less(t, peak.Load()-baseline, int64(32<<20),
+		"peak heap above baseline must stay below any ladder outcome (resident bodies alone exceed 32 MiB)")
+	t.Logf("streaming unshallow: 54 MiB across 3 packs under the 64 MiB soft limit, peak heap %.1f MiB (baseline %.1f MiB)",
+		float64(peak.Load())/(1<<20), float64(baseline)/(1<<20))
 }
