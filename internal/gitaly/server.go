@@ -61,6 +61,11 @@ type Options struct {
 	// clone-budget gate apply to gitaly traffic exactly as to /r/).
 	Convergence      bool
 	FullCloneMaxByte int64
+	// BackupDir roots the server-side backup sink (the local-directory
+	// stand-in for upstream's go-cloud blob sink). Empty = server-side
+	// backups off: the backup RPCs answer FailedPrecondition, like an
+	// unconfigured upstream node.
+	BackupDir string
 }
 
 // maxWireMsg matches upstream's large-message posture: a fetch response or

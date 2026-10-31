@@ -32,11 +32,6 @@ type internalGitalyService struct {
 	s *Server
 }
 
-type backupService struct {
-	gitalypb.UnimplementedBackupServiceServer
-	s *Server
-}
-
 type partitionService struct {
 	gitalypb.UnimplementedPartitionServiceServer
 	s *Server
