@@ -350,10 +350,11 @@ func TestGitalyRefAndCommitSurface(t *testing.T) {
 		assert.False(t, v.GetValue())
 	})
 
-	t.Run("unimplemented rpc answers unimplemented", func(t *testing.T) {
+	t.Run("a known repo on an unknown storage answers NotFound", func(t *testing.T) {
 		_, err := gitalypb.NewPraefectInfoServiceClient(conn).RepositoryReplicas(ctx,
-			&gitalypb.RepositoryReplicasRequest{})
-		assert.Equal(t, codes.Unimplemented, status.Code(err))
+			&gitalypb.RepositoryReplicasRequest{Repository: &gitalypb.Repository{
+				StorageName: "not-a-storage", RelativePath: "@hashed/x.git"}})
+		assert.Equal(t, codes.NotFound, status.Code(err))
 	})
 }
 
