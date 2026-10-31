@@ -22,11 +22,6 @@ type remoteService struct {
 	s *Server
 }
 
-type cleanupService struct {
-	gitalypb.UnimplementedCleanupServiceServer
-	s *Server
-}
-
 type objectPoolService struct {
 	gitalypb.UnimplementedObjectPoolServiceServer
 	s *Server
