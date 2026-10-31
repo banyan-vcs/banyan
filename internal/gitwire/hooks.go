@@ -184,6 +184,46 @@ func (s *Server) hooksClient() *WebhookRunner {
 	return defaultWebhookRunner
 }
 
+// HookUpdate is one ref update of a gitaly-side hook evaluation
+// (the gitaly HookService bridge, docs/19): OIDs render through the same
+// zero-OID rule the gateway plane uses.
+type HookUpdate struct {
+	Old  string
+	New  string
+	Ref  string
+}
+
+// FireRepoHooks evaluates one hook event for a whole repository (no
+// directory scoping — the gitaly plane addresses repos, not subtrees) and
+// answers the first declination, the same fail-closed rule the serving
+// gateway applies at push time. The gitaly HookService RPCs ride this.
+func FireRepoHooks(ctx context.Context, meta storage.MetaStore, runner *WebhookRunner,
+	repo, event, user string, updates []HookUpdate) error {
+	hooks, err := meta.ListHooks(ctx, repo)
+	if err != nil {
+		return fmt.Errorf("hook registry: %w", err)
+	}
+	if runner == nil {
+		runner = defaultWebhookRunner
+	}
+	infos := make([]hookUpdateInfo, len(updates))
+	for i, u := range updates {
+		infos[i] = hookUpdateInfo{Old: u.Old, New: u.New, Ref: u.Ref}
+	}
+	payload := hookPayload{
+		Event:   event,
+		Repo:    repo,
+		User:    user,
+		Updates: infos,
+	}
+	for _, h := range matchHooks(hooks, "", event) {
+		if cerr := runner.call(ctx, h, payload); cerr != nil {
+			return cerr
+		}
+	}
+	return nil
+}
+
 var defaultWebhookRunner = &WebhookRunner{}
 
 // call delivers one callback and classifies the outcome.
