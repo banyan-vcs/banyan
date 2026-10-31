@@ -109,6 +109,39 @@ func (rs *repositoryService) GetArchive(req *gitalypb.GetArchiveRequest, stream 
 	}
 }
 
+// renderArchive writes the archive bytes for one commit to w — the shared
+// core of GetArchive and SSHUploadArchive's wire renderer (no path
+// scoping: the upload-archive protocol archives whole trees).
+func (rs *repositoryService) renderArchive(ctx context.Context, name string,
+	format gitalypb.GetArchiveRequest_Format, commitID, prefix string, w io.Writer) error {
+	commitOID, err := rs.s.resolveRevision(ctx, name, commitID)
+	if err != nil {
+		return status.Errorf(codes.InvalidArgument, "gitaly: invalid commitId: %s", commitID)
+	}
+	rec, err := rs.s.commitRecord(ctx, name, commitOID)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, "gitaly: invalid commitId")
+	}
+	entries, err := rs.collectArchiveEntries(ctx, name, rec.Tree, "", false, nil)
+	if err != nil {
+		return status.Error(codes.Internal, err.Error())
+	}
+	when := time.Unix(rec.When, 0).UTC()
+	switch format {
+	case gitalypb.GetArchiveRequest_ZIP:
+		return writeZipArchive(w, entries, prefix, when, name, rs)
+	case gitalypb.GetArchiveRequest_TAR_GZ:
+		zw := gzip.NewWriter(w)
+		zw.Header.OS = 3 // gzip -n matches git's compressor byte for byte
+		if err := writeTarArchive(zw, entries, prefix, when, commitOID, name, rs); err != nil {
+			return err
+		}
+		return zw.Close()
+	default:
+		return writeTarArchive(w, entries, prefix, when, commitOID, name, rs)
+	}
+}
+
 // pathUnderCommit reports whether a cleaned path resolves inside the tree.
 func (rs *repositoryService) pathUnderCommit(ctx context.Context, repo string, tree model.OID, path string) bool {
 	entry, err := rs.s.entryAtPath(ctx, repo, tree, path)

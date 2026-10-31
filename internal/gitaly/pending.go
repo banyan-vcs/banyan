@@ -32,11 +32,6 @@ type partitionService struct {
 	s *Server
 }
 
-type analysisService struct {
-	gitalypb.UnimplementedAnalysisServiceServer
-	s *Server
-}
-
 type praefectInfoService struct {
 	gitalypb.UnimplementedPraefectInfoServiceServer
 	s *Server
