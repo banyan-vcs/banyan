@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
@@ -71,4 +72,25 @@ func algoOfPackOID(oid model.OID) model.HashAlgo {
 		return model.SHA256
 	}
 	return model.SHA1
+}
+
+// verifyPackBytes checks a fully-buffered pack against its trailer
+// checksum (the pack OID): the digest over everything but the trailing
+// hash-width bytes must equal that trailer. The read path uses it to
+// detect a corrupted replica and fall through to the next holder instead
+// of serving or caching bad bytes.
+func verifyPackBytes(packOID model.OID, raw []byte) error {
+	w := 20
+	if algoOfPackOID(packOID) == model.SHA256 {
+		w = 32
+	}
+	if len(raw) < 12+w {
+		return fmt.Errorf("pack %s: %d bytes is no pack", packOID, len(raw))
+	}
+	h := algoOfPackOID(packOID).New()
+	h.Write(raw[:len(raw)-w])
+	if !bytes.Equal(h.Sum(nil), raw[len(raw)-w:]) {
+		return fmt.Errorf("pack %s: trailer checksum mismatch", packOID)
+	}
+	return nil
 }

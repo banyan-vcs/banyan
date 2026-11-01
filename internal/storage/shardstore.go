@@ -1173,8 +1173,19 @@ func (l *LocalShardStore) PutPack(repo string, packOID model.OID, packBytes, idx
 }
 
 // GetPackBytes reads raw pack bytes.
+// GetPackBytes reads raw pack bytes, trailer-verified: a bad disk surfaces
+// as a checksum error here (there is no second replica to fall through to
+// on the local backend — the caller sees a precise failure, not a
+// mid-decode mystery).
 func (l *LocalShardStore) GetPackBytes(repo string, packOID model.OID) ([]byte, error) {
-	return os.ReadFile(l.packPath(repo, packOID))
+	raw, err := os.ReadFile(l.packPath(repo, packOID))
+	if err != nil {
+		return nil, err
+	}
+	if verr := verifyPackBytes(packOID, raw); verr != nil {
+		return nil, verr
+	}
+	return raw, nil
 }
 
 // PutPackStream lands the pack from a reader with one streaming copy (the
