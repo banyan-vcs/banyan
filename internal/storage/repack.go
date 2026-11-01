@@ -206,18 +206,26 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int, 
 func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []PackInfo) (RepackResult, error) {
 	var res RepackResult
 	var blobs, trees, commits, tags = map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}
+	// skipped collects fragments whose bytes could not be read (all holders
+	// unreachable, racing deletion). Their objects are NOT in the merged
+	// pack, so dropping their registration would delete the only rows that
+	// still locate those objects — data loss. They stay registered for the
+	// next round instead (reads keep working once the holder returns; a
+	// genuinely vanished pack is an availability problem, not one a repack
+	// may convert into permanent loss).
+	skipped := map[model.OID]bool{}
 	for _, p := range set {
 		raw, rerr := s.PackBytes(ctx, repo, p.PackOID)
 		if rerr != nil {
-			// A vanished fragment (racing deletion) is skipped; its objects
-			// re-register to surviving packs on their next ingest.
 			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, rerr)
+			skipped[p.PackOID] = true
 			continue
 		}
 		res.BytesBefore += int64(len(raw))
 		dp, derr := DecodePack(raw)
 		if derr != nil {
 			log.Printf("repack %s: skip pack %s: %v", repo, p.PackOID, derr)
+			skipped[p.PackOID] = true
 			continue
 		}
 		for oid, b := range dp.Blobs {
@@ -276,6 +284,9 @@ func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []PackI
 	for _, p := range set {
 		if p.PackOID == newOID {
 			continue // CAS idempotency: the merged pack may equal a fragment
+		}
+		if skipped[p.PackOID] {
+			continue // unreadable fragment: its objects are not covered — never drop
 		}
 		if derr := s.Meta.DropPack(ctx, repo, p.PackOID); derr != nil {
 			log.Printf("repack %s: drop meta %s: %v", repo, p.PackOID, derr)
