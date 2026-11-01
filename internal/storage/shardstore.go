@@ -1127,22 +1127,39 @@ func (l *LocalShardStore) idxPath(repo string, packOID model.OID) string {
 }
 
 // PutPack persists raw pack bytes and idx v2 (pack only when idx is empty).
-func (l *LocalShardStore) PutPack(repo string, packOID model.OID, packBytes, idxBytes []byte) error {
-	paths := []string{l.packPath(repo, packOID)}
-	if len(idxBytes) > 0 {
-		paths = append(paths, l.idxPath(repo, packOID))
+// landAtomic writes bytes to their final path via tmp+rename: a crash
+// mid-write can never truncate a pack that is already registered (the
+// same-ID re-write is the idempotent-retry window ReceivePack has always
+// closed on the cluster wire — this brings the local paths to parity).
+func landAtomic(p string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
 	}
-	for i, p := range paths {
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return err
-		}
-		data := packBytes
-		if i == 1 {
-			data = idxBytes
-		}
-		if err := os.WriteFile(p, data, 0o644); err != nil {
-			return err
-		}
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".put-*")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.Write(data)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+		return werr
+	}
+	if err := os.Rename(tmp.Name(), p); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
+}
+
+func (l *LocalShardStore) PutPack(repo string, packOID model.OID, packBytes, idxBytes []byte) error {
+	if err := landAtomic(l.packPath(repo, packOID), packBytes); err != nil {
+		return err
+	}
+	if len(idxBytes) > 0 {
+		return landAtomic(l.idxPath(repo, packOID), idxBytes)
 	}
 	return nil
 }
@@ -1154,8 +1171,9 @@ func (l *LocalShardStore) GetPackBytes(repo string, packOID model.OID) ([]byte, 
 
 // PutPackStream lands the pack from a reader with one streaming copy (the
 // large-push ingest path — the whole pack never materializes in memory).
-// size cross-checks the copy when positive; idx lands after the pack so a
-// crash mid-write leaves at most a pack without its idx.
+// size cross-checks the copy when positive; the landing is tmp+rename (a
+// crash mid-write can never truncate a registered pack); idx lands after
+// the pack so a crash mid-write leaves at most a pack without its idx.
 func (l *LocalShardStore) PutPackStream(repo string, packOID model.OID, size int64, open func() (io.ReadCloser, error), idxBytes []byte) error {
 	p := l.packPath(repo, packOID)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -1166,23 +1184,28 @@ func (l *LocalShardStore) PutPackStream(repo string, packOID model.OID, size int
 		return err
 	}
 	defer src.Close()
-	dst, err := os.Create(p)
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".put-*")
 	if err != nil {
 		return err
 	}
-	n, cerr := io.Copy(dst, src)
-	werr := dst.Close()
+	n, cerr := io.Copy(tmp, src)
+	werr := tmp.Close()
+	if cerr == nil {
+		cerr = werr
+	}
+	if cerr == nil && size > 0 && n != size {
+		cerr = fmt.Errorf("put %s: short copy %d/%d", packOID, n, size)
+	}
 	if cerr != nil {
+		_ = os.Remove(tmp.Name())
 		return cerr
 	}
-	if werr != nil {
-		return werr
-	}
-	if size > 0 && n != size {
-		return fmt.Errorf("put %s: short copy %d/%d", packOID, n, size)
+	if err := os.Rename(tmp.Name(), p); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
 	}
 	if len(idxBytes) > 0 {
-		return os.WriteFile(l.idxPath(repo, packOID), idxBytes, 0o644)
+		return landAtomic(l.idxPath(repo, packOID), idxBytes)
 	}
 	return nil
 }
