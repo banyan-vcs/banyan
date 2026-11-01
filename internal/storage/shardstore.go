@@ -292,18 +292,20 @@ func (s *ObjectService) EndSynthBatch(repo string) {
 // batch depth: the durability point before a timeline head CAS —
 // registration is the fact, so a committed head must never reference
 // objects that only exist in this process's memory (cluster: other
-// gateways would miss them).
-func (s *ObjectService) FlushSynthBatch(repo string) {
-	s.flushSynthBatch(repo)
+// gateways would miss them). The error answer is the caller's gate: write
+// paths must abort the following CAS; read-path weave anchors may log and
+// defer (their synthetics are deterministically re-derivable).
+func (s *ObjectService) FlushSynthBatch(repo string) error {
+	return s.flushSynthBatch(repo)
 }
 
-func (s *ObjectService) flushSynthBatch(repo string) {
+func (s *ObjectService) flushSynthBatch(repo string) error {
 	s.batchMu.Lock()
 	buf := s.batchBuf[repo]
 	delete(s.batchBuf, repo)
 	s.batchMu.Unlock()
 	if len(buf) == 0 {
-		return
+		return nil
 	}
 	var blobs, trees, commits map[model.OID][]byte
 	ensure := func() {
@@ -327,22 +329,26 @@ func (s *ObjectService) flushSynthBatch(repo string) {
 	var pack bytes.Buffer
 	if err := EncodePack(&pack, blobs, trees, commits, nil); err != nil {
 		log.Printf("synth batch %s: encode: %v (per-object fallback)", repo, err)
-		s.persistSynthEach(repo, buf)
-		return
+		return s.persistSynthEach(repo, buf)
 	}
 	if _, err := s.IngestPack(context.Background(), repo, pack.Bytes()); err != nil {
 		log.Printf("synth batch %s: persist: %v (per-object fallback)", repo, err)
-		s.persistSynthEach(repo, buf)
+		return s.persistSynthEach(repo, buf)
 	}
+	return nil
 }
 
-func (s *ObjectService) persistSynthEach(repo string, buf map[model.OID]synthObject) {
+func (s *ObjectService) persistSynthEach(repo string, buf map[model.OID]synthObject) error {
+	var firstErr error
 	for oid, so := range buf {
-		s.persistSynthOne(repo, oid, so.Type, so.Data)
+		if err := s.persistSynthOne(repo, oid, so.Type, so.Data); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
+	return firstErr
 }
 
-func (s *ObjectService) persistSynthOne(repo string, oid model.OID, t model.ObjectType, data []byte) {
+func (s *ObjectService) persistSynthOne(repo string, oid model.OID, t model.ObjectType, data []byte) error {
 	var blobs, trees, commits map[model.OID][]byte
 	switch t {
 	case model.BlobType:
@@ -355,11 +361,13 @@ func (s *ObjectService) persistSynthOne(repo string, oid model.OID, t model.Obje
 	var buf bytes.Buffer
 	if err := EncodePack(&buf, blobs, trees, commits, nil); err != nil {
 		log.Printf("synth %s/%s: encode: %v (memory-only)", repo, oid, err)
-		return
+		return err
 	}
 	if _, err := s.IngestPack(context.Background(), repo, buf.Bytes()); err != nil {
 		log.Printf("synth %s/%s: persist: %v (memory-only)", repo, oid, err)
+		return err
 	}
+	return nil
 }
 
 // --- location cache (docs/11 P0-1) ---

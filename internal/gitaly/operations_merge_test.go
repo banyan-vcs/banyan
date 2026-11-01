@@ -1,6 +1,7 @@
 package gitaly
 
 import (
+	"fmt"
 	"context"
 	"io"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
+	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
 // TestGitalyMergeSurface covers the five user-facing merge RPCs over
@@ -270,4 +272,79 @@ func TestGitalyMergeSurface(t *testing.T) {
 		assert.Nil(t, e, "reverted change is gone")
 		mainTip = revOID
 	})
+}
+
+// failPutBackend wraps a backend and fails every pack write — the injection
+// point for the durability-gate tests (FlushSynthBatch must fail, and with
+// it the write that was about to CAS a ref onto unpersisted objects).
+type failPutBackend struct{ inner storage.ShardBackend }
+
+func (f *failPutBackend) PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) ([]string, error) {
+	return nil, fmt.Errorf("injected put failure")
+}
+func (f *failPutBackend) PutPackStream(ctx context.Context, repo string, packOID model.OID, size int64, open func() (io.ReadCloser, error), idxBytes []byte) ([]string, error) {
+	return nil, fmt.Errorf("injected put failure")
+}
+func (f *failPutBackend) GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error) {
+	return f.inner.GetPack(ctx, repo, packOID, holders)
+}
+func (f *failPutBackend) OpenPack(ctx context.Context, repo string, packOID model.OID, holders []string) (io.ReadCloser, int64, error) {
+	return f.inner.OpenPack(ctx, repo, packOID, holders)
+}
+func (f *failPutBackend) PackSize(ctx context.Context, repo string, packOID model.OID, holders []string) (int64, error) {
+	return f.inner.PackSize(ctx, repo, packOID, holders)
+}
+func (f *failPutBackend) CheapPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, bool) {
+	return f.inner.CheapPack(ctx, repo, packOID, holders)
+}
+func (f *failPutBackend) GetObject(ctx context.Context, repo string, packOID, oid model.OID, holders []string, algo model.HashAlgo) (model.ObjectType, []byte, error) {
+	return f.inner.GetObject(ctx, repo, packOID, oid, holders, algo)
+}
+func (f *failPutBackend) PrefersWholePack() bool { return f.inner.PrefersWholePack() }
+func (f *failPutBackend) DeletePack(ctx context.Context, repo string, packOID model.OID, holders []string) {
+	f.inner.DeletePack(ctx, repo, packOID, holders)
+}
+func (f *failPutBackend) RenameRepo(ctx context.Context, from, to string) error { return f.inner.RenameRepo(ctx, from, to) }
+func (f *failPutBackend) DeleteRepo(ctx context.Context, repo string) error     { return f.inner.DeleteRepo(ctx, repo) }
+
+// A failed synthetic flush must fail the merge BEFORE any ref CAS: a head
+// committed onto objects that only exist in this process's memory strands
+// every other reader (cluster) and the next restart (single node).
+func TestUserMergeDurabilityGate(t *testing.T) {
+	srv, meta, objects, svc, addr := startServer(t)
+	ctx := context.Background()
+	conn, err := Dial(addr, testToken)
+	require.NoError(t, err)
+	defer conn.Close()
+	op := gitalypb.NewOperationServiceClient(conn)
+
+	repoName := "merge-dur"
+	repo := repoRef(repoName)
+	require.NoError(t, meta.CreateRepo(ctx, repoName, model.SHA1))
+	blob := model.ObjectOID(model.BlobType, []byte("base\n"), model.SHA1)
+	require.NoError(t, svc.PutObjects(ctx, repoName, []service.PutObject{
+		{OID: blob, Type: "blob", Data: []byte("base\n")}}))
+	base, err := svc.CreateCommit(ctx, service.CommitRequest{Repo: repoName,
+		Message: "base", Changes: []service.Change{{Path: "a.txt", Blob: blob}}})
+	require.NoError(t, err)
+
+	// Fail every pack write from here on (seeding is already persisted).
+	inner := objects.Backend
+	objects.Backend = &failPutBackend{inner: inner}
+
+	stream, err := op.UserMergeBranch(ctx)
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&gitalypb.UserMergeBranchRequest{
+		Repository: repo, User: &gitalypb.User{GlId: "u", Name: []byte("M"), Email: []byte("m@x")},
+		Branch: []byte("main"), CommitId: base.Head.String(),
+		Message: []byte("self merge\n"), Timestamp: timestamppb.New(time.Unix(1700002000, 0)),
+	}))
+	_, err = stream.Recv()
+	require.Error(t, err, "apply must fail when the synth flush fails")
+	assert.Equal(t, codes.Internal, status.Code(err))
+
+	// The branch head is untouched — nothing was CAS'd onto ghost objects.
+	tip, terr := srv.resolveRevision(ctx, repoName, "refs/heads/main")
+	require.NoError(t, terr)
+	assert.Equal(t, base.Head, tip)
 }
