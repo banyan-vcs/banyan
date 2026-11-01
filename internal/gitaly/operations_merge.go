@@ -146,7 +146,13 @@ func (os *operationService) applyMerge(ctx context.Context, repo string, spec me
 	}
 	commitOID := commit.OID(os.s.Algo)
 	os.s.Objects.PutSynthetic(repo, commitOID, model.CommitType, commit.Encode())
-	os.s.Objects.FlushSynthBatch(repo) // durability before any ref CAS
+	if err := os.s.Objects.FlushSynthBatch(repo); err != nil {
+		// Durability before any ref CAS: a head committing to objects that
+		// only exist in this process's memory would strand every other
+		// reader. Fail the operation — the retry re-derives the same
+		// content-addressed commit.
+		return "", nil, status.Errorf(codes.Internal, "gitaly: persisting merge objects: %v", err)
+	}
 	return commitOID, nil, nil
 }
 

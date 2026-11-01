@@ -3,6 +3,7 @@ package view
 import (
 	"container/heap"
 	"context"
+	"log"
 	"sort"
 	"strings"
 
@@ -337,11 +338,16 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 	}
 	if !last.IsZero() && last != prevWoven {
 		// Durability before visibility (same as the root weave): flush the
-		// batched synthetics before the woven-tip CAS commits them.
-		s.Objects.FlushSynthBatch(repo)
-		wovTL := model.Timeline{Repo: repo, Anchor: wovenAnchorFor(scope), Name: branch}
-		_ = s.Meta.EnsureTimeline(ctx, wovTL, prevWoven, model.OID(""))
-		_ = s.Meta.CASHead(ctx, wovTL, prevWoven, last) // benign race: CAS winner stands
+		// batched synthetics before the woven-tip CAS commits them. A failed
+		// flush defers the anchor — the read keeps its in-memory answer and
+		// the next materialization re-derives and retries (see view.go).
+		if err := s.Objects.FlushSynthBatch(repo); err != nil {
+			log.Printf("scoped weave %s%s: synth flush deferred: %v", repo, scope, err)
+		} else {
+			wovTL := model.Timeline{Repo: repo, Anchor: wovenAnchorFor(scope), Name: branch}
+			_ = s.Meta.EnsureTimeline(ctx, wovTL, prevWoven, model.OID(""))
+			_ = s.Meta.CASHead(ctx, wovTL, prevWoven, last) // benign race: CAS winner stands
+		}
 	}
 	advance()
 	s.mu.Lock()

@@ -21,6 +21,7 @@ import (
 	"container/heap"
 	"context"
 	"errors"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -528,12 +529,19 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 	if !last.IsZero() && last != prevWoven {
 		// Durability before visibility: the woven tip's synthetics must be
 		// registered before the head CAS commits them (docs/10 registration
-		// is the fact; docs/11 P0-2 batching flush point).
-		s.Objects.FlushSynthBatch(repo)
-		wovenTL := model.Timeline{Repo: repo, Anchor: wovenAnchorFor(scope), Name: branch}
-		_ = s.Meta.EnsureTimeline(ctx, wovenTL, prevWoven, model.OID(""))
-		if err := s.Meta.CASHead(ctx, wovenTL, prevWoven, last); err != nil {
-			_ = err // benign race: the CAS winner stands
+		// is the fact; docs/11 P0-2 batching flush point). A failed flush
+		// defers the anchor rather than failing the read: weave synthetics
+		// are deterministically re-derived, so the next materialization
+		// retries both — advancing a persistent anchor past unpersisted
+		// objects is the one outcome this must never produce.
+		if err := s.Objects.FlushSynthBatch(repo); err != nil {
+			log.Printf("weave %s%s: synth flush deferred: %v", repo, scope, err)
+		} else {
+			wovenTL := model.Timeline{Repo: repo, Anchor: wovenAnchorFor(scope), Name: branch}
+			_ = s.Meta.EnsureTimeline(ctx, wovenTL, prevWoven, model.OID(""))
+			if err := s.Meta.CASHead(ctx, wovenTL, prevWoven, last); err != nil {
+				_ = err // benign race: the CAS winner stands
+			}
 		}
 	}
 	s.advanceMarker(ctx, repo, branch, scope, model.RootAnchor, rootLocal)

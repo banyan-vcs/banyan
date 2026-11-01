@@ -318,7 +318,10 @@ func (os *operationService) rebaseOnto(ctx context.Context, repo string, upstrea
 		os.s.Objects.PutSynthetic(repo, ours, model.CommitType, nc.Encode())
 		oursTree = newTree
 	}
-	os.s.Objects.FlushSynthBatch(repo)
+	if err := os.s.Objects.FlushSynthBatch(repo); err != nil {
+		// Durability before any ref CAS (same gate as the merge engine).
+		return "", nil, status.Errorf(codes.Internal, "gitaly: persisting rebase objects: %v", err)
+	}
 	return ours, nil, nil
 }
 
