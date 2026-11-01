@@ -166,3 +166,5 @@ go test ./...                       # 单元 + 集成
 CI 效率基准（go-git 实测）：子树 clone **1547 对象** vs 全仓 30203（19.5×）。
 
 单元侧：`storage.TestGenerationDiamond`（代数精确/污染语义 + 树反向索引，docs/09 §2）。
+
+**存储一致性修复回归组（2026-11-01，评审四缺口）**：`TestRepackUnreadableFragmentSurvives`（repack 跳过读失败分片但不得 drop 其注册——数据丢失窗口关闭）、`TestUserMergeDurabilityGate`（failPutBackend 注入：synth flush 失败→merge 硬失败且 ref 不动——"durability before any ref CAS"从注释变成闸门）、`TestHACorruptReplicaFallback`（HA 三节点同长字节翻转腐坏两副本：GetPack 尾部校验跳坏 holder、OpenPack verbatim 经校验落地回放、无缓存 gateway 也走校验临时文件——clone+fsck oracle）；伴 B 修复（LocalShardStore 全写路径 tmp+rename 原子落盘）由既有 storage/integration 全量回归覆盖。
