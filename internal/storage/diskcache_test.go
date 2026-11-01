@@ -59,3 +59,8 @@ func TestDiskPackCacheLifecycle(t *testing.T) {
 	_, ok = c2.Get("r", bad)
 	assert.False(t, ok, "路径形 packOID 应被拒绝缓存")
 }
+
+// The streaming tee (OpenPack's write-through) must not keep a corrupted
+// body as a cache entry: a same-length byte flip is invisible to a length
+// check — only the trailer checksum catches it, and at EOF the entry is
+// dropped. A good body promotes normally (review fix E).

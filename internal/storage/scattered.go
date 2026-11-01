@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -434,41 +436,15 @@ func (s *ScatteredStore) PutPackStream(ctx context.Context, repo string, packOID
 	return confirmed, nil
 }
 
-// teeCacheReader streams a node body into the gateway disk cache while the
-// consumer reads it (write-through, one pass): EOF promotes the cache entry,
-// an early Close aborts it. Cache errors never fail the serving stream.
-type teeCacheReader struct {
-	rc  io.ReadCloser
-	put *CachePut
-}
-
-func (t *teeCacheReader) Read(p []byte) (int, error) {
-	n, err := t.rc.Read(p)
-	if n > 0 && t.put != nil {
-		if _, werr := t.put.Write(p[:n]); werr != nil {
-			t.put.Abort()
-			t.put = nil
-		}
-	}
-	if err == io.EOF && t.put != nil {
-		_ = t.put.Complete()
-		t.put = nil
-	}
-	return n, err
-}
-
-func (t *teeCacheReader) Close() error {
-	if t.put != nil {
-		t.put.Abort()
-		t.put = nil
-	}
-	return t.rc.Close()
-}
-
-// OpenPack streams one pack without buffering it (exact-pack verbatim
-// serve, docs/03 §5): gateway disk cache first (disk → consumer), else the
-// first reachable holder's response body, tee'd into the disk cache as the
-// bytes flow past.
+// OpenPack streams one pack for verbatim serve (exact-pack hit, docs/03
+// §5): gateway disk cache first; else the body lands through a VERIFYING
+// pass — SpoolVerifiedCopy into the cache temp file (or a plain temp file
+// on a cache-less gateway), trailer checked at EOF, and only a verified
+// body replays to the consumer. A corrupted holder falls through to the
+// next replica instead of streaming bad bytes at the client: bytes already
+// sent cannot be unsent, so verification happens before the first one goes
+// out. The disk hop is the same one the write-through tee always paid; the
+// consumer still reads a stream, never a buffer.
 func (s *ScatteredStore) OpenPack(ctx context.Context, repo string, packOID model.OID, holders []string) (io.ReadCloser, int64, error) {
 	if s.DiskCache != nil {
 		if f, size, ok := s.DiskCache.Open(repo, packOID); ok {
@@ -484,18 +460,80 @@ func (s *ScatteredStore) OpenPack(ctx context.Context, repo string, packOID mode
 		if !ok {
 			continue
 		}
-		rc, size, err := s.client(addr).OpenPack(ctx, repo, packOID)
+		rc, _, err := s.client(addr).OpenPack(ctx, repo, packOID)
 		if err != nil {
 			continue
 		}
 		if s.DiskCache != nil {
 			if put, perr := s.DiskCache.BeginPut(repo, packOID); perr == nil {
-				return &teeCacheReader{rc: rc, put: put}, size, nil
+				_, _, trailerOK, cerr := SpoolVerifiedCopy(put, rc, algoOfPackOID(packOID))
+				rc.Close()
+				if cerr == nil && !trailerOK {
+					cerr = fmt.Errorf("pack %s: trailer checksum mismatch", packOID)
+				}
+				if cerr != nil {
+					put.Abort()
+					log.Printf("scattered: holder %s pack %s: %v (trying next holder)", id, packOID, cerr)
+					continue
+				}
+				if err := put.Complete(); err != nil {
+					put.Abort()
+					log.Printf("scattered: cache complete %s: %v (trying next holder)", packOID, err)
+					continue
+				}
+				if f, size, ok := s.DiskCache.Open(repo, packOID); ok {
+					return f, size, nil
+				}
+				continue
 			}
 		}
-		return rc, size, nil
+		// Cache-less gateway: verify through a temp file and replay it.
+		if f, size, verr := verifiedTempPack(rc, packOID); verr == nil {
+			return f, size, nil
+		} else {
+			rc.Close()
+			log.Printf("scattered: holder %s pack %s: %v (trying next holder)", id, packOID, verr)
+		}
 	}
 	return nil, 0, errNoHolder(packOID, holders)
+}
+
+// verifiedTempPack lands a holder's body in a system temp file with the
+// trailer verified, and answers a replay handle that removes the file on
+// Close (the cache-less verbatim path).
+func verifiedTempPack(rc io.Reader, packOID model.OID) (io.ReadCloser, int64, error) {
+	tmp, err := os.CreateTemp("", "banyan-openpack-*")
+	if err != nil {
+		return nil, 0, err
+	}
+	name := tmp.Name()
+	n, _, trailerOK, cerr := SpoolVerifiedCopy(tmp, rc, algoOfPackOID(packOID))
+	if cerr == nil && !trailerOK {
+		cerr = fmt.Errorf("pack %s: trailer checksum mismatch", packOID)
+	}
+	if cerr != nil {
+		tmp.Close()
+		os.Remove(name)
+		return nil, 0, cerr
+	}
+	if _, serr := tmp.Seek(0, io.SeekStart); serr != nil {
+		tmp.Close()
+		os.Remove(name)
+		return nil, 0, serr
+	}
+	return &tempPackFile{f: tmp, name: name}, n, nil
+}
+
+type tempPackFile struct {
+	f    *os.File
+	name string
+}
+
+func (t *tempPackFile) Read(p []byte) (int, error) { return t.f.Read(p) }
+func (t *tempPackFile) Close() error {
+	err := t.f.Close()
+	os.Remove(t.name)
+	return err
 }
 
 // PackSize reports a pack's byte size cheaply: cache index first, then a
@@ -545,6 +583,15 @@ func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model
 		}
 		raw, err := s.client(addr).GetPack(ctx, repo, packOID)
 		if err == nil {
+			// Trailer-verify before serving or caching: a corrupted replica
+			// (bit rot, a bad disk) falls through to the next holder instead
+			// of surfacing as a mid-decode failure — or worse, landing in
+			// the disk cache as the "good" copy.
+			if verr := verifyPackBytes(packOID, raw); verr != nil {
+				log.Printf("scattered: holder %s %v (trying next holder)", id, verr)
+				lastErr = verr
+				continue
+			}
 			if s.DiskCache != nil {
 				_ = s.DiskCache.Put(repo, packOID, raw) // best-effort
 			}

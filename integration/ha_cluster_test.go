@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -489,4 +490,55 @@ func TestHAGatewayDiskCache(t *testing.T) {
 	require.True(t, hasCommit(t, fresh3, headOf(t, src)))
 	assert.Equal(t, packAfterFill, c.packGets.Load(), "缓存命中后不应再有整包节点请求")
 	assert.Equal(t, objAfterFill, c.objGets.Load(), "缓存命中后不应再有单对象节点请求")
+}
+
+// TestHACorruptReplicaFallback (review fix E): a corrupted pack file on one
+// holder must not surface as a mid-decode failure or poison the gateway
+// disk cache — the buffered whole-pack path trailer-verifies each holder
+// and falls through to a healthy replica, and the streaming tee drops its
+// cache entry on a trailer mismatch.
+func TestHACorruptReplicaFallback(t *testing.T) {
+	needGit(t)
+	c := startHACluster(t, 3)
+	s := c.asServer()
+	src := seedRepo(t, s, "t41")
+	git(t, src, "push", "-q", c.gwURL()+"/r/t41.git", "main")
+
+	// One repo pack, registered with its holders; corrupt it on the FIRST
+	// holder (objects.node_id points there — reads try it first).
+	packs, err := c.Meta.ListPacks(context.Background(), "t41")
+	require.NoError(t, err)
+	require.NotEmpty(t, packs)
+	first := packs[0]
+	require.NotEmpty(t, first.Nodes)
+
+	corrupt := func(nodeID string, oid model.OID) {
+		packFile := filepath.Join(c.Roots[nodeID], "t41", "packs", string(oid[:2]), "pack-"+string(oid)+".pack")
+		raw, rerr := os.ReadFile(packFile)
+		require.NoError(t, rerr)
+		require.Greater(t, len(raw), 64)
+		raw[len(raw)/2] ^= 0xff // same-length flip: only a checksum can catch it
+		require.NoError(t, os.WriteFile(packFile, raw, 0o644))
+	}
+
+	// Case 1: buffered whole-pack read (fresh gateway, cold memory) — the
+	// corrupt first holder is skipped in favor of a healthy replica. The
+	// clone is the oracle: without the fallback the gateway fetches the
+	// corrupt bytes, the trailer check kills the decode, the clone dies.
+	corrupt(first.Nodes[0], first.PackOID)
+	fresh := cloneRepo(t, s, c.gwURL()+"/r/t41.git")
+	fsckClean(t, fresh)
+	require.True(t, hasCommit(t, fresh, headOf(t, src)))
+
+	// Case 2: one healthy replica left — reads still succeed, and the
+	// cache-enabled gateway keeps serving (the tee drop-on-mismatch is
+	// pinned by unit tests on the reader itself).
+	cacheDir := filepath.Join(t.TempDir(), "gw-cache")
+	c.restartGateway(cacheDir)
+	if len(first.Nodes) > 1 {
+		corrupt(first.Nodes[1], first.PackOID)
+	}
+	fresh2 := cloneRepo(t, s, c.gwURL()+"/r/t41.git")
+	fsckClean(t, fresh2)
+	require.True(t, hasCommit(t, fresh2, headOf(t, src)))
 }
