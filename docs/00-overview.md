@@ -71,6 +71,12 @@ git wire 协议语义，服务端内部自由重构。
 同进程，SQLite + 本地分片——开发/demo）与**集群**（无状态网关 ×N + refs +
 存储 ×N——横向扩展，docs/10）。
 
+进程姿态（docs/14 生产主轴）：生产缺省**安全**——客户端面角色（all-in-one/
+gateway）无认证拒启、gitaly 监听无 token 拒启，`dev: true` 是显式开发出路；
+SIGINT/SIGTERM 优雅 drain（在途传输跑完）；每个角色暴露 `/metrics`
+（Prometheus 文本，git 流量/时延/inflight、ingest、CAS 冲突、副本回退、
+reconciler/sweep）。
+
 ## 文档地图（总分序）
 
 阅读顺序即设计展开的顺序：
@@ -79,8 +85,11 @@ git wire 协议语义，服务端内部自由重构。
 |---|---|---|
 | **总** | [00-overview](00-overview.md) · [01-big-picture](01-big-picture.md) | banyan 是什么；站在哪里（通用代码存储层 + 平台集成拓扑） |
 | **核心设计**（自底向上） | [02-data-model](02-data-model.md) · [03-storage](03-storage.md) · [04-git-compat](04-git-compat.md) · [05-service-api](05-service-api.md) · [06-cli](06-cli.md) | 目录锚定时间线 → 分片 pack 存储 → git 兼容层（HTTP+SSH）→ 服务层与前端 → 薄客户端 |
-| **横切能力** | [07-authorization](07-authorization.md) · [08-derived-data](08-derived-data.md) · [09-indexing-packing](09-indexing-packing.md) · [15-workflow](15-workflow.md) | 授权与个人分支可见性；派生数据；索引与打包；目录级高并发工作流（M4） |
-| **运行与演进** | [10-ha](10-ha.md) · [11-performance](11-performance.md) · [12-docker-demo](12-docker-demo.md) · [13-testing](13-testing.md) · [14-roadmap](14-roadmap.md) · [16-benchmark-report](16-benchmark-report.md) · [18-gitaly](18-gitaly.md) · [19-gitaly-compat](19-gitaly-compat.md) | 高可用集群；性能与基准门；demo 走查；测试矩阵；里程碑；性能实测报告；Gitaly 集成方案；Gitaly 协议兼容层实现账本 |
+| **横切能力** | [07-authorization](07-authorization.md) · [08-derived-data](08-derived-data.md) · [09-indexing-packing](09-indexing-packing.md) · [15-workflow](15-workflow.md) · [17-console](17-console.md) | 授权与个人分支可见性（含安全默认）；派生数据；索引与打包；目录级高并发工作流（M4）；产品侧控制台（banyans） |
+| **运行与演进** | [10-ha](10-ha.md) · [11-performance](11-performance.md) · [12-docker-demo](12-docker-demo.md) · [13-testing](13-testing.md) · [14-roadmap](14-roadmap.md) · [19-gitaly-compat](19-gitaly-compat.md) | 高可用集群；性能与基准门（多轮实测与劣化归因并入 §3a）；demo 走查；测试矩阵；里程碑与生产主轴；Gitaly 协议兼容层（研究稿并入 §0） |
+
+编号有洞（16/18）= 已合并：16 并入 11 §3a、18 并入 19 §0——编号稳定
+优先于连续性（docs/19 被 50+ 文件引用），外链不因合并失效。
 
 ## 基座选型：go-git
 

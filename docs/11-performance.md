@@ -69,7 +69,11 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
   pack-format.txt）；集群 wire 从整包降为单对象（/internal/object）；
 - 落地时击落既有 bug：idx oid→offset 此前按 Scanner/Parser 顺序按位
   配对，delta pack 上错位——改用 Parser Observer 权威源，并补齐 crc 段
-  真值。
+  真值；
+- **内容哈希终验（2026-11-05 追加）**：抽取结果对请求 oid 做
+  model.ObjectOID 终验，失配即错（腐坏副本能 inflate 出"可解析但错误"
+  的字节——内容寻址系统里每个读出字节都要过哈希；散布存储失配时回退
+  下一 holder）。每个单对象抽取多一次哈希——安全换性能，量级可忽略。
 
 **P1-2 fetch-trees 二进制化（治 B4）✅**
 - "format":"bin" → 二进制帧（magic + JSON 头行 + kind/oid/varint 记录），
@@ -150,8 +154,7 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
   >20% 退出码 1（夜间跑，不进 go test 热路径）。
 
 本机实测（Windows 开发机，runs=5；随机器浮动，回归判断以 `--check`
-门为准；**多轮验证与三个劣化指标的 pack 级归因见 [16-benchmark-report
-](16-benchmark-report.md)**）：
+门为准；**多轮验证与三个劣化指标的 pack 级归因见 §3a**）：
 
 | 场景 | medium 字节比/耗时比 | large 字节比/耗时比 |
 |---|---|---|
@@ -192,6 +195,75 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 scion 复刻对等基线（需 Rust 工具链；tekeburak 自己的对等基准数字也
 注明了要打折读）、阶段分解 trace（scion 的 SCION_TRACE 形态——服务端
 各阶段 span 汇总找 critical path）。
+
+### 3a. 多轮验证与劣化归因（原 16 号实测报告并入，2026-10-25）
+
+> 原独立报告（16-benchmark-report.md）并入本节。工具与基线即 §3；
+> 本节是实测快照与归因，原始样本由工具 `--csv` 再生，不入库。
+
+medium（120c × 10d × 8f）完整三轮（每轮每场景 5 采样）+ large（500c ×
+20d × 12f）一轮：
+
+| 场景 | medium 三轮（字节比） | large（字节比） | 稳定性 |
+|---|---|---|---|
+| clone 全量 | 1.07x / 1.07x / 1.07x | 1.07x | **字节三轮位级稳定**（260.2–260.4KB，差异 <0.2%） |
+| clone 浅化 depth=1 | 1.15x / 1.15x / 1.16x | 1.14x | 稳定 |
+| clone partial | 0.65x ×3 | 0.91x | 稳定 |
+| clone 子树 | 36.4KB（全量 14%） | 87.2KB（全量 5.9%） | 稳定（git 无对应能力） |
+| fetch 增量 | 0.87x ×3 | 0.87x | 稳定 |
+| push 1 提交 | 0.92x ×3 | 0.92x | 稳定 |
+| dev-loop 每轮 | 0.89x ×3 | 0.89x | 稳定 |
+| burst-8 total | 0.98–0.99x | 0.99x | 稳定 |
+| ls-remote | 0.85x ×3 | 0.85x | 稳定 |
+
+耗时类中位数轮间波动 ±10% 以内（burst total 0.55–0.61x、clone 0.49–
+0.61x）——**字节是结构性指标、耗时受进程 spawn 与调度噪声主导**的实证；
+离群计数（Tukey）普遍 0–2/5。结论数字（耗时取三轮区间中位）：
+
+- **burst-8**（8 并发写者）：total 0.55–0.66x、p50 0.52–0.66x 且随规模
+  扩大（git 侧每轮 rebase 拉全史）；
+- 全量/增量/推送/循环等稳态场景耗时 0.39–0.61x（git CGI 每请求 spawn
+  是主因，常驻 git 服务形态下会收敛）。
+
+**劣化场景归因**（对象集全部验证相同；三个落后指标逐个 pack 级取证，
+独立 probe 仓 + bench 保留工作目录，`verify-pack -v` 逐对象对比）：
+
+**① clone 全量 1.07x —— 双方 delta 化时机不同，非实现缺陷。**
+对象数与 delta 数完全相同（1087=1087），逐对象 delta 后大小差 ~3.5%。
+banyan 走 ExactPackHit **verbatim 直传客户端 push 的 pack**（零拷贝）；
+git http-backend 每次服务**现场重新 delta 化**（C pack-objects）。两次
+delta 化（客户端打包时 vs 服务端服务时）的基选择不同 → ~8% 总差。
+**repack 反而更差**：对同仓跑 banyan repack 后 serve 字节 229.9KB
+（> verbatim 215.2KB > git 199.4KB）——banyan 的 Go delta 编码器
+（go-git EncodePackDelta 移植）压缩质量低于 C diff-delta。
+**结论：现状即最优解**——7% 字节换零拷贝直传；repack 的价值在碎片
+合并运维，不在 serve 字节（部署不必为带宽而 repack）。注：pack 尺寸
+本身没有 4GiB 限制——idx v2 的 64 位大偏移表即为此设计，banyan 的
+偏移自 2026-10-25 起全链 uint64——此处差异纯在 delta 选择。
+
+**② clone 浅化 1.14x —— 对象集相同，编码差异，方向随形态波动。**
+bench 场景（多 pack 状态）下浅化克隆对象数相同（116=116）、pack 级
+1.065x；但独立 probe（干净仓、blob 相似度高的形态）banyan 浅化**反超
+至 0.85x**（banyan 在线 delta 化在小闭包上更优）。差异全部在压缩/delta
+编码层（对象集计算已由 T15 钉死正确），波动区间约 ±15%。
+**可选优化**：在线编码路径（浅化/子树/partial 的 closure pack）将
+`compress/zlib` 换 klauspost/compress（纯 Go、zlib 兼容、压缩率高
+5–10%）——优先级低：该路径多数场景已反超，仅浅化一项略落后。
+
+**③ partial clone 大仓收窄至 0.91x** —— 双方都退化为提交+树，banyan
+树遍历服务端消化的优势被摊薄，非劣化。**无优化动作**。
+
+**结论矩阵**：
+
+| 维度 | banyan vs git | 性质 |
+|---|---|---|
+| 结构能力（子树克隆/目录级推送） | 全量的 5.9–14%；git 无对应 | 模型级优势，随规模放大 |
+| 并发收敛（burst-8） | 耗时 0.52–0.66x，字节持平 | 协议往返次数优势（收敛列车 vs rebase 重试） |
+| 稳态传输（全量/增量/推送） | 字节 0.87–1.07x | 持平；7% 上限来自 verbatim vs 现场 delta 的取舍 |
+| 离散能力（浅化/partial） | 0.65–1.16x | 编码层波动，对象集恒等 |
+
+复现：`go run ./cmd/banyan-bench --profile medium|large --runs 5
+--md report.md --csv samples.csv`（多轮验证重复执行多次取区间）。
 
 ## 4. 排期对位
 

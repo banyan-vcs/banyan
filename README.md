@@ -239,21 +239,21 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 
 | Doc | Contents |
 |---|---|
-| [docs/07-authorization.md](docs/07-authorization.md) | Authorization model, personal-branch visibility, web demo |
+| [docs/07-authorization.md](docs/07-authorization.md) | Authorization model (incl. secure-by-default startup), personal-branch visibility, web demo |
 | [docs/08-derived-data.md](docs/08-derived-data.md) | Derived data: commit-graph, path history, blame |
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
 | [docs/15-workflow.md](docs/15-workflow.md) | M4 design: per-directory commit queue + convergence (merge train) |
-| [docs/16-benchmark-report.md](docs/16-benchmark-report.md) | Measured benchmark report vs git http-backend (multi-run, drift forensics) |
-| [docs/18-gitaly.md](docs/18-gitaly.md) | Gitaly integration plan (phased, research) |
+| [docs/17-console.md](docs/17-console.md) | Product-side console (`banyans`): group/project routing, PAT auth, member roles |
 **Operations & evolution**:
 
 | Doc | Contents |
 |---|---|
 | [docs/10-ha.md](docs/10-ha.md) | High availability: all-in-one vs gateway + cluster, per-repo replicas |
-| [docs/11-performance.md](docs/11-performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates |
+| [docs/11-performance.md](docs/11-performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates, measured benchmark report (§3a) |
 | [docs/12-docker-demo.md](docs/12-docker-demo.md) | Docker demo walkthrough: auth, ssh, web UI, cluster pointers |
 | [docs/13-testing.md](docs/13-testing.md) | Integration test matrix |
-| [docs/14-roadmap.md](docs/14-roadmap.md) | Milestones |
+| [docs/14-roadmap.md](docs/14-roadmap.md) | Milestones & the production-readiness track |
+| [docs/19-gitaly-compat.md](docs/19-gitaly-compat.md) | Gitaly gRPC compat layer: coverage matrix (163 RPCs), design notes |
 
 ## Conventions
 
