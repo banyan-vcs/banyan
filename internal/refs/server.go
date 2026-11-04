@@ -86,6 +86,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/get-repo", s.hGetRepo)
 	meta.HandleFunc("/internal/meta/list-repos", s.hListRepos)
 	meta.HandleFunc("/internal/meta/rename-repo", s.hRenameRepo)
+	meta.HandleFunc("/internal/meta/begin-rename", s.hBeginRename)
+	meta.HandleFunc("/internal/meta/abort-rename", s.hAbortRename)
 	meta.HandleFunc("/internal/meta/delete-repo", s.hDeleteRepo)
 	meta.HandleFunc("/internal/meta/set-force-push", s.hSetForcePush)
 	meta.HandleFunc("/internal/meta/set-default-branch", s.hSetDefaultBranch)
@@ -340,8 +342,9 @@ func (s *Server) hCreateRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 // hRenameRepo flips the registry only (docs/03 §6): storage-layer moves for
-// named addressing happen at the gateway BEFORE this call, so by the time
-// the name changes the bytes already answer under it.
+// named addressing happen at the gateway BETWEEN hBeginRename and this call,
+// so by the time the name changes the bytes already answer under it. The
+// flip also lifts the fence in the same transaction.
 func (s *Server) hRenameRepo(w http.ResponseWriter, r *http.Request) {
 	req, ok := decode[struct {
 		From string `json:"from"`
@@ -351,6 +354,38 @@ func (s *Server) hRenameRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Meta.RenameRepo(r.Context(), req.From, req.To); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// hBeginRename installs the rename fence (write barrier phase 1, docs/03
+// §6a); hAbortRename lifts it after a failed or abandoned rename.
+func (s *Server) hBeginRename(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.BeginRename(r.Context(), req.From, req.To); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) hAbortRename(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.AbortRename(r.Context(), req.From, req.To); err != nil {
 		writeErr(w, err)
 		return
 	}

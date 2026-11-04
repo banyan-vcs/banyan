@@ -120,8 +120,20 @@ type RepoRegistry interface {
 	// RenameRepo renames a repository across the registry (docs/03 §6):
 	// every repo-keyed row moves in one transaction; the immutable StorageID
 	// rides along untouched. Storage-layer moves (named addressing) happen
-	// BEFORE this call — see ObjectService.RenameRepo.
+	// BETWEEN BeginRename and this call — see ObjectService.RenameRepo. The
+	// flip also lifts any rename fence covering `from`.
 	RenameRepo(ctx context.Context, from, to string) error
+	// BeginRename installs the rename fence — the write barrier's reject
+	// side (docs/03 §6b). While the fence stands, every mutating operation
+	// touching either name fails with ErrRepoRenaming, so a concurrent push
+	// that started under the old name fails cleanly instead of landing a
+	// confirmed-but-invisible write under the name that is about to die.
+	// The flip (RenameRepo) or AbortRename lifts it; re-running BeginRename
+	// is idempotent and re-installs the same fence after a crash.
+	BeginRename(ctx context.Context, from, to string) error
+	// AbortRename lifts the fence after a failed or abandoned rename
+	// (idempotent; a fence that never existed is a no-op).
+	AbortRename(ctx context.Context, from, to string) error
 	// DeleteRepo drops every repo-keyed row (repos, timelines, packs,
 	// pack_nodes, objects, placement, hooks) in one transaction. Storage
 	// bytes are reclaimed separately via ObjectService.DeleteRepo. A missing
@@ -217,11 +229,20 @@ type RepoInfo struct {
 // ErrNonFastForward mirrors git push non-fast-forward (docs/02 §4.3).
 var ErrNonFastForward = fmt.Errorf("non-fast-forward: timeline head moved")
 
-// ErrRepoNotFound / ErrTimelineUnknown / ErrPackNotFound.
+// ErrRepoNotFound / ErrTimelineUnknown / ErrPackNotFound / ErrRepoRenaming.
 var (
 	ErrRepoNotFound    = fmt.Errorf("repo not found")
 	ErrTimelineUnknown = fmt.Errorf("timeline unknown")
 	ErrPackNotFound    = fmt.Errorf("pack not found")
+	// ErrRepoRenaming: a rename fence covers this name (docs/03 §6b) — the
+	// caller retries; pushes surface it as a retryable failure so the client
+	// re-negotiates under the settled name.
+	ErrRepoRenaming = fmt.Errorf("repo rename in progress")
+	// ErrRepoRenamedAway: this name was retired by a completed rename (its
+	// tombstone stands) — creating under it would ack pushes into a fresh,
+	// disconnected repository. The name recycles when the renamed-to repo is
+	// deleted.
+	ErrRepoRenamedAway = fmt.Errorf("repo name retired by rename")
 )
 
 // MemoryMetaStore is the single-node in-memory implementation (M1). WAL semantics
@@ -237,6 +258,8 @@ type MemoryMetaStore struct {
 	hooks      map[string]map[string]HookInfo // repo → hook ID → registration
 	repoBlobs  map[string]map[string][]byte  // repo → blob key → bytes (gitaly custom-hooks)
 	pools      map[string]PoolInfo          // member repo → pool record
+	renames    map[string]string            // fence: from → to (rename in flight, docs/03 §6b)
+	retired    map[string]string            // tombstone: from → to (rename completed)
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
@@ -250,16 +273,85 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 		repoBlobs:  map[string]map[string][]byte{},
 		hooks:      map[string]map[string]HookInfo{},
 		pools:      map[string]PoolInfo{},
+		renames:    map[string]string{},
+		retired:    map[string]string{},
 	}
+}
+
+// fenceHit reports whether a rename fence covers the name (either side of an
+// in-flight rename). Callers hold m.mu.
+func (m *MemoryMetaStore) fenceHit(name string) bool {
+	if _, ok := m.renames[name]; ok {
+		return true
+	}
+	for _, to := range m.renames {
+		if to == name {
+			return true
+		}
+	}
+	return false
+}
+
+// fenceErr is the fenced-mutation rejection (callers hold m.mu and have
+// already confirmed the hit).
+func fenceErr(name string) error {
+	return fmt.Errorf("%w: %s", ErrRepoRenaming, name)
 }
 
 func (m *MemoryMetaStore) CreateRepo(_ context.Context, repo string, algo model.HashAlgo) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
+	// Rename tombstone (docs/03 §6b): a retired name must not be
+	// resurrected — a late push under it would ack into a fresh,
+	// disconnected repository.
+	if to, ok := m.retired[repo]; ok {
+		return fmt.Errorf("%w: %s was renamed to %s", ErrRepoRenamedAway, repo, to)
+	}
 	if _, exists := m.repos[repo]; exists {
 		return fmt.Errorf("repo %s already exists", repo)
 	}
 	m.repos[repo] = RepoInfo{ID: repo, Algo: algo, DefaultBranch: "main", StorageID: NewStorageID()}
+	return nil
+}
+
+// BeginRename installs the fence (docs/03 §6b). Fail-fast checks — source
+// exists, target free, no overlapping rename — run here so a doomed rename
+// never blocks the repo.
+func (m *MemoryMetaStore) BeginRename(_ context.Context, from, to string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.repos[from]; !ok {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, from)
+	}
+	if _, exists := m.repos[to]; exists {
+		return fmt.Errorf("repo %s already exists", to)
+	}
+	// Idempotent re-install of the SAME fence (rename re-run after a crash);
+	// only a DIFFERENT overlapping rename is refused.
+	if cur, ok := m.renames[from]; ok {
+		if cur == to {
+			return nil
+		}
+		return fenceErr(from + "->" + to)
+	}
+	for _, dst := range m.renames {
+		if dst == from || dst == to {
+			return fenceErr(from + "->" + to)
+		}
+	}
+	m.renames[from] = to
+	return nil
+}
+
+func (m *MemoryMetaStore) AbortRename(_ context.Context, from, to string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.renames[from] == to {
+		delete(m.renames, from)
+	}
 	return nil
 }
 
@@ -310,6 +402,18 @@ func (m *MemoryMetaStore) RenameRepo(_ context.Context, from, to string) error {
 		m.pools[to] = p
 		delete(m.pools, from)
 	}
+	// The flip retires the fence into a tombstone: mutations under `to` are
+	// legal from here, while re-creating `from` stays refused (a late push
+	// under the dead name must not ack into a disconnected fresh repo).
+	// Tombstones pointing at the old name retarget to the new one — the
+	// hazard chain follows the data.
+	delete(m.renames, from)
+	m.retired[from] = to
+	for name, dst := range m.retired {
+		if dst == from && name != from {
+			m.retired[name] = to
+		}
+	}
 	return nil
 }
 
@@ -317,6 +421,9 @@ func (m *MemoryMetaStore) RenameRepo(_ context.Context, from, to string) error {
 func (m *MemoryMetaStore) DeleteRepo(_ context.Context, repo string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	delete(m.repos, repo)
 	delete(m.packs, repo)
 	delete(m.packObjs, repo)
@@ -331,6 +438,14 @@ func (m *MemoryMetaStore) DeleteRepo(_ context.Context, repo string) error {
 	for member, p := range m.pools {
 		if p.Pool == repo {
 			delete(m.pools, member)
+		}
+	}
+	// Deletion retires the name for real: tombstones blocking older names
+	// (retired into this repo) lift — the recycled name is creatable again.
+	delete(m.retired, repo)
+	for name, dst := range m.retired {
+		if dst == repo {
+			delete(m.retired, name)
 		}
 	}
 	return nil
@@ -350,6 +465,9 @@ func (m *MemoryMetaStore) ListRepos(_ context.Context) ([]RepoInfo, error) {
 func (m *MemoryMetaStore) SetForcePush(_ context.Context, repo string, enabled bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	info, ok := m.repos[repo]
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
@@ -362,6 +480,9 @@ func (m *MemoryMetaStore) SetForcePush(_ context.Context, repo string, enabled b
 func (m *MemoryMetaStore) SetDefaultBranch(_ context.Context, repo string, branch string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	info, ok := m.repos[repo]
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
@@ -388,6 +509,9 @@ func (m *MemoryMetaStore) SetHook(_ context.Context, repo string, h HookInfo) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	if _, ok := m.repos[repo]; !ok {
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
@@ -401,6 +525,9 @@ func (m *MemoryMetaStore) SetHook(_ context.Context, repo string, h HookInfo) er
 func (m *MemoryMetaStore) DeleteHook(_ context.Context, repo, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	if m.hooks[repo] != nil {
 		delete(m.hooks[repo], id)
 	}
@@ -410,6 +537,9 @@ func (m *MemoryMetaStore) DeleteHook(_ context.Context, repo, id string) error {
 func (m *MemoryMetaStore) SetRepoBlob(_ context.Context, repo, key string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	if m.repoBlobs[repo] == nil {
 		m.repoBlobs[repo] = map[string][]byte{}
 	}
@@ -430,6 +560,9 @@ func (m *MemoryMetaStore) GetRepoBlob(_ context.Context, repo, key string) ([]by
 func (m *MemoryMetaStore) LinkPool(_ context.Context, member, pool string, upstream bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(member) || m.fenceHit(pool) {
+		return fenceErr(member)
+	}
 	m.pools[member] = PoolInfo{Member: member, Pool: pool, Upstream: upstream}
 	return nil
 }
@@ -437,6 +570,9 @@ func (m *MemoryMetaStore) LinkPool(_ context.Context, member, pool string, upstr
 func (m *MemoryMetaStore) UnlinkPool(_ context.Context, member string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(member) {
+		return fenceErr(member)
+	}
 	delete(m.pools, member)
 	return nil
 }
@@ -462,6 +598,9 @@ func (m *MemoryMetaStore) ListPoolMembers(_ context.Context) ([]PoolInfo, error)
 func (m *MemoryMetaStore) DeletePoolRecords(_ context.Context, pool string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(pool) {
+		return fenceErr(pool)
+	}
 	for member, p := range m.pools {
 		if p.Pool == pool {
 			delete(m.pools, member)
@@ -473,6 +612,9 @@ func (m *MemoryMetaStore) DeletePoolRecords(_ context.Context, pool string) erro
 func (m *MemoryMetaStore) PutPack(_ context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	if _, ok := m.repos[repo]; !ok {
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
@@ -540,6 +682,9 @@ func (m *MemoryMetaStore) PackObjects(_ context.Context, repo string, packOID mo
 func (m *MemoryMetaStore) DropPack(_ context.Context, repo string, packOID model.OID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	if _, ok := m.packs[repo][packOID]; !ok {
 		return fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
 	}
@@ -556,6 +701,9 @@ func (m *MemoryMetaStore) DropPack(_ context.Context, repo string, packOID model
 func (m *MemoryMetaStore) SetPackNodes(_ context.Context, repo string, packOID model.OID, nodes []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	if _, ok := m.packs[repo][packOID]; !ok {
 		return fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
 	}
@@ -571,6 +719,9 @@ func (m *MemoryMetaStore) SetPackNodes(_ context.Context, repo string, packOID m
 func (m *MemoryMetaStore) SetPlacement(_ context.Context, repo string, replicas int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
 	if _, ok := m.repos[repo]; !ok {
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
@@ -599,6 +750,9 @@ func (m *MemoryMetaStore) Timeline(_ context.Context, tl model.Timeline) (model.
 func (m *MemoryMetaStore) CASHead(_ context.Context, tl model.Timeline, expected, next model.OID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(tl.Repo) {
+		return fenceErr(tl.Repo)
+	}
 	expected = expected.NormalizeZero()
 	next = next.NormalizeZero()
 	if m.timelines[tl.Repo] == nil {
@@ -632,6 +786,9 @@ func (m *MemoryMetaStore) ListTimelines(_ context.Context, repo string, anchor m
 func (m *MemoryMetaStore) EnsureTimeline(_ context.Context, tl model.Timeline, head, base model.OID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fenceHit(tl.Repo) {
+		return fenceErr(tl.Repo)
+	}
 	if m.timelines[tl.Repo] == nil {
 		m.timelines[tl.Repo] = map[model.Timeline]model.TimelineState{}
 	}

@@ -994,32 +994,63 @@ func (s *ObjectService) forgetPackSize(repo string, packOID model.OID) {
 	s.mu.Unlock()
 }
 
-// RenameRepo renames a repository end to end (docs/03 §6).
+// RenameRepo renames a repository end to end (docs/03 §6, write barrier
+// §6a). Two phases around the storage move:
+//
+//	1. BeginRename installs the fence at the metadata authority: every
+//	   mutating operation on either name fails with ErrRepoRenaming until
+//	   the flip. A push racing the rename therefore FAILS CLEANLY — its
+//	   client retries under the settled name — instead of landing a
+//	   confirmed-but-invisible write under the name about to die.
+//	2. the move itself, then the registry flip, which lifts the fence in
+//	   the same transaction.
 //
 //	hashed addressing: the registry flip alone — the storage key derives
-//	 from the immutable storage id and never moves.
-//	named addressing:  every storage location moves FIRST (idempotent —
-//	 re-running after a partial failure only hits laggards), the registry
-//	 flips LAST, so the data is never behind the name it is looked up by.
+//	 from the immutable storage id and never moves. The fence still applies:
+//	 a registration under the old name must not commit after the flip.
+//	named addressing:  every storage location moves (idempotent — re-running
+//	 after a partial failure only hits laggards), the registry flips LAST,
+//	 so the data is never behind the name it is looked up by.
 //
-// Named-mode boundary (honest): the move fans out to the backend's current
-// node view; a node absent from that view keeps the old-named directory and
-// must be renamed after it returns (re-run the same call — nodes already
-// moved answer OK).
+// Crash between phases leaves the fence standing: the repo rejects writes
+// until the rename is re-run (idempotent) or aborted — liveness for the
+// operator, never a silent split. Named-mode boundary (honest): the move
+// fans out to the backend's current node view; a node absent from that view
+// keeps the old-named directory and must be renamed after it returns
+// (re-run the same call — nodes already moved answer OK; leftover
+// directories are the fleet sweep's to reclaim).
 func (s *ObjectService) RenameRepo(ctx context.Context, from, to string) error {
+	if err := s.Meta.BeginRename(ctx, from, to); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = s.Meta.AbortRename(context.WithoutCancel(ctx), from, to)
+		}
+	}()
 	if s.Addressing != nil && s.Addressing.Mode == "hashed" {
-		return s.Meta.RenameRepo(ctx, from, to)
+		if err := s.Meta.RenameRepo(ctx, from, to); err != nil {
+			return err
+		}
+		committed = true
+		return nil
 	}
 	if err := s.Backend.RenameRepo(ctx, from, to); err != nil {
 		return err
 	}
-	return s.Meta.RenameRepo(ctx, from, to)
+	if err := s.Meta.RenameRepo(ctx, from, to); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // DeleteRepo reclaims the repo's storage bytes and drops every registry row
 // (repository deletion, gitaly RemoveRepository). Hashed addressing keeps the
 // immutable storage key — only the registry rows go; a later repo of the same
-// name starts clean (its old key is unreachable garbage until fleet GC).
+// name starts clean (its old key is unreachable garbage until the fleet sweep
+// reclaims it, docs/10 §8.7).
 func (s *ObjectService) DeleteRepo(ctx context.Context, repo string) error {
 	if s.Addressing == nil || s.Addressing.Mode != "hashed" {
 		if err := s.Backend.DeleteRepo(ctx, repo); err != nil {

@@ -171,9 +171,24 @@ func (m *RemoteMeta) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 
 // RenameRepo flips the registry on the refs service (docs/03 §6). Storage-
 // layer moves (named addressing) have already happened at the caller — the
-// refs service never touches pack bytes.
+// refs service never touches pack bytes. The flip lifts the fence installed
+// by BeginRename in the same registry transaction.
 func (m *RemoteMeta) RenameRepo(ctx context.Context, from, to string) error {
 	return m.Refs.call(ctx, "/internal/meta/rename-repo",
+		map[string]string{"from": from, "to": to}, nil)
+}
+
+// BeginRename installs the rename fence on the refs service (write barrier
+// phase 1, docs/03 §6b) — mutations under either name fail with
+// ErrRepoRenaming until the flip or AbortRename.
+func (m *RemoteMeta) BeginRename(ctx context.Context, from, to string) error {
+	return m.Refs.call(ctx, "/internal/meta/begin-rename",
+		map[string]string{"from": from, "to": to}, nil)
+}
+
+// AbortRename lifts the fence on the refs service (idempotent).
+func (m *RemoteMeta) AbortRename(ctx context.Context, from, to string) error {
+	return m.Refs.call(ctx, "/internal/meta/abort-rename",
 		map[string]string{"from": from, "to": to}, nil)
 }
 
