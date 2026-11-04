@@ -2,7 +2,29 @@
 
 > 目标：以 gitaly 的 gRPC protocol 为契约实现全部接口，使本进程可**替代**
 > gitaly 节点接入 GitLab（Rails/workhorse 只改 gitaly.yml 指向）。
-> 方案与研究记录见 [18-gitaly](18-gitaly.md)；本文是实现账本与覆盖矩阵。
+> 研究稿（原 18 号文档）已并入本文 §0；本文是形态、覆盖矩阵与实现账本。
+
+## 0. 背景：Gitaly 是什么，为什么能替换（原 18 号研究稿并入）
+
+- **对象速写**：gitlab-rails ←gRPC→ gitaly 节点（中间可选 praefect）；
+  git 数据 = 节点上的 bare 仓，gitaly 的本质是"把 git 操作变成 gRPC"。
+  寻址是 Storage 级配置（名称 → address + token），每个请求携带
+  `Repository{storage_name, relative_path}`；鉴权 = per-storage 静态令牌。
+- **接入形态**：banyan 以**单个 gitaly 节点**身份注册进 GitLab
+  （`gitlab.rb` 的 `gitaly[:storages]` 一条：名字 → banyand 的 gRPC 地址
+  + token），Rails/workhorse 只改 gitaly.yml。GitLab 的 @hashed 寻址与
+  banyan hashed 模式天然同构（§2），无翻译层。
+- **漂移隔离纪律**：vendored proto 与生成代码只经 `internal/gitaly/`
+  适配层 import，核心代码不接触 gitaly 类型（与 enterprise/ 门控同款）。
+  升级 = 锁定 GitLab minor 重放 proto + 全量回归；RPC 增量按需补，
+  删除项在适配层报 Unimplemented 而非编译期扩散。测试金字塔：handler
+  表契约测试（默认）→ 传输模拟器/workhorse 形态对拍（T61/T62）→
+  GitLab CE e2e（opt-in）。
+- **演进注记**：研究稿曾按 P1a 只读 → P1b 传输 → P2 网页写分期，且
+  "不做清单"排除 praefect / ObjectPool / 历史重写。实现超越了研究：
+  163/163 全落地，praefect 族以 cluster-of-one 语义映射、对象池以
+  alternates 行为等价、CleanupService 以快照重放实现（§4、§6a）——
+  分期与不做清单仅存历史意义。
 
 ## 1. 形态
 
@@ -14,6 +36,8 @@
   service 视图），与 gitwire / JSON API 并列的第三个前端。
 - 依赖：`google.golang.org/grpc v1.85.0`、`protobuf v1.36.12`（首批外部
   gRPC 依赖）。
+- 生命周期：SIGTERM 时 gRPC 面 GracefulStop（宽限后降级 Stop），在途
+  RPC 流跑完——与全进程 drain 同一条终止上下文（docs/14 生产主轴）。
 
 ## 2. 寻址：relative_path → banyan 仓库名
 
