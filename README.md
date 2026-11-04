@@ -104,7 +104,7 @@ directory timelines align both boundaries at the same granularity.
 | Token auth + repo-create tightening, diff/blame RPCs | 🚧 next (M5 / M2–M3) |
 | Gitaly gRPC frontend (replace GitLab's gitaly node; protocol v19.5.2, 163/163 RPCs live — every service including the praefect cluster family (cluster-of-one), server-side backups, snapshots, object pools, history rewrite, hooks-over-callbacks and the ssh upload-archive wire protocol — full Operation/Ref/Commit/Diff/Blob services, transport incl. sidechannel, byte-identical git-archive, bundles, blame, conflicts resolution, smart-HTTP remote fetch and mirror push as a client) | ✅ slices 1–11 ([docs/19](docs/19-gitaly-compat.md)) |
 
-83 top-level integration test functions pin the behavior with the **real git CLI** as the client
+88 top-level integration test functions pin the behavior with the **real git CLI** as the client
 ([docs/13](docs/13-testing.md)) — the thin-CLI commit path is cross-verified
 by fresh git clones plus `fsck`; the gitaly frontend is cross-verified
 against git's own answers (T60), a workhorse-shaped gRPC transport emulator
