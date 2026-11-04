@@ -542,3 +542,103 @@ func TestHACorruptReplicaFallback(t *testing.T) {
 	fsckClean(t, fresh2)
 	require.True(t, hasCommit(t, fresh2, headOf(t, src)))
 }
+
+// renameViaRPC drives the production rename path (rpc handler →
+// ObjectService.RenameRepo → fence, node moves, registry flip).
+func (c *haCluster) renameViaRPC(t *testing.T, from, to string) {
+	t.Helper()
+	resp, err := http.Post(c.gwURL()+"/api/v1/repos/"+from+"/rename",
+		"application/json", strings.NewReader(`{"to":"`+to+`"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "rename %s→%s 应走通生产路径", from, to)
+}
+
+// TestHARenameWriteBarrier (review fix F): a push that races a rename must
+// either fail cleanly (client retries under the settled name) or complete
+// before the fence — never land a confirmed-but-invisible write under the
+// dying name. Deterministic interleave: hold the rename in its move window
+// (fence installed), attempt the push, assert rejection and an unchanged
+// registry, then complete the rename through the production path.
+func TestHARenameWriteBarrier(t *testing.T) {
+	needGit(t)
+	c := startHACluster(t, 3)
+	s := c.asServer()
+	ctx := context.Background()
+	src := seedRepo(t, s, "t42")
+	seedHead := headOf(t, src)
+
+	packsBefore, err := c.Meta.ListPacks(ctx, "t42")
+	require.NoError(t, err)
+	tl := model.Timeline{Repo: "t42", Anchor: model.RootAnchor, Name: "main"}
+	headBefore, err := c.Meta.Timeline(ctx, tl)
+	require.NoError(t, err)
+
+	// Hold the rename mid-flight: the fence is up, the node moves have not
+	// run — exactly the window a concurrent push would slip into.
+	require.NoError(t, c.Meta.BeginRename(ctx, "t42", "t42n"))
+
+	appendLine(t, filepath.Join(src, "README.md"), "racing-push\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-qm", "racing push during rename")
+	if out, perr := gitTry(src, "push", "-q", c.gwURL()+"/r/t42.git", "main"); perr == nil {
+		t.Fatalf("围栏期间的 push 必须失败（干净拒绝而非已确认不可见写）\n%s", out)
+	}
+
+	// The rejected push left nothing behind: same packs, same head.
+	packsAfter, err := c.Meta.ListPacks(ctx, "t42")
+	require.NoError(t, err)
+	assert.Equal(t, len(packsBefore), len(packsAfter), "被拒 push 不得注册 pack")
+	headAfter, err := c.Meta.Timeline(ctx, tl)
+	require.NoError(t, err)
+	assert.Equal(t, headBefore.Head, headAfter.Head, "被拒 push 不得移动 ref")
+
+	// Complete the rename through the production path: BeginRename
+	// re-installs the same fence idempotently, the nodes move, the flip
+	// lifts it. The pre-rename data must answer under the new name.
+	c.renameViaRPC(t, "t42", "t42n")
+	renamed := cloneRepo(t, s, c.gwURL()+"/r/t42n.git")
+	fsckClean(t, renamed)
+	require.True(t, hasCommit(t, renamed, seedHead), "rename 后旧数据应在新名下完整可见")
+
+	// Fence lifted: writes land under the new name; the old name is gone.
+	git(t, src, "push", "-q", c.gwURL()+"/r/t42n.git", "main")
+	_, err = gitTry("", "ls-remote", c.gwURL()+"/r/t42.git")
+	assert.Error(t, err, "旧名字在翻转后不应再存在")
+}
+
+// TestHARenameVsPushRace: the statistical guard over the same invariant —
+// rename and push run concurrently; whatever the interleaving, an ACKED
+// push is fully visible under the settled name (never silently lost).
+func TestHARenameVsPushRace(t *testing.T) {
+	needGit(t)
+	c := startHACluster(t, 3)
+	s := c.asServer()
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("t42r%d", i)
+		src := seedRepo(t, s, name)
+		seedHead := headOf(t, src)
+		appendLine(t, filepath.Join(src, "README.md"), fmt.Sprintf("race-%d\n", i))
+		git(t, src, "add", "-A")
+		git(t, src, "commit", "-qm", "concurrent with rename")
+
+		pushErr := make(chan error, 1)
+		go func() {
+			_, err := gitTry(src, "push", "-q", c.gwURL()+"/r/"+name+".git", "main")
+			pushErr <- err
+		}()
+		c.renameViaRPC(t, name, name+"n")
+		err := <-pushErr
+
+		renamed := cloneRepo(t, s, c.gwURL()+"/r/"+name+"n.git")
+		fsckClean(t, renamed)
+		if err != nil {
+			// Rejected push: only the seed is visible; the client would retry.
+			assert.Equal(t, 1, countCommits(t, renamed), "被拒 push 的提交不应出现")
+			require.True(t, hasCommit(t, renamed, seedHead))
+		} else {
+			// Acked push: BOTH commits visible — the barrier's core promise.
+			assert.Equal(t, 2, countCommits(t, renamed), "已确认 push 不得静默丢失（i=%d）", i)
+		}
+	}
+}

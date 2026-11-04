@@ -290,6 +290,45 @@ packs/objects/placement…）仍按名字键控，rename 为单事务全表改�
 | 副本策略 | rendezvous × R，或对象存储自带 EC | pack 大且不可变，纠删码收益高 |
 | 缓存层 | 独立 cache 进程（LRU by pack_oid） | 三层同构，见 §3 |
 
+## 6b. rename 写屏障：两段式围栏 + 墓碑（2026-11-04，一致性评审 F 项）
+
+§6 的顺序纪律（数据先于名字）解决了**读**侧，但 **写**侧曾留一扇窗：
+rename 移动期间并发 push——字节落旧名、注册/CAS 也落旧名，翻转后这条
+**已确认的写在任何名字下都不可见**。散布式进程锁封不住它（多网关拓扑
+下 push 与 rename 不共进程），唯一的公共串行点是**元数据权威**。
+
+**两段式协议**（`ObjectService.RenameRepo` 驱动，memory/SQL/RemoteMeta
+三实现同语义）：
+
+```
+1. BeginRename(from,to)   安装围栏（rename_fence 行 / memory map）
+   └─ 之后所有触碰 from/to 的变更（PutPack/CASHead/EnsureTimeline/
+      CreateRepo/DeleteRepo/hooks/placement/pool…）拒绝 ErrRepoRenaming
+      ——并发 push 干净失败，客户端在落定后的名字下重试
+2. 字节移动（named：全部节点幂等改目录；hashed：零动作）
+3. RenameRepo 翻转        单事务全表改名 + 围栏转墓碑
+```
+
+- **翻转即解围栏**：同一事务里 `done=1`——`to` 名下的写在翻转提交瞬间
+  合法。SQL 侧围栏探测用锁定读（MVCC 后端 `FOR UPDATE`，SQLite 全库单
+  写者天然串行），与翻转的 DELETE 构成同锁序（fence-last），无死锁环。
+- **幂等重装**：崩溃在两段之间，围栏留存——仓库拒绝写入直到重跑
+  rename（同 (from,to) 的 BeginRename 幂等重装）或 AbortRename。
+  活性交给运维，绝不静默劈叉。
+- **墓碑（tombstone）**：翻转不删围栏行，转为 `done=1` 墓碑——被改名
+  离开的名字**拒绝再创建**（`ErrRepoRenamedAway`）。没有它，翻转后到达
+  旧名的 push 会触发 auto-create 复活死名，确认写落进一个与任何名字
+  都断连的空仓库（竞态测试击落过的真实形态）。墓碑链随再改名重定向
+  （t1→t2→t3 后 t1 的墓碑指向 t3）；`DeleteRepo` 清除指向自己的墓碑，
+  名字回收。
+- **围栏不挡读**：可见性不受影响，rename 期间的读窗口语义与 §6 相同。
+
+回归：`TestRenameFenceRejectsMutations`（双实现全拒绝面 + 幂等 + 墓碑
+回收）、`TestHARenameWriteBarrier`（确定性交错：围栏期 push 被拒且注册
+表零残留，生产路径完成 rename 后旧数据新名完整可读）、
+`TestHARenameVsPushRace`（5 轮并发不变量：ACK 的 push 必在新名下完整
+可见，被拒的 push 不留痕）。
+
 ## 7. 骨架对应
 
 | 本文档概念 | 代码位置 |

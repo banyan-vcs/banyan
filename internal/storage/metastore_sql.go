@@ -249,6 +249,11 @@ func ddlSQLite() []string {
 	pool     TEXT NOT NULL,
 	upstream INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID`,
+		`CREATE TABLE IF NOT EXISTS rename_fence(
+	frm TEXT NOT NULL PRIMARY KEY,
+	dst TEXT NOT NULL,
+	done INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID`,
 	}
 }
 
@@ -312,6 +317,11 @@ func ddlMySQL() []string {
 	member   VARCHAR(190) NOT NULL PRIMARY KEY,
 	pool     VARCHAR(190) NOT NULL,
 	upstream TINYINT NOT NULL DEFAULT 0
+)`,
+		`CREATE TABLE IF NOT EXISTS rename_fence(
+	frm TEXT NOT NULL PRIMARY KEY,
+	dst TEXT NOT NULL,
+	done INTEGER NOT NULL DEFAULT 0
 )`,
 	}
 }
@@ -377,6 +387,11 @@ func ddlPostgres() []string {
 	pool     TEXT NOT NULL,
 	upstream INTEGER NOT NULL DEFAULT 0
 )`,
+		`CREATE TABLE IF NOT EXISTS rename_fence(
+	frm VARCHAR(190) NOT NULL PRIMARY KEY,
+	dst VARCHAR(190) NOT NULL,
+	done INTEGER NOT NULL DEFAULT 0
+)`,
 	}
 }
 
@@ -391,6 +406,53 @@ type SQLMetaStore struct {
 
 // q rebinds placeholders through the dialect.
 func (s *SQLMetaStore) q(sql string) string { return s.d.rebind(sql) }
+
+// fenceHitTx is the in-transaction fence probe: run as the first statement
+// of a mutating transaction it takes a locking read (rowLock on the MVCC
+// backends; SQLite serializes writers wholesale), so a fence installed after
+// this probe cannot slip its flip in before COMMIT — and the flip's DELETE
+// of the fence row blocks until this transaction settles.
+func (s *SQLMetaStore) fenceHitTx(ctx context.Context, q queryer, names ...string) (bool, error) {
+	var one int
+	for _, n := range names {
+		err := q.QueryRowContext(ctx, s.q("SELECT 1 FROM rename_fence WHERE (frm=? OR dst=?) AND done=0"+s.d.rowLock), n, n).Scan(&one)
+		if err == nil {
+			return true, nil
+		}
+		if err != sql.ErrNoRows {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+// queryer is the shared surface of *sql.Tx, *sql.Conn and *sql.DB for the
+// fence probe.
+type queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// fenceRejectTx returns ErrRepoRenaming when a fence covers any name.
+func (s *SQLMetaStore) fenceRejectTx(ctx context.Context, q queryer, names ...string) error {
+	hit, err := s.fenceHitTx(ctx, q, names...)
+	if err != nil {
+		return err
+	}
+	if hit {
+		if len(names) == 1 {
+			return fmt.Errorf("%w: %s", ErrRepoRenaming, names[0])
+		}
+		return fmt.Errorf("%w: %v", ErrRepoRenaming, names)
+	}
+	return nil
+}
+
+// fenceReject is the standalone probe for single-statement writers (config
+// rows); the check-to-commit gap is sub-millisecond, versus the fence's
+// minutes-long life covering a storage move.
+func (s *SQLMetaStore) fenceReject(ctx context.Context, names ...string) error {
+	return s.fenceRejectTx(ctx, s.db, names...)
+}
 
 // NewSQLMetaStore opens (creating if needed) the metadata database on the
 // given backend ("sqlite" | "mysql" | "postgres") and applies the schema.
@@ -454,7 +516,10 @@ func (s *SQLMetaStore) applySchema(ctx context.Context) error {
 	if err := s.migrateColumn(ctx, "repos", "storage_id", "TEXT NOT NULL DEFAULT ''", "sqlite"); err != nil {
 		return err
 	}
-	return s.migrateColumn(ctx, "repos", "force_push", "INTEGER NOT NULL DEFAULT 0", "")
+	if err := s.migrateColumn(ctx, "repos", "force_push", "INTEGER NOT NULL DEFAULT 0", ""); err != nil {
+		return err
+	}
+	return s.migrateColumn(ctx, "rename_fence", "done", "INTEGER NOT NULL DEFAULT 0", "")
 }
 
 func (s *SQLMetaStore) ddl() []string {
@@ -517,12 +582,80 @@ func firstLine(s string) string {
 func (s *SQLMetaStore) Close() error { return s.db.Close() }
 
 func (s *SQLMetaStore) CreateRepo(ctx context.Context, repo string, algo model.HashAlgo) error {
-	_, err := s.db.ExecContext(ctx, s.q(
+	if err := s.fenceReject(ctx, repo); err != nil {
+		return err
+	}
+	// Rename tombstone (docs/03 §6b): a name retired by a rename must not
+	// be resurrected — a late push or auto-create under the dead name would
+	// ack into a fresh, disconnected repository (confirmed-but-invisible).
+	var dst string
+	err := s.db.QueryRowContext(ctx, s.q(
+		"SELECT dst FROM rename_fence WHERE frm=? AND done=1"), repo).Scan(&dst)
+	if err == nil {
+		return fmt.Errorf("%w: %s was renamed to %s", ErrRepoRenamedAway, repo, dst)
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, s.q(
 		"INSERT INTO repos(name, algo, default_branch, storage_id) VALUES(?, ?, 'main', ?)"),
 		repo, int(algo), NewStorageID())
 	if s.d.isUnique(err) {
 		return fmt.Errorf("repo %s already exists", repo)
 	}
+	return err
+}
+
+// BeginRename installs the fence row (docs/03 §6b): fail-fast checks —
+// source exists, target free, no overlapping fence — run here so a doomed
+// rename never blocks the repo.
+func (s *SQLMetaStore) BeginRename(ctx context.Context, from, to string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var one int
+	if err := tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), from).Scan(&one); err == sql.ErrNoRows {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, from)
+	} else if err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), to).Scan(&one); err == nil {
+		return fmt.Errorf("repo %s already exists", to)
+	} else if err != sql.ErrNoRows {
+		return err
+	}
+	// Idempotent re-install of the SAME fence (rename re-run after a crash);
+	// only a DIFFERENT overlapping rename is refused. Completed renames
+	// (tombstones) never match: their source repo no longer exists.
+	var dst string
+	err = tx.QueryRowContext(ctx, s.q("SELECT dst FROM rename_fence WHERE frm=? AND done=0"+s.d.rowLock), from).Scan(&dst)
+	if err == nil {
+		if dst == to {
+			return tx.Commit() // already fenced for this exact rename
+		}
+		return fmt.Errorf("%w: %s->%s", ErrRepoRenaming, from, to)
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	if hit, err := s.fenceHitTx(ctx, tx, from, to); err != nil {
+		return err
+	} else if hit {
+		return fmt.Errorf("%w: %s->%s", ErrRepoRenaming, from, to)
+	}
+	if _, err := tx.ExecContext(ctx, s.q(
+		"INSERT INTO rename_fence(frm, dst) VALUES(?, ?)"), from, to); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLMetaStore) AbortRename(ctx context.Context, from, to string) error {
+	// Active fence only — a completed rename's tombstone is not abortable
+	// (the rename happened; AbortRename only cleans up interrupted ones).
+	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM rename_fence WHERE frm=? AND dst=? AND done=0"), from, to)
 	return err
 }
 
@@ -545,6 +678,9 @@ func (s *SQLMetaStore) GetRepo(ctx context.Context, repo string) (RepoInfo, erro
 }
 
 func (s *SQLMetaStore) SetForcePush(ctx context.Context, repo string, enabled bool) error {
+	if err := s.fenceReject(ctx, repo); err != nil {
+		return err
+	}
 	res, err := s.db.ExecContext(ctx, s.q("UPDATE repos SET force_push=? WHERE name=?"), boolInt(enabled), repo)
 	if err != nil {
 		return err
@@ -556,6 +692,9 @@ func (s *SQLMetaStore) SetForcePush(ctx context.Context, repo string, enabled bo
 }
 
 func (s *SQLMetaStore) SetDefaultBranch(ctx context.Context, repo string, branch string) error {
+	if err := s.fenceReject(ctx, repo); err != nil {
+		return err
+	}
 	// MySQL reports an unchanged UPDATE as 0 affected rows, so existence is
 	// probed explicitly rather than inferred from the write.
 	var one int
@@ -597,6 +736,9 @@ func (s *SQLMetaStore) SetHook(ctx context.Context, repo string, h HookInfo) err
 	if err := h.validate(); err != nil {
 		return err
 	}
+	if err := s.fenceReject(ctx, repo); err != nil {
+		return err
+	}
 	var exists int
 	if err := s.db.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM repos WHERE name=?"), repo).Scan(&exists); err != nil {
 		return err
@@ -621,11 +763,17 @@ func (s *SQLMetaStore) SetHook(ctx context.Context, repo string, h HookInfo) err
 }
 
 func (s *SQLMetaStore) DeleteHook(ctx context.Context, repo, id string) error {
+	if err := s.fenceReject(ctx, repo); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM hooks WHERE repo=? AND id=?"), repo, id)
 	return err
 }
 
 func (s *SQLMetaStore) SetRepoBlob(ctx context.Context, repo, key string, data []byte) error {
+	if err := s.fenceReject(ctx, repo); err != nil {
+		return err
+	}
 	suffix := " ON CONFLICT(repo, key) DO UPDATE SET data=excluded.data"
 	if s.d.name == "mysql" {
 		suffix = " ON DUPLICATE KEY UPDATE data=VALUES(data)"
@@ -649,6 +797,9 @@ func (s *SQLMetaStore) GetRepoBlob(ctx context.Context, repo, key string) ([]byt
 }
 
 func (s *SQLMetaStore) LinkPool(ctx context.Context, member, pool string, upstream bool) error {
+	if err := s.fenceReject(ctx, member, pool); err != nil {
+		return err
+	}
 	suffix := " ON CONFLICT(member) DO UPDATE SET pool=excluded.pool, upstream=excluded.upstream"
 	if s.d.name == "mysql" {
 		suffix = " ON DUPLICATE KEY UPDATE pool=VALUES(pool), upstream=VALUES(upstream)"
@@ -660,6 +811,9 @@ func (s *SQLMetaStore) LinkPool(ctx context.Context, member, pool string, upstre
 }
 
 func (s *SQLMetaStore) UnlinkPool(ctx context.Context, member string) error {
+	if err := s.fenceReject(ctx, member); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM repo_pools WHERE member=?"), member)
 	return err
 }
@@ -698,6 +852,9 @@ func (s *SQLMetaStore) ListPoolMembers(ctx context.Context) ([]PoolInfo, error) 
 }
 
 func (s *SQLMetaStore) DeletePoolRecords(ctx context.Context, pool string) error {
+	if err := s.fenceReject(ctx, pool); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM repo_pools WHERE pool=?"), pool)
 	return err
 }
@@ -757,6 +914,20 @@ func (s *SQLMetaStore) RenameRepo(ctx context.Context, from, to string) error {
 	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET name=? WHERE name=?"), to, from); err != nil {
 		return err
 	}
+	// The flip retires the fence into a tombstone inside the same
+	// transaction: mutations under `to` are legal the moment the rename
+	// commits, while re-creating `from` stays refused (a late push under the
+	// dead name must not ack into a disconnected fresh repo). Tombstones
+	// pointing at the old name retarget to the new one — the hazard chain
+	// follows the data.
+	if _, err := tx.ExecContext(ctx, s.q(
+		"UPDATE rename_fence SET done=1 WHERE frm=?"), from); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, s.q(
+		"UPDATE rename_fence SET dst=? WHERE dst=? AND done=1"), to, from); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -768,6 +939,9 @@ func (s *SQLMetaStore) DeleteRepo(ctx context.Context, repo string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.fenceRejectTx(ctx, tx, repo); err != nil {
+		return err
+	}
 	for _, table := range []string{"objects", "pack_nodes", "packs", "timelines", "placement", "hooks", "repo_blobs"} {
 		if _, err := tx.ExecContext(ctx, s.q("DELETE FROM "+table+" WHERE repo=?"), repo); err != nil {
 			return err
@@ -776,6 +950,11 @@ func (s *SQLMetaStore) DeleteRepo(ctx context.Context, repo string) error {
 	// The repo leaves its pool (member row) and, when it was a pool, every
 	// membership record pointing at it goes too.
 	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM repo_pools WHERE member=? OR pool=?"), repo, repo); err != nil {
+		return err
+	}
+	// Deletion retires the name for real: tombstones blocking older names
+	// (retired into this repo) lift — the recycled name is creatable again.
+	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM rename_fence WHERE frm=? OR dst=?"), repo, repo); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM repos WHERE name=?"), repo); err != nil {
@@ -793,6 +972,9 @@ func (s *SQLMetaStore) PutPack(ctx context.Context, repo string, packOID model.O
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.fenceRejectTx(ctx, tx, repo); err != nil {
+		return err
+	}
 
 	var one string
 	err = tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), repo).Scan(&one)
@@ -962,6 +1144,9 @@ func (s *SQLMetaStore) DropPack(ctx context.Context, repo string, packOID model.
 		return err
 	}
 	defer conn.Close()
+	if err := s.fenceRejectTx(ctx, conn, repo); err != nil {
+		return fail(err)
+	}
 	// Object rows pointing at this pack are deleted only when they still do:
 	// the replacement pack's registration may have already re-pointed them.
 	if _, err := conn.ExecContext(ctx, s.q(
@@ -995,6 +1180,9 @@ func (s *SQLMetaStore) SetPackNodes(ctx context.Context, repo string, packOID mo
 		return err
 	}
 	defer conn.Close()
+	if err := s.fenceRejectTx(ctx, conn, repo); err != nil {
+		return fail(err)
+	}
 	if _, err := conn.ExecContext(ctx, s.q(
 		"DELETE FROM pack_nodes WHERE repo=? AND pack_oid=?"), repo, string(packOID)); err != nil {
 		return fail(err)
@@ -1015,6 +1203,9 @@ func (s *SQLMetaStore) SetPackNodes(ctx context.Context, repo string, packOID mo
 }
 
 func (s *SQLMetaStore) SetPlacement(ctx context.Context, repo string, replicas int) error {
+	if err := s.fenceReject(ctx, repo); err != nil {
+		return err
+	}
 	if _, err := s.GetRepo(ctx, repo); err != nil {
 		return err
 	}
@@ -1123,6 +1314,11 @@ func (s *SQLMetaStore) CASHead(ctx context.Context, tl model.Timeline, expected,
 		_, _ = conn.ExecContext(context.WithoutCancel(ctx), s.d.rebind("ROLLBACK"))
 		return err
 	}
+	// Fence probe inside the write transaction: a rename whose fence went in
+	// after this CAS began cannot slip its flip in before COMMIT.
+	if err := s.fenceRejectTx(ctx, conn, tl.Repo); err != nil {
+		return fail(err)
+	}
 	var head, base string
 	err = conn.QueryRowContext(ctx, s.q(
 		"SELECT head, base FROM timelines WHERE repo=? AND anchor=? AND name=?"+s.d.rowLock),
@@ -1174,6 +1370,9 @@ func (s *SQLMetaStore) EnsureTimeline(ctx context.Context, tl model.Timeline, he
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.fenceRejectTx(ctx, tx, tl.Repo); err != nil {
+		return err
+	}
 	var one string
 	err = tx.QueryRowContext(ctx, s.q(
 		"SELECT 1 FROM timelines WHERE repo=? AND anchor=? AND name=?"),
