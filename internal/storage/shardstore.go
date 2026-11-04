@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/go-git/go-git/v5/plumbing/format/packfile"
@@ -1353,12 +1354,137 @@ func (l *LocalShardStore) RenameRepo(from, to string) error {
 }
 
 // DeleteRepo removes the repo's whole storage directory. A missing directory
-// is a successful no-op (deletion is idempotent by contract).
+// is a successful no-op (deletion is idempotent by contract). Storage KEYS
+// may be multi-segment under hashed addressing (@hashed/<2>/<2>/<32>), so
+// the guard rejects traversal, not nesting.
 func (l *LocalShardStore) DeleteRepo(repo string) error {
-	if strings.ContainsAny(repo, `/\`) {
-		return fmt.Errorf("delete %s: repo must be a single path segment", repo)
+	if !validKeyPath(repo) {
+		return fmt.Errorf("delete %s: repo must be a clean relative path", repo)
 	}
 	return os.RemoveAll(filepath.Join(l.Root, repo))
+}
+
+// validKeyPath accepts clean relative storage keys: no traversal, no
+// absolute paths, no drive letters, no backslashes (named mode is a single
+// segment; hashed mode nests @hashed/<2>/<2>/<32>).
+func validKeyPath(key string) bool {
+	if key == "" || key == "." || strings.ContainsAny(key, `\\`) || filepath.IsAbs(key) {
+		return false
+	}
+	for _, seg := range strings.FieldsFunc(key, func(r rune) bool { return r == '/' }) {
+		if seg == "" || seg == "." || seg == ".." || strings.Contains(seg, ":") {
+			return false
+		}
+	}
+	return true
+}
+
+// NodePackEntry is one pack file a node reports to the fleet sweep: the pack
+// OID and the file's mtime — the sweep's in-flight protection input.
+type NodePackEntry struct {
+	OID model.OID `json:"oid"`
+	// ModUnix is the pack file's mtime (seconds); 0 when unavailable.
+	ModUnix int64 `json:"mtime"`
+}
+
+// ListRepoPacks enumerates the pack files under one storage key (fleet
+// sweep input, docs/10 §8.7): every pack-<oid>.pack under packs/<h2>/ with
+// its mtime. The sweep diffs this against the central registry; idx files
+// ride their pack's decision (DeletePack removes both).
+func (l *LocalShardStore) ListRepoPacks(repo string) ([]NodePackEntry, error) {
+	if !validKeyPath(repo) {
+		return nil, fmt.Errorf("list %s: repo must be a clean relative path", repo)
+	}
+	var out []NodePackEntry
+	root := filepath.Join(l.Root, repo, "packs")
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil // missing key or unreadable shard: empty report
+		}
+		name := d.Name()
+		const p = "pack-"
+		if !strings.HasPrefix(name, p) || !strings.HasSuffix(name, ".pack") {
+			return nil // tmp files are CleanTmp's, idx files ride the pack
+		}
+		oid := strings.TrimSuffix(strings.TrimPrefix(name, p), ".pack")
+		e := NodePackEntry{OID: model.OID(oid)}
+		if info, serr := d.Info(); serr == nil {
+			e.ModUnix = info.ModTime().Unix()
+		}
+		out = append(out, e)
+		return nil
+	})
+	return out, nil
+}
+
+// ListKeys enumerates the storage keys present on this node (fleet sweep
+// input): every directory tree that contains a packs/ store — a single
+// level under named addressing, four under hashed. A key the registry no
+// longer resolves is either a deleted repo (hashed keeps its key; named
+// keeps its directory) or a rename laggard — the sweep's whole-key phase.
+func (l *LocalShardStore) ListKeys() ([]string, error) {
+	var out []string
+	// walk finds any dir containing a "packs" child, up to the hashed depth.
+	var walk func(dir, key string, depth int) error
+	walk = func(dir, key string, depth int) error {
+		if depth > 4 {
+			return nil
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil // root missing: nothing to sweep
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			sub := filepath.Join(dir, e.Name())
+			subKey := e.Name()
+			if key != "" {
+				subKey = key + "/" + e.Name()
+			}
+			if _, err := os.Stat(filepath.Join(sub, "packs")); err == nil {
+				out = append(out, subKey)
+				continue // a key dir never nests another key
+			}
+			if err := walk(sub, subKey, depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(l.Root, "", 1); err != nil {
+		return nil, err
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// CleanTmp removes crashed-landing leftovers (.put-* tmp files from
+// landAtomic/ReceivePack aborts) older than minAge. Returns count and
+// reclaimed bytes. A tmp file is never referenced — only age gates it.
+func (l *LocalShardStore) CleanTmp(repo string, minAge time.Duration) (int, int64, error) {
+	if !validKeyPath(repo) {
+		return 0, 0, fmt.Errorf("clean %s: repo must be a clean relative path", repo)
+	}
+	removed, reclaimed := 0, int64(0)
+	cutoff := time.Now().Add(-minAge)
+	root := filepath.Join(l.Root, repo, "packs")
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasPrefix(d.Name(), ".put-") {
+			return nil
+		}
+		info, serr := d.Info()
+		if serr != nil || info.ModTime().After(cutoff) {
+			return nil // young tmp: a landing may be in flight
+		}
+		if rmErr := os.Remove(path); rmErr == nil {
+			removed++
+			reclaimed += info.Size()
+		}
+		return nil
+	})
+	return removed, reclaimed, nil
 }
 
 // GetDecoded reads back and decodes a pack (miss path; object bodies then stay in cache).

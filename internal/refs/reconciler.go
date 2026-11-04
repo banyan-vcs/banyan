@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
@@ -187,6 +188,155 @@ func (r *Reconciler) nodeKey(ctx context.Context, repo string) string {
 		return repo
 	}
 	return key
+}
+
+// SweepOptions tunes one fleet-sweep pass (docs/10 §8.7).
+type SweepOptions struct {
+	// MinAge protects in-flight writes: a byte-land → register span is one
+	// sequential call chain measured in milliseconds, while a sweep pass is
+	// an operator/batch concern — files younger than MinAge are never
+	// touched. The default (an hour) buys ~5 orders of magnitude of margin.
+	MinAge time.Duration
+	// DryRun reports what a pass would reclaim without deleting.
+	DryRun bool
+}
+
+// SweepResult reports one fleet-sweep pass (observability + tests).
+type SweepResult struct {
+	KeysDropped  int `json:"keys_dropped"`  // whole storage keys removed (deleted/renamed-away repos)
+	PacksDropped int `json:"packs_dropped"` // unregistered or unheld packs removed
+	// Failed counts per-node sweep errors (a node listing badly does not
+	// stop the rest of the fleet).
+	Failed int `json:"failed"`
+}
+
+func (o *SweepOptions) fill() {
+	if o.MinAge <= 0 {
+		o.MinAge = time.Hour
+	}
+}
+
+// SweepOnce reclaims orphan bytes across the fleet (docs/10 §8.7) — the GC
+// arm the reconciler never had: bytes a registry row no longer vouches for.
+// Two phases per node, registry-driven:
+//
+//	whole-key:   a storage key no live repo resolves to (a deleted repo —
+//	             hashed keeps its immutable key; named keeps its directory —
+//	             or a rename laggard) is removed whole. Safe unordered: a
+//	             repo row always exists before any byte lands under its key.
+//	pack-level:  within a live key, a pack the registry does not know, or
+//	             knows but holds ELSEWHERE (a trim whose node delete failed)
+//	             is removed. Safety rests on register-follows-land being one
+//	             sequential span, backed by the MinAge grace.
+//
+// tmp leftovers (.put-* from crashed landings) are cleaned per key under the
+// same grace. DryRun reports the same numbers without deleting.
+func (r *Reconciler) SweepOnce(ctx context.Context, opt SweepOptions) SweepResult {
+	opt.fill()
+	res := SweepResult{}
+	healthy := r.Health.healthy()
+	if len(healthy) == 0 {
+		return res
+	}
+
+	// Live keys: every repo row (pools included — a pool is a repo) maps to
+	// exactly one storage key; hashed keys derive from the immutable
+	// StorageID and never collide with a dead name.
+	repos, err := r.Meta.ListRepos(ctx)
+	if err != nil {
+		log.Printf("sweep: list repos: %v", err)
+		res.Failed++
+		return res
+	}
+	live := map[string]string{} // storage key → repo name
+	for _, info := range repos {
+		key, kerr := r.Addressing.Key(ctx, info.ID)
+		if kerr != nil {
+			log.Printf("sweep %s: addressing: %v", info.ID, kerr)
+			continue
+		}
+		live[key] = info.ID
+	}
+
+	cutoff := time.Now().Add(-opt.MinAge)
+	for _, n := range healthy {
+		keys, err := r.client(n.Addr).ListKeys(ctx)
+		if err != nil {
+			log.Printf("sweep %s: list keys: %v", n.ID, err)
+			res.Failed++
+			continue
+		}
+		for _, key := range keys {
+			repo, isLive := live[key]
+			packs, err := r.client(n.Addr).ListRepoPacks(ctx, key)
+			if err != nil {
+				log.Printf("sweep %s %s: list packs: %v", n.ID, key, err)
+				res.Failed++
+				continue
+			}
+			if !isLive {
+				// Whole-key orphan — only once nothing inside is young.
+				if newestOf(packs).After(cutoff) {
+					continue
+				}
+				if !opt.DryRun {
+					if err := r.client(n.Addr).DeleteRepo(ctx, key); err != nil {
+						log.Printf("sweep %s %s: drop key: %v", n.ID, key, err)
+						res.Failed++
+						continue
+					}
+				}
+				res.KeysDropped++
+				continue
+			}
+			registry := map[model.OID]map[string]bool{}
+			regPacks, err := r.Meta.ListPacks(ctx, repo)
+			if err != nil {
+				log.Printf("sweep %s: registry packs: %v", repo, err)
+				res.Failed++
+				continue
+			}
+			for _, p := range regPacks {
+				holders := map[string]bool{}
+				for _, id := range p.Nodes {
+					holders[id] = true
+				}
+				registry[p.PackOID] = holders
+			}
+			for _, e := range packs {
+				if !time.Unix(e.ModUnix, 0).Before(cutoff) {
+					continue // younger than the grace: possibly in flight
+				}
+				holders, known := registry[e.OID]
+				if known && holders[n.ID] {
+					continue // registered and held here: live data
+				}
+				if !opt.DryRun {
+					if err := r.client(n.Addr).DeletePack(ctx, key, e.OID); err != nil {
+						log.Printf("sweep %s %s %s: drop pack: %v", n.ID, key, e.OID, err)
+						res.Failed++
+						continue
+					}
+				}
+				res.PacksDropped++
+			}
+			if !opt.DryRun {
+				_, _, _ = r.client(n.Addr).CleanTmp(ctx, key, opt.MinAge)
+			}
+		}
+	}
+	return res
+}
+
+// newestOf returns the newest mtime among entries (zero time when empty).
+func newestOf(packs []storage.NodePackEntry) time.Time {
+	var t time.Time
+	for _, e := range packs {
+		if mt := time.Unix(e.ModUnix, 0); mt.After(t) {
+			t = mt
+		}
+	}
+	return t
 }
 
 // copyPack repairs one pack's replicas without ever holding it: the source

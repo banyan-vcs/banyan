@@ -46,11 +46,76 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/internal/pack", s.hPack)
 	mux.HandleFunc("/internal/pack/rename", s.hRename)
 	mux.HandleFunc("/internal/pack/delete-repo", s.hDeleteRepo)
+	mux.HandleFunc("/internal/pack/list", s.hListPacks)
+	mux.HandleFunc("/internal/pack/clean-tmp", s.hCleanTmp)
+	mux.HandleFunc("/internal/keys", s.hKeys)
 	mux.HandleFunc("/internal/object", s.hObject)
 	mux.HandleFunc("/internal/status", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"role":"storage"}`))
 	})
+}
+
+// hListPacks enumerates the pack files under one storage key (fleet sweep
+// input, docs/10 §8.7): [{oid, mtime}] — the sweep diffs this against the
+// central registry, keyed by the same storage key the gateway writes.
+func (s *Server) hListPacks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	key := r.URL.Query().Get("repo")
+	if key == "" {
+		http.Error(w, "repo required", http.StatusBadRequest)
+		return
+	}
+	packs, err := s.local.ListRepoPacks(key)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"packs": packs})
+}
+
+// hKeys enumerates the storage keys present on this node (whole-key phase
+// of the fleet sweep: deleted repos and rename laggards).
+func (s *Server) hKeys(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	keys, err := s.local.ListKeys()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"keys": keys})
+}
+
+// hCleanTmp removes crashed-landing leftovers older than min_age_sec under
+// one storage key (bounded janitor of the tmp+rename landing protocol).
+func (s *Server) hCleanTmp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Repo     string `json:"repo"`
+		MinAgeSec int   `json:"min_age_sec"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Repo == "" {
+		http.Error(w, "repo required", http.StatusBadRequest)
+		return
+	}
+	removed, reclaimed, err := s.local.CleanTmp(req.Repo, time.Duration(req.MinAgeSec)*time.Second)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"removed": removed, "bytes": reclaimed})
 }
 
 // hRename moves a repo directory between storage keys (named addressing,
@@ -78,7 +143,9 @@ func (s *Server) hRename(w http.ResponseWriter, r *http.Request) {
 }
 
 // hDeleteRepo drops a repo's whole storage directory. Missing = OK
-// (deletion is idempotent by contract).
+// (deletion is idempotent by contract). Keys may nest under hashed
+// addressing; the store validates the path shape (clean relative, no
+// traversal).
 func (s *Server) hDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -87,13 +154,12 @@ func (s *Server) hDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Repo string `json:"repo"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Repo == "" ||
-		strings.ContainsAny(req.Repo, `/\`) {
-		http.Error(w, "repo required (single path segment)", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Repo == "" {
+		http.Error(w, "repo required", http.StatusBadRequest)
 		return
 	}
 	if err := s.local.DeleteRepo(req.Repo); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

@@ -168,3 +168,16 @@ CI 效率基准（go-git 实测）：子树 clone **1547 对象** vs 全仓 3020
 单元侧：`storage.TestGenerationDiamond`（代数精确/污染语义 + 树反向索引，docs/09 §2）。
 
 **存储一致性修复回归组（2026-11-01，评审四缺口）**：`TestRepackUnreadableFragmentSurvives`（repack 跳过读失败分片但不得 drop 其注册——数据丢失窗口关闭）、`TestUserMergeDurabilityGate`（failPutBackend 注入：synth flush 失败→merge 硬失败且 ref 不动——"durability before any ref CAS"从注释变成闸门）、`TestHACorruptReplicaFallback`（HA 三节点同长字节翻转腐坏两副本：GetPack 尾部校验跳坏 holder、OpenPack verbatim 经校验落地回放、无缓存 gateway 也走校验临时文件——clone+fsck oracle）；伴 B 修复（LocalShardStore 全写路径 tmp+rename 原子落盘）由既有 storage/integration 全量回归覆盖。
+
+**一致性遗留双修复回归组（2026-11-04，评审 F/D 两项）**：
+`TestRenameFenceRejectsMutations`（memory+sqlite 双实现：围栏期全变更面
+ErrRepoRenaming、读不受挡、同 (from,to) 幂等重装/异重叠拒绝、Abort 解
+围栏、翻转迁移+解围栏、墓碑拒绝死名再建、DeleteRepo 回收墓碑）；
+`TestHARenameWriteBarrier`（HA 确定性交错：围栏期 push 被拒且注册表零
+残留，生产路径完成 rename 后旧数据新名完整可读，墓碑挡死名复活）；
+`TestHARenameVsPushRace`（5 轮并发不变量：ACK 的 push 必在新名完整可
+见——竞态版首跑击落"翻转后 auto-create 复活死名"形态，墓碑语义由它
+逼出）；`TestHAFleetSweepOrphans`（孤儿 pack/去持有化残留/整键幽灵/
+tmp 残片全清 + grace 内新文件保留 + dry-run 只计数 + 活数据 clone+fsck
+无损）；`TestHAFleetSweepHashedDeletedRepo`（hashed 删除仓库的不可变
+键三节点整键回收，存活仓库键不动可 clone——docs/10 §8.7）。

@@ -112,6 +112,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/internal/health/nodes", s.hHealthNodes)
 	mux.HandleFunc("/internal/health/maintenance", s.hMaintenance)
 	mux.HandleFunc("/internal/reconcile", s.hReconcile)
+	mux.HandleFunc("/internal/sweep", s.hSweep)
 	mux.HandleFunc("/internal/authz/policy", s.hAuthzPolicy)
 }
 
@@ -772,5 +773,28 @@ func (s *Server) hMaintenance(w http.ResponseWriter, r *http.Request) {
 func (s *Server) hReconcile(w http.ResponseWriter, r *http.Request) {
 	s.Health.Tick()
 	res := s.Recon.RunOnce(r.Context())
+	writeJSON(w, res)
+}
+
+// hSweep drives one fleet-sweep pass (docs/10 §8.7): POST with
+// {"min_age_sec": n, "dry_run": bool} — orphan keys/packs past the grace
+// are reclaimed; a dry run reports the same numbers without deleting.
+func (s *Server) hSweep(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	req, ok := decode[struct {
+		MinAgeSec int  `json:"min_age_sec"`
+		DryRun    bool `json:"dry_run"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	s.Health.Tick()
+	res := s.Recon.SweepOnce(r.Context(), SweepOptions{
+		MinAge: time.Duration(req.MinAgeSec) * time.Second,
+		DryRun: req.DryRun,
+	})
 	writeJSON(w, res)
 }

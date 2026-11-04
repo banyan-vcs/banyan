@@ -642,3 +642,174 @@ func TestHARenameVsPushRace(t *testing.T) {
 		}
 	}
 }
+
+// nodePackPath builds the on-disk path of one pack on one node (fixture
+// reaches straight into the shard root — the sweep's oracle view).
+func nodePackPath(c *haCluster, nodeID, key string, oid model.OID) string {
+	return filepath.Join(c.Roots[nodeID], key, "packs", string(oid[:2]), "pack-"+string(oid)+".pack")
+}
+
+// ageFile backdates a file for the sweep grace window.
+func ageFile(t *testing.T, path string, d time.Duration) {
+	t.Helper()
+	old := time.Now().Add(-d)
+	require.NoError(t, os.Chtimes(path, old, old))
+}
+
+// TestHAFleetSweepOrphans (review fix D): bytes no registry row vouches for
+// are reclaimed by the fleet sweep, while live data and young (possibly
+// in-flight) files are untouched. Scenarios: an unregistered pack, a pack
+// registered but no longer held on this node (a trim whose delete failed),
+// a whole storage key no repo resolves to, crashed-landing tmp files — and
+// the grace that protects a fresh landing.
+func TestHAFleetSweepOrphans(t *testing.T) {
+	needGit(t)
+	c := startHACluster(t, 3)
+	s := c.asServer()
+	ctx := context.Background()
+	src := seedRepo(t, s, "t43")
+	liveHead := headOf(t, src)
+
+	packs, err := c.Meta.ListPacks(ctx, "t43")
+	require.NoError(t, err)
+	require.NotEmpty(t, packs)
+	liveOID := packs[0].PackOID
+	holder := packs[0].Nodes[0]
+
+	// (a) Unregistered pack: real bytes under an OID the registry never saw.
+	orphanOID := model.OID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	raw, err := os.ReadFile(nodePackPath(c, holder, "t43", liveOID))
+	require.NoError(t, err)
+	orphanPath := nodePackPath(c, holder, "t43", orphanOID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(orphanPath), 0o755))
+	require.NoError(t, os.WriteFile(orphanPath, raw, 0o644))
+	ageFile(t, orphanPath, 2*time.Hour)
+
+	// (b) Young unregistered pack: inside the grace — must survive (a
+	// byte-land → register span is milliseconds; an hour is the margin).
+	youngOID := model.OID("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	youngPath := nodePackPath(c, holder, "t43", youngOID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(youngPath), 0o755))
+	require.NoError(t, os.WriteFile(youngPath, raw, 0o644)) // mtime = now
+
+	// (c) Unheld pack: registry trimmed the holder set but the node delete
+	// failed — bytes remain on the trimmed node.
+	var keep []string
+	for _, id := range packs[0].Nodes {
+		if id != holder {
+			keep = append(keep, id)
+		}
+	}
+	require.NoError(t, c.Meta.SetPackNodes(ctx, "t43", liveOID, keep))
+	ageFile(t, nodePackPath(c, holder, "t43", liveOID), 2*time.Hour)
+
+	// (d) Whole-key orphan: a storage key no repo resolves to.
+	ghostOID := model.OID("cccccccccccccccccccccccccccccccccccccccc")
+	ghostPath := nodePackPath(c, holder, "t43ghost", ghostOID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(ghostPath), 0o755))
+	require.NoError(t, os.WriteFile(ghostPath, raw, 0o644))
+	ageFile(t, ghostPath, 2*time.Hour)
+
+	// (e) Crashed-landing tmp leftover.
+	tmpPath := filepath.Join(c.Roots[holder], "t43", "packs", ".put-crashed")
+	require.NoError(t, os.WriteFile(tmpPath, raw, 0o644))
+	ageFile(t, tmpPath, 2*time.Hour)
+
+	// Dry run: counts the reclaim, deletes nothing.
+	dry := c.RefsSrv.Recon.SweepOnce(ctx, refs.SweepOptions{MinAge: time.Hour, DryRun: true})
+	assert.Equal(t, 3, dry.KeysDropped+dry.PacksDropped, "dry run 应只计数不删除")
+	assert.Equal(t, 1, dry.KeysDropped)
+	assert.Equal(t, 2, dry.PacksDropped)
+	_, err = os.Stat(orphanPath)
+	require.NoError(t, err, "dry run 不得删除")
+
+	// Real pass through the HTTP endpoint.
+	resp, err := http.Post(c.RefsURL+"/internal/sweep", "application/json",
+		strings.NewReader(`{"min_age_sec":3600}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var res refs.SweepResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&res))
+	resp.Body.Close()
+	assert.Equal(t, 1, res.KeysDropped, "ghost key 应被整键回收")
+	assert.Equal(t, 2, res.PacksDropped, "孤儿 pack + 去持有化 pack 应被回收")
+
+	_, err = os.Stat(orphanPath)
+	assert.True(t, os.IsNotExist(err), "孤儿 pack 应被清扫")
+	_, err = os.Stat(nodePackPath(c, holder, "t43", liveOID))
+	assert.True(t, os.IsNotExist(err), "被修剪节点的 pack 应被清扫")
+	_, err = os.Stat(filepath.Join(c.Roots[holder], "t43ghost"))
+	assert.True(t, os.IsNotExist(err), "ghost key 目录应被清扫")
+	_, err = os.Stat(tmpPath)
+	assert.True(t, os.IsNotExist(err), "崩溃残留 tmp 应被清扫")
+	_, err = os.Stat(youngPath)
+	require.NoError(t, err, "grace 内的新落地文件必须保留")
+
+	// Live data untouched: other holders still serve the seed pack.
+	fresh := cloneRepo(t, s, c.gwURL()+"/r/t43.git")
+	fsckClean(t, fresh)
+	require.True(t, hasCommit(t, fresh, liveHead))
+}
+
+// TestHAFleetSweepHashedDeletedRepo: hashed addressing keeps a deleted
+// repo's immutable storage key (docs/03 §6) — the fleet sweep is the
+// promised reclamation. After the sweep the @hashed trees are gone on
+// every node while the live repo's key stays.
+func TestHAFleetSweepHashedDeletedRepo(t *testing.T) {
+	needGit(t)
+	c := startHAClusterMode(t, 3, "hashed")
+	s := c.asServer()
+	ctx := context.Background()
+	seedRepo(t, s, "t44h")
+	staysSrc := seedRepo(t, s, "t44h-stays")
+	staysHead := headOf(t, staysSrc)
+
+	// Resolve both keys BEFORE the delete — the dead repo's rows go away
+	// with it, but the key itself is what the sweep judges by.
+	addr := storage.NewAddressing("hashed", c.Meta)
+	deadKey, err := addr.Key(ctx, "t44h")
+	require.NoError(t, err)
+	liveKey, err := addr.Key(ctx, "t44h-stays")
+	require.NoError(t, err)
+	require.NotEqual(t, deadKey, liveKey)
+
+	// The hashed-mode delete: registry rows only, the immutable key stays
+	// (ObjectService.DeleteRepo's hashed branch).
+	require.NoError(t, c.Meta.DeleteRepo(ctx, "t44h"))
+
+	// Both keys still on every node; the dead one gets old enough to sweep.
+	hashed := 0
+	for _, root := range c.Roots {
+		key := filepath.Join(root, "@hashed")
+		_ = filepath.WalkDir(key, func(path string, d os.DirEntry, err error) error {
+			if err != nil || !d.IsDir() || d.Name() != "packs" {
+				return nil
+			}
+			hashed++
+			parent := filepath.Dir(path)
+			_ = filepath.WalkDir(parent, func(p string, f os.DirEntry, e error) error {
+				if e == nil && !f.IsDir() && strings.HasPrefix(f.Name(), "pack-") {
+					ageFile(t, p, 2*time.Hour)
+				}
+				return nil
+			})
+			return nil
+		})
+	}
+	require.Equal(t, 6, hashed, "两仓库 × 三节点应有 6 个 key 目录")
+
+	res := c.RefsSrv.Recon.SweepOnce(ctx, refs.SweepOptions{MinAge: time.Hour})
+	assert.Equal(t, 3, res.KeysDropped, "被删仓库的 3 个副本 key 应被整键回收")
+
+	for id, root := range c.Roots {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(deadKey)))
+		assert.True(t, os.IsNotExist(err), "节点 %s 上被删仓库的 key 应被回收", id)
+		_, err = os.Stat(filepath.Join(root, filepath.FromSlash(liveKey), "packs"))
+		assert.NoError(t, err, "节点 %s 上存活仓库的 key 必须保留", id)
+	}
+
+	// The live repo answers after the sweep (its key was never a candidate).
+	fresh := cloneRepo(t, s, c.gwURL()+"/r/t44h-stays.git")
+	fsckClean(t, fresh)
+	require.True(t, hasCommit(t, fresh, staysHead))
+}
