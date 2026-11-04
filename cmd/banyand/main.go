@@ -35,7 +35,7 @@ import (
 func main() {
 	cfg, err := config.Load(os.Args[1:])
 	if err != nil {
-		log.Fatalf("%v\nusage: banyand [-config banyan.yaml] [-role all-in-one|gateway|refs|storage] [-listen addr] [-root dir] [-meta mem|sqlite] [-db path] [-refs-addr host:port] [-node-id id] [-init-repo name]", err)
+		log.Fatalf("%v\nusage: banyand [-config banyan.yaml] [-role all-in-one|gateway|refs|storage] [-listen addr] [-root dir] [-meta mem|sqlite] [-db path] [-refs-addr host:port] [-node-id id] [-init-repo name] [-dev]", err)
 	}
 	fmt.Fprintf(os.Stderr, "banyand config: %s\n", cfg.Describe())
 	// Ops plane (docs/05 §6): pprof family + runtime snapshot + expvar

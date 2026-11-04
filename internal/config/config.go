@@ -95,10 +95,16 @@ type Config struct {
 	// bearer credential frontends authenticate with.
 	Gitaly struct {
 		Listen          string `yaml:"listen"`           // "host:port" or "unix:<path>"; empty = off
-		Token           string `yaml:"token"`            // Bearer token; empty = unauthenticated (development only)
+		Token           string `yaml:"token"`            // Bearer token; empty = unauthenticated (dev mode only — production startup refuses)
 		StorageName     string `yaml:"storage_name"`     // virtual storage this node answers as; default "default"
 		ReportedVersion string `yaml:"reported_version"` // ServerInfo server_version; default the vendored protocol (19.5.2)
 	} `yaml:"gitaly"`
+
+	// Dev opts this deployment into development mode: unauthenticated git
+	// traffic, push auto-create, an unauthenticated gitaly frontend. The
+	// production default (false) refuses to start in these shapes — an
+	// unauthenticated server is a decision, never an accident.
+	Dev bool `yaml:"dev"`
 
 	Cache struct {
 		// PackDir enables the gateway's on-disk pack cache (docs/11 P2-1):
@@ -169,6 +175,7 @@ func Load(args []string) (*Config, error) {
 	reconSec := fs.Int("recon-interval-sec", defaults.ReconSec, "reconciler interval in seconds")
 	reconCur := fs.Int("recon-concurrency", defaults.ReconCurrency, "reconciler parallel pack copies")
 	heartbeat := fs.Int("heartbeat-sec", defaults.HeartbeatSec, "storage node heartbeat interval in seconds")
+	dev := fs.Bool("dev", defaults.Dev, "development mode: unauthenticated git traffic, push auto-create, open gitaly frontend (production refuses these)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -217,6 +224,9 @@ func Load(args []string) (*Config, error) {
 	apply("recon-interval-sec", &cfg.ReconSec, *reconSec)
 	apply("recon-concurrency", &cfg.ReconCurrency, *reconCur)
 	apply("heartbeat-sec", &cfg.HeartbeatSec, *heartbeat)
+	if set["dev"] {
+		cfg.Dev = *dev
+	}
 	return &cfg, cfg.normalize()
 }
 
@@ -286,6 +296,20 @@ func (c *Config) normalize() error {
 		}
 		c.Auth.Upstream = withScheme(c.Auth.Upstream)
 	}
+	// Production posture (secure by default): the client-facing roles
+	// refuse to start unauthenticated, and the gitaly frontend refuses an
+	// empty token. Dev mode is the explicit opt-out for local/demo
+	// deployments — an open server must be a decision, never an accident.
+	if !c.Dev {
+		if c.Role == "" || c.Role == "all-in-one" || c.Role == "gateway" {
+			if c.Auth.Upstream == "" && len(c.Auth.Users) == 0 {
+				return fmt.Errorf("config: production mode requires authentication (auth.upstream or auth.users); set dev: true for an unauthenticated local deployment")
+			}
+		}
+		if c.Gitaly.Listen != "" && c.Gitaly.Token == "" {
+			return fmt.Errorf("config: gitaly.listen requires gitaly.token in production mode; set dev: true for an unauthenticated frontend")
+		}
+	}
 	switch c.Role {
 	case "gateway":
 		if c.RefsAddr == "" {
@@ -345,6 +369,6 @@ func withScheme(addr string) string {
 
 // Describe renders the effective configuration for startup logging.
 func (c *Config) Describe() string {
-	return fmt.Sprintf("role=%s listen=%s root=%s meta=%s db=%q init_repo=%q refs_addr=%q node_id=%q advertise=%q default_replicas=%d write_acks=%s cache_pack_dir=%q debug_pprof=%q gitaly_listen=%q",
-		c.Role, c.Listen, c.Root, c.MetaBackend, c.DBPath, c.InitRepo, c.RefsAddr, c.NodeID, c.Advertise, c.DefaultR, c.WriteAcks, c.Cache.PackDir, c.Debug.PprofAddr, c.Gitaly.Listen)
+	return fmt.Sprintf("role=%s listen=%s root=%s meta=%s db=%q init_repo=%q refs_addr=%q node_id=%q advertise=%q default_replicas=%d write_acks=%s cache_pack_dir=%q debug_pprof=%q gitaly_listen=%q dev=%t",
+		c.Role, c.Listen, c.Root, c.MetaBackend, c.DBPath, c.InitRepo, c.RefsAddr, c.NodeID, c.Advertise, c.DefaultR, c.WriteAcks, c.Cache.PackDir, c.Debug.PprofAddr, c.Gitaly.Listen, c.Dev)
 }

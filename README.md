@@ -180,8 +180,9 @@ Docker 29.x; the same flows are pinned in-process by integration tests T23–T26
 go build ./... && go vet ./... && go test ./...   # ~65s (integration needs git on PATH)
 
 # Start the server. Config resolves as defaults < YAML (-config) < explicit flags;
-# unknown config keys are rejected. See banyan.example.yaml.
-go run ./cmd/banyand -listen 127.0.0.1:8097 -root ./banyand-data -meta sqlite
+# unknown config keys are rejected. -dev = unauthenticated local mode — production
+# posture refuses to start without auth (see banyan.example.yaml). See banyan.example.yaml.
+go run ./cmd/banyand -dev -listen 127.0.0.1:8097 -root ./banyand-data -meta sqlite
 
 # Push any git repo (first push auto-creates it)
 git remote add banyan http://127.0.0.1:8097/r/myrepo.git
