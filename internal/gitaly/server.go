@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 
 	"google.golang.org/grpc"
@@ -166,6 +167,22 @@ func (s *Server) Serve(l net.Listener) error {
 
 // Stop tears the server down (tests, shutdown).
 func (s *Server) Stop() { s.grpcSrv.Stop() }
+
+// drainGrace bounds graceful gRPC shutdown (see GracefulStop).
+const drainGrace = 15 * time.Second
+
+// GracefulStop finishes in-flight RPCs — a streaming clone keeps its
+// context — then closes the listener; whatever outlives the grace is cut
+// with a hard Stop (rolling restarts must not hang on a stuck stream).
+func (s *Server) GracefulStop() {
+	done := make(chan struct{})
+	go func() { s.grpcSrv.GracefulStop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(drainGrace):
+		s.grpcSrv.Stop()
+	}
+}
 
 // --- authentication ---
 

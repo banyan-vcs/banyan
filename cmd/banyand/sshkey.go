@@ -52,22 +52,24 @@ func loadOrCreateHostKey(path string) (ssh.Signer, error) {
 // ssh.listen is configured (no-op without it). ssh.host_key defaults to
 // <root>/ssh_host_ed25519_key. The transport requires the auth policy —
 // an SSH listener without a key table cannot authenticate anyone, so a
-// configured listen without auth is refused outright.
-func startSSH(listen, hostKey string, gw *gitwire.Server) error {
+// configured listen without auth is refused outright. The returned stop
+// func closes the listener: in-flight sessions keep streaming, new ones
+// are refused.
+func startSSH(listen, hostKey string, gw *gitwire.Server) (func(), error) {
 	if listen == "" {
-		return nil
+		return func() {}, nil
 	}
 	if gw.Auth == nil {
-		return fmt.Errorf("ssh.listen requires an auth policy (no key table without one)")
+		return nil, fmt.Errorf("ssh.listen requires an auth policy (no key table without one)")
 	}
 	signer, err := loadOrCreateHostKey(hostKey)
 	if err != nil {
-		return fmt.Errorf("ssh host key: %w", err)
+		return nil, fmt.Errorf("ssh host key: %w", err)
 	}
 	gw.SSHHostKey = signer
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.Printf("ssh: git transport on %s (host key %s)", listen, hostKey)
 	go func() {
@@ -75,7 +77,7 @@ func startSSH(listen, hostKey string, gw *gitwire.Server) error {
 			log.Printf("ssh: listener ended: %v", err)
 		}
 	}()
-	return nil
+	return func() { _ = ln.Close() }, nil
 }
 
 // sshHostKeyPath resolves the configured host key, defaulting into the

@@ -47,15 +47,21 @@ func main() {
 		BlockProfileRateNs:   cfg.Debug.BlockProfileRateNs,
 	})
 
+	// One termination context for the whole process: SIGINT/SIGTERM cancels
+	// it, every role drains (in-flight pack streams finish) instead of
+	// dying mid-transfer — the posture a rolling restart needs.
+	ctx, stop := signalContext()
+	defer stop()
+
 	switch cfg.Role {
 	case "storage":
-		runStorage(cfg)
+		runStorage(ctx, cfg)
 	case "refs":
-		runRefs(cfg)
+		runRefs(ctx, cfg)
 	case "gateway":
-		runGateway(cfg)
+		runGateway(ctx, cfg)
 	default:
-		runAllInOne(cfg)
+		runAllInOne(ctx, cfg)
 	}
 }
 
@@ -79,7 +85,7 @@ func openMeta(cfg *config.Config) storage.MetaStore {
 	}
 }
 
-func runAllInOne(cfg *config.Config) {
+func runAllInOne(ctx context.Context, cfg *config.Config) {
 	meta := openMeta(cfg)
 	local := storage.NewLocalShardStore(cfg.Root)
 	nodes := []storage.Node{{ID: "local-1", Local: true}}
@@ -115,22 +121,30 @@ func runAllInOne(cfg *config.Config) {
 	gw.Register(mux)
 	api.Register(mux)
 	root(mux)
-	startGitaly(cfg, meta, objects)
-	if err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw); err != nil {
+	gs := startGitaly(cfg, meta, objects)
+	stopSSH, err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw)
+	if err != nil {
 		log.Fatalf("ssh: %v", err)
 	}
-	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
+	if err := serveHTTP(ctx, cfg.Listen, mux); err != nil {
+		log.Fatalf("http: %v", err)
+	}
+	stopSSH()
+	if gs != nil {
+		gs.GracefulStop() // in-flight gRPC streams drain after the HTTP face
+	}
 }
 
 // startGitaly serves the gitaly-protocol gRPC frontend (docs/19) when
 // gitaly.listen is configured: a GitLab Rails/workhorse stack can replace
-// its stock gitaly node with this process.
-func startGitaly(cfg *config.Config, meta storage.MetaStore, objects *storage.ObjectService) {
+// its stock gitaly node with this process. Returns the server (nil when the
+// frontend is off) so the caller can drain it at shutdown.
+func startGitaly(cfg *config.Config, meta storage.MetaStore, objects *storage.ObjectService) *gitaly.Server {
 	if cfg.Gitaly.Listen == "" {
-		return
+		return nil
 	}
 	if cfg.Gitaly.Token == "" {
-		log.Printf("gitaly: WARNING no token set — the frontend accepts unauthenticated gRPC (development only)")
+		log.Printf("gitaly: WARNING no token set — the frontend accepts unauthenticated gRPC (dev mode)")
 	}
 	gs := gitaly.NewServer(meta, objects, model.SHA1, gitaly.Options{
 		Token:            cfg.Gitaly.Token,
@@ -145,6 +159,7 @@ func startGitaly(cfg *config.Config, meta storage.MetaStore, objects *storage.Ob
 			log.Fatalf("gitaly: %v", err)
 		}
 	}()
+	return gs
 }
 // staticPolicy builds the demo authorization policy from config (docs/07
 // §2): nil when the auth section is absent — authorization off.
@@ -166,7 +181,7 @@ func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
 // An optional on-disk pack cache (cache.pack_dir, docs/11 P2-1) carries the
 // fetched packs across restarts — the one piece of expendable local state
 // that meaningfully cuts cold-start traffic.
-func runGateway(cfg *config.Config) {
+func runGateway(ctx context.Context, cfg *config.Config) {
 	refsClient := storage.NewRefsClient(cfg.RefsAddr)
 	meta := &storage.RemoteMeta{Refs: refsClient}
 	backend := storage.NewScatteredStore(refsClient, cfg.DefaultR, cfg.WriteAcks)
@@ -213,18 +228,25 @@ func runGateway(cfg *config.Config) {
 	gw.Register(mux)
 	api.Register(mux)
 	root(mux)
-	startGitaly(cfg, meta, objects)
+	gs := startGitaly(cfg, meta, objects)
 	// Same transport wiring as all-in-one: the gateway decides access
 	// against the synced policy snapshot (keys ride along, docs/07 §4/§7).
-	if err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw); err != nil {
+	stopSSH, err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw)
+	if err != nil {
 		log.Fatalf("ssh: %v", err)
 	}
-	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
+	if err := serveHTTP(ctx, cfg.Listen, mux); err != nil {
+		log.Fatalf("http: %v", err)
+	}
+	stopSSH()
+	if gs != nil {
+		gs.GracefulStop()
+	}
 }
 
 // runRefs serves the serialization point: meta RPC, the health table and
 // the reconciler (single writer; HA story in docs/10 §4).
-func runRefs(cfg *config.Config) {
+func runRefs(ctx context.Context, cfg *config.Config) {
 	meta := openMeta(cfg)
 	if cfg.MetaBackend == "mem" {
 		log.Printf("refs role with meta=%s: metadata is NOT durable across restarts (use -meta sqlite/mysql/postgres)", cfg.MetaBackend)
@@ -242,22 +264,26 @@ func runRefs(cfg *config.Config) {
 	mux := http.NewServeMux()
 	srv.Register(mux)
 	root(mux)
-	srv.RunBackground(context.Background())
+	srv.RunBackground(ctx) // health ticker + reconciler stop with the process
 	log.Printf("refs: serving %s (default_replicas=%d suspect=%s dead=%s recon=%s×%d)",
 		cfg.Listen, cfg.DefaultR, time.Duration(cfg.SuspectSec)*time.Second,
 		time.Duration(cfg.DeadSec)*time.Second, time.Duration(cfg.ReconSec)*time.Second, cfg.ReconCurrency)
-	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
+	if err := serveHTTP(ctx, cfg.Listen, mux); err != nil {
+		log.Fatalf("http: %v", err)
+	}
 }
 
 // runStorage serves the pack warehouse and heartbeats to refs.
-func runStorage(cfg *config.Config) {
+func runStorage(ctx context.Context, cfg *config.Config) {
 	node := storenode.New(cfg.NodeID, cfg.Root, cfg.RefsAddr, cfg.Advertise)
 	mux := http.NewServeMux()
 	node.Register(mux)
 	root(mux)
-	go node.HeartbeatLoop(context.Background(), time.Duration(cfg.HeartbeatSec)*time.Second)
+	go node.HeartbeatLoop(ctx, time.Duration(cfg.HeartbeatSec)*time.Second)
 	log.Printf("storage %s: serving %s (advertise=%s → refs %s)", cfg.NodeID, cfg.Listen, cfg.Advertise, cfg.RefsAddr)
-	log.Fatal(http.ListenAndServe(cfg.Listen, mux))
+	if err := serveHTTP(ctx, cfg.Listen, mux); err != nil {
+		log.Fatalf("http: %v", err)
+	}
 }
 
 func root(mux *http.ServeMux) {
