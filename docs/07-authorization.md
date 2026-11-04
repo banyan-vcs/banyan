@@ -5,10 +5,32 @@
 > 规则表——生产形态（token introspection / SSO / 数据库策略）在同一个
 > `auth.Service` 缝隙替换，wire 层零改动。
 
+## 0. 启动姿态：安全默认（2026-11-05，docs/14 生产主轴 P0）
+
+**生产缺省下，无认证的进程拒绝启动**——部署错误不该等第一个请求到达
+才暴露：
+
+- 客户端面角色（role 为空 / all-in-one / gateway）在**既无
+  `auth.upstream` 又无 `auth.users`** 时启动即报错，错误信息直接给出
+  出路：`set dev: true for an unauthenticated local deployment`；
+- `gitaly.listen` 配置了而 `gitaly.token` 为空：同样拒启（gRPC 面同权
+  严肃，docs/19 §3）；
+- `dev: true`（YAML）或 `-dev`（旗标）= **显式开发模式**：免认证本地
+  跑，`-help` usage 与配置 Describe 均标注。demo 栈即此形态（单体
+  compose 挂 auth-demo.yaml 走正路；集群 demo 网关走 `-dev`）；
+- refs/storage 角色不受此限——集群内部面（自有边界），客户端流量
+  永远经网关；
+- 首推建仓（auto-create）无需新开关：有认证时匿名推不进（CanPush
+  挡在 receive-pack），无认证时进程不再启动。
+
+§1 的"nil Service = 授权关闭"由此收窄：**nil 只在 dev 模式合法**。
+回归：TestProductionRequiresAuth（单测，8 情形：三种客户端角色 ×
+有/无认证、gitaly token 对、dev 出路）。
+
 ## 1. 抽象（internal/auth）
 
-nil Service = 授权关闭（存量行为，全部测试不依赖认证）；一经接线，
-**wire 层没有任何绕过点**：
+nil Service = 授权关闭（**仅 dev 模式下能启动到这一步**，§0；测试即
+-dev 形态）；一经接线，**wire 层没有任何绕过点**：
 
 | 决策 | 语义 | 粒度 |
 |---|---|---|
