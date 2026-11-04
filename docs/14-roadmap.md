@@ -1,5 +1,31 @@
 # 14 · 路线图
 
+## 生产可用主轴（2026-11-05 修订）
+
+产品方向定为**生产可用**：主轴从"能力扩展"转为"敢托付"——安全默认、
+故障行为、可观测、可运维四条判定。原 M 系里程碑保留为能力索引，优先级
+按此重排：
+
+- **P0 · 上线 blocker**（2026-11-05 完成）：
+  - [x] **安全默认**：`dev: true` 显式开发模式；生产（缺省）下面向客户端
+    的角色无认证配置拒绝启动、gitaly 前端无 token 拒绝启动——开放的服务
+    必须是决策而非事故（`TestProductionRequiresAuth` 姿态矩阵）
+  - [x] **优雅停机**：SIGINT/SIGTERM → drain——新连接即拒、在途 pack 流
+    15s 窗口内跑完（HTTP 四角色 + gitaly GracefulStop 降级硬停 + SSH
+    listener 关闭；`TestServeHTTPDrainsInFlight` 契约测试）
+  - [x] **可观测地基**：`/metrics`（Prometheus 文本，零依赖自研
+    internal/metrics）——git 请求率/延迟/在途（http+ssh 双传输）、ingest
+    计数与字节、CAS 冲突（计数在两实现源头，双拓扑成立）、副本校验回退
+    （评审 E 的可观测面）、reconciler/sweep 进度（`TestMetrics*` 差值
+    断言）
+- **P1 · 运维闭环**（下一步）：sweep 周期化（`sweep_interval` 配置）+ 运营
+  CLI（repo rename/delete/sweep/backup）+ 备份策略与**恢复演练** runbook +
+  磁盘水位/心跳告警语义
+- **P2 · 生产纵深**：HA-2 备份到对象存储 sink（机房级灾难恢复）；位图/
+  commit-graph/M4.4 bench 从"blocker"降级为**容量规划数字**
+- **P3 · 架构演进**（规模化后）：收编 merge 方案 C（组装移读路径，高并发
+  写热点消除）
+
 ## M0 · 设计 + 骨架（本次交付）
 
 - [x] 设计文档 6 篇（数据模型 / 存储 / 兼容层 / 派生数据 / CLI / 路线图）

@@ -14,8 +14,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/metrics"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/go-git/go-git/v5/plumbing/format/packfile"
+)
+
+// Ingest telemetry: what landed, and how much of it — the push plane's
+// throughput baseline at /metrics.
+var (
+	mIngestPacks = metrics.GetCounter("banyan_ingest_packs_total", "packs ingested from pushes/imports")
+	mIngestBytes = metrics.GetCounter("banyan_ingest_bytes_total", "pack bytes ingested from pushes/imports")
 )
 
 // ObjectService orchestrates the read path (docs/03 §3):
@@ -790,6 +798,8 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 
 	s.rememberPackSize(repo, dp.PackOID, int64(len(packBytes)))
 	s.memoizeDecoded(repo, dp.PackOID, dp)
+	mIngestPacks.With().Inc()
+	mIngestBytes.With().Add(int64(len(packBytes)))
 	return dp.PackOID, nil
 }
 
@@ -854,6 +864,8 @@ func (s *ObjectService) IngestPackFile(ctx context.Context, repo, path string, s
 	}
 	s.packOrder[repo][packOID] = obs.order
 	s.mu.Unlock()
+	mIngestPacks.With().Inc()
+	mIngestBytes.With().Add(size)
 	return packOID, nil
 }
 

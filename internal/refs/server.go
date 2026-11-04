@@ -9,9 +9,30 @@ import (
 	"time"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
+	"github.com/banyan-vcs/banyan/internal/metrics"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
+
+// The refs role's own telemetry plane (served at /metrics): reconciler and
+// sweep progress — CAS contention is counted at the CAS implementations
+// themselves (internal/storage), so every topology reports it.
+var (
+	mReconUnder = metrics.GetGauge("banyan_reconciler_under_replicated", "packs below replica target at the last pass")
+	mReconFailed = metrics.GetGauge("banyan_reconciler_failed", "packs that could not converge at the last pass")
+	mReconCopied = metrics.GetCounter("banyan_reconciler_copied_total", "packs re-replicated by the reconciler")
+	mReconTrimmed = metrics.GetCounter("banyan_reconciler_trimmed_total", "over-replicated packs trimmed")
+	mSweepKeys  = metrics.GetCounter("banyan_sweep_keys_reclaimed_total", "storage keys reclaimed by fleet sweeps")
+	mSweepPacks = metrics.GetCounter("banyan_sweep_packs_reclaimed_total", "packs reclaimed by fleet sweeps")
+)
+
+// observeRecon records one convergence pass's outcome.
+func observeRecon(res ReconResult) {
+	mReconUnder.With().Set(int64(res.UnderReplicated))
+	mReconFailed.With().Set(int64(res.Failed))
+	mReconCopied.With().Add(int64(res.Copied))
+	mReconTrimmed.With().Add(int64(res.Trimmed))
+}
 
 // Options configures the refs service (docs/10 §8.1 thresholds).
 type Options struct {
@@ -114,6 +135,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/internal/reconcile", s.hReconcile)
 	mux.HandleFunc("/internal/sweep", s.hSweep)
 	mux.HandleFunc("/internal/authz/policy", s.hAuthzPolicy)
+	// The refs process's own telemetry (Prometheus text format).
+	mux.Handle("/metrics", metrics.Handler())
 }
 
 // hAuthzPolicy serves the cluster's policy snapshot for gateways
@@ -150,12 +173,14 @@ func (s *Server) RunBackground(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
-				if res := s.Recon.RunOnce(ctx); res.UnderReplicated > 0 || res.Trimmed > 0 || res.Failed > 0 {
-					log.Printf("reconciler: under=%d copied=%d trimmed=%d failed=%d",
-						res.UnderReplicated, res.Copied, res.Trimmed, res.Failed)
-				}
+		case <-t.C:
+			res := s.Recon.RunOnce(ctx)
+			observeRecon(res)
+			if res.UnderReplicated > 0 || res.Trimmed > 0 || res.Failed > 0 {
+				log.Printf("reconciler: under=%d copied=%d trimmed=%d failed=%d",
+					res.UnderReplicated, res.Copied, res.Trimmed, res.Failed)
 			}
+		}
 		}
 	}()
 }
@@ -773,6 +798,7 @@ func (s *Server) hMaintenance(w http.ResponseWriter, r *http.Request) {
 func (s *Server) hReconcile(w http.ResponseWriter, r *http.Request) {
 	s.Health.Tick()
 	res := s.Recon.RunOnce(r.Context())
+	observeRecon(res)
 	writeJSON(w, res)
 }
 
@@ -796,5 +822,9 @@ func (s *Server) hSweep(w http.ResponseWriter, r *http.Request) {
 		MinAge: time.Duration(req.MinAgeSec) * time.Second,
 		DryRun: req.DryRun,
 	})
+	if !req.DryRun {
+		mSweepKeys.With().Add(int64(res.KeysDropped))
+		mSweepPacks.With().Add(int64(res.PacksDropped))
+	}
 	writeJSON(w, res)
 }

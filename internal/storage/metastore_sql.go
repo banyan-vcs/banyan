@@ -1325,6 +1325,7 @@ func (s *SQLMetaStore) CASHead(ctx context.Context, tl model.Timeline, expected,
 		tl.Repo, string(tl.Anchor), tl.Name).Scan(&head, &base)
 	if err == sql.ErrNoRows {
 		if expected != "" {
+			mCASConflicts.With().Inc()
 			return fail(ErrNonFastForward) // creating requires expected=zero
 		}
 		if next == "" {
@@ -1335,6 +1336,7 @@ func (s *SQLMetaStore) CASHead(ctx context.Context, tl model.Timeline, expected,
 			tl.Repo, string(tl.Anchor), tl.Name, string(next))
 		if err != nil {
 			if s.d.isUnique(err) {
+				mCASConflicts.With().Inc()
 				return fail(ErrNonFastForward) // another writer created it first
 			}
 			return fail(err)
@@ -1346,6 +1348,7 @@ func (s *SQLMetaStore) CASHead(ctx context.Context, tl model.Timeline, expected,
 		return fail(err)
 	}
 	if model.OID(head).NormalizeZero() != expected {
+		mCASConflicts.With().Inc()
 		return fail(ErrNonFastForward)
 	}
 	if next == "" {

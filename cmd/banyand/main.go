@@ -25,6 +25,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/debug"
 	"github.com/banyan-vcs/banyan/internal/gitaly"
 	"github.com/banyan-vcs/banyan/internal/gitwire"
+	"github.com/banyan-vcs/banyan/internal/metrics"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/refs"
 	"github.com/banyan-vcs/banyan/internal/rpc"
@@ -161,6 +162,7 @@ func startGitaly(cfg *config.Config, meta storage.MetaStore, objects *storage.Ob
 	}()
 	return gs
 }
+
 // staticPolicy builds the demo authorization policy from config (docs/07
 // §2): nil when the auth section is absent — authorization off.
 func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
@@ -288,6 +290,10 @@ func runStorage(ctx context.Context, cfg *config.Config) {
 
 func root(mux *http.ServeMux) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintln(w, "banyan — endpoints: /r/<repo>[/info/refs|/git-upload-pack|/git-receive-pack], /api/v1/*")
+		fmt.Fprintln(w, "banyan — endpoints: /r/<repo>[/info/refs|/git-upload-pack|/git-receive-pack], /api/v1/*, /metrics")
 	})
+	// Process telemetry (Prometheus text format): scrape target for every
+	// role. Internal by convention — front it with the same network
+	// boundary as the process's other internal endpoints.
+	mux.Handle("/metrics", metrics.Handler())
 }

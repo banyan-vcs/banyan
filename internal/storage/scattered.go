@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/metrics"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
@@ -25,6 +26,14 @@ type NodeClient struct {
 	Addr string
 	HTTP *http.Client
 }
+
+// The replica-integrity plane's observability (review fix E): every holder
+// that fails trailer verification and falls through to the next replica —
+// a nonzero trend means disks are rotting somewhere.
+var mHolderFallback = metrics.GetCounter("banyan_pack_holder_fallbacks_total",
+	"pack reads that failed verification on one holder and fell through to the next replica")
+
+func noteHolderFallback() { mHolderFallback.With().Inc() }
 
 // Node request timeouts are layered (docs/10 §3): connection setup and
 // response headers get fixed transport budgets — the only phases with no
@@ -551,11 +560,13 @@ func (s *ScatteredStore) OpenPack(ctx context.Context, repo string, packOID mode
 				}
 				if cerr != nil {
 					put.Abort()
+					noteHolderFallback()
 					log.Printf("scattered: holder %s pack %s: %v (trying next holder)", id, packOID, cerr)
 					continue
 				}
 				if err := put.Complete(); err != nil {
 					put.Abort()
+					noteHolderFallback()
 					log.Printf("scattered: cache complete %s: %v (trying next holder)", packOID, err)
 					continue
 				}
@@ -570,6 +581,7 @@ func (s *ScatteredStore) OpenPack(ctx context.Context, repo string, packOID mode
 			return f, size, nil
 		} else {
 			rc.Close()
+			noteHolderFallback()
 			log.Printf("scattered: holder %s pack %s: %v (trying next holder)", id, packOID, verr)
 		}
 	}
@@ -666,6 +678,7 @@ func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model
 			// of surfacing as a mid-decode failure — or worse, landing in
 			// the disk cache as the "good" copy.
 			if verr := verifyPackBytes(packOID, raw); verr != nil {
+				noteHolderFallback()
 				log.Printf("scattered: holder %s %v (trying next holder)", id, verr)
 				lastErr = verr
 				continue
