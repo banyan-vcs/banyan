@@ -64,17 +64,27 @@ func ExtractObjectAt(src io.ReaderAt, size int64, idx *PackIndex, algo model.Has
 	return extractObject(&sizedSource{ReaderAt: src, size: size}, idx, algo, oid)
 }
 
-// ExtractObject reads one object out of a pack using its idx. The object
-// header at the idx offset carries the type and inflated size; ofs-delta
-// entries encode a negative offset to their base, ref-delta entries the
-// base oid (which must itself be in the pack — our stored packs are
-// self-contained; receive-pack advertises no-thin).
+// extractObject reads one object out of a pack using its idx and VERIFIES
+// the result against the requested oid — content addressing is the truth.
+// The extraction path inflates straight from the pack bytes at the idx
+// offset; without this final hash a corrupted pack copy could inflate into
+// subtly wrong bytes (a flipped byte inside a tree's entry region parses
+// into a garbage child oid) and the caller would treat it as fact. A
+// mismatch is an error, not data: the scattered-store caller falls through
+// to the next holder's copy.
 func extractObject(src packSource, idx *PackIndex, algo model.HashAlgo, oid model.OID) (model.ObjectType, []byte, error) {
 	off, ok := idx.Entries[oid]
 	if !ok {
 		return "", nil, fmt.Errorf("%w: %s not in pack idx", model.ErrObjectNotFound, oid)
 	}
-	return readObjectAt(src, idx, int64(off), algo, 0)
+	t, data, err := readObjectAt(src, idx, int64(off), algo, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	if got := model.ObjectOID(t, data, algo); got != oid {
+		return "", nil, fmt.Errorf("extract: %s: content hash mismatch (got %s) — corrupt pack copy", oid, got)
+	}
+	return t, data, nil
 }
 
 func readObjectAt(src packSource, idx *PackIndex, off int64, algo model.HashAlgo, depth int) (model.ObjectType, []byte, error) {

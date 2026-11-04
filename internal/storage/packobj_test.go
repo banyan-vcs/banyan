@@ -117,3 +117,44 @@ func TestLocalGetObjectViaDisk(t *testing.T) {
 		assert.Equal(t, c, data)
 	}
 }
+
+// TestExtractVerifiesContentHash pins the extraction path's final content
+// verification: the idx-guided inflate reads raw pack bytes, and a corrupted
+// copy can inflate into WRONG-but-parseable bytes (a flip inside a tree's
+// entry region parses into a garbage child oid — the flake the HA corrupt
+// test caught in the wild). The requested oid is the truth: a mismatch is
+// an error so the scattered-store caller falls through to the next holder.
+// Simulated here by pointing the idx at the wrong offset — inflate succeeds,
+// content is not the requested object.
+func TestExtractVerifiesContentHash(t *testing.T) {
+	b1 := []byte("first blob body, quite compressible\n")
+	b2 := []byte("second blob body, also quite compressible\n")
+	o1 := model.ObjectOID(model.BlobType, b1, model.SHA1)
+	o2 := model.ObjectOID(model.BlobType, b2, model.SHA1)
+	var pack testBuffer
+	require.NoError(t, EncodePackDelta(&pack, map[model.OID][]byte{o1: b1, o2: b2}, nil, nil, nil))
+	raw := pack.Bytes()
+	dp, err := DecodePack(raw)
+	require.NoError(t, err)
+	idxRaw, err := EncodeIdx(model.SHA1, dp.PackOID, dp.Offsets, dp.CRCs)
+	require.NoError(t, err)
+	idx, err := DecodeIdx(idxRaw, model.SHA1)
+	require.NoError(t, err)
+
+	// Sanity: the honest idx round-trips.
+	typ, got, err := ExtractObject(raw, idx, model.SHA1, o1)
+	require.NoError(t, err)
+	assert.Equal(t, model.BlobType, typ)
+	assert.Equal(t, b1, got)
+
+	// The corruption shape: o1's idx entry points at o2's bytes. Inflate
+	// succeeds, the content is parseable — only the hash check stands
+	// between it and the caller.
+	lied := &PackIndex{Entries: map[model.OID]uint64{
+		o1: idx.Entries[o2],
+		o2: idx.Entries[o1],
+	}, CRCs: idx.CRCs, OIDOrder: idx.OIDOrder, PackOID: idx.PackOID}
+	_, _, err = ExtractObject(raw, lied, model.SHA1, o1)
+	require.Error(t, err, "错内容的成功 inflate 必须被内容哈希终验击落")
+	assert.Contains(t, err.Error(), "hash mismatch")
+}
