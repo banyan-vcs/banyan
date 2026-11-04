@@ -32,7 +32,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 ## 设计目标
 
 1. **完全兼容 git 命令行**：标准 `git clone / fetch / push` 直接可用（Smart HTTP
-   v1；v2 已规划——fetch 侧命令面（docs/11），当前 v2 客户端自动回退）。
+   v1 + v2——fetch 侧命令面 ls-refs/fetch 已落地，docs/04 §9b）。
 2. **任意子目录可 clone 为独立仓库**：不是 partial clone 的"稀疏检出"，而是每个
    目录拥有自己的 commit timeline，`/r/{repo}/tree/{subdir}` 即一个语义完整、
    带完整投影历史的仓库。
@@ -69,11 +69,16 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 服务层 + JSON API（`/api/v1/*`，统一错误信封） | ✅ |
 | 薄工作区 CLI（`clone/status/commit/pull/log/cat/...`） | ✅ |
 | HA 集群：网关 + ref 服务 + 散布多副本 pack 存储、节点故障恢复、仓库级动态副本 | ✅ 核心（本地盘集群，T23-T26；MySQL/raft refs 后端 → HA-2） |
+| 产品侧控制台（`banyans`）：`{group}/{project}[/path]` 路由、PAT 认证、子树作用域成员角色与前缀链继承（docs/17） | ✅ M6.1/M6.2（HTTP；SSH/web → M6.3/M6.4） |
+| 生产姿态：安全默认启动（客户端面角色无认证、gitaly 无 token 即拒启；`dev: true` 是显式出路）、SIGINT/SIGTERM 优雅 drain（在途 pack 流跑完；gRPC GracefulStop；15s 上限）、每角色 `/metrics` Prometheus 端点（git 流量速率/时延/在途、ingest 字节、CAS 冲突、副本校验回退、reconciler/sweep 进度） | ✅ P0（[docs/14](docs/14-roadmap.md) 生产主轴） |
 | token 认证 + 建仓收紧、diff/blame RPC | 🚧 下一步（M5 / M2–M3） |
-| Gitaly gRPC 前端（作为 GitLab 底层存储节点） | 🚧 规划中（docs/05 §4） |
+| Gitaly gRPC 前端（可直接替换 GitLab 的 gitaly 节点；协议 v19.5.2，163/163 RPC 全部落地——含 praefect 集群族（cluster-of-one）、服务端备份、快照、对象池、历史重写、回调式 hooks 与 ssh upload-archive 线协议——完整 Operation/Ref/Commit/Diff/Blob 服务、含 sidechannel 的传输面、逐字节一致的 git-archive、bundle、blame、冲突解决、作为客户端的 smart-HTTP 远端抓取与镜像推送） | ✅ 切片 1–11（[docs/19](docs/19-gitaly-compat.md)） |
 
-66 个集成用例以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
-薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证。
+88 个顶层集成测试函数以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
+薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证；gitaly 前端经
+git 自身答案对拍（T60）、workhorse 形态 gRPC 传输模拟器（T61）、真 clone
+所乘的多路复用 sidechannel 传输（T62）交叉验证，diff 面与 git diff
+逐字节对比（T63）。
 
 ## 代码结构
 
@@ -84,6 +89,8 @@ internal/model/     核心数据模型（anchored commit / timeline / assembly /
 internal/storage/   分布式 pack 存储（shard / metastore / packfile / index / repack）
 internal/view/      读时视图引擎（v5 织入、子树视图）
 internal/gitwire/   git wire 协议（smart HTTP v1 / upload-pack / receive-pack）
+internal/gitaly/   gitaly gRPC 前端（GitLab 直接替换，docs/19）
+internal/gitalypb/ vendored gitaly 协议（v19.5.2，生成代码）
 internal/service/   协议无关服务层（三前端共核心，docs/05）
 internal/rpc/       httpd JSON 前端（/api/v1）
 internal/cli/       薄工作区客户端实现
@@ -142,8 +149,9 @@ bash demo/cluster-demo.sh   # 完整走查：push → 杀节点 → 恢复 → �
 go build ./... && go vet ./... && go test ./...   # ~65s（集成测试需 PATH 中有 git）
 
 # 启动服务端。配置三层解析：内置默认 < YAML（-config）< 显式标志；
-# 未知配置键直接报错。示例见 banyan.example.yaml。
-go run ./cmd/banyand -listen 127.0.0.1:8097 -root ./banyand-data -meta sqlite
+# 未知配置键直接报错。-dev = 免认证本地模式——生产姿态下无认证
+# 拒绝启动（见 banyan.example.yaml）。
+go run ./cmd/banyand -dev -listen 127.0.0.1:8097 -root ./banyand-data -meta sqlite
 
 # 任意 git 仓库推上来（首次 push 自动建仓）
 git remote add banyan http://127.0.0.1:8097/r/myrepo.git
@@ -198,21 +206,22 @@ go run ../cmd/banyan log           # 远端历史，零下载
 
 | 文档 | 内容 |
 |---|---|
-| [docs/07-authorization.md](docs/07-authorization.md) | 授权模型、个人分支可见性、Web 演示 |
+| [docs/07-authorization.md](docs/07-authorization.md) | 授权模型（含安全默认启动）、个人分支可见性、Web 演示 |
 | [docs/08-derived-data.md](docs/08-derived-data.md) | 派生数据：commit-graph、路径历史、blame |
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | 索引（代数）与打包（have 减除/delta/repack）设计 |
 | [docs/15-workflow.md](docs/15-workflow.md) | M4 设计：同目录提交队列 + 分歧收敛（merge train） |
-| [docs/16-benchmark-report.md](docs/16-benchmark-report.md) | 性能实测报告：多轮验证与劣化归因（对 git http-backend） |
+| [docs/17-console.md](docs/17-console.md) | 产品侧控制台（`banyans`）：组/项目路由、PAT 认证、成员角色 |
 
 **运行与演进**：
 
 | 文档 | 内容 |
 |---|---|
 | [docs/10-ha.md](docs/10-ha.md) | 高可用：一体化 vs 网关 + 集群、仓库级副本 |
-| [docs/11-performance.md](docs/11-performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门 |
+| [docs/11-performance.md](docs/11-performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门、实测报告（§3a） |
 | [docs/12-docker-demo.md](docs/12-docker-demo.md) | Docker demo 走查：授权、SSH、Web、集群栈指引 |
 | [docs/13-testing.md](docs/13-testing.md) | 集成测试矩阵 |
-| [docs/14-roadmap.md](docs/14-roadmap.md) | 里程碑与演进路径 |
+| [docs/14-roadmap.md](docs/14-roadmap.md) | 里程碑与生产主轴 |
+| [docs/19-gitaly-compat.md](docs/19-gitaly-compat.md) | Gitaly gRPC 兼容层：覆盖矩阵（163 RPC）与设计账本 |
 
 ## 开发与提交约定
 
