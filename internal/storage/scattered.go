@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -92,6 +93,83 @@ func (n *NodeClient) DeleteRepo(ctx context.Context, repo string) error {
 		return fmt.Errorf("storage %s delete %s: status %d", n.Addr, repo, resp.StatusCode)
 	}
 	return nil
+}
+
+// ListKeys enumerates the storage keys present on the node (fleet sweep
+// whole-key phase, docs/10 §8.7).
+func (n *NodeClient) ListKeys(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, n.Addr+"/internal/keys", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("storage %s list keys: status %d", n.Addr, resp.StatusCode)
+	}
+	var out struct {
+		Keys []string `json:"keys"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Keys, nil
+}
+
+// ListRepoPacks enumerates the pack files under one storage key with their
+// mtimes (fleet sweep pack phase: diff against the central registry).
+func (n *NodeClient) ListRepoPacks(ctx context.Context, repo string) ([]NodePackEntry, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		n.Addr+"/internal/pack/list?repo="+url.QueryEscape(repo), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("storage %s list %s: status %d", n.Addr, repo, resp.StatusCode)
+	}
+	var out struct {
+		Packs []NodePackEntry `json:"packs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Packs, nil
+}
+
+// CleanTmp removes crashed-landing tmp files older than minAge under one
+// storage key; returns (removed, reclaimed bytes).
+func (n *NodeClient) CleanTmp(ctx context.Context, repo string, minAge time.Duration) (int, int64, error) {
+	body := []byte(`{"repo":` + strconv.Quote(repo) + `,"min_age_sec":` +
+		strconv.FormatInt(int64(minAge/time.Second), 10) + `}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.Addr+"/internal/pack/clean-tmp", bytes.NewReader(body))
+	if err != nil {
+		return 0, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := n.HTTP.Do(req)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, fmt.Errorf("storage %s clean %s: status %d", n.Addr, repo, resp.StatusCode)
+	}
+	var out struct {
+		Removed int   `json:"removed"`
+		Bytes   int64 `json:"bytes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, 0, err
+	}
+	return out.Removed, out.Bytes, nil
 }
 
 func (n *NodeClient) PutPack(ctx context.Context, repo string, packOID model.OID, packBytes, idxBytes []byte) error {
