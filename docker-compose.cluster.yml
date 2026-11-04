@@ -54,7 +54,9 @@ services:
     build: .
     image: banyan:dev
     container_name: banyan-gateway
-    command: ["-role", "gateway", "-listen", "0.0.0.0:8080",
+    # -dev: the demo gateway runs unauthenticated; production posture
+    # refuses to boot a client-facing role without auth (docs/07 §0)
+    command: ["-role", "gateway", "-listen", "0.0.0.0:8080", "-dev",
               "-refs-addr", "refs:8102", "-root", "/tmp"]
     ports:
       - "8100:8080" # git + JSON API
