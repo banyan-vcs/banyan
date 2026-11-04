@@ -181,3 +181,15 @@ ErrRepoRenaming、读不受挡、同 (from,to) 幂等重装/异重叠拒绝、Ab
 tmp 残片全清 + grace 内新文件保留 + dry-run 只计数 + 活数据 clone+fsck
 无损）；`TestHAFleetSweepHashedDeletedRepo`（hashed 删除仓库的不可变
 键三节点整键回收，存活仓库键不动可 clone——docs/10 §8.7）。
+
+**生产可用 P0 回归组（2026-11-05，docs/14 生产主轴）**：
+`TestProductionRequiresAuth`（config 姿态矩阵：双客户端角色无认证拒启、
+gitaly 无 token 拒启、dev 显式放开、refs/storage 内部面不受限）；
+`TestServeHTTPDrainsInFlight`（drain 契约：ctx 取消后在途请求跑完才返
+回、ErrServerClosed 吞掉、listener 关闭）；`internal/metrics` 单测组
+（Prometheus 文本格式 HELP/TYPE/标签转义/累积 bucket/并发安全/幂等声明）；
+`TestMetricsObserveGitTraffic`（真 git push+clone 落进进程注册表——请求
+计数/延迟/ingest 字节**差值**断言（registry 进程级共享，禁绝对值），
+/metrics 端点 exposition 格式）；`TestMetricsCASConflictCounter`（陈旧
+expected 的 CAS 计一次冲突——计数点在两实现源头，monolith 拓扑同样可
+测）。
