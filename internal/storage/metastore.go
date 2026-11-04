@@ -7,8 +7,15 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/banyan-vcs/banyan/internal/metrics"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
+
+// The single writer's contention gauge (served at /metrics): every CAS
+// rejected with non-fast-forward, counted at the CAS implementations so
+// every topology (in-process meta, cluster refs) reports it.
+var mCASConflicts = metrics.GetCounter("banyan_cas_conflicts_total",
+	"ref CAS attempts rejected with non-fast-forward (contention gauge)")
 
 // MetaStore is the central metadata service interface (docs/03 §2.1): a
 // composite of four role interfaces, each with its own data shape and access
@@ -760,6 +767,7 @@ func (m *MemoryMetaStore) CASHead(_ context.Context, tl model.Timeline, expected
 	}
 	cur := m.timelines[tl.Repo][tl]
 	if cur.Head != expected {
+		mCASConflicts.With().Inc()
 		return ErrNonFastForward
 	}
 	if next == "" {

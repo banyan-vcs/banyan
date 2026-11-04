@@ -172,18 +172,18 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 			}
 			switch ep {
 			case "/info/refs":
-				s.handleInfoRefs(w, r, vr)
+				observeGit("info_refs", func(w http.ResponseWriter, r *http.Request) { s.handleInfoRefs(w, r, vr) })(w, r)
 			case "/git-upload-pack":
 				// v2 carries the command in the POST body; remote-curl also sends the
 				// Git-Protocol header on the POST (http-backend.c checks the header
 				// there too — a v1 body never starts with "command=").
 				if wantsV2(r) {
-					s.serveUploadPackV2(w, r, vr)
+					observeGit("upload_pack", func(w http.ResponseWriter, r *http.Request) { s.serveUploadPackV2(w, r, vr) })(w, r)
 				} else {
-					s.serveUploadPack(w, r, vr)
+					observeGit("upload_pack", func(w http.ResponseWriter, r *http.Request) { s.serveUploadPack(w, r, vr) })(w, r)
 				}
 			case "/git-receive-pack":
-				s.serveReceivePack(w, r, vr) // receive-pack has no v2 — v0 forever
+				observeGit("receive_pack", func(w http.ResponseWriter, r *http.Request) { s.serveReceivePack(w, r, vr) })(w, r) // receive-pack has no v2 — v0 forever
 			}
 			return
 		}

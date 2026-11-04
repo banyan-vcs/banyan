@@ -28,6 +28,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -160,10 +161,12 @@ func (s *Server) serveGitExec(ch ssh.Channel, id auth.Identity, protocol, payloa
 		fmt.Fprintf(ch, "ERR %v\n", err)
 		return 1
 	}
+	start := time.Now()
 	br := bufio.NewReaderSize(ch, 64*1024)
 	out := newBufWriter(ch)
 	code := s.serveSessionCore(context.Background(), service, path, protocol, br, out, id)
 	_ = out.Flush()
+	observeSSHSession(service, code, time.Since(start))
 	return code
 }
 
