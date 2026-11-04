@@ -247,6 +247,44 @@ debug:
   `debug.block_profile_rate_ns`（0=关；block 低于 ~10µs 有实测吞吐
   代价）；设了采样率而没开 pprof_addr 会被严格校验拒绝。
 
+### 5b. 集群内部端点与 `/metrics`（2026-11-05 登记）
+
+`/api/v1` 与 git 面之外，集群内部有两套平面（设计细节归 docs/03/10，
+本节是总册登记）：
+
+**refs 服务内部面**（`/internal/*`）：
+
+| 端点 | 用途 |
+|---|---|
+| `POST /internal/meta/begin-rename` · `abort-rename` | rename 写屏障两段式（docs/03 §6b：围栏+墓碑） |
+| `POST /internal/sweep {"min_age_sec":n,"dry_run":b}` | fleet GC 两阶段（docs/10 §8.7）；周期化见 docs/14 P1 |
+| `/internal/heartbeat` · `/internal/health/nodes` · `/internal/reconcile` · `/internal/authz/policy` · `/internal/meta/*` | 既有平面（docs/10） |
+
+**存储节点内部面**（storenode）：`/internal/pack`（GET 整包/流式）、
+`/internal/object`（单对象）、`/internal/pack/list`（带 mtime，sweep 用）、
+`/internal/keys`（节点存储键清单，sweep 用）、`/internal/pack/clean-tmp`、
+`/internal/pack/rename`·`delete-repo`、`/internal/status`。
+
+**`/metrics`**（Prometheus 文本，每角色：all-in-one/gateway 的主监听 +
+refs 自有监听；零依赖自研 registry，internal/metrics）——值班第一眼
+切的面：
+
+| 指标 | 类型 | 语义 |
+|---|---|---|
+| `banyan_git_requests_total{transport,op,result}` | counter | git 会话数（http/ssh × upload_pack/receive_pack 等 × ok/rejected/error） |
+| `banyan_git_request_seconds{transport,op}` | histogram | 会话耗时 |
+| `banyan_git_inflight{transport,op}` | gauge | 在途会话（drain 观测） |
+| `banyan_ingest_packs_total` / `banyan_ingest_bytes_total` | counter | 落盘 pack 数与字节 |
+| `banyan_cas_conflicts_total` | counter | timeline head CAS 冲突（实现源头计数，双拓扑成立） |
+| `banyan_pack_holder_fallbacks_total` | counter | 散布存储 holder 校验失败回退（抽取终验击中即计数——腐坏副本信号） |
+| `banyan_reconciler_under_replicated` / `banyan_reconciler_failed` | gauge | 最近的欠副本仓数/失败数 |
+| `banyan_reconciler_copied_total` / `banyan_reconciler_trimmed_total` | counter | 副本修复字节数/裁剪数 |
+| `banyan_sweep_keys_reclaimed_total` / `banyan_sweep_packs_reclaimed_total` | counter | fleet GC 回收量 |
+
+运维面层级由此定型：`/debug/*`（pprof/stats/expvar）独立辅助监听、
+部署决策开关；`/metrics` 在主监听、随进程常开（只读、无仓库内容，
+按行抓取）。
+
 ## 6. 代码迁移路径（现状 → 目标）
 
 | 现状 | 目标 |

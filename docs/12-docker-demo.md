@@ -13,6 +13,11 @@
 
 两栈都占 8100，**不能同时跑**——切换前先 `docker compose down -v`。
 
+认证姿态（docs/07 §0 安全默认）：单体栈挂 `demo/auth-demo.yaml` 走
+**正路**（auth.users 在）；集群 demo 的 gateway 无用户表，以 `-dev`
+显式开发模式启动——生产缺省下无认证的客户端面角色会**拒绝启动**，
+demo 与生产的差别就在这一个旗标上，不是隐式放行。
+
 ## 1. 启动
 
 ```bash
@@ -154,8 +159,12 @@ docker compose down -v     # 连 banyan-data 一起删 = 完全重置
 ## 7. 本地开发（不经 Docker）
 
 ```bash
-# 服务端：显式 flag 覆盖 YAML（默认 < -config < flags），root 落本地目录
+# 服务端：显式 flag 覆盖 YAML（默认 < -config < flags），root 落本地目录。
+# 挂 demo 策略即有认证（正路）；裸跑无认证必须 -dev（docs/07 §0：
+# 生产缺省下无认证拒启，-dev 是显式开发模式）
 go run ./cmd/banyand -config demo/auth-demo.yaml -listen 127.0.0.1:8097 -root ./demo-data
+# 或免认证本地跑：
+#   go run ./cmd/banyand -dev -listen 127.0.0.1:8097 -root ./demo-data
 
 # Web：工具链仅 tsc，运行时零依赖
 cd web && npm install && npm run build
