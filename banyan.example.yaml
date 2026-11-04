@@ -64,6 +64,12 @@ meta: "mem"
 #   pack_dir: "/var/lib/banyan/gateway-cache"
 #   pack_max_mb: 1024
 
+# --- 开发/生产姿态（secure by default） ---
+# 生产缺省：面向客户端的角色（all-in-one/gateway）无认证配置（auth.upstream 或 auth.users）
+# 时拒绝启动；gitaly 前端监听但无 token 同样拒绝。以下显式放开为本地/演示形态：
+#   无认证 git 流量 + push 自动建仓 + gitaly 前端免 token。生产部署删掉此键并配好 auth 段。
+#dev: true
+
 # --- 授权（docs/07；缺省=关闭） ---
 
 # 一体化 demo 的静态策略：HTTP Basic 用户表 + 管理员 + 保护分支 + 目录访问
