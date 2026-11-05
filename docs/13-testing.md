@@ -194,3 +194,27 @@ gitaly 无 token 拒启、dev 显式放开、refs/storage 内部面不受限）�
 /metrics 端点 exposition 格式）；`TestMetricsCASConflictCounter`（陈旧
 expected 的 CAS 计一次冲突——计数点在两实现源头，monolith 拓扑同样可
 测）。
+
+## CI push-run 抖动档案（2026-11-05，未归因·仪器就位）
+
+当日 7 次 push-run 失败（next 修错连推 ×5 + main 两次合入）全数取证为
+**同一形态**：`--- FAIL: TestAuthorizationWire`，失败耗时 **0.26–0.46s**
+（用例正常 1.5s+——死在最先几个 git 操作：种子 push/匿名 clone/首次
+克隆附近），套件其余用例全绿、包完整跑完。仪器侧发现并修复 v2 注解
+过滤器的自噬 bug（`^--` 吃掉 `--- FAIL` 行、`\s` 吃掉全部缩进断言行），
+v3 起断言文本直达注解。
+
+**归因证据链**：同一棵树（e0671b8≡41b6aed）在 03:24–09:47 窗口内两败，
+其后同树连绿 23 轮（含 15 轮空提交探针 + workflow_dispatch）；恒定失败率
+无法产生该分布（0.12²×0.88²³≈0.07%）——失败概率随时间窗涨落而非随代码，
+指向 runner 侧瞬态（启动期基础设施/磁盘/网络），非代码竞态。本地全谱
+锤击零复现：TAW 隔离 115 轮（暖）+ 60 轮（每轮全新进程，对齐 CI 冷启动）、
+`-race` 15 轮（服务端数据竞态排除）、integration×storage 并发碰撞
+（runner 保真布局：共享 2 CPU 预算 + 真 mysql:8/postgres:16，DB 就绪门控）
+多轮全绿、全量 `go test ./...` ×7。
+
+**复现/取证工具链**（`F:\Workspace\test\`）：`ci-repro/Dockerfile`
+（ubuntu:26.04 + apt golang + gcc，GOTOOLCHAIN=auto——runner 等价环境）；
+`probe2.sh`（push-run 探针：`?event=push&per_page=1` 盯本尊，败即拉 v3
+注解）。再发作时：一次失败注解直接点名断言行——git 报错文本=基础设施
+实锤，断言不匹配=代码 bug，即刻归因修复。
