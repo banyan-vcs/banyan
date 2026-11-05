@@ -63,7 +63,7 @@ func newSSHServer(t *testing.T) (url func(user, path string) string, keyEnv func
 	}
 
 	meta := storage.NewMemoryMetaStore()
-	local := storage.NewLocalShardStore(t.TempDir())
+	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	objects := storage.NewObjectService(meta, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
 	gw := gitwire.NewServer(meta, objects, model.SHA1)
 	gw.Auth = policy

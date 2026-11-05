@@ -47,7 +47,7 @@ type consoleStack struct {
 func newConsoleStack(t *testing.T) *consoleStack {
 	t.Helper()
 	meta := storage.NewMemoryMetaStore()
-	local := storage.NewLocalShardStore(t.TempDir())
+	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	nodes := []storage.Node{{ID: "t1", Local: true}}
 	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
 
