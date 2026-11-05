@@ -11,6 +11,7 @@ on:
   push:
     branches: [main, next]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
