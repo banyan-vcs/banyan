@@ -9,7 +9,11 @@
 - **P0 · 上线 blocker**（2026-11-05 完成）：
   - [x] **安全默认**：`dev: true` 显式开发模式；生产（缺省）下面向客户端
     的角色无认证配置拒绝启动、gitaly 前端无 token 拒绝启动——开放的服务
-    必须是决策而非事故（`TestProductionRequiresAuth` 姿态矩阵）
+    必须是决策而非事故（`TestProductionRequiresAuth` 姿态矩阵）。
+    **元数据同姿态**（2026-11-05 补）：持有元数据的角色（all-in-one/refs）
+    生产缺省 `meta: postgres`（mysql 并列、sqlite 单机显式选择），内存
+    `mem` 仅 dev 合法（`TestMetaPostureDefaults`）——重启丢元数据同样
+    必须是决策而非事故
   - [x] **优雅停机**：SIGINT/SIGTERM → drain——新连接即拒、在途 pack 流
     15s 窗口内跑完（HTTP 四角色 + gitaly GracefulStop 降级硬停 + SSH
     listener 关闭；`TestServeHTTPDrainsInFlight` 契约测试）

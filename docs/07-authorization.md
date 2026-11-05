@@ -20,6 +20,10 @@
   compose 挂 auth-demo.yaml 走正路；集群 demo 网关走 `-dev`）；
 - refs/storage 角色不受此限——集群内部面（自有边界），客户端流量
   永远经网关；
+- **元数据同姿态**（2026-11-05）：生产（非 dev）下持有元数据的角色
+  （all-in-one/refs）`meta` 缺省即 **postgres**（mysql 并列支持、sqlite
+  为单机显式选择）；`meta: mem` 内存态仅 dev 合法，生产拒启。缺 DSN
+  的报错自带示例串。gateway/storage 不持有元数据、不受影响；
 - 首推建仓（auto-create）无需新开关：有认证时匿名推不进（CanPush
   挡在 receive-pack），无认证时进程不再启动。
 
