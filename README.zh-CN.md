@@ -70,7 +70,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 薄工作区 CLI（`clone/status/commit/pull/log/cat/...`） | ✅ |
 | HA 集群：网关 + ref 服务 + 散布多副本 pack 存储、节点故障恢复、仓库级动态副本 | ✅ 核心（本地盘集群，T23-T26；MySQL/raft refs 后端 → HA-2） |
 | 产品侧控制台（`banyans`）：`{group}/{project}[/path]` 路由、PAT 认证、子树作用域成员角色与前缀链继承（docs/17） | ✅ M6.1/M6.2（HTTP；SSH/web → M6.3/M6.4） |
-| 生产姿态：安全默认启动（客户端面角色无认证、gitaly 无 token 即拒启；`dev: true` 是显式出路）、SIGINT/SIGTERM 优雅 drain（在途 pack 流跑完；gRPC GracefulStop；15s 上限）、每角色 `/metrics` Prometheus 端点（git 流量速率/时延/在途、ingest 字节、CAS 冲突、副本校验回退、reconciler/sweep 进度） | ✅ P0（[docs/14](docs/14-roadmap.md) 生产主轴） |
+| 生产姿态：安全默认启动（客户端面角色无认证、gitaly 无 token 即拒启；`dev: true` 是显式出路）、元数据默认进数据库（持有元数据的角色缺省 postgres，mysql 并列支持，内存 mem 仅 dev 合法）、SIGINT/SIGTERM 优雅 drain（在途 pack 流跑完；gRPC GracefulStop；15s 上限）、每角色 `/metrics` Prometheus 端点（git 流量速率/时延/在途、ingest 字节、CAS 冲突、副本校验回退、reconciler/sweep 进度） | ✅ P0（[docs/14](docs/14-roadmap.md) 生产主轴） |
 | token 认证 + 建仓收紧、diff/blame RPC | 🚧 下一步（M5 / M2–M3） |
 | Gitaly gRPC 前端（可直接替换 GitLab 的 gitaly 节点；协议 v19.5.2，163/163 RPC 全部落地——含 praefect 集群族（cluster-of-one）、服务端备份、快照、对象池、历史重写、回调式 hooks 与 ssh upload-archive 线协议——完整 Operation/Ref/Commit/Diff/Blob 服务、含 sidechannel 的传输面、逐字节一致的 git-archive、bundle、blame、冲突解决、作为客户端的 smart-HTTP 远端抓取与镜像推送） | ✅ 切片 1–11（[docs/19](docs/19-gitaly-compat.md)） |
 

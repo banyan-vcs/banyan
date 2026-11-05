@@ -16,15 +16,21 @@ listen: ":8080"
 # 本地分片存储根目录（pack + idx 落盘位置；storage/all-in-one 使用）
 root: "./data"
 
-# 元数据后端：mem（内存态，重启即失）| sqlite（单机持久化，docs/03 §2）
-# | mysql | postgres（集群形态：HA 交数据库生态，docs/10 §4）
-# 集群 refs 角色应使用持久化后端（refs 重启状态零丢失，docs/10 §8/T26）
-meta: "mem"
+# 元数据后端（docs/03 §2）。缺省随姿态（docs/07 §0）：
+#   生产（非 dev）且角色持有元数据（all-in-one/refs）→ postgres；
+#   dev → mem（内存态，重启即失）。
+# 可选：postgres（生产默认）| mysql | sqlite（单机持久化）| mem（仅 dev——
+#   生产对 mem 拒启）。
+# 集群 refs 角色必须用持久化后端（refs 重启状态零丢失，docs/10 §8/T26）。
+meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgres
 
 # sqlite：数据库文件路径（默认 <root>/banyan.db）
 # mysql/postgres：驱动 DSN（数据库须已存在；schema 自动建），
 #   例 "user:pass@tcp(db:3306)/banyan?charset=utf8mb4"
 #   或 "postgres://user:pass@db:5432/banyan?sslmode=disable"
+# 生产典型（postgres 缺省时 db 必填，即此形态）：
+#   meta: "postgres"
+#   db: "postgres://banyan:pass@db:5432/banyan?sslmode=disable"
 # db: "./data/banyan.db"
 
 # 启动时创建的仓库名（可选）
