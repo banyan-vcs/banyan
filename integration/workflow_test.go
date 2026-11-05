@@ -68,9 +68,51 @@ func TestWorkflowBurst(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+
+	// The burst races git's own client-side freshness check: a member whose
+	// info/refs GET observes a tip its local history does not contain
+	// (another member already landed) is refused BY ITS OWN git client
+	// ("fetch first") — the push never reaches the train. That window is
+	// native git semantics, not a server rejection, and it widens under
+	// CPU starvation (CI runners), so client-side refusals auto-heal with
+	// pull --rebase + re-push (T18 semantics). What the train is pinned
+	// on: every push the server actually receives lands on the first try —
+	// any OTHER failure fails the test right here.
+	pending := make([]int, 0, n)
 	for i := 0; i < n; i++ {
-		require.NoError(t, errs[i], "并发 push %d 不应被拒绝（merge train 应全部落地）:\n%s", i, outs[i])
+		if errs[i] == nil {
+			continue
+		}
+		if !strings.Contains(outs[i], "fetch first") {
+			require.NoError(t, errs[i], "并发 push %d 不应被服务端拒绝（merge train 应全部落地）:\n%s", i, outs[i])
+		}
+		pending = append(pending, i)
 	}
+	for round := 0; len(pending) > 0 && round < 5; round++ {
+		var rwg sync.WaitGroup
+		for _, i := range pending {
+			rwg.Add(1)
+			go func(i int) {
+				defer rwg.Done()
+				outs[i], errs[i] = gitTry(dirs[i], "pull", "--rebase", "-q", "origin", "main")
+				if errs[i] == nil {
+					outs[i], errs[i] = gitTry(dirs[i], "push", "-q", "origin", "main")
+				}
+			}(i)
+		}
+		rwg.Wait()
+		still := make([]int, 0, len(pending))
+		for _, i := range pending {
+			if errs[i] != nil && !strings.Contains(outs[i], "fetch first") {
+				require.NoError(t, errs[i], "fetch-first 自愈轮 %d 的重推不应被服务端拒绝:\n%s", round, outs[i])
+			}
+			if errs[i] != nil {
+				still = append(still, i)
+			}
+		}
+		pending = still
+	}
+	require.Empty(t, pending, "fetch-first 自愈后仍有未落地的推送（5 轮）")
 
 	fresh := cloneRepo(t, s, s.treeURL("t41", "lib"))
 	for i := 0; i < n; i++ {

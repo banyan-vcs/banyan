@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,8 +114,11 @@ func TestRepackFragmentMerge(t *testing.T) {
 
 	// Fragmentation: several pushes + a subtree push (each weave
 	// materialization persists single-object synthetics) leave many packs.
+	// big.txt versions are deliberately large: the delta-encoding win the
+	// byte assertion pins must dwarf one stray ~74B single-object synthetic
+	// pack, not race it.
 	for i := 1; i <= 3; i++ {
-		appendLine(t, filepath.Join(src, "big.txt"), strings.Repeat("version line for delta compression ", 8)+strings.Repeat("x", i)+"\n")
+		appendLine(t, filepath.Join(src, "big.txt"), strings.Repeat("version line for delta compression ", 48)+strings.Repeat("x", i)+"\n")
 		git(t, src, "add", "-A")
 		git(t, src, "commit", "-qm", "t21: bulk "+string(rune('a'+i)))
 		git(t, src, "push", "-q", s.repoURL("t21"), "main")
@@ -125,10 +129,6 @@ func TestRepackFragmentMerge(t *testing.T) {
 	git(t, sub, "push", "-q", "origin", "main")
 
 	ctx := context.Background()
-	before, err := objects.Meta.ListPacks(ctx, "t21")
-	require.NoError(t, err)
-	require.Greater(t, len(before), 3, "预备条件：应已碎片化")
-	bytesBeforePre := 0
 	unionObjs := func(packs []storage.PackInfo) map[model.OID]bool {
 		set := map[model.OID]bool{}
 		for _, p := range packs {
@@ -140,7 +140,27 @@ func TestRepackFragmentMerge(t *testing.T) {
 		}
 		return set
 	}
-	beforeUnion := unionObjs(before)
+	// Quiesce before snapshotting: synthetic objects (weave materialization,
+	// index renders) appear lazily after the pushes, and under CPU
+	// starvation (CI runners run few vCPUs) they can straddle the snapshot
+	// window. Poll until packs and objects stop changing, then freeze the
+	// before-universe both assertions compare against.
+	var before []storage.PackInfo
+	var beforeUnion map[model.OID]bool
+	for stable, i := 0, 0; i < 80 && stable < 2; i++ {
+		packs, err := objects.Meta.ListPacks(ctx, "t21")
+		require.NoError(t, err)
+		union := unionObjs(packs)
+		if beforeUnion != nil && len(union) == len(beforeUnion) && len(packs) == len(before) {
+			stable++
+		} else {
+			stable = 0
+		}
+		before, beforeUnion = packs, union
+		time.Sleep(25 * time.Millisecond)
+	}
+	require.Greater(t, len(before), 3, "预备条件：应已碎片化")
+	bytesBeforePre := 0
 	for _, p := range before {
 		if raw, err := objects.Local.GetPackBytes("t21", p.PackOID); err == nil {
 			bytesBeforePre += len(raw)
@@ -159,8 +179,15 @@ func TestRepackFragmentMerge(t *testing.T) {
 	assert.Less(t, len(after), len(before), "几何合并应减少 pack 数")
 	// Object preservation at UNION scope: packs overlap (synthetics
 	// duplicate push objects), and the geometric merge only consolidates
-	// the violating run — the union across packs must be unchanged.
-	assert.Equal(t, beforeUnion, unionObjs(after), "对象必须全部保全（并集口径）")
+	// the violating run — every object from the before-union must survive.
+	// Superset is legal: the lightweight-commit index renders synthetic
+	// commit objects asynchronously, and under CPU starvation (CI runners)
+	// renders can land between the two snapshots — new content, not a
+	// repack defect (that would be a MISSING object, which this catches).
+	afterUnion := unionObjs(after)
+	for o := range beforeUnion {
+		assert.True(t, afterUnion[o], "repack 不得丢失对象 %s（并集口径）", o)
+	}
 
 	// Byte shrink: the merged run is delta-encoded (similar consecutive
 	// big.txt versions are prime delta bases), so total bytes drop.
