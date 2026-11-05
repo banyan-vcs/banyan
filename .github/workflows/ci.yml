@@ -60,7 +60,7 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test ./... -timeout 20m 2>&1 | tee /tmp/gotest.log; rc=${PIPESTATUS[0]}; if [ $rc -ne 0 ]; then
-          grep -E -- '^(--- FAIL|FAIL|panic:)' /tmp/gotest.log | head -20 | while IFS= read -r line; do echo "::error::${line}"; done;
+          grep -A 14 -E -- '^(--- FAIL|panic:)' /tmp/gotest.log | grep -v -E '^(--|goroutine|\s)' | head -30 | while IFS= read -r line; do echo "::error::${line}"; done;
           exit $rc; fi
 
   enterprise:
