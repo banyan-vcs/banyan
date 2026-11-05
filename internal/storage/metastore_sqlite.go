@@ -78,12 +78,19 @@ CREATE TABLE IF NOT EXISTS hooks(
 // database/sql pools plain connections, and a PRAGMA issued via Exec applies
 // to one pooled connection only. WAL keeps readers running while the
 // single-writer CAS holds the write lock (docs/03 §2); busy_timeout bounds
-// lock contention between pool connections.
+// lock contention between pool connections. _txlock=immediate makes every
+// transaction take the write lock at BEGIN: a DEFERRED read-then-write
+// transaction whose snapshot is invalidated by a concurrent commit fails
+// with SQLITE_BUSY IMMEDIATELY — busy_timeout does not retry that case
+// (it only waits on held locks), so under write contention rename/push
+// would surface spurious 500s. Immediate transactions serialize via
+// busy_timeout instead.
 func sqliteDSN(path string) string {
 	return "file:" + filepath.ToSlash(path) +
-		"?_pragma=busy_timeout(5000)" +
+		"?_pragma=busy_timeout(10000)" +
 		"&_pragma=journal_mode(WAL)" +
-		"&_pragma=synchronous(NORMAL)"
+		"&_pragma=synchronous(NORMAL)" +
+		"&_txlock=immediate"
 }
 
 // NewSQLiteMetaStore opens (creating if needed) the database at path and
