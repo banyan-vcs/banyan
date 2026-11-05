@@ -1,0 +1,94 @@
+# Pre-merge CI (docs/13): the exact local gate — build, vet, the full test
+# suite (integration needs git on PATH; ubuntu runners have it) — plus what
+# a merge target deserves and a laptop can't always provide: the metadata
+# conformance and rename-fence batteries against real mysql:8 / postgres:16
+# service containers (BANYAN_TEST_MYSQL_DSN / BANYAN_TEST_POSTGRES_DSN; the
+# openers skip silently when unset). The web console is tsc-only and the
+# enterprise module is a separate Go module — both get their own job.
+name: ci
+
+on:
+  push:
+    branches: [main, next]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: go (build + vet + tests, four metadata backends)
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: banyan
+          MYSQL_DATABASE: banyan
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -proot -pbanyan"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: banyan
+          POSTGRES_DB: banyan
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd=pg_isready
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      BANYAN_TEST_MYSQL_DSN: root:banyan@tcp(127.0.0.1:3306)/banyan?charset=utf8mb4
+      BANYAN_TEST_POSTGRES_DSN: postgres://postgres:banyan@127.0.0.1:5432/banyan?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build
+        run: go build ./...
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./... -timeout 20m
+
+  enterprise:
+    name: enterprise module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: enterprise/go.mod
+          cache: true
+          cache-dependency-path: enterprise/go.sum
+      - name: build + vet + test
+        run: |
+          go build ./... && go vet ./... && go test ./...
+        working-directory: enterprise
+
+  web:
+    name: web console (tsc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: install
+        run: npm ci
+        working-directory: web
+      - name: build
+        run: npm run build
+        working-directory: web
