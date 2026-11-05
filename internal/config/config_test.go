@@ -155,3 +155,54 @@ func TestProductionRequiresAuth(t *testing.T) {
 		})
 	}
 }
+
+// TestMetaPostureDefaults pins the metadata-backend posture: production
+// defaults the metadata-owning roles (all-in-one, refs) to postgres and
+// rejects in-memory mem; dev keeps mem; gateway/storage never own metadata
+// and stay on mem regardless; explicit sqlite survives in production as
+// the single-node choice; a missing DSN for the database backends is an
+// error that teaches the DSN shape.
+func TestMetaPostureDefaults(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		args    []string
+		want    string
+		wantErr string
+	}{
+		{name: "dev-defaults-mem", yaml: "dev: true\n", want: "mem"},
+		{name: "prod-allin-one-defaults-postgres", yaml: "auth:\n  users:\n    ops: pw\n",
+			args: []string{"-db", "postgres://u:p@h:5432/b?sslmode=disable"}, want: "postgres"},
+		{name: "prod-refs-defaults-postgres", yaml: "role: refs\n",
+			args: []string{"-db", "postgres://u:p@h:5432/b?sslmode=disable"}, want: "postgres"},
+		{name: "prod-storage-stays-mem", yaml: "role: storage\nrefs_addr: 127.0.0.1:8200\nnode_id: s1\n", want: "mem"},
+		{name: "prod-gateway-stays-mem", yaml: "role: gateway\nrefs_addr: 127.0.0.1:8200\nauth:\n  users:\n    ops: pw\n", want: "mem"},
+		{name: "prod-explicit-sqlite-ok", yaml: "auth:\n  users:\n    ops: pw\nmeta: sqlite\n", want: "sqlite"},
+		{name: "prod-explicit-mysql-ok", yaml: "auth:\n  users:\n    ops: pw\nmeta: mysql\n",
+			args: []string{"-db", "u:p@tcp(h:3306)/b"}, want: "mysql"},
+		{name: "prod-mem-rejected", yaml: "auth:\n  users:\n    ops: pw\nmeta: mem\n", wantErr: "dev-only"},
+		{name: "prod-postgres-no-dsn", yaml: "auth:\n  users:\n    ops: pw\n", wantErr: `e.g. "postgres://`},
+		{name: "prod-mysql-no-dsn", yaml: "auth:\n  users:\n    ops: pw\nmeta: mysql\n", wantErr: `e.g. "user:pass@tcp`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"-config", writeYAML(t, tc.yaml), "-root", t.TempDir()}, tc.args...)
+			cfg, err := Load(args)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("want error containing %q, got config %+v", tc.wantErr, cfg)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error %q does not contain %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want ok, got %v", err)
+			}
+			if cfg.MetaBackend != tc.want {
+				t.Fatalf("meta backend = %q, want %q", cfg.MetaBackend, tc.want)
+			}
+		})
+	}
+}

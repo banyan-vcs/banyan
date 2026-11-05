@@ -133,12 +133,13 @@ type Config struct {
 	FullCloneMaxBytes int64 `yaml:"full_clone_max_bytes"`
 }
 
-// Default returns the built-in defaults.
+// Default returns the built-in defaults. MetaBackend stays empty: the
+// resolved default follows the posture (normalize) — mem in dev, postgres
+// in production for the metadata-owning roles.
 func Default() Config {
 	return Config{
 		Listen:        ":8080",
 		Root:          "./data",
-		MetaBackend:   "mem",
 		Role:          "all-in-one",
 		DefaultR:      3,
 		WriteAcks:     "quorum",
@@ -162,7 +163,7 @@ func Load(args []string) (*Config, error) {
 	listen := fs.String("listen", defaults.Listen, "HTTP listen address")
 	root := fs.String("root", defaults.Root, "local shard storage root")
 	initRepo := fs.String("init-repo", defaults.InitRepo, "repo name to create at startup (optional)")
-	metaBackend := fs.String("meta", defaults.MetaBackend, `metadata backend: "mem", "sqlite" (file), "mysql"/"postgres" (cluster DSN in -db)`)
+	metaBackend := fs.String("meta", defaults.MetaBackend, `metadata backend: postgres (production default for all-in-one/refs) | mysql | sqlite (file) | mem (dev default; -dev)`)
 	dbPath := fs.String("db", defaults.DBPath, "sqlite database path for -meta sqlite (default <root>/banyan.db)")
 	role := fs.String("role", defaults.Role, `deployment role: all-in-one (default) | gateway | refs | storage (docs/10)`)
 	nodeID := fs.String("node-id", defaults.NodeID, "storage role: cluster node identity")
@@ -232,14 +233,6 @@ func Load(args []string) (*Config, error) {
 
 // normalize validates cross-field consistency and fills derived defaults.
 func (c *Config) normalize() error {
-	if c.MetaBackend == "" {
-		c.MetaBackend = "mem"
-	}
-	switch c.MetaBackend {
-	case "mem", "sqlite", "mysql", "postgres":
-	default:
-		return fmt.Errorf("config: meta %q: want mem|sqlite|mysql|postgres", c.MetaBackend)
-	}
 	if c.Role == "" {
 		c.Role = "all-in-one"
 	}
@@ -247,6 +240,26 @@ func (c *Config) normalize() error {
 	case "all-in-one", "gateway", "refs", "storage":
 	default:
 		return fmt.Errorf("config: role %q: want all-in-one|gateway|refs|storage", c.Role)
+	}
+	// The metadata default follows the posture. Only all-in-one and refs
+	// own metadata (gateway dials refs; storage is stateless bytes):
+	// production metadata belongs in a database — postgres by default,
+	// mysql equally supported — while mem is a dev convenience that loses
+	// everything on restart and sqlite is the embedded single-node choice.
+	ownsMeta := c.Role == "all-in-one" || c.Role == "refs"
+	if c.MetaBackend == "" {
+		c.MetaBackend = "mem"
+		if ownsMeta && !c.Dev {
+			c.MetaBackend = "postgres"
+		}
+	}
+	switch c.MetaBackend {
+	case "mem", "sqlite", "mysql", "postgres":
+	default:
+		return fmt.Errorf("config: meta %q: want mem|sqlite|mysql|postgres", c.MetaBackend)
+	}
+	if !c.Dev && c.MetaBackend == "mem" && ownsMeta {
+		return fmt.Errorf("config: meta mem is in-memory and dev-only — production metadata defaults to postgres (meta: postgres|mysql with a db DSN; sqlite for a single node)")
 	}
 	if c.Listen == "" {
 		return fmt.Errorf("config: listen must not be empty")
@@ -258,7 +271,11 @@ func (c *Config) normalize() error {
 		c.DBPath = filepath.Join(c.Root, "banyan.db")
 	}
 	if (c.MetaBackend == "mysql" || c.MetaBackend == "postgres") && c.DBPath == "" {
-		return fmt.Errorf("config: meta %s requires db (the driver DSN)", c.MetaBackend)
+		example := map[string]string{
+			"postgres": `postgres://user:pass@host:5432/banyan?sslmode=disable`,
+			"mysql":    `user:pass@tcp(host:3306)/banyan`,
+		}[c.MetaBackend]
+		return fmt.Errorf("config: meta %s requires db (the driver DSN), e.g. %q", c.MetaBackend, example)
 	}
 	switch c.WriteAcks {
 	case "quorum", "all", "one":
