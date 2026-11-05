@@ -19,12 +19,14 @@ import (
 // (docs/03 §2.1). The concurrent-CAS case doubles as the SQLite
 // busy/WAL serialization exercise.
 //
-// The cluster backends (mysql, postgres) join the matrix when their DSN is
+// metaOpeners is the shared backend matrix — every store-level battery
+// (conformance, the rename fence) runs it, so the cluster backends cannot
+// drift behind the file backends. mysql/postgres join when their DSN is
 // provided — locally via Docker (docs/10), in CI via service containers:
 //
 //	BANYAN_TEST_MYSQL_DSN="root:banyan@tcp(127.0.0.1:3306)/banyan?charset=utf8mb4"
 //	BANYAN_TEST_POSTGRES_DSN="postgres://postgres:banyan@127.0.0.1:5432/banyan?sslmode=disable"
-func TestMetaStoreConformance(t *testing.T) {
+func metaOpeners() map[string]func(*testing.T) (MetaStore, func()) {
 	open := map[string]func(*testing.T) (MetaStore, func()){
 		"mem": func(*testing.T) (MetaStore, func()) {
 			return NewMemoryMetaStore(), func() {}
@@ -57,7 +59,11 @@ func TestMetaStoreConformance(t *testing.T) {
 			return s, func() { s.Close() }
 		}
 	}
-	for name, o := range open {
+	return open
+}
+
+func TestMetaStoreConformance(t *testing.T) {
+	for name, o := range metaOpeners() {
 		t.Run(name, func(t *testing.T) {
 			m, done := o(t)
 			defer done()
@@ -67,10 +73,12 @@ func TestMetaStoreConformance(t *testing.T) {
 }
 
 // dropAllTables wipes the schema on a shared cluster database so each
-// conformance run starts empty (the file backends get a fresh file).
+// battery starts empty (the file backends get a fresh file). Every table
+// applySchema creates must be listed here — a missed table survives runs
+// and turns the shared-DB suites order-dependent.
 func dropAllTables(t *testing.T, s *SQLMetaStore) {
 	t.Helper()
-	for _, table := range []string{"hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos"} {
+	for _, table := range []string{"rename_fence", "repo_pools", "repo_blobs", "hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos"} {
 		if _, err := s.db.Exec("DROP TABLE IF EXISTS " + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}

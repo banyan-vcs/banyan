@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/banyan-vcs/banyan/internal/model"
@@ -14,25 +13,15 @@ import (
 // name fails with ErrRepoRenaming (a racing push fails cleanly instead of
 // landing a confirmed-but-invisible write), reads keep answering, the flip
 // lifts the fence, AbortRename lifts it, and only a DIFFERENT overlapping
-// rename is refused — re-running the same one is idempotent.
+// rename is refused — re-running the same one is idempotent. It runs the
+// full backend matrix (metaOpeners) — the fence's locked reads and
+// tombstone retargets are exactly the SQL that behaves differently per
+// database until proven otherwise.
 func TestRenameFenceRejectsMutations(t *testing.T) {
-	open := []struct {
-		name string
-		mk   func(t *testing.T) MetaStore
-	}{
-		{"memory", func(t *testing.T) MetaStore { return NewMemoryMetaStore() }},
-		{"sqlite", func(t *testing.T) MetaStore {
-			ms, err := NewSQLiteMetaStore(filepath.Join(t.TempDir(), "fence.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = ms.Close() }) // release the Windows file lock
-			return ms
-		}},
-	}
-	for _, o := range open {
-		t.Run(o.name, func(t *testing.T) {
-			m := o.mk(t)
+	for name, open := range metaOpeners() {
+		t.Run(name, func(t *testing.T) {
+			m, done := open(t)
+			defer done()
 			ctx := context.Background()
 			if err := m.CreateRepo(ctx, "alpha", model.SHA1); err != nil {
 				t.Fatal(err)
