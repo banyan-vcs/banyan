@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -68,6 +69,27 @@ func newServerPlane(t *testing.T) (*server, storage.MetaStore, *storage.ObjectSe
 func (s *server) repoURL(name string) string { return s.URL + "/r/" + name + ".git" }
 func (s *server) treeURL(name, sub string) string {
 	return s.URL + "/r/" + name + ".git/tree/" + sub
+}
+
+// tempDirQuiet is t.TempDir plus a retrying sweep: async server-side
+// goroutines (post-receive hook delivery is fire-and-forget) can outlive
+// the httptest server by microseconds and drop one more file into the
+// shard root while the standard RemoveAll is already walking it — on
+// Linux that surfaces as "directory not empty" and fails the TEST, not
+// the code under test. The extra pass (registered later, so it runs
+// first in LIFO order) sweeps until the tree stays gone.
+func tempDirQuiet(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Cleanup(func() {
+		for i := 0; i < 10; i++ {
+			if err := os.RemoveAll(dir); err == nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+	return dir
 }
 
 func needGit(t *testing.T) {
