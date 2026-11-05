@@ -185,7 +185,8 @@ var (
 // MySQL notes: InnoDB index keys are byte-limited (3072 with utf8mb4), so
 // indexed text columns get explicit VARCHAR sizes instead of TEXT; rows that
 // exceed them fail at insert (strict mode) — repo names, anchors and ref
-// names are admin/client-visible strings, not arbitrary blobs.
+// names are admin/client-visible strings, not arbitrary blobs. Column names
+// must dodge MySQL reserved words (why repo_blobs says blob_key, not key).
 
 func ddlSQLite() []string {
 	return []string{
@@ -240,9 +241,9 @@ func ddlSQLite() []string {
 ) WITHOUT ROWID`,
 		`CREATE TABLE IF NOT EXISTS repo_blobs(
 	repo TEXT NOT NULL,
-	key  TEXT NOT NULL,
+	blob_key TEXT NOT NULL,
 	data BLOB NOT NULL,
-	PRIMARY KEY(repo, key)
+	PRIMARY KEY(repo, blob_key)
 ) WITHOUT ROWID`,
 		`CREATE TABLE IF NOT EXISTS repo_pools(
 	member   TEXT NOT NULL PRIMARY KEY,
@@ -309,9 +310,9 @@ func ddlMySQL() []string {
 )`,
 		`CREATE TABLE IF NOT EXISTS repo_blobs(
 	repo VARCHAR(190) NOT NULL,
-	key  VARCHAR(120) NOT NULL,
+	blob_key VARCHAR(120) NOT NULL,
 	data LONGBLOB NOT NULL,
-	PRIMARY KEY(repo, key)
+	PRIMARY KEY(repo, blob_key)
 )`,
 		`CREATE TABLE IF NOT EXISTS repo_pools(
 	member   VARCHAR(190) NOT NULL PRIMARY KEY,
@@ -319,8 +320,8 @@ func ddlMySQL() []string {
 	upstream TINYINT NOT NULL DEFAULT 0
 )`,
 		`CREATE TABLE IF NOT EXISTS rename_fence(
-	frm TEXT NOT NULL PRIMARY KEY,
-	dst TEXT NOT NULL,
+	frm VARCHAR(190) NOT NULL PRIMARY KEY,
+	dst VARCHAR(190) NOT NULL,
 	done INTEGER NOT NULL DEFAULT 0
 )`,
 	}
@@ -378,9 +379,9 @@ func ddlPostgres() []string {
 )`,
 		`CREATE TABLE IF NOT EXISTS repo_blobs(
 	repo VARCHAR(190) NOT NULL,
-	key  VARCHAR(120) NOT NULL,
+	blob_key VARCHAR(120) NOT NULL,
 	data BYTEA NOT NULL,
-	PRIMARY KEY(repo, key)
+	PRIMARY KEY(repo, blob_key)
 )`,
 		`CREATE TABLE IF NOT EXISTS repo_pools(
 	member   TEXT NOT NULL PRIMARY KEY,
@@ -774,19 +775,19 @@ func (s *SQLMetaStore) SetRepoBlob(ctx context.Context, repo, key string, data [
 	if err := s.fenceReject(ctx, repo); err != nil {
 		return err
 	}
-	suffix := " ON CONFLICT(repo, key) DO UPDATE SET data=excluded.data"
+	suffix := " ON CONFLICT(repo, blob_key) DO UPDATE SET data=excluded.data"
 	if s.d.name == "mysql" {
 		suffix = " ON DUPLICATE KEY UPDATE data=VALUES(data)"
 	}
 	_, err := s.db.ExecContext(ctx,
-		s.q("INSERT INTO repo_blobs(repo, key, data) VALUES(?,?,?)"+suffix), repo, key, data)
+		s.q("INSERT INTO repo_blobs(repo, blob_key, data) VALUES(?,?,?)"+suffix), repo, key, data)
 	return err
 }
 
 func (s *SQLMetaStore) GetRepoBlob(ctx context.Context, repo, key string) ([]byte, bool, error) {
 	var data []byte
 	err := s.db.QueryRowContext(ctx,
-		s.q("SELECT data FROM repo_blobs WHERE repo=? AND key=?"), repo, key).Scan(&data)
+		s.q("SELECT data FROM repo_blobs WHERE repo=? AND blob_key=?"), repo, key).Scan(&data)
 	if err == sql.ErrNoRows {
 		return nil, false, nil
 	}
