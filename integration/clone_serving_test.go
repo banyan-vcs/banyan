@@ -46,7 +46,7 @@ func (c *countingBackend) GetPack(ctx context.Context, repo string, packOID mode
 func TestCloneShapedServing(t *testing.T) {
 	needGit(t)
 	meta := storage.NewMemoryMetaStore()
-	local := storage.NewLocalShardStore(t.TempDir())
+	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	backend := &countingBackend{LocalBackend: &storage.LocalBackend{Local: local, NodeID: "t1"}}
 	objects := storage.NewObjectServiceWithBackend(meta, backend, model.SHA1)
 

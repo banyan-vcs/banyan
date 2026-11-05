@@ -28,7 +28,7 @@ import (
 func newConvergeServer(t *testing.T) *server {
 	t.Helper()
 	meta := storage.NewMemoryMetaStore()
-	local := storage.NewLocalShardStore(t.TempDir())
+	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	nodes := []storage.Node{{ID: "t1", Local: true}}
 	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
 	mux := http.NewServeMux()

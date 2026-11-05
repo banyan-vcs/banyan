@@ -34,7 +34,7 @@ func newAuthServer(t *testing.T) (*server, *auth.StaticPolicy) {
 		SubtreeAccess:     map[string][]string{"/secret": {"admin"}},
 	}
 	meta := storage.NewMemoryMetaStore()
-	local := storage.NewLocalShardStore(t.TempDir())
+	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	objects := storage.NewObjectService(meta, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
 	mux := http.NewServeMux()
 	gw := gitwire.NewServer(meta, objects, model.SHA1)

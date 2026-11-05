@@ -413,6 +413,22 @@ func TestHARefsRestart(t *testing.T) {
 	git(t, seed, "commit", "-qm", "ha4: before restart")
 	git(t, seed, "push", "-q", c.gwURL()+"/r/ha4.git", "main")
 
+	// Let the push's async weave/synth flush settle BEFORE the restart: the
+	// flush registers synthetic objects with refs after the push returns,
+	// and under CPU starvation (CI) it can still be in flight when refs
+	// closes — the post-restart advertisement then names a tip the client
+	// has never seen and the next push dies as client-side "fetch first".
+	// Poll until the advertised tip is stable.
+	lsremote := func() string {
+		return strings.TrimSpace(git(t, seed, "ls-remote", "-q", c.gwURL()+"/r/ha4.git", "refs/heads/main"))
+	}
+	for prev, i := lsremote(), 0; i < 40; i++ {
+		time.Sleep(50 * time.Millisecond)
+		if cur := lsremote(); cur == prev && cur != "" {
+			break
+		}
+	}
+
 	// Stop the refs service and restart it on the same address + database.
 	_ = c.refsHTTP.Close()
 	time.Sleep(100 * time.Millisecond)

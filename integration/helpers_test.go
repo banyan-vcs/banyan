@@ -55,7 +55,7 @@ func newServer(t *testing.T) *server {
 func newServerPlane(t *testing.T) (*server, storage.MetaStore, *storage.ObjectService) {
 	t.Helper()
 	meta := storage.NewMemoryMetaStore()
-	local := storage.NewLocalShardStore(t.TempDir())
+	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	nodes := []storage.Node{{ID: "t1", Local: true}}
 	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
 	mux := http.NewServeMux()
@@ -80,14 +80,27 @@ func (s *server) treeURL(name, sub string) string {
 // first in LIFO order) sweeps until the tree stays gone.
 func tempDirQuiet(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	// Self-managed, NOT t.TempDir: async server-side writers (post-receive
+	// hook delivery is fire-and-forget; index renders persist synthetics
+	// after a fetch) can outlive the httptest server by a beat and drop one
+	// more file into the shard root — on Linux a stdlib t.TempDir cleanup
+	// then FAILS THE TEST with "directory not empty". This variant owns its
+	// cleanup entirely: sweep, let a straggler land, confirm gone — repeat
+	// until it stays gone; no stdlib cleanup is involved.
+	dir, err := os.MkdirTemp("", "banyan-it-*")
+	require.NoError(t, err)
 	t.Cleanup(func() {
-		for i := 0; i < 10; i++ {
-			if err := os.RemoveAll(dir); err == nil {
+		for i := 0; i < 25; i++ {
+			if err := os.RemoveAll(dir); err != nil {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			time.Sleep(15 * time.Millisecond) // let a straggler land
+			if _, serr := os.Stat(dir); os.IsNotExist(serr) {
 				return
 			}
-			time.Sleep(20 * time.Millisecond)
 		}
+		_ = os.RemoveAll(dir) // best effort; give up quietly
 	})
 	return dir
 }
