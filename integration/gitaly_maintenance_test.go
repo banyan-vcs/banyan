@@ -14,6 +14,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -66,6 +67,12 @@ func TestT67GitalyMaintenanceSurface(t *testing.T) {
 	write(t, src+"/hello.txt", "hello archive\n")
 	write(t, src+"/docs/guide.md", "guide\n")
 	write(t, src+"/run.sh", "#!/bin/sh\necho hi\n")
+	// Keep the working tree honest on Linux: update-index --chmod=+x only
+	// sets the INDEX mode, so a plain 0644 working file would flip the exec
+	// bit back at the next `add -A` (core.filemode=true) and pollute the c2
+	// raw diff with a phantom run.sh mode change. Windows ignores the exec
+	// bit, so the chmod is inert there.
+	require.NoError(t, os.Chmod(src+"/run.sh", 0o755))
 	gitDated(t, src, 1700000001, "add", "-A")
 	gitDated(t, src, 1700000001, "update-index", "--chmod=+x", "run.sh")
 	gitDated(t, src, 1700000001, "commit", "-qm", "c1 seed")

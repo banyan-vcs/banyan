@@ -131,7 +131,7 @@ func listHooks(t *testing.T, s *server, repo string) []storage.HookInfo {
 func newHookServer(t *testing.T) *server {
 	t.Helper()
 	meta := storage.NewMemoryMetaStore()
-	local := storage.NewLocalShardStore(t.TempDir())
+	local := storage.NewLocalShardStore(tempDirQuiet(t)) // async hook writers outlive the server briefly (Linux RemoveAll race)
 	nodes := []storage.Node{{ID: "t1", Local: true}}
 	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
 	mux := http.NewServeMux()
