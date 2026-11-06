@@ -14,9 +14,9 @@ import (
 // It is deliberately in-process and readable — production replaces it at
 // the Service seam, never by weakening the wire enforcement points.
 type StaticPolicy struct {
-	Users  map[string]string   // user → password (demo-grade; plaintext by design)
-	Admins []string            // see and do everything (protected branches, all personal refs)
-	ProtectedBranches []string // push restricted to admins (e.g. main)
+	Users             map[string]string // user → password (demo-grade; plaintext by design)
+	Admins            []string          // see and do everything (protected branches, all personal refs)
+	ProtectedBranches []string          // push restricted to admins (e.g. main)
 	// SubtreeAccess restricts fetch of a subtree virtual repo to the listed
 	// users (directory granularity). Paths absent from the map are open to
 	// every authenticated user.
@@ -152,4 +152,10 @@ func (p *StaticPolicy) CanPush(id Identity, _, _, branch string) bool {
 		return p.isAdmin(id.User)
 	}
 	return true
+}
+
+// CanAdmin (auth.AdminChecker): the static admins manage everything —
+// repo "" (global) and any repo name alike.
+func (p *StaticPolicy) CanAdmin(id Identity, _ string) bool {
+	return !id.Anonymous() && p.isAdmin(id.User)
 }

@@ -524,13 +524,53 @@ func (s *SQLMetaStore) applySchema(ctx context.Context) error {
 }
 
 func (s *SQLMetaStore) ddl() []string {
+	var base []string
 	switch s.d.name {
 	case "mysql":
-		return ddlMySQL()
+		base = ddlMySQL()
 	case "postgres":
-		return ddlPostgres()
+		base = ddlPostgres()
 	default:
-		return ddlSQLite()
+		base = ddlSQLite()
+	}
+	return append(base, s.tokensDDL())
+}
+
+// tokensDDL is the personal-access-token table (docs/07 §6) in this
+// backend's dialect — column names avoid MySQL reserved words.
+func (s *SQLMetaStore) tokensDDL() string {
+	switch s.d.name {
+	case "mysql":
+		return `CREATE TABLE IF NOT EXISTS tokens(
+	token_hash CHAR(64) NOT NULL PRIMARY KEY,
+	owner      VARCHAR(120) NOT NULL,
+	name       VARCHAR(190) NOT NULL DEFAULT '',
+	scope      VARCHAR(16) NOT NULL,
+	expires_at BIGINT NOT NULL DEFAULT 0,
+	revoked    INTEGER NOT NULL DEFAULT 0,
+	created_at BIGINT NOT NULL,
+	INDEX idx_tokens_owner (owner)
+)`
+	case "postgres":
+		return `CREATE TABLE IF NOT EXISTS tokens(
+	token_hash CHAR(64) PRIMARY KEY,
+	owner      VARCHAR(120) NOT NULL,
+	name       VARCHAR(190) NOT NULL DEFAULT '',
+	scope      VARCHAR(16) NOT NULL,
+	expires_at BIGINT NOT NULL DEFAULT 0,
+	revoked    INTEGER NOT NULL DEFAULT 0,
+	created_at BIGINT NOT NULL
+)`
+	default:
+		return `CREATE TABLE IF NOT EXISTS tokens(
+	token_hash TEXT PRIMARY KEY,
+	owner      TEXT NOT NULL,
+	name       TEXT NOT NULL DEFAULT '',
+	scope      TEXT NOT NULL,
+	expires_at INTEGER NOT NULL DEFAULT 0,
+	revoked    INTEGER NOT NULL DEFAULT 0,
+	created_at INTEGER NOT NULL
+) WITHOUT ROWID`
 	}
 }
 

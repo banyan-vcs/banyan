@@ -78,7 +78,7 @@ func TestMetaStoreConformance(t *testing.T) {
 // and turns the shared-DB suites order-dependent.
 func dropAllTables(t *testing.T, s *SQLMetaStore) {
 	t.Helper()
-	for _, table := range []string{"rename_fence", "repo_pools", "repo_blobs", "hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos"} {
+	for _, table := range []string{"rename_fence", "repo_pools", "repo_blobs", "hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos", "tokens"} {
 		if _, err := s.db.Exec("DROP TABLE IF EXISTS " + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -305,6 +305,58 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 	// Deletion is idempotent.
 	if err := m.DeleteRepo(ctx, "r2"); err != nil {
 		t.Fatalf("delete again: %v", err)
+	}
+
+	// --- token registry (docs/07 §6): every metadata-owning store ---
+	tr, ok := m.(TokenRegistry)
+	if !ok {
+		t.Fatal("metadata-owning store must implement TokenRegistry")
+	}
+	plain, err := NewTokenPlaintext()
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if len(plain) <= len("banyan_") || plain[:7] != "banyan_" {
+		t.Fatalf("plaintext shape = %q", plain)
+	}
+	tok := TokenInfo{Hash: HashToken(plain), User: "alice", Name: "ci", Scope: ScopeWrite, Created: 12345}
+	if err := tr.PutToken(ctx, tok); err != nil {
+		t.Fatalf("put token: %v", err)
+	}
+	if err := tr.PutToken(ctx, tok); err == nil {
+		t.Fatal("duplicate token hash must fail")
+	}
+	bad := tok
+	bad.Scope = "root"
+	if tr.PutToken(ctx, bad) == nil {
+		t.Fatal("invalid scope must fail")
+	}
+	got, err := tr.TokenByHash(ctx, HashToken(plain))
+	if err != nil || got.User != "alice" || got.Scope != ScopeWrite || got.Revoked {
+		t.Fatalf("by-hash = %+v, %v", got, err)
+	}
+	if _, err := tr.TokenByHash(ctx, HashToken("banyan_nope")); !errors.Is(err, ErrTokenUnknown) {
+		t.Fatalf("unknown token error = %v, want ErrTokenUnknown", err)
+	}
+	if err := tr.PutToken(ctx, TokenInfo{Hash: HashToken("banyan_second"), User: "bob", Scope: ScopeRead, Created: 12346}); err != nil {
+		t.Fatalf("put second: %v", err)
+	}
+	all, err := tr.ListTokens(ctx, "")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("list all = %v, %v", all, err)
+	}
+	mine, err := tr.ListTokens(ctx, "alice")
+	if err != nil || len(mine) != 1 || mine[0].User != "alice" {
+		t.Fatalf("list alice = %v, %v", mine, err)
+	}
+	if err := tr.RevokeToken(ctx, HashToken(plain)); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if err := tr.RevokeToken(ctx, HashToken(plain)); err != nil {
+		t.Fatalf("revoke idempotent: %v", err)
+	}
+	if got, _ := tr.TokenByHash(ctx, HashToken(plain)); !got.Revoked {
+		t.Fatal("revoked flag must persist")
 	}
 }
 

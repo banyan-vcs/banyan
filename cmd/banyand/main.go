@@ -114,8 +114,17 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		log.Printf("auth: upstream console %s (snapshot v2 + signed identity)", cfg.Auth.Upstream)
 	case staticPolicy(cfg) != nil:
 		policy := staticPolicy(cfg)
-		gw.Auth = policy
-		api.Auth = policy
+		var svc auth.Service = policy
+		// Metadata-plane PATs ride on top of the static policy (docs/07
+		// §6): passwords and SSH keys keep working, tokens add scoped
+		// credentials (read/write/admin) — the decorator composes at the
+		// same Service seam the wire layers already enforce through.
+		if tr, ok := meta.(storage.TokenRegistry); ok {
+			svc = &auth.TokenPolicy{Inner: policy, Tokens: tr}
+			log.Printf("auth: token layer on (personal access tokens, scopes read/write/admin)")
+		}
+		gw.Auth = svc
+		api.Auth = svc
 		log.Printf("auth: enabled (%d users, %d admins, protected %v)",
 			len(policy.Users), len(policy.Admins), policy.ProtectedBranches)
 	}

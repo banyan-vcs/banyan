@@ -267,6 +267,7 @@ type MemoryMetaStore struct {
 	pools      map[string]PoolInfo          // member repo → pool record
 	renames    map[string]string            // fence: from → to (rename in flight, docs/03 §6b)
 	retired    map[string]string            // tombstone: from → to (rename completed)
+	tokens     map[string]TokenInfo         // sha256 → token (docs/07 §6)
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
@@ -279,6 +280,7 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 		placements: map[string]int{},
 		repoBlobs:  map[string]map[string][]byte{},
 		hooks:      map[string]map[string]HookInfo{},
+		tokens:     map[string]TokenInfo{},
 		pools:      map[string]PoolInfo{},
 		renames:    map[string]string{},
 		retired:    map[string]string{},
