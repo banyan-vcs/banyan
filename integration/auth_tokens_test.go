@@ -10,6 +10,7 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -32,7 +33,8 @@ import (
 func newTokenServer(t *testing.T) (*server, *storage.MemoryMetaStore) {
 	t.Helper()
 	policy := &auth.StaticPolicy{
-		Users: map[string]string{"alice": "a", "bob": "b", "admin": "x"},
+		Users:  map[string]string{"alice": "a", "bob": "b", "admin": "x"},
+		Admins: []string{"admin"},
 	}
 	meta := storage.NewMemoryMetaStore()
 	objects := storage.NewObjectService(meta, storage.NewLocalShardStore(tempDirQuiet(t)),
@@ -60,12 +62,13 @@ func mintToken(t *testing.T, s *server, user, pass, scope string) (plaintext, ha
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode, "mint %s token as %s", scope, user)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	require.Equal(t, http.StatusOK, resp.StatusCode, "mint %s token as %s: %s", scope, user, raw)
 	var out struct {
 		Token string `json:"token"`
 		Hash  string `json:"hash"`
 	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+	require.NoError(t, json.Unmarshal(raw, &out))
 	require.True(t, strings.HasPrefix(out.Token, "banyan_"), "plaintext shape")
 	return out.Token, out.Hash
 }
@@ -77,12 +80,18 @@ func TestTokenAuthE2E(t *testing.T) {
 	readTok, readHash := mintToken(t, s, "alice", "a", "read")
 	writeTok, _ := mintToken(t, s, "alice", "a", "write")
 
-	// Seed as alice over the password path (auto-create needs push rights).
-	src := seedRepo(t, s, "tk")
+	// Seed as alice over the password path (auto-create needs push rights —
+	// a credentialed URL; the anonymous shape would 401 and wake the local
+	// credential manager).
+	src := t.TempDir()
+	git(t, src, "init", "-q", "-b", "main", ".")
+	write(t, filepath.Join(src, "README.md"), "readme-v1\n")
+	write(t, filepath.Join(src, "lib", "a.txt"), "a-v1\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-qm", "seed tk")
+	git(t, src, "push", "-q", credURL(s, "alice", "a", "/r/tk.git"), "main")
 
 	// A read token fetches.
-	home := cloneRepo(t, s, s.repoURL("tk"))
-	_ = home
 	ro := t.TempDir()
 	git(t, "", "clone", "-q", credURL(s, "alice", readTok, "/r/tk.git"), ro)
 	assert.Equal(t, "readme-v1\n", readFile(t, filepath.Join(ro, "README.md")))
@@ -124,13 +133,20 @@ func TestTokenAuthE2E(t *testing.T) {
 			assert.True(t, tok.Revoked, "revocation visible in listing")
 		}
 	}
-	_ = src
 }
 
 func TestRPCFineGrainedAuthorization(t *testing.T) {
 	needGit(t)
-	s, meta := newTokenServer(t)
-	seedRepo(t, s, "rz")
+	s, _ := newTokenServer(t)
+	// Seed with credentials: the anonymous URL would 401 and wake the local
+	// credential manager (Windows GCM pops a dialog).
+	src := t.TempDir()
+	git(t, src, "init", "-q", "-b", "main", ".")
+	write(t, filepath.Join(src, "README.md"), "rz\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-qm", "seed rz")
+	git(t, src, "push", "-q", credURL(s, "alice", "a", "/r/rz.git"), "main")
+	_ = src
 
 	rpcCall := func(method, path, user, pass, body string) int {
 		t.Helper()
@@ -145,7 +161,9 @@ func TestRPCFineGrainedAuthorization(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
 		resp.Body.Close()
+		t.Logf("%s %s as %s -> %d %s", method, path, user, resp.StatusCode, raw)
 		return resp.StatusCode
 	}
 
@@ -170,7 +188,6 @@ func TestRPCFineGrainedAuthorization(t *testing.T) {
 	// Repo creation carries the push gate: read tokens cannot create.
 	require.Equal(t, http.StatusForbidden, rpcCall("POST", "/api/v1/repos", "alice", readTok, `{"name":"fresh"}`))
 	require.Equal(t, http.StatusOK, rpcCall("POST", "/api/v1/repos", "alice", "a", `{"name":"fresh"}`))
-	_ = meta
 }
 
 func TestDiffBlameRPC(t *testing.T) {

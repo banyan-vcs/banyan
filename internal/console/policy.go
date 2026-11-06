@@ -210,6 +210,11 @@ func (d *DB) BuildSnapshot(ctx context.Context) (auth.UpstreamSnapshot, error) {
 			snap.Admins = append(snap.Admins, u.Username)
 		}
 	}
+	// The console's service principal ("console") signs the operational
+	// passthroughs (repack/rename/placement, docs/17 §5) after authorizing
+	// the acting admin on its own side — the gateway's AdminChecker admits
+	// it as the management plane itself.
+	snap.Admins = append(snap.Admins, "console")
 	projects, err := d.ListProjects(ctx)
 	if err != nil {
 		return snap, err

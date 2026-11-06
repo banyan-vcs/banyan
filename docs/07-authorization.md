@@ -152,8 +152,12 @@ upstream console 形态不包裹（console 自有 PAT 体系，网关验签名�
 策略实现它才生效，不实现维持原认证门（远端快照网关向后兼容）：
 StaticPolicy=管理员表；UpstreamPolicy=console 快照 Admins；
 TokenPolicy=admin scope 或内层管理员。内容写走 git wire 同一条
-CanPush（`/api/v1/commit` 按解析后的默认分支判定保护分支；
-`POST /api/v1/refs`、建仓同）。只读端点（log/diff/blame/objects/
+CanPush（`/api/v1/commit` 按解析后的默认分支判定保护分支；`POST /api/v1/refs` 同）。
+建仓走**写权限级门**（认证 + scope≥write）：待建仓对 per-repo 策略
+天然未知，upstream 快照下 CanPush 会 fail-closed 整个 console 两跳
+建仓流——console 在自己侧做完产品级授权后以服务身份转发，网关的
+AdminChecker 由此把快照里的服务主体 "console" 列为隐式管理员
+（policy.go BuildSnapshot）。只读端点（log/diff/blame/objects/
 fetch-trees/resolve）维持认证门。测试：T79（token E2E：read 可取不可
 推、write 推过、吊销即刻 401、属主错配拒绝、明文只现一次）、T80
 （RPC 分级：开发者 403 / 管理员 200 / admin token 管理 / read token
