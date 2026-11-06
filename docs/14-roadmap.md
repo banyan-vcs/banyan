@@ -71,12 +71,14 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 - [ ] commit-graph + merge-base（generation number）
 - [x] log RPC（/api/v1/log，路径过滤 + hash 一致视图）
 - [x] 服务层抽取（internal/service，2026-10-23：rpc 全量薄化为适配层、fetch-trees/commit/refs/objects 扩展/resolve/repos 落地、log 下沉共享实现；gitwire 发布路径迁移至 CommitService 留待 Gitaly 前端，docs/05 §6）
-- [ ] 路径历史 / diff RPC
+- [x] 路径历史 / diff RPC（2026-11-06：路径历史=log RPC 既有 path 过滤；diff RPC
+      字节对 git diff，引擎与 gitaly 前端同源，T81）
 - [x] 全局对象索引批量定位 + pack cache（内存层 M1 已落地；CommitGraph/TreeMemo 派生索引见 docs/03 §1.3）
 
 ## M3 · 派生数据与下载优化
 
-- [ ] blame RPC（递归 + 记忆化）
+- [x] blame RPC（2026-11-06：递归首父归因引擎 + --line-porcelain 字节对齐 git
+      blame——boundary/previous 头、同源行分组规则一并钉死，T81）
 - [ ] 可达性位图（upload-pack 闭包加速）
 - [ ] 服务端 filter 完整规格（blob:none / tree:0 / sparse:oid / subtree:<path>）
 - [x] 热路径整 pack 直传（已提前实现，docs/03 §1.3：闭包=整 pack 时字节直传，serve 2.77s→24ms）
@@ -153,8 +155,12 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
 - [x] 存储寻址双模式 + rename（2026-10-25，docs/03 §6：named 可读目录 vs hashed
       @hashed 不透明键——映射在网关解析、rename 零存储动作；不变 storage_id；
       T40。reconciler 自动补齐 named 改名残留归 HA-2）
-- [ ] token 认证（PAT / CI job token 透传，仓库级 R/W scope）+ 自动建仓收紧开关（已收紧：授权
-      开启时建仓需 push 权）+ RPC 层细粒度授权（rename 端点现为认证门）
+- [x] token 认证 + RPC 层细粒度授权（2026-11-06，docs/07 §8/§8b）：元数据面 PAT
+      （sha256 落库四后端矩阵、明文只现一次、过期/吊销读取时判定）；scope
+      read<write<admin 是上限不是旁路——TokenPolicy 装饰任何 Service（static/upstream），
+      wire 层零改动；RPC 管理端点走 auth.AdminChecker 可选扩展缝、内容写与 wire 同一条
+      CanPush；自动建仓收紧此前已内建（wire 与 RPC 建仓同门）。T79/T80。CI job
+      token=按用户铸造的 PAT（属主必须匹配，docs/17 §4 约定）
 - [ ] Gitaly gRPC 兼容前端 P1（Server/Repository/SmartHTTP/Ref/Commit/Blob/Diff 子集；GitLab 直连 banyand 为存储节点，docs/05 §4）
 - [ ] webhook 派发（push event → 平台 trigger）
 - [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）

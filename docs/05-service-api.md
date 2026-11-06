@@ -101,10 +101,10 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | commit（blob 上传） | `POST /api/v1/objects/content` | Object.Put | **已落地** |
 | commit | `POST /api/v1/commit` | Commit.Create | **已落地** |
 | log | `POST /api/v1/log` | History.Log | **已有**（已下沉 service） |
-| show | `POST /api/v1/log`（n=1）+ `POST /api/v1/diff` | Log + Diff | diff 待建（M2） |
-| diff | `POST /api/v1/diff` | History.Diff | M2 |
+| show | `POST /api/v1/log`（n=1）+ `GET /api/v1/diff` | Log + Diff | **已落地**（diff 引擎与 gitaly 同源） |
+| diff | `GET /api/v1/diff?repo&from&to&path` | History.Diff | **已落地**（2026-11-06；字节对 `git diff`，T81；path 支持目录前缀 `lib/`） |
 | file-history | `POST /api/v1/file-history` | History.FileHistory | M2 |
-| blame | `POST /api/v1/blame` | History.Blame | M3 |
+| blame | `GET /api/v1/blame?repo&rev&path` | History.Blame | **已落地**（2026-11-06；`--line-porcelain` 字节对齐 `git blame`，T81） |
 | cat（非 HEAD rev / 缓存脱靶） | `POST /api/v1/resolve` | Resolve | **已落地**（计划外增补：rev:path → 对象指针） |
 | branch / tag | `GET /api/v1/refs` / `POST /api/v1/refs` | Ref.List / Ref.CAS | **已落地**（POST 限根仓库） |
 | repo create/ls | `GET /api/v1/repos` | Repo.List | GET **已落地**；create 配合 M5 |
@@ -298,7 +298,7 @@ refs 自有监听；零依赖自研 registry，internal/metrics）——值班�
 
 | 里程碑 | 本篇内容 |
 |---|---|
-| M2 | ✅ 服务层抽取 + fetch-trees / objects 扩展 / commit / refs / resolve / repos RPC + thin CLI（2026-10-23，T22）；diff / file-history 待建 |
-| M3 | blame RPC；pull --rebase（服务端重放复用 Commit.Create） |
+| M2 | ✅ 服务层抽取 + fetch-trees / objects 扩展 / commit / refs / resolve / repos RPC + thin CLI（2026-10-23，T22）；✅ diff RPC（2026-11-06，T81）；路径历史=log RPC 既有 path 过滤；file-history 独立端点仍留待 |
+| M3 | ✅ blame RPC（2026-11-06，T81）；pull --rebase（服务端重放复用 Commit.Create） |
 | M5 | token 认证（service 边界）；Gitaly P1；repo 建仓收紧 |
 | M5+ | Gitaly P2（hook 回调 + webhook 共挂点）；P3（housekeeping→repack） |

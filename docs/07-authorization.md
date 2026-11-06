@@ -83,12 +83,12 @@ nil Service = 授权关闭（**仅 dev 模式下能启动到这一步**，§0；
 
 ## 5. 边界与后续（诚实清单）
 
-- RPC 层目前**只做认证**，不做细粒度授权（repo/dir/branch 规则在
-  git wire 上；Web 经 gitwire 广告拿分支列表故页面可见性正确）——
-  RPC 细粒度授权列 M5 后续；建仓与 rename 端点同享这道认证门
-  （docs/03 §6）；
-- 密码表现明存储于配置（demo 定位）；token 认证（PAT/CI 透传）为
-  M5 下一项；
+- ~~RPC 层只做认证~~ **已细粒度化**（2026-11-06，§8b）：管理端点走
+  `auth.AdminChecker` 扩展缝（管理员/token admin scope），内容写
+  （`/api/v1/commit`、`POST /refs`、建仓）走与 git wire 同一条
+  CanPush；只读端点维持认证门；
+- 密码表现明存储于配置（demo 定位）；~~token 认证为 M5 下一项~~
+  **已落地**（§8：元数据面 PAT，read/write/admin scope）；
 - Web 会话为进程内存（重启即登出）；生产需持久会话存储。
 
 ## 6. Web 演示（web/，TypeScript 零运行时依赖）
@@ -114,3 +114,47 @@ HttpOnly cookie）→ 仓库列表/建仓 → 仓库页**分支列表 = 登录�
 网关经 refs 策略快照解析（快照携带 keys，fail-closed 语义不变）。传输
 细节（会话形态/协商轮次）见 docs/04 §7b，T39 钉住。边界：SSH 传输要求
 auth 必须开启（无钥匙表可认证任何人——拒绝启动而非裸监听）。
+
+## 8. Token 认证与可扩展性缝（2026-11-06，docs/14 M5）
+
+**PAT（personal access token）**：`banyan_` 前缀随机明文（crypto/rand，
+32B base64url），落库只存 sha256（`storage.TokenRegistry`——元数据面的
+一张 `tokens` 表，四后端 conformance 同矩阵）。明文只在铸造应答里出现
+一次。HTTP Basic(user, token) 即 git 客户端唯一需要的形态；非空用户名
+必须匹配 token 属主（与 console 约定一致，docs/17 §4）。过期与吊销在
+**读取时**判定——吊销即刻生效，无缓存窗口。
+
+**scope 是上限不是旁路**：`Identity.Scope`（read < write < admin）由
+凭证携带；TokenPolicy 装饰器在任何决策前先压 scope 上限（read 永不能
+push，write 永不能管理），其余规则全部委托内层策略（静态密码表/上游
+快照/远端快照）——**token 从不绕过内层规则，只收窄**。可扩展性即组合：
+
+```go
+svc := &auth.TokenPolicy{Inner: staticOrUpstream, Tokens: meta}
+gw.Auth, api.Auth = svc, svc      // wire 层只见 auth.Service，零改动
+```
+
+装配（cmd/banyand）：all-in-one 在持有元数据时自动包裹 static 策略；
+upstream console 形态不包裹（console 自有 PAT 体系，网关验签名，docs/17）；
+纯网关角色无本地元数据，无 token 面（TokenRegistry 是可选接口，
+远端 meta 不实现也不破坏编译）。
+
+**token 生命周期 RPC**：`POST /api/v1/auth/tokens`（登录用户铸造，
+应答唯一一次明文；scope 缺省 write，`expires_days` 可选）、
+`GET /api/v1/auth/tokens`（本户清单；`?all=1` 需管理员——只回哈希，
+永不回明文）、`DELETE /api/v1/auth/tokens/<hash>`（自吊销；管理员可
+吊销任何人的）。
+
+## 8b. RPC 细粒度授权（同一扩展缝）
+
+管理端点（repack、rename、force-push 开关、placement、hooks、
+`cluster/nodes`、`meta/backup`）经 `auth.AdminChecker`——**可选接口**，
+策略实现它才生效，不实现维持原认证门（远端快照网关向后兼容）：
+StaticPolicy=管理员表；UpstreamPolicy=console 快照 Admins；
+TokenPolicy=admin scope 或内层管理员。内容写走 git wire 同一条
+CanPush（`/api/v1/commit` 按解析后的默认分支判定保护分支；
+`POST /api/v1/refs`、建仓同）。只读端点（log/diff/blame/objects/
+fetch-trees/resolve）维持认证门。测试：T79（token E2E：read 可取不可
+推、write 推过、吊销即刻 401、属主错配拒绝、明文只现一次）、T80
+（RPC 分级：开发者 403 / 管理员 200 / admin token 管理 / read token
+不能建仓不能动 ref）。
