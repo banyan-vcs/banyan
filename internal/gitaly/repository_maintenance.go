@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
@@ -44,24 +43,20 @@ func repoChecksum(ctx context.Context, s *Server, name string) string {
 	if err != nil {
 		return ""
 	}
-	var sum big.Int
+	// Fixed-width XOR: big.Int.Bytes() drops leading zero bytes and the
+	// checksum loses a hex char whenever the XOR's first byte is 0 (1/256
+	// by content — a lurking flake the fixed-width oracle caught).
+	var acc [sha1.Size]byte
 	for _, r := range refs {
 		if !checksumRefsAllowed.MatchString(r.Name) {
 			continue
 		}
 		h := sha1.Sum([]byte(string(r.Head) + " " + r.Name))
-		var one big.Int
-		one.SetBytes(h[:])
-		if sum.BitLen() == 0 {
-			sum.Set(&one)
-		} else {
-			sum.Xor(&sum, &one)
+		for i := range acc {
+			acc[i] ^= h[i]
 		}
 	}
-	if sum.BitLen() == 0 {
-		return strings.Repeat("0", 40)
-	}
-	return hex.EncodeToString(sum.Bytes())
+	return hex.EncodeToString(acc[:])
 }
 
 // Fsck walks every reference's reachable object closure and reports the
