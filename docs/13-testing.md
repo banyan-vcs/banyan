@@ -222,3 +222,12 @@ v3 起断言文本直达注解。
 `probe2.sh`（push-run 探针：`?event=push&per_page=1` 盯本尊，败即拉 v3
 注解）。再发作时：一次失败注解直接点名断言行——git 报错文本=基础设施
 实锤，断言不匹配=代码 bug，即刻归因修复。
+
+**档案承诺兑现（2026-11-06）**：v3 仪器首击即点名——`TestAuthorizationWire`
+（0.27s）auth_test.go:112 **"按 OID 取隐藏分支对象应被拒"却成功**：bob 以
+raw-OID fetch 拿到了 alice 隐藏分支 tip（want 校验被放行）。该 flake 首次
+留下断言文本。已排除的机制：广告序随机（MemoryMetaStore.ListTimelines
+确为裸 map 序，但 ls-remote 客户端排序，hiddenTip 取首行恒为
+refs/heads/alice/wip）；同秒时间戳平局。候选：wantsBeyondTips 的
+fail-open 分支（ResolveRefs 出错→放行）或可见性/闭包判定的时间窗。
+归因进行中——每次再发作 v3 都会复点名同一断言直至根因落网。
