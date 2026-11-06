@@ -392,9 +392,11 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "name required, single path segment"}})
 			return
 		}
-		// The same push gate the git wire's auto-create applies — creating
-		// a repository is committing to it (docs/07 §5).
-		if !s.requirePush(w, r, req.Name, "", "") {
+		// A metadata-plane write: scoped credentials need write rank
+		// (docs/07 §8b) — unscoped identities keep the authenticated gate;
+		// the not-yet-existing repo is unknown to per-repo policy by
+		// construction, and the console authorizes creation on its side.
+		if !s.requireWriteRank(w, r) {
 			return
 		}
 		if err := s.Meta.CreateRepo(r.Context(), req.Name, s.Algo); err != nil {

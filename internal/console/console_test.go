@@ -270,7 +270,9 @@ func TestBuildSnapshot(t *testing.T) {
 	snap, err := db.BuildSnapshot(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, snap.Version)
-	require.ElementsMatch(t, []string{"root"}, snap.Admins)
+	// "console" is the service principal the operational passthroughs sign as
+	// (docs/17 §5) — an implicit management-plane admin.
+	require.ElementsMatch(t, []string{"root", "console"}, snap.Admins)
 	require.ElementsMatch(t, []string{"root", "alice", "bob", "carol"}, snap.Users)
 
 	r, ok := snap.Repos["p_test01"]
