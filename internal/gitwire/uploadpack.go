@@ -1,7 +1,6 @@
 package gitwire
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -108,7 +107,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 		return
 	}
 
-	br := bufio.NewReaderSize(r.Body, 64*1024)
+	br := bodyReader(r, 64*1024)
 	out := newBufWriter(w)
 
 	st := &fetchReq{}

@@ -106,19 +106,22 @@ func TestAuthorizationWire(t *testing.T) {
 	assert.Contains(t, out, "permission denied")
 
 	// Raw-OID fetch through a hidden branch is rejected (visible-tips
-	// coverage, not just advertisement filtering). The failure message
-	// carries the scene (this assertion is the push-run flake's named
-	// identity — docs/13): what bob sees now, and whether a replay still
-	// succeeds, so the next strike's annotation brings the crime scene.
-	hiddenTip := strings.Fields(lsAlice2)[0]
-	out, err = gitTry("", "fetch", "-q", bob("/r/t38.git"), hiddenTip)
-	if err == nil {
-		sceneBob, _ := gitTry("", "ls-remote", "--heads", bob("/r/t38.git"))
-		replayOut, replayErr := gitTry("", "fetch", "-q", bob("/r/t38.git"), hiddenTip)
-		require.Error(t, err,
-			"按 OID 取隐藏分支对象应被拒（flake 现场）: hiddenTip=%s | bob 现在可见: %q | 重放 err=%v out=%q | 原 out=%q",
-			hiddenTip, strings.Join(strings.Fields(sceneBob), " "), replayErr, replayOut, out)
+	// coverage, not just advertisement filtering). hiddenTip is pinned to
+	// the alice/wip LINE — the advertisement order is not contractual (the
+	// memory store's listing is map-ordered; v2 ls-remote passes it through
+	// unsorted), and the first line is sometimes main's tip, a perfectly
+	// fetchable OID — the months-long "push-run flake" was exactly that
+	// (docs/13: the gzip-body bug masked it locally, git 2.53 unmasked it).
+	var hiddenTip string
+	for _, line := range strings.Split(lsAlice2, "\n") {
+		if strings.HasSuffix(strings.TrimSpace(line), "refs/heads/alice/wip") {
+			hiddenTip = strings.Fields(line)[0]
+			break
+		}
 	}
+	require.NotEmpty(t, hiddenTip, "alice/wip 必须在 alice 的广告里:\n%s", lsAlice2)
+	out, err = gitTry("", "fetch", "-q", bob("/r/t38.git"), hiddenTip)
+	require.Error(t, err, "按 OID 取隐藏分支对象应被拒:\n%s", out)
 
 	// Protected branch: developer denied, admin allowed.
 	git(t, home, "checkout", "-q", "main")

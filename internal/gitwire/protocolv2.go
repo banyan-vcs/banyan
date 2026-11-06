@@ -84,7 +84,7 @@ func (s *Server) serveUploadPackV2(w http.ResponseWriter, r *http.Request, vr Vi
 	if !ok {
 		return
 	}
-	br := bufio.NewReaderSize(r.Body, 64*1024)
+	br := bodyReader(r, 64*1024)
 	out := newBufWriter(w)
 
 	s.serveV2Command(r.Context(), br, out, vr, id)
