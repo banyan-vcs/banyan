@@ -52,7 +52,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 		log.Printf("receive-pack: auto-created repo %q (object-format=%d)", vr.Repo, s.Algo)
 	}
 
-	br := bufio.NewReaderSize(r.Body, 256*1024)
+	br := bodyReader(r, 256*1024)
 	out := newBufWriter(w)
 	if err := s.finishPush(r.Context(), id, br, out, vr); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

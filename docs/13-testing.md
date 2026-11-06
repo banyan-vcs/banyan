@@ -106,6 +106,7 @@ testify，文件按测试目标拆分）：
 | T79 | `TestTokenAuthE2E` | **PAT 端到端**（docs/07 §8，2026-11-06）：RPC 铸造→Basic(user,token) 真 git 取/推——read scope 可取**永不能推**（上限不是旁路）、write 推过、属主错配即拒、吊销即刻 401、清单只回哈希永不回明文 |
 | T80 | `TestRPCFineGrainedAuthorization` | **RPC 分级授权**（docs/07 §8b）：管理端点（repack/cluster/force-push）开发者 403·管理员 200·admin token 200；内容写（POST refs/建仓）read token 403——AdminChecker 可选扩展缝 + 与 wire 同一 CanPush |
 | T81 | `TestDiffBlameRPC` | **diff/blame RPC 字节 oracle**（docs/05 §3，2026-11-06）：`GET /api/v1/diff` 输出 == `git diff`（含 path 目录前缀过滤 == `git diff -- lib`）；`GET /api/v1/blame` == `git blame --line-porcelain`——顺带把引擎的 porcelain 格式钉死到 git 逐字节（boundary/previous 头、同源行分组、组长度只在组首） |
+| T82 | `TestGzipFetchBody` | **gzip rpc POST 体**（docs/13 档案破案，2026-11-06）：同一 v2 fetch 终轮请求 plain 与 gzip 各发一次——gzip 体必须同样走到 packfile 节并回 PACK 字节（修复前：空响应，git 2.50 expected acknowledgments） |
 
 | T43 | `TestForcePushRevivalRejected` / `…Recovery` / `TestRootForcePushViewMonotonic` | **子树 force push 回滚守卫**（docs/04 §6a）：wire 无 force 信号、old 恒=广告值——回滚/重写丢他人内容的 force push 以连续 push 形态到达；四种形态（adopt/收敛 × 纯回滚/回滚+己方提交）真实 git 客户端全拒绝（non-fast-forward: would rewind，旧代码上实证全部 forced-update 落地）；拒后 pull --rebase 恢复路线畅通；根仓库 force push 放行（git 原生 verbatim）但织入视图单调——root-local 内容与目录时间线内容均不回魂 |
 | T44 | `TestForcePushOptIn` | **仓库级 force push 开关 + 织入重建**（docs/04 §6a）：PUT /api/v1/repos/&lt;repo&gt;/force-push 运行时生效——关（默认）回滚仍拒（T43 语义不回归）；开后回滚链落地（forced update）且 `/.woven` 家族重置全量重织：lib 时间线回滚（a.txt 回退）而**下层 lib/nested 独立时间线内容保留**（时间线边界=回滚边界）、根视图历史**重建**（被回滚提交的织入体从 log 消失、nested 织入保留）、回滚后正常 push 即刻恢复；开关再关守卫重新武装 |
@@ -230,4 +231,14 @@ raw-OID fetch 拿到了 alice 隐藏分支 tip（want 校验被放行）。该 f
 确为裸 map 序，但 ls-remote 客户端排序，hiddenTip 取首行恒为
 refs/heads/alice/wip）；同秒时间戳平局。候选：wantsBeyondTips 的
 fail-open 分支（ResolveRefs 出错→放行）或可见性/闭包判定的时间窗。
-归因进行中——每次再发作 v3 都会复点名同一断言直至根因落网。
+**破案（2026-11-06 深夜，双缺陷叠加）**：①**服务端真 bug（T82 钉死）**——git 会把
+v2 fetch 第二轮 POST（重发全量 have 表）以 Content-Encoding: gzip 压缩（<1KiB
+也压）；服务端裸读把 gzip 字节当 pkt-line→首包乱码→会话静默终结→空响应
+（git 2.50 报 expected acknowledgments）；修=三处 POST 面 bodyReader 解压。②**测试潜伏 bug（被①掩盖数月）**——hiddenTip 取广告首行，
+而 mem 广告序=map 随机：main 在前时抓到的是**合法可取**的 main tip；本地
+git 2.50 必触发①→fetch 必败→负向断言碰巧全过（115 连绿的真相）；runner
+滚动到 Ubuntu 26/git 2.53 后该场景不再 gzip→fetch 成功→按 map 序偏置概率
+暴露（实测 2-key map 序偏差可达 7/8，与历史 ~12% 失败率吻合）。修=hiddenTip
+显式钉 alice/wip 行；mem ListTimelines 补排序对齐 SQL 确定性。取证链：
+v3 注解具名断言→断言携带现场（bob 可见=main@hiddenTip）→packet trace 锁
+空响应→服务端 peek/头部日志锁 gzip。

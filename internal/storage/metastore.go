@@ -790,6 +790,15 @@ func (m *MemoryMetaStore) ListTimelines(_ context.Context, repo string, anchor m
 			out = append(out, tl)
 		}
 	}
+	// Map order is random per process — sorted output keeps ref
+	// advertisements (and every test reading them) deterministic, matching
+	// the SQL backends' ORDER BY name.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Anchor < out[j].Anchor
+	})
 	return out, nil
 }
 
