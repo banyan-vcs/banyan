@@ -335,19 +335,26 @@ func (cs *commitService) blameLines(ctx context.Context, repo string, tip model.
 	return tipLines, chain, owner, origNo, nil
 }
 
-// blamePorcelain renders `git blame --porcelain` output: one block per
-// attribution run, full headers, content lines prefixed with a TAB.
+// blamePorcelain renders `git blame --line-porcelain` output,
+// byte-compatible with git: a full header block for EVERY line; the
+// numeric header carries the same-commit run length on a run's first line
+// only; boundary marks the walk's end (a parentless commit); previous
+// names the first parent and the file's path there whenever blame can
+// continue past the commit.
 func blamePorcelain(lines []string, chain []blameStep, owner []int, origNo []int, path string) string {
 	var b strings.Builder
-	i := 0
-	for i < len(lines) {
-		j := i
-		for j < len(lines) && owner[j] == owner[i] {
-			j++
-		}
+	for i := 0; i < len(lines); i++ {
 		step := chain[owner[i]]
 		c := step.rec
-		fmt.Fprintf(&b, "%s %d %d %d\n", step.oid, origNo[i], i+1, j-i)
+		if i == 0 || owner[i] != owner[i-1] {
+			j := i
+			for j < len(lines) && owner[j] == owner[i] {
+				j++
+			}
+			fmt.Fprintf(&b, "%s %d %d %d\n", step.oid, origNo[i], i+1, j-i)
+		} else {
+			fmt.Fprintf(&b, "%s %d %d\n", step.oid, origNo[i], i+1)
+		}
 		subject := strings.SplitN(strings.TrimSuffix(c.Message, "\n"), "\n", 2)[0]
 		fmt.Fprintf(&b, "author %s\n", c.Author.Name)
 		fmt.Fprintf(&b, "author-mail <%s>\n", c.Author.Email)
@@ -358,13 +365,14 @@ func blamePorcelain(lines []string, chain []blameStep, owner []int, origNo []int
 		fmt.Fprintf(&b, "committer-time %d\n", c.Committer.When.Unix())
 		fmt.Fprintf(&b, "committer-tz %s\n", c.Committer.When.Format("-0700"))
 		fmt.Fprintf(&b, "summary %s\n", subject)
-		fmt.Fprintf(&b, "filename %s\n", path)
-		b.WriteString("\n")
-		for k := i; k < j; k++ {
-			b.WriteString("\t")
-			b.WriteString(lines[k])
+		if len(c.Parents) == 0 {
+			b.WriteString("boundary\n")
+		} else {
+			fmt.Fprintf(&b, "previous %s %s\n", c.Parents[0], path)
 		}
-		i = j
+		fmt.Fprintf(&b, "filename %s\n", path)
+		b.WriteString("\t")
+		b.WriteString(lines[i])
 	}
 	return b.String()
 }
