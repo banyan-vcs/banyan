@@ -11,8 +11,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
+	"github.com/banyan-vcs/banyan/internal/gitaly"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
 	"github.com/banyan-vcs/banyan/internal/storage"
@@ -31,6 +33,10 @@ type Server struct {
 	// fine-grained repo/dir/branch rules live on the git wire — the web
 	// service enforces page-level visibility through it.
 	Auth auth.Service
+
+	// The diff/blame engine facade (lazy; diffblame.go).
+	engMu sync.Mutex
+	eng   *gitaly.Server
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
@@ -53,8 +59,10 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/meta/backup", s.authn(s.handleMetaBackup))
 	mux.HandleFunc("/api/v1/resolve", s.authn(s.handleResolve))
 	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
-	// TODO(M2): /api/v1/diff  /api/v1/file-history
-	// TODO(M3): /api/v1/blame
+	mux.HandleFunc("/api/v1/auth/tokens", s.authn(s.handleTokens))  // PAT mint/list (docs/07 §6)
+	mux.HandleFunc("/api/v1/auth/tokens/", s.authn(s.handleTokens)) // DELETE /<hash> revoke
+	mux.HandleFunc("/api/v1/diff", s.authn(s.handleDiff))           // path diff (docs/14 M2)
+	mux.HandleFunc("/api/v1/blame", s.authn(s.handleBlame))         // recursive blame (docs/14 M3)
 }
 
 // authn wraps a handler with the authentication requirement (no-op without
@@ -268,6 +276,9 @@ func (s *Server) handleRepack(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
+	if !s.requireAdmin(w, r, req.Repo) {
+		return
+	}
 	res, err := s.Svc.Repack(r.Context(), req.Repo, req.Threshold)
 	if err != nil {
 		writeServiceErr(w, err)
@@ -311,6 +322,17 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
+	// The same push rule the git wire enforces: "" resolves to the repo's
+	// default branch so protected-branch policy sees the real name.
+	branch := req.Branch
+	if branch == "" {
+		if info, err := s.Meta.GetRepo(r.Context(), req.Repo); err == nil && info.DefaultBranch != "" {
+			branch = info.DefaultBranch
+		}
+	}
+	if !s.requirePush(w, r, req.Repo, req.Sub, branch) {
+		return
+	}
 	res, err := s.Svc.CreateCommit(r.Context(), req)
 	if err != nil {
 		writeServiceErr(w, err)
@@ -340,6 +362,9 @@ func (s *Server) handleRefs(w http.ResponseWriter, r *http.Request) {
 		if !decodeBody(w, r, &req) {
 			return
 		}
+		if !s.requirePush(w, r, req.Repo, "", strings.TrimPrefix(req.Name, "refs/heads/")) {
+			return
+		}
 		if err := s.Svc.UpdateRef(r.Context(), req); err != nil {
 			writeServiceErr(w, err)
 			return
@@ -367,6 +392,11 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "name required, single path segment"}})
 			return
 		}
+		// The same push gate the git wire's auto-create applies — creating
+		// a repository is committing to it (docs/07 §5).
+		if !s.requirePush(w, r, req.Name, "", "") {
+			return
+		}
 		if err := s.Meta.CreateRepo(r.Context(), req.Name, s.Algo); err != nil {
 			writeServiceErr(w, err)
 			return
@@ -389,6 +419,11 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
 	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks") {
 		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks)"}})
+		return
+	}
+	// Repo management is admin territory (docs/07 §5); size stays a plain
+	// repo stat for any authenticated member.
+	if parts[1] != "size" && !s.requireAdmin(w, r, parts[0]) {
 		return
 	}
 	if parts[1] == "hooks" {
@@ -530,6 +565,9 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 // --- GET /api/v1/cluster/nodes: storage-node health view (cluster mode) ---
 
 func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r, "") {
+		return
+	}
 	nodes, err, cluster := s.Svc.ClusterNodes(r.Context())
 	if !cluster {
 		writeJSON(w, http.StatusOK, map[string]any{"cluster": false, "nodes": []any{}})
@@ -565,6 +603,9 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 // single writer keep running; docs/10 §8.4). Cluster backends answer 409:
 // their backups belong to the database ecosystem's own tooling.
 func (s *Server) handleMetaBackup(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r, "") {
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "POST only"}})
 		return
