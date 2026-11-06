@@ -12,10 +12,15 @@ import (
 	"net/http"
 )
 
-// Identity is the authenticated caller. User "" is anonymous.
+// Identity is the authenticated caller. User "" is anonymous. Scope is the
+// credential's own ceiling (storage.ScopeRead/Write/Admin): "" means the
+// identity carries the policy's full rights (password login, SSH key);
+// token identities carry the scope their token was minted with — the
+// policy layers enforce it as an upper bound on top of their rules.
 type Identity struct {
-	User string
-	Name string
+	User  string
+	Name  string
+	Scope string
 }
 
 func (i Identity) Anonymous() bool { return i.User == "" }

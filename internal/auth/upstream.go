@@ -350,3 +350,11 @@ func (p *UpstreamPolicy) knownUser(u string) bool {
 	}
 	return false
 }
+
+// CanAdmin (auth.AdminChecker): the console's global admins (snapshot
+// Admins). Repo ownership already grants push-to-protected — management of
+// the serving plane itself (repack, backup, cluster ops) stays with the
+// platform admins.
+func (p *UpstreamPolicy) CanAdmin(id Identity, _ string) bool {
+	return !id.Anonymous() && p.isAdmin(id)
+}
