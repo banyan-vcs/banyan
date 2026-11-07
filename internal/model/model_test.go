@@ -50,6 +50,7 @@ func TestAnchoredCommitRoundTrip(t *testing.T) {
 		Committer:     ident("han"),
 		Message:       "subdir commit\n",
 		ProjectedFrom: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		WovenFrom:     "cccccccccccccccccccccccccccccccccccccccc",
 		Synthetic:     true,
 	}
 	got, err := DecodeCommit(c.Encode())
@@ -57,8 +58,18 @@ func TestAnchoredCommitRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Anchor != c.Anchor || got.TreeOID != c.TreeOID || got.Synthetic != true ||
-		got.ProjectedFrom != c.ProjectedFrom || len(got.Parents) != 1 || got.Parents[0] != c.Parents[0] {
+		got.ProjectedFrom != c.ProjectedFrom || got.WovenFrom != c.WovenFrom ||
+		len(got.Parents) != 1 || got.Parents[0] != c.Parents[0] {
 		t.Fatalf("round-trip mismatch: %+v", got)
+	}
+	raw := string(c.Encode())
+	if !strings.Contains(raw, "banyan-woven-from cccccccc") {
+		t.Fatalf("missing woven-from header:\n%s", raw)
+	}
+	// Zero provenance must not leak a header — client commits stay byte-identical to git.
+	plain := &AnchoredCommit{Anchor: RootAnchor, TreeOID: c.TreeOID, Author: ident("han"), Committer: ident("han"), Message: "m\n"}
+	if strings.Contains(string(plain.Encode()), "banyan-") {
+		t.Fatalf("plain commit leaked banyan headers:\n%s", plain.Encode())
 	}
 }
 
