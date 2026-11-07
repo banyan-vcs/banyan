@@ -26,9 +26,10 @@ import (
 
 // CommitInfo is one commit-graph record.
 type CommitInfo struct {
-	Tree    model.OID
-	Parents []model.OID
-	When    int64 // committer unix time (for ordering/generation)
+	Tree      model.OID
+	Parents   []model.OID
+	When      int64     // committer unix time (for ordering/generation)
+	WovenFrom model.OID // weave provenance: this commit is the fold of that source commit (docs/02 §13); zero = none
 }
 
 type repoIndex struct {
@@ -66,7 +67,7 @@ func (s *ObjectService) buildIndex(repo string, dp *DecodedPack) {
 			continue
 		}
 		if c, err := model.DecodeCommit(raw); err == nil {
-			ri.commits[oid] = &CommitInfo{Tree: c.TreeOID, Parents: c.Parents, When: c.Committer.When.Unix()}
+			ri.commits[oid] = &CommitInfo{Tree: c.TreeOID, Parents: c.Parents, When: c.Committer.When.Unix(), WovenFrom: c.WovenFrom}
 			ri.treeCommits[c.TreeOID] = append(ri.treeCommits[c.TreeOID], oid)
 		}
 		// Decompose into lightweight record + bmsg (byte-level render verification;
@@ -159,7 +160,7 @@ func (s *ObjectService) CommitInfo(repo string, oid model.OID) (*CommitInfo, err
 	if err != nil {
 		return nil, err
 	}
-	ci := &CommitInfo{Tree: c.TreeOID, Parents: c.Parents, When: c.Committer.When.Unix()}
+	ci := &CommitInfo{Tree: c.TreeOID, Parents: c.Parents, When: c.Committer.When.Unix(), WovenFrom: c.WovenFrom}
 	s.idxMu.Lock()
 	if s.idx[repo] == nil {
 		s.idx[repo] = newRepoIndex()
