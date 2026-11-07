@@ -167,6 +167,10 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
       ——v2 HMAC bearer/默认支全限定名/ListRefs 前缀语义/tree path "."/
       FindTag 结构化错/archive LFS 门（docs/19 §8）。开放缺口登记：
       post-receive→Rails internal API 回调链）
+- [x] 子树投影 ref（2026-11-07，T84：默认分支顶层目录以
+      `refs/banyan/tree/<dir>` 投影进父项目 ref 空间——GitLab 等整仓
+      前端用一条 URL/一套凭证取推子树，推送向上装配；docs/20 §7，
+      经 GitLab URL 活体验收）
 - [ ] post-receive → GitLab internal API 适配（push 事件/pipeline/
       MR-from-push/缓存失效——banyan 接收路径向 gitlab-shell 协议
       `/api/v4/internal/post_receive` 的回调适配器，docs/19 §8）

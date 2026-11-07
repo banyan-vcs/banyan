@@ -72,7 +72,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 产品侧控制台（`banyans`）：`{group}/{project}[/path]` 路由、PAT 认证、子树作用域成员角色与前缀链继承（docs/17） | ✅ M6.1/M6.2（HTTP；SSH/web → M6.3/M6.4） |
 | 生产姿态：安全默认启动（客户端面角色无认证、gitaly 无 token 即拒启；`dev: true` 是显式出路）、元数据默认进数据库（持有元数据的角色缺省 postgres，mysql 并列支持，内存 mem 仅 dev 合法）、SIGINT/SIGTERM 优雅 drain（在途 pack 流跑完；gRPC GracefulStop；15s 上限）、每角色 `/metrics` Prometheus 端点（git 流量速率/时延/在途、ingest 字节、CAS 冲突、副本校验回退、reconciler/sweep 进度） | ✅ P0（[docs/14](docs/14-roadmap.md) 生产主轴） |
 | 可扩展认证：元数据面 PAT（sha256 落库、明文只现一次、过期/吊销读取时判定；scope read<write<admin 是上限不是旁路——TokenPolicy 在同一 Service 缝装饰任意策略）、RPC 细粒度授权（管理端点走 auth.AdminChecker，内容写与 wire 同一 CanPush）、路径 diff + blame RPC 与 git diff / git blame 逐字节一致 | ✅ M5 + M2/M3（docs/07 §8） |
-| Gitaly gRPC 前端（可直接替换 GitLab 的 gitaly 节点；协议 v19.5.2，163/163 RPC 全部落地——含 praefect 集群族（cluster-of-one）、服务端备份、快照、对象池、历史重写、回调式 hooks 与 ssh upload-archive 线协议——完整 Operation/Ref/Commit/Diff/Blob 服务、含 sidechannel 的传输面、逐字节一致的 git-archive、bundle、blame、冲突解决、作为客户端的 smart-HTTP 远端抓取与镜像推送） | ✅ 切片 1–11（[docs/19](docs/19-gitaly-compat.md)） |
+| Gitaly gRPC 前端（可直接替换 GitLab 的 gitaly 节点；协议 v19.5.2，163/163 RPC 全部落地——含 praefect 集群族（cluster-of-one）、服务端备份、快照、对象池、历史重写、回调式 hooks 与 ssh upload-archive 线协议——完整 Operation/Ref/Commit/Diff/Blob 服务、含 sidechannel 的传输面、逐字节一致的 git-archive、bundle、blame、冲突解决、作为客户端的 smart-HTTP 远端抓取与镜像推送；子树投影 ref——顶层目录以 refs/banyan/tree/<dir> 经 GitLab URL 直取直推，T84） | ✅ 切片 1–11（[docs/19](docs/19-gitaly-compat.md)） |
 
 96 个顶层集成测试函数以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证；gitaly 前端经
