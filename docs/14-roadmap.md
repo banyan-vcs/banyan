@@ -176,8 +176,16 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
       `Gitlab-Shell-Api-Request` 头——调 `/internal/{pre,post}_receive`；
       身份免费来自 gRPC 请求自带的 GlId/GlRepository（workhorse/gitlab-shell
       填）。live 实证：经 GitLab 的 push 后**零干预**读面即刻刷新、
-      PostReceiveWorker 跑完（事件/pipeline/MR-from-push/缓存过期全通）。
-      剩余：pre-receive 的 `/allowed` 权限面（保护分支经 HTTP 的强制）未接）
+      PostReceiveWorker 跑完（事件/pipeline/MR-from-push/缓存过期全通））
+- [x] pre-receive 的 `/allowed` 策略门（2026-11-07，T86：ref 级推送策略
+      ——保护分支为首——在 Rails，workhorse 前门看不见 pack 里的 ref；
+      banyan 在 ref 移动前同形调 `/internal/allowed`，拒绝消息（401+
+      `{status:false,message}`，Rails 特意选 401 让消息上屏）原样透传，
+      fail-closed 与上游一致。活体揪出第八缝一对：changes 行零侧须渲染
+      全零 OID（空字段使 Rails 字段左移→新建分支必 500）、
+      ListBlobs/ListLFSPointers 的 revisions 是 rev-list 参数语法
+      （LfsCheck 传 `[newrev, "--not", "--all"]`）——双修后 live 矩阵全过：
+      developer→保护分支拒、developer→新分支过、root→保护分支过）
 - [ ] webhook 派发（push event → 平台 trigger）
 - [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）
 - [ ] 命名空间映射（平台 group/project ↔ banyan repo）

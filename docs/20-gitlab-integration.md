@@ -20,7 +20,8 @@ git/ssh  ──▶ gitlab-shell ┘                          ▲
   （docs/19 §0 漂移隔离纪律）。
 - **信任模型**：per-storage 共享 token，**token 之后全信**——banyan 的
   gitaly 面不做 GitLab 用户级鉴权（授权、保护分支、审计都在 Rails），
-  与上游 gitaly 一致。token 保密级别 = 存储层 root。
+  与上游 gitaly 一致；推送路径经适配器把策略请回 Rails 强制（§2/§4）。
+  token 保密级别 = 存储层 root。
 - **praefect**：不需要。单节点形态；praefect 族 RPC 以 cluster-of-one
   语义诚实作答（docs/19 §6a）。
 
@@ -60,8 +61,12 @@ gitaly:
 同形的 JWT 调 `/api/v4/internal/{pre,post}_receive`：push 落库后
 Rails 自动过期读缓存、记活动事件、触发 pipeline、处理
 `-o merge_request.create` 等 push 选项；`/pre_receive` 配对引用计数。
-不配适配器时这些平台处理不会发生（数据正常，只是 GitLab 侧"无感"），
-需手动 `expire_all_method_caches`（§6）。
+**同一配置还武装 `/allowed` 策略门**（T86）：ref 移动前 banyan 以
+gitlab-shell 同形契约问一次 Rails——保护分支等 ref 级推送策略由此强制
+（workhorse 前门只做仓库级授权，看不见 pack 里的 ref）；拒绝时 Rails 的
+原因原样透传到 git 客户端，Rails 不可达则拒推（fail-closed，与上游
+一致）。不配适配器时这些平台处理不会发生、策略门也不设防（数据正常，
+只是 GitLab 侧"无感"），需手动 `expire_all_method_caches`（§6）。
 
 **② GitLab 侧 `gitlab.rb`**（三处，注意是 `repositories_storages`）：
 
@@ -114,6 +119,7 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | wiki、个人 snippet 仓库 | ✅（同为 gitaly 寻址，自动落 banyan） |
 | SSH 推送/拉取（gitlab-shell） | ✅ 同一授权面 |
 | **push 后的活动流/pipeline/MR-from-push 触发/缓存失效** | ✅ **post-receive 适配器**（T85，§2 的 `gitlab.gitlab` 配置节）：经 GitLab 的 push 以 gitlab-shell 同形契约（JWT 签名）调 Rails internal API——缓存自动过期、事件/pipeline/MR-from-push 全触发（live 实证：push 后零干预读面即刻刷新）；不配置则退回"数据正常落库但平台无感" |
+| **ref 级推送策略：保护分支（HTTP 推送的强制）** | ✅ **`/allowed` 策略门**（T86，同一 `gitlab.gitlab` 配置节）：ref 移动前问 Rails `GitAccess.check`——developer 推保护分支被拒且原因上屏、新分支/owner 放行（live 矩阵）；SSH 面由 gitlab-shell 前置检查、HTTP 面由此门补齐 |
 | 服务端维护（housekeeping/repack） | 空操作语义（对象平面恒 compact，docs/19 §6） |
 
 ## 5. 回退与数据面
@@ -139,6 +145,8 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | 计划删除的项目（路径带 `-deletion_scheduled-N`）还在项目列表 | 正常：CE 默认**缓冲期删除**（7 天后才真删），不是卡死 | 管理区可立即删除或恢复；`pending_delete=false` 属预期 |
 | archive 500（workhorse 日志 `SendArchive: …`） | 树内实有 LFS pointer 且 `include_lfs_blobs`（smudge 面未建，诚实拒绝）；或历史版本缺结构化错 | 前者为能力边界（登记 docs/19 §8）；升级 banyan ≥ 0e137d8 |
 | 空仓 `FindDefaultBranchName` 答 `refs/heads/main` 但项目页仍"空仓" | 正常契约：无分支时启发式答空 | 先推一个提交 |
+| push 被拒 `! [remote rejected] … (You are not allowed to push code to protected branches…)` | **正常强制**：`/allowed` 策略门在起作用（T86）——保护分支等 ref 级策略由 Rails 判定，消息原样透传 | 无需处置；确需推送走 MR 或放开保护设置 |
+| push 被拒 `gitlab policy check unavailable` | Rails 不可达/答非所问，门 fail-closed（与上游钩子一致） | 查 GitLab 健康（`gitlab-ctl status`）与适配器配置 §2；恢复后重推 |
 | Rails runner 连不上（`Peer authentication failed`） | runner 以 root 跑，postgres peer 拒 | `docker exec -u git …` |
 | 种子 root 失败 `Password must not contain commonly used…` | GitLab 黑名单（demo/pass/gitlab 字样都拒） | 随机强口令；种子读 `ENV['GITLAB_ROOT_PASSWORD']` |
 | **omnibus 端口**：宿主 curl 000 但容器健康检查绿 | nginx 监听 `external_url` 的端口（容器内 8180），映射须 `8180:8180` 非 `8180:80` | 改 compose 端口映射 |
