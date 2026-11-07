@@ -98,6 +98,13 @@ func (s *Service) UpdateRef(ctx context.Context, req RefUpdate) error {
 	if !strings.HasPrefix(req.Name, "refs/") || !strings.Contains(strings.TrimPrefix(req.Name, "refs/"), "/") {
 		return invalid("ref name %q: want refs/<ns>/<name>", req.Name)
 	}
+	// refs/banyan/* is the reserved subtree-projection namespace (docs/20
+	// §7): it is derived state on the git wire — a verbatim write here
+	// would shadow the projection with a phantom aux ref. Pushes through
+	// git's receive-pack route to the subtree write path instead.
+	if strings.HasPrefix(req.Name, "refs/banyan/") {
+		return invalid("ref %q: refs/banyan/* is the reserved subtree-projection namespace", req.Name)
+	}
 	if !req.New.IsZero() {
 		if _, _, err := s.Objects.Raw(ctx, req.Repo, req.New); err != nil {
 			return invalid("target object %s missing", req.New)
