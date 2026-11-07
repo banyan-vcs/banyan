@@ -578,5 +578,11 @@ func TestGitalyBlobAndRepoExtras(t *testing.T) {
 		sz, err := rs.RepositorySize(ctx, &gitalypb.RepositorySizeRequest{Repository: repo})
 		require.NoError(t, err)
 		assert.Greater(t, sz.GetSize(), int64(0))
+
+		// The projection namespace is derived state: verbatim writes are
+		// reserved-namespace rejections, not aux refs.
+		_, err = rs.WriteRef(ctx, &gitalypb.WriteRefRequest{
+			Repository: repo, Ref: []byte("refs/banyan/tree/lib"), Revision: []byte("main")})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
 }
