@@ -143,19 +143,63 @@ type listedBlob struct {
 	size int64
 }
 
-// walkHistoryBlobs enumerates every blob reachable from the revisions' full
-// commit history (rev-list --objects semantics): shared subtrees are walked
-// once (tree memo) and each blob answers at its first occurrence, so files
-// deleted at the tip still list. Unresolvable revisions error out — callers
-// decide the wire code.
-func (bs *blobService) walkHistoryBlobs(ctx context.Context, repo string, revisions []string, limit int32) ([]listedBlob, error) {
-	var heads []model.OID
+// parseRevArgs interprets a revision list the way rev-list(1) does for the
+// subset GitLab sends: plain revisions resolve as tips, "--not" flips the
+// polarity of everything after it, "--all" expands to every ref under the
+// current polarity. GitLab's push-time access checks pass
+// [<newrev>, "--not", "--all"] — "blobs this push introduces" — so the
+// negative side is what keeps the answer honest.
+func (bs *blobService) parseRevArgs(ctx context.Context, repo string, revisions []string) (pos, neg []model.OID, err error) {
+	not := false
 	for _, rev := range revisions {
-		oid, err := bs.s.resolveRevision(ctx, repo, rev)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "gitaly: revision %q not found", rev)
+		switch rev {
+		case "--not":
+			not = !not
+		case "--all":
+			refs, rerr := bs.s.listRefs(ctx, repo)
+			if rerr != nil {
+				return nil, nil, rerr
+			}
+			for _, r := range refs {
+				if not {
+					neg = append(neg, r.Head)
+				} else {
+					pos = append(pos, r.Head)
+				}
+			}
+		default:
+			oid, rerr := bs.s.resolveRevision(ctx, repo, rev)
+			if rerr != nil {
+				return nil, nil, status.Errorf(codes.InvalidArgument, "gitaly: revision %q not found", rev)
+			}
+			if not {
+				neg = append(neg, oid)
+			} else {
+				pos = append(pos, oid)
+			}
 		}
-		heads = append(heads, oid)
+	}
+	return pos, neg, nil
+}
+
+// walkHistoryBlobs enumerates every blob reachable from the revisions' full
+// commit history (rev-list --objects semantics, "--not" exclusions
+// included): shared subtrees are walked once (tree memo) and each blob
+// answers at its first occurrence, so files deleted at the tip still list.
+// Unresolvable revisions error out — callers decide the wire code.
+func (bs *blobService) walkHistoryBlobs(ctx context.Context, repo string, revisions []string, limit int32) ([]listedBlob, error) {
+	heads, excludedHeads, err := bs.parseRevArgs(ctx, repo, revisions)
+	if err != nil {
+		return nil, err
+	}
+	excluded := map[model.OID]bool{}
+	if len(excludedHeads) > 0 {
+		if werr := bs.s.walkHistory(ctx, repo, excludedHeads, func(oid model.OID, _ *commitRecord) bool {
+			excluded[oid] = true
+			return true
+		}); werr != nil {
+			return nil, status.Errorf(codes.Internal, "gitaly: walking excluded history: %v", werr)
+		}
 	}
 	lookup := bs.s.Objects.Lookup(repo)
 	seenBlobs := map[model.OID]bool{}
@@ -191,8 +235,10 @@ func (bs *blobService) walkHistoryBlobs(ctx context.Context, repo string, revisi
 		}
 	}
 	var walkErr error
-	err := bs.s.walkHistory(ctx, repo, heads, func(_ model.OID, rec *commitRecord) bool {
-		emit(rec.Tree, "")
+	err = bs.s.walkHistory(ctx, repo, heads, func(oid model.OID, rec *commitRecord) bool {
+		if !excluded[oid] {
+			emit(rec.Tree, "")
+		}
 		return !(limit > 0 && int32(len(out)) >= limit)
 	})
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash"
+	"strings"
 )
 
 // HashAlgo selects the object hash algorithm. SHA-1 is the default for maximal
@@ -27,6 +28,18 @@ func (a HashAlgo) New() hash.Hash {
 		return sha256.New()
 	}
 	return sha1.New()
+}
+
+// WireZero is the all-zero object ID the git wire protocol uses for a ref's
+// absent side (old value on creation, new value on deletion) — the
+// rendering-boundary inverse of NormalizeZero: line protocols downstream
+// (gitlab-shell's changes lines) split on whitespace and cannot carry an
+// empty field.
+func (a HashAlgo) WireZero() string {
+	if a == SHA256 {
+		return strings.Repeat("0", 64)
+	}
+	return strings.Repeat("0", 40)
 }
 
 // OID is a lowercase hex object identifier (40 chars for SHA-1, 64 for SHA-256).
