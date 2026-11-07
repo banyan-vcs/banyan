@@ -527,6 +527,10 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
 
 ## 8. GitLab-CE 活体实测（2026-11-07，T83）
 
+> 接入操作手册（怎么接、怎么验、坏了怎么查）见
+> [docs/20-gitlab-integration.md](20-gitlab-integration.md)；本节是验收
+> 记录与实现侧账本。
+
 **一键演示**（`demo/gitlab/`）：`docker compose up -d` 拉起真 GitLab-CE
 （19.5.3-ce.0，与 vendored 协议同 minor）+ banyan；`provision.sh` 走查全
 链路——种子 root、铸 PAT、建项目（CreateRepository）、HTTP push
