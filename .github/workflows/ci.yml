@@ -62,6 +62,7 @@ jobs:
       - name: test
         run: TAB=$'\t'; go test ./... -timeout 20m 2>&1 | tee /tmp/gotest.log; rc=${PIPESTATUS[0]}; if [ $rc -ne 0 ]; then
           grep -A 20 -E -- '^(--- FAIL|panic:)' /tmp/gotest.log | grep -v -E "^--$|^goroutine |^created by|^[0-9]{4}/|^[[:space:]]*$|^${TAB}" | head -30 | while IFS= read -r line; do echo "::error::${line}"; done;
+          { echo '## server-side evidence'; echo '```'; grep -E 'broke mid-copy|panic serving|early EOF|unexpected disconnect' /tmp/gotest.log | head -20; echo '```'; } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true;
           exit $rc; fi
 
   enterprise:
