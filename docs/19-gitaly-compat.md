@@ -577,8 +577,29 @@ TTL）以共享 `gitlab_shell_secret` 签名进 `Gitlab-Shell-Api-Request` 头�
 pipeline/MR-from-push。**身份零映射**：协议请求自带 GlId/GlRepository
 （workhorse/gitlab-shell 填，smarthttp/SSH 两面都有），gitaly 桥经
 内部头穿到接收路径。live 实证：经 GitLab 的 push 后零干预读面即刻刷新、
-PostReceiveWorker 完成。剩余登记：pre-receive 的 `/allowed`（保护分支经
-HTTP 推送的强制检查）未接——ref 级策略仍属前端/适配器后续。
+PostReceiveWorker 完成。
+
+**`/allowed` 策略门（T86，2026-11-07）**：ref 级推送策略（保护分支为首）
+在 Rails 而非存储节点，workhorse 前门又看不见 pack 里的 ref——真 gitaly
+在 pre-receive 钩子里调 `/internal/allowed`（`GitAccess.check(action,
+changes)`）补上这一环，banyan 现在在 ref 移动前同形调用：载荷
+gl_repository/identifier/protocol/action/changes 行式（源码级取证
+api/internal/base.rb + GitAccessActor.from_params + ChangesList）；拒绝
+是 HTTP 401+`{status:false,message}`——Rails 特意选 401 让消息穿透到 git
+客户端，banyan 原样透传。上游顺序照搬：策略先于本地钩子与
+`/pre_receive` 计数对（被拒的推送不进计数）；**fail-closed**——Rails
+不可达即拒推（上游同款行为，且 Rails 挂时推送本就到不了 banyan）。
+活体矩阵（main 保护、Developer 拒）：developer→main 被拒且 Rails 原话
+上屏、developer→新分支落库、root→main 落库；事件链 `pushed new` 正确。
+
+**活体第八缝（T86 交付时揪出，一对）**：① **changes 行的零侧必须渲染
+全零 OID**（`HashAlgo.WireZero`）——ChangesList 按空白切分，空字段使
+newrev 吞掉 ref 名，LfsCheck 拿 `"refs/heads/<新分支>"` 当 revision 去解析
+→ 一切新建分支推送 500（同缺陷也毁 post_receive 的创建行事件）；②
+**ListBlobs/ListLFSPointers 的 revisions 是 rev-list(1) 参数语法**——
+推送期 LfsCheck 传 `[<newrev>, "--not", "--all"]`（本推送新引入的对象），
+banyan 原先逐条当 revision 字面解析，`"--not"` 直接 InvalidArgument；
+现按极性翻转/`--all` 展开为正负 tips、负侧闭包剔除后遍历。
 
 **子树投影 ref（T84，docs/20 §7）**：gitaly 面的广告桥接到内建
 gitwire（SmartHTTP SSH 同源），子树投影 `refs/banyan/tree/<dir>` 因此
