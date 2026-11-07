@@ -601,6 +601,29 @@ newrev 吞掉 ref 名，LfsCheck 拿 `"refs/heads/<新分支>"` 当 revision 去
 banyan 原先逐条当 revision 字面解析，`"--not"` 直接 InvalidArgument；
 现按极性翻转/`--all` 展开为正负 tips、负侧闭包剔除后遍历。
 
+**活体第九缝（T87，2026-11-07 深夜，SSH fetch 面）**：
+`SSHUploadPackWithSidechannel` 的 sidechannel 上**还有一层会话帧**——
+gitlab-shell 走 gitaly 客户端库 `ProxyPktLine`：client→server 是原样会话
+字节（framedConn 分帧重组，原本就对），server→client 每个 pkt 的 payload
+是 **band 字节+数据**（band1=stdout、band2=stderr、其他皆协议错
+"unexpected band"），git 协议自身的 pkt-line/flush 全是 band1 载荷（sideband
+是透明管道），**终结=关流 EOF**（flush-pkt 反而是 "invalid sideband
+packet"；gitlab-shell 源码把 copy-response-EOF 列为良性片段即佐证）。
+banyan 原先裸写会话字节→首个 pkt 的 'v'（"version 2" 的 v=118）被当 band
+→ SSH fetch/clone 全挂（推送恒 v0 走流式 SSHReceivePack 所以活）。修：
+sidebandSessionWriter 包装（32KiB 分片、band1）；receive 面不受影响
+（gitlab-shell 19.5 对 receive 用流式变体）。
+
+**push options + 推送大小上限（T87，同轮）**：① receive-pack 广告
+`push-options` 能力并解析选项段（命令表 flush 后、pack 前），经
+`post_receive.push_options` 上报——`-o merge_request.create` 端到端活体
+（MR #1 实开）；纯 banyan 部署解析后暂存 `vr.PushOptions`。② /allowed
+verdict 的 `git_config_options` 携带 `receive.maxInputSize=N`（GitLab
+"Maximum push size" 设置），门对照 spool 尺寸强制——活体：设 1MB、推
+2MB 随机包被拒 `pack exceeds maximum allowed size (1048576 bytes)`、
+复位后小包通过。③ 计数对泄漏修复：本地钩子 decline 路径不再 INCR
+（/pre_receive 只在所有门全过后触发；上游同序）。
+
 **子树投影 ref（T84，docs/20 §7）**：gitaly 面的广告桥接到内建
 gitwire（SmartHTTP SSH 同源），子树投影 `refs/banyan/tree/<dir>` 因此
 对 GitLab 客户端原样可见——ls-remote/fetch/推回全走 GitLab URL 与
