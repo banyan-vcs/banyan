@@ -69,6 +69,7 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 		keySubs = append(keySubs, string(tl.Anchor)+"@"+string(st.Head))
 	}
 	sort.Slice(subs, func(i, j int) bool { return subs[i].anchor < subs[j].anchor })
+	sort.Slice(ancestors, func(i, j int) bool { return ancestors[i].anchor < ancestors[j].anchor })
 	if !localTip.IsZero() {
 		keySubs = append(keySubs, string(scope)+"@"+string(localTip))
 	}
@@ -92,6 +93,14 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 	s.mu.Unlock()
 
 	entries := map[model.OID]*weaveEntry{}
+	// Provenance-embedded sources (docs/02 §13, same rule as the root weave):
+	// every visited chain records which source commits it already folds
+	// (banyan-woven-from — scoped graft outputs ride their own timeline's
+	// locals after adoption, and root-side folds ride the projections). The
+	// prefix walk below seeds the set; entry collection (ancestors →
+	// projection delta → strictly-below grafts, anchor-ordered) keeps it
+	// complete before each family is visited.
+	embedded := map[model.OID]bool{}
 	children := map[model.OID][]model.OID{}
 	reachable := func(from model.OID, stop map[model.OID]bool, visit func(model.OID)) {
 		if from.IsZero() {
@@ -165,6 +174,15 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 				if err != nil {
 					return
 				}
+				// Same two-clause skip as the root weave (see view.go); the
+				// candidate's own claim is collected only after the check.
+				skip := embedded[oid] || (ci.WovenFrom != "" && embedded[ci.WovenFrom])
+				if ci.WovenFrom != "" {
+					embedded[ci.WovenFrom] = true
+				}
+				if skip {
+					return // its change is already folded into a visited chain
+				}
 				xtree := model.SubtreeAt(lookup, ci.Tree, rel)
 				if xtree.IsZero() {
 					return // scope path absent in this commit
@@ -193,7 +211,14 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 				s.Objects.PutSynthetic(repo, pc.OID(s.Algo), model.CommitType, pc.Encode())
 			}
 			skip := map[model.OID]bool{}
-			reachable(baseHead, nil, func(oid model.OID) { skip[oid] = true })
+			// The prefix walk also seeds the provenance set: adopted scoped
+			// outputs (locals) and their folds record what is already woven.
+			reachable(baseHead, nil, func(oid model.OID) {
+				skip[oid] = true
+				if ci, cerr := s.Objects.CommitInfo(repo, oid); cerr == nil && ci.WovenFrom != "" {
+					embedded[ci.WovenFrom] = true
+				}
+			})
 			if markersHonored {
 				if mHead, mstop := s.markerStop(ctx, repo, branch, scope, model.RootAnchor, rootLocal); mHead != "" {
 					mergeStop(skip, mstop)
@@ -207,7 +232,13 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 			}
 			for _, pc := range res.Commits {
 				oid := pc.OID(s.Algo)
-				if skip[oid] {
+				// Two-clause provenance skip (see view.go), checked before the
+				// projection's own claim is collected.
+				pskip := embedded[oid] || (pc.WovenFrom != "" && embedded[pc.WovenFrom])
+				if pc.WovenFrom != "" {
+					embedded[pc.WovenFrom] = true
+				}
+				if skip[oid] || pskip {
 					continue
 				}
 				if ci, cerr := s.Objects.CommitInfo(repo, oid); cerr == nil {
@@ -235,6 +266,16 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 			}
 			ci, err := s.Objects.CommitInfo(repo, oid)
 			if err != nil {
+				return
+			}
+			// Two-clause provenance skip (see view.go): the graft itself is
+			// claimed, or it is a fold of a source already embedded into the
+			// prefix / projections / an earlier graft.
+			skip := embedded[oid] || (ci.WovenFrom != "" && embedded[ci.WovenFrom])
+			if ci.WovenFrom != "" {
+				embedded[ci.WovenFrom] = true
+			}
+			if skip {
 				return
 			}
 			entries[oid] = &weaveEntry{oid: oid, kind: 1, rel: rel, when: ci.When, ci: ci}
@@ -330,6 +371,9 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 			Author:    c.Author,
 			Committer: c.Committer,
 			Message:   c.Message,
+			// The append IS the provenance: record the fold source so later
+			// folds (rebuilds, other scopes, deeper timelines) recognize it.
+			WovenFrom: e.oid,
 		}
 		oid := nc.OID(s.Algo)
 		s.Objects.PutSynthetic(repo, oid, model.CommitType, nc.Encode())
