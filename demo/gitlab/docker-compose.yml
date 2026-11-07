@@ -1,0 +1,55 @@
+# One-command GitLab-CE integration demo (docs/19): a real GitLab whose
+# only Gitaly storage node is banyan. GitLab-CE (pinned to the vendored
+# protocol version, internal/gitaly/server.go ProtoVersion) keeps its web
+# UI, auth, and workhorse; every git byte lands in banyan over the gitaly
+# gRPC protocol.
+#
+#   docker compose -f demo/gitlab/docker-compose.yml up -d
+#   demo/gitlab/provision.sh          # waits, mints a root PAT, runs the
+#                                     # push + read-back walkthrough
+#
+#   GitLab UI  http://localhost:8180  (root / 2pPzp76xwdyirr4B2Kyh)
+#   banyan API http://localhost:8170  (the storage node's own face)
+#
+# The demo VM needs ~4 GiB for GitLab; the gitlab.rb here is the trimmed
+# footprint (puma 2 workers, sidekiq 5, monitoring off).
+services:
+  banyan:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: banyan:dev
+    container_name: banyan-gitlab
+    command: ["-config", "/etc/banyan/banyan-gitaly.yaml"]
+    ports:
+      - "8170:8080" # banyan's native API (repo listing, health)
+      - "127.0.0.1:8175:8075" # the gitaly gRPC face, host-local for probes
+    volumes:
+      - banyan-gitlab-data:/var/lib/banyan
+      - ./banyan-gitaly.yaml:/etc/banyan/banyan-gitaly.yaml:ro
+    restart: unless-stopped
+
+  gitlab:
+    image: gitlab/gitlab-ce:19.5.3-ce.0
+    container_name: banyan-gitlab-ce
+    hostname: banyan-gitlab-ce
+    environment:
+      GITLAB_ROOT_PASSWORD: "2pPzp76xwdyirr4B2Kyh"
+      GITLAB_OMNIBUS_CONFIG: "from_file('/omnibus_config/gitlab.rb')"
+    ports:
+      # omnibus nginx listens on the external_url port INSIDE the container
+      # (http://localhost:8180), so the mapping is same-port, not 8180:80
+      - "8180:8180" # web UI / git-over-HTTP
+      - "8122:22" # git-over-SSH (gitlab-shell -> banyan SSHService)
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - ./gitlab.rb:/omnibus_config/gitlab.rb:ro
+    depends_on:
+      - banyan
+    restart: unless-stopped
+
+volumes:
+  banyan-gitlab-data:
+  gitlab-config:
+  gitlab-logs:
