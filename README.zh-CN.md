@@ -45,40 +45,61 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 
 ## 当前能力
 
-| 能力 | 状态 |
-|---|---|
-| 根/子树 `git clone/fetch/push`（Smart HTTP v1 + v2） | ✅ 真实 git 客户端实测 |
-| git-over-SSH 传输（`ssh://` + 公钥认证，v0 有状态协商 + v2） | ✅ 同一服务核心与授权（docs/04 §7b） |
-| partial clone（`--filter=blob:none`/`tree:0` + 惰性取回） | ✅ |
-| serve 路径 delta 包（过 64KiB 阈值 OFS/REF-delta） | ✅ |
-| 增量 fetch 真 thin pack（对客户端持有基对象出 REF_DELTA） | ✅（字节 0.87× git，docs/11 §3） |
-| 授权：仓库/目录/分支粒度的下载与提交控制（docs/07） | ✅ demo 策略，opt-in |
-| 存储寻址双模式：named 可读目录 / hashed 不透明键 + rename（docs/03 §6） | ✅ hashed 模式 rename 零存储动作，T40 |
-| M4 目录级工作流：同目录队列 + 服务端收敛（纯 Go merge-ort 子集，docs/15） | ✅ 并发突发零拒绝；冲突票隔离，T41/T42 |
-| 个人分支命名空间（refs/heads/<user>/*）仅本人可见 | ✅ monorepo 分支过多解法 |
-| Web 界面：仓库管理 + 文件浏览（TypeScript 零运行时依赖） | ✅ web/ |
-| 子树虚拟仓库（`/tree/<path>`，完整历史投影） | ✅ |
-| 目录时间线 + 线性织入根视图（v5） | ✅ |
-| 浅克隆（depth / deepen / unshallow） | ✅ |
-| have 减除增量 fetch | ✅ |
-| repack：碎片合并 + delta | ✅ |
-| 任意仓规模的有界内存服务：精确命中 verbatim 流式直传、多 pack 完整 clone 走类型化枚举 + 逐对象窗口编码 | ✅（T53/T55；docs/03 §3） |
-| 运维面：pprof 全家 + 运行时快照 + 服务路径计数器（`debug.pprof_addr`） | ✅（T54） |
-| tags 与任意 `refs/<ns>` 命名空间 | ✅ |
-| SQLite 元数据持久化 + YAML 配置 | ✅ |
-| 服务层 + JSON API（`/api/v1/*`，统一错误信封） | ✅ |
-| 薄工作区 CLI（`clone/status/commit/pull/log/cat/...`） | ✅ |
-| HA 集群：网关 + ref 服务 + 散布多副本 pack 存储、节点故障恢复、仓库级动态副本 | ✅ 核心（本地盘集群，T23-T26；MySQL/raft refs 后端 → HA-2） |
-| 产品侧控制台（`banyans`）：`{group}/{project}[/path]` 路由、PAT 认证、子树作用域成员角色与前缀链继承（docs/17） | ✅ M6.1/M6.2（HTTP；SSH/web → M6.3/M6.4） |
-| 生产姿态：安全默认启动（客户端面角色无认证、gitaly 无 token 即拒启；`dev: true` 是显式出路）、元数据默认进数据库（持有元数据的角色缺省 postgres，mysql 并列支持，内存 mem 仅 dev 合法）、SIGINT/SIGTERM 优雅 drain（在途 pack 流跑完；gRPC GracefulStop；15s 上限）、每角色 `/metrics` Prometheus 端点（git 流量速率/时延/在途、ingest 字节、CAS 冲突、副本校验回退、reconciler/sweep 进度） | ✅ P0（[docs/14](docs/14-roadmap.md) 生产主轴） |
-| 可扩展认证：元数据面 PAT（sha256 落库、明文只现一次、过期/吊销读取时判定；scope read<write<admin 是上限不是旁路——TokenPolicy 在同一 Service 缝装饰任意策略）、RPC 细粒度授权（管理端点走 auth.AdminChecker，内容写与 wire 同一 CanPush）、路径 diff + blame RPC 与 git diff / git blame 逐字节一致 | ✅ M5 + M2/M3（docs/07 §8） |
-| Gitaly gRPC 前端（可直接替换 GitLab 的 gitaly 节点；协议 v19.5.2，163/163 RPC 全部落地——含 praefect 集群族（cluster-of-one）、服务端备份、快照、对象池、历史重写、回调式 hooks 与 ssh upload-archive 线协议——完整 Operation/Ref/Commit/Diff/Blob 服务、含 sidechannel 的传输面、逐字节一致的 git-archive、bundle、blame、冲突解决、作为客户端的 smart-HTTP 远端抓取与镜像推送；子树投影 ref——顶层目录以 refs/banyan/tree/<dir> 经 GitLab URL 直取直推，T84） | ✅ 切片 1–11（[docs/19](docs/19-gitaly-compat.md)） |
+以下全部已落地，由 **100 个顶层集成测试函数**以真实 git CLI 钉住
+（[docs/13](docs/13-testing.md)）；GitLab 模式各条另经真 GitLab-CE 活体验证
+（[docs/19](docs/19-gitaly-compat.md) §8、[docs/20](docs/20-gitlab-integration.md)）。
 
-100 个顶层集成测试函数以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
+**git 协议面**——普通 git 客户端能做什么：
+
+| 能力 | 说明 |
+|---|---|
+| 根/子树 `clone / fetch / push` | Smart HTTP v1 + v2（[docs/04](docs/04-git-compat.md)） |
+| git-over-SSH | `ssh://` + 公钥认证，v0 有状态协商 + v2；同一服务核心、同一授权 |
+| partial clone | `--filter=blob:none` / `tree:0`，按 OID 惰性取回 |
+| 浅克隆 | depth / deepen / unshallow |
+| tags 与任意 `refs/<ns>` 命名空间 | 原样存储与广告 |
+| push options | `-o` 选项段协商与解析 |
+| 高效传输 | serve 路径 delta 包；增量 fetch 真 thin pack——字节 0.87× git（[docs/11](docs/11-performance.md) §3）；have 减除 |
+
+**目录锚定存储**——数据模型本身：
+
+| 能力 | 说明 |
+|---|---|
+| 任意子目录即仓库 | `/r/{repo}/tree/{subdir}`，完整投影历史——`log / show / fsck` 全可用 |
+| 目录时间线 | 一次 push 只 CAS 一条时间线——零跨目录锁；根视图读时织入（v5） |
+| 目录级工作流（M4） | 同目录队列 + 服务端收敛：突发零拒绝、冲突按票隔离（[docs/15](docs/15-workflow.md)） |
+| 个人分支命名空间 | `refs/heads/<user>/*` 仅本人可见——monorepo 分支过多解法 |
+| repack | 碎片合并 + delta 编码 |
+| 有界内存服务 | 精确命中 verbatim 直传、类型化枚举 + 逐对象窗口编码，任意仓规模（[docs/03](docs/03-storage.md) §3） |
+
+**平台集成**——GitLab 直接替换：
+
+| 能力 | 说明 |
+|---|---|
+| gitaly gRPC 前端 | 协议 v19.5.2，**163/163 RPC**——Operation/Ref/Commit/Diff/Blob 全服务、praefect（cluster-of-one）、备份、bundle、历史重写、sidechannel 传输（[docs/19](docs/19-gitaly-compat.md)） |
+| GitLab-CE 跑在 banyan 存储上 | 建项目、HTTP **与** SSH 推拉、Web 浏览、MR 合并、wiki、归档——全部经真 GitLab-CE 19.5 活体验证（[docs/20](docs/20-gitlab-integration.md)） |
+| 推送策略门 | 保护分支等 ref 级策略经 `/internal/allowed` 强制，Rails 拒绝原话透传到 git 客户端 |
+| 平台回调 | post-receive 适配器：活动事件、pipeline、缓存过期、MR-from-push（`-o merge_request.create` 活体实证） |
+| 子树投影 ref | `refs/banyan/tree/<dir>`——一个 GitLab URL、一套凭证取推任意子树；推送向上装配回根视图 |
+| 推送大小上限 | GitLab Maximum push size 设置经 `receive.maxInputSize` 强制 |
+
+**生产与运维**：
+
+| 能力 | 说明 |
+|---|---|
+| HA 集群 | 网关 + refs 服务 + 散布多副本 pack：节点故障恢复、仓库级动态副本（[docs/10](docs/10-ha.md)；当前本地盘集群，MySQL/raft refs → HA-2） |
+| 授权 | 仓库/目录/分支粒度的下载与提交控制（[docs/07](docs/07-authorization.md)；demo 策略，opt-in） |
+| PAT | sha256 落库、明文只现一次、过期/吊销读取时判定；scope 是上限不是旁路——TokenPolicy 装饰任意策略，RPC 授权同缝 |
+| 生产姿态 | 安全默认启动、元数据默认进数据库、优雅 drain、每角色 `/metrics`（P0，[docs/14](docs/14-roadmap.md)） |
+| 服务端 diff 与 blame | 路径 diff、blame RPC 与 `git diff` / `git blame` 逐字节一致 |
+| 存储寻址 | named 可读 / hashed 不透明，rename 零存储动作（[docs/03](docs/03-storage.md) §6） |
+| 服务层 + JSON API | `/api/v1/*` 统一错误信封；SQLite / MySQL / Postgres 元数据 + YAML 配置 |
+| 客户端与界面 | 薄工作区 CLI（`banyan`）、零运行时依赖 Web UI、产品控制台 `banyans` 子树作用域角色（[docs/17](docs/17-console.md)；控制台 SSH/web → M6.3/M6.4） |
+| 运维面 | pprof 全家、运行时快照、服务路径计数器 |
+
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证；gitaly 前端经
-git 自身答案对拍（T60）、workhorse 形态 gRPC 传输模拟器（T61）、真 clone
-所乘的多路复用 sidechannel 传输（T62）交叉验证，diff 面与 git diff
-逐字节对比（T63）。
+git 自身答案对拍（T60）、workhorse 形态传输模拟器（T61）、真 clone 所乘的
+多路复用 sidechannel 传输（T62）交叉验证，diff 面与 git diff 逐字节对比（T63）。
 
 ## 代码结构
 

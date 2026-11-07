@@ -76,40 +76,64 @@ directory timelines align both boundaries at the same granularity.
 
 ## What works today
 
-| Capability | Status |
-|---|---|
-| Root + subtree `git clone/fetch/push` (Smart HTTP v1 + v2) | ✅ verified against real git clients |
-| Git over SSH (`ssh://` + public-key auth, v0 stateful negotiation + v2) | ✅ same serving core, same authz (docs/04 §7b) |
-| Partial clone (`--filter=blob:none`/`tree:0` + lazy fetch) | ✅ |
-| Serve-path delta packs (OFS/REF-delta past 64KiB) | ✅ |
-| Thin packs on incremental fetch (REF_DELTA vs client-held bases) | ✅ (0.87x git's bytes, docs/11 sec.3) |
-| Authorization: repo / directory / branch granularity, fetch and push (docs/07) | ✅ demo policy, opt-in |
-| Storage addressing: named (readable dirs) vs hashed (opaque keys, gateway-mapped) + rename (docs/03 §6) | ✅ hashed renames never touch storage, T40 |
-| M4 directory workflow: per-timeline queue + server-side convergence (pure-Go merge-ort subset, docs/15) | ✅ bursts land with zero rejections; conflicts isolated per ticket, T41/T42 |
-| Personal branch namespaces (`refs/heads/<user>/*`) visible to their owner alone | ✅ the monorepo too-many-branches answer |
-| Web UI: repository management + file browsing (TypeScript, zero runtime deps) | ✅ `web/` |
-| Subtree virtual repos (`/tree/<path>`), full-history projection | ✅ |
-| Per-directory timelines, linear woven root view (v5) | ✅ |
-| Shallow clone (depth / deepen / unshallow) | ✅ |
-| Incremental fetch with have subtraction | ✅ |
-| Repack: fragment merge + delta encoding | ✅ |
-| Bounded-memory serving at any repo size: verbatim exact-pack streams, multi-pack clones via typed enumeration + per-object windowed encode | ✅ (T53/T55; docs/03 §3) |
-| Ops plane: pprof family, runtime snapshot, serve-path counters (`debug.pprof_addr`) | ✅ (T54) |
-| Tags and arbitrary `refs/<ns>` namespaces | ✅ |
-| SQLite metadata persistence + YAML config | ✅ |
-| Service layer + JSON API (`/api/v1/*`, error envelope) | ✅ |
-| Thin-workspace CLI (`clone/status/commit/pull/log/cat/...`) | ✅ |
-| HA cluster: gateway + refs service + scattered multi-replica pack storage, node failure recovery, dynamic per-repo replicas | ✅ core (local-disk cluster, T23-T26; MySQL/raft refs backend → HA-2) |
-| Product-side console (`banyans`): `{group}/{project}[/path]` routing, PAT auth, subtree-scoped member roles with prefix-chain inheritance (docs/17) | ✅ M6.1/M6.2 (HTTP; SSH/web → M6.3/M6.4) |
-| Production posture: secure-by-default startup (unauthenticated client-facing roles and tokenless gitaly refuse to boot; `dev: true` is the explicit opt-out), metadata in a database by default (postgres for the metadata-owning roles, mysql equally supported, in-memory mem is dev-only), graceful drain on SIGINT/SIGTERM (in-flight pack streams finish; gRPC GracefulStop; 15s cap), `/metrics` Prometheus endpoint on every role (git traffic rate/latency/inflight, ingest bytes, CAS conflicts, replica-verification fallbacks, reconciler/sweep progress) | ✅ P0 ([docs/14](docs/14-roadmap.md) production track) |
-| Extensible auth: metadata-plane personal access tokens (sha256 at rest, plaintext shown once, expiry/revocation on read; scope read<write<admin is a ceiling, never a bypass — TokenPolicy decorates any policy at the same Service seam), RPC fine-grained authorization (management endpoints behind auth.AdminChecker, content writes behind the same CanPush the wire enforces), path-diff + blame RPCs byte-equal to git diff / git blame | ✅ M5 + M2/M3 (docs/07 §8) |
-| Gitaly gRPC frontend (replace GitLab's gitaly node; protocol v19.5.2, 163/163 RPCs live; subtree projection refs — every top-level directory addressable as refs/banyan/tree/<dir> through the GitLab URL, T84 — every service including the praefect cluster family (cluster-of-one), server-side backups, snapshots, object pools, history rewrite, hooks-over-callbacks and the ssh upload-archive wire protocol — full Operation/Ref/Commit/Diff/Blob services, transport incl. sidechannel, byte-identical git-archive, bundles, blame, conflicts resolution, smart-HTTP remote fetch and mirror push as a client) | ✅ slices 1–11 ([docs/19](docs/19-gitaly-compat.md)) |
+Everything below is landed and pinned by **100 top-level integration test
+functions** driving the real git CLI ([docs/13](docs/13-testing.md));
+GitLab-mode rows are additionally verified against a real GitLab-CE
+([docs/19](docs/19-gitaly-compat.md) §8, [docs/20](docs/20-gitlab-integration.md)).
 
-100 top-level integration test functions pin the behavior with the **real git CLI** as the client
-([docs/13](docs/13-testing.md)) — the thin-CLI commit path is cross-verified
-by fresh git clones plus `fsck`; the gitaly frontend is cross-verified
-against git's own answers (T60), a workhorse-shaped gRPC transport emulator
-(T61), the multiplexed sidechannel transport real clones ride (T62), and the diff surface byte-compared with git diff (T63).
+**Git protocol** — what a plain git client can do:
+
+| Capability | Notes |
+|---|---|
+| Root + subtree `clone / fetch / push` | Smart HTTP v1 + v2 ([docs/04](docs/04-git-compat.md)) |
+| Git over SSH | `ssh://` + public-key auth, v0 stateful + v2; same serving core, same authz |
+| Partial clone | `--filter=blob:none` / `tree:0`, lazy fetch by OID |
+| Shallow clone | depth / deepen / unshallow |
+| Tags and arbitrary `refs/<ns>` namespaces | stored and advertised verbatim |
+| Push options | `-o` negotiated and parsed |
+| Efficient transfers | serve-path delta packs; thin packs on incremental fetch — 0.87× git's bytes ([docs/11](docs/11-performance.md) §3); have subtraction |
+
+**Directory-anchored storage** — the data model in action:
+
+| Capability | Notes |
+|---|---|
+| Any subdirectory is a repo | `/r/{repo}/tree/{subdir}`, full projected history — `log / show / fsck` all work on it |
+| Per-directory timelines | a push CASes exactly one timeline — zero cross-directory locks; the root view is woven on read (v5) |
+| Directory workflow (M4) | per-timeline queue + server-side convergence: bursts land with zero rejections, conflicts isolated per ticket ([docs/15](docs/15-workflow.md)) |
+| Personal branch namespaces | `refs/heads/<user>/*` visible to their owner alone — the monorepo too-many-branches answer |
+| Repack | fragment merge + delta encoding |
+| Bounded-memory serving | exact-pack verbatim streams; typed enumeration + windowed encode at any repo size ([docs/03](docs/03-storage.md) §3) |
+
+**Platform integration** — GitLab drop-in:
+
+| Capability | Notes |
+|---|---|
+| Gitaly gRPC frontend | protocol v19.5.2, **163/163 RPCs** — Operation/Ref/Commit/Diff/Blob services, praefect (cluster-of-one), backups, bundles, history rewrite, sidechannel transport ([docs/19](docs/19-gitaly-compat.md)) |
+| GitLab-CE on banyan storage | project create, push/clone over HTTP **and** SSH, web browsing, MR merges, wiki, archives — live-verified against GitLab-CE 19.5 ([docs/20](docs/20-gitlab-integration.md)) |
+| Push policy gate | protected branches and friends enforced via `/internal/allowed`; Rails' rejection message reaches the git client verbatim |
+| Platform callbacks | post-receive adapter: activity events, pipelines, cache expiry, MR-from-push (`-o merge_request.create` verified live) |
+| Subtree projection refs | `refs/banyan/tree/<dir>` — one GitLab URL and one credential per subtree; pushes assemble upward into the root view |
+| GitLab push size limit | the Maximum-push-size setting enforced via `receive.maxInputSize` |
+
+**Production and operations**:
+
+| Capability | Notes |
+|---|---|
+| HA cluster | gateway + refs service + scattered multi-replica packs; node-failure recovery, dynamic per-repo replicas ([docs/10](docs/10-ha.md); local-disk cluster today, MySQL/raft refs → HA-2) |
+| Authorization | repo / directory / branch granularity, fetch and push ([docs/07](docs/07-authorization.md); demo policy, opt-in) |
+| Personal access tokens | sha256 at rest, plaintext shown once, expiry/revocation on read; scopes are ceilings, never bypasses — TokenPolicy decorates any policy, RPC authz at the same seam |
+| Production posture | secure-by-default startup, DB-backed metadata by default, graceful drain, `/metrics` on every role (P0, [docs/14](docs/14-roadmap.md)) |
+| Server-side diff & blame | path-diff and blame RPCs byte-equal to `git diff` / `git blame` |
+| Storage addressing | named vs hashed, renames never touch storage ([docs/03](docs/03-storage.md) §6) |
+| Service layer + JSON API | `/api/v1/*` unified error envelope; SQLite / MySQL / Postgres metadata + YAML config |
+| Clients & UIs | thin-workspace CLI (`banyan`), zero-dependency web UI, product console `banyans` with subtree-scoped roles ([docs/17](docs/17-console.md); console SSH/web → M6.3/M6.4) |
+| Ops plane | pprof family, runtime snapshots, serve-path counters |
+
+The thin-CLI commit path is cross-verified by fresh git clones plus `fsck`;
+the gitaly frontend is cross-verified against git's own answers (T60), a
+workhorse-shaped transport emulator (T61), the multiplexed sidechannel
+transport real clones ride (T62), and the diff surface byte-compared with
+git diff (T63).
 
 ## Repository layout
 
