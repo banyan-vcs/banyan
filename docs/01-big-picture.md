@@ -77,13 +77,19 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
 | 层 | 内容 | 状态 |
 |---|---|---|
 | L1 协议兼容 | GitLab 的一切 git 操作（mirror/CI fetch/开发者 remote）把 banyan 当普通远端 | **已完成**（git 2.50 实测矩阵 T13–T16：v2 客户端降级、partial 回退、浅化全通） |
-| L2 数据互通 | 镜像拓扑：真相源唯一，另一侧为投影 | **规划**（GitLab 侧配置即可起步，banyan 侧零开发；管理工具待 banyan CLI） |
-| L3 流程集成 | 认证桥接 / 命名空间映射 / webhook 触发 CI | **规划**（banyan 侧需 token auth + webhook 派发，见 3.3） |
+| L2 数据互通 | **直连（gitaly 模式，已落地）**：GitLab 前端原样，存储节点换成 banyan（163/163 RPC，真 GitLab-CE 活体验收，[docs/19](19-gitaly-compat.md)/[20](20-gitlab-integration.md)）；镜像拓扑（A/B）作为形态备选 | 直连 ✅（demo/gitlab 一键栈 + T83）；镜像管理工具待 banyan CLI |
+| L3 流程集成 | 认证桥接 / 命名空间映射 / webhook 触发 CI | 部分：token auth + RPC 分级 ✅（docs/07 §8）；webhook/post-receive 适配 **待建**（见 3.3） |
 
 ### 3.2 集成拓扑（L2）：写路径在哪，真相源在哪
 
 ```
-拓扑 A：GitLab 为主（现状迁移最平滑）
+拓扑 S（直连，已落地）：GitLab 跑在 banyan 存储上
+  dev ──push──▶ GitLab(workhorse) ──gitaly gRPC──▶ banyan   ← 唯一真相源
+  子树：refs/banyan/tree/<dir> 投影 ref（一条 GitLab URL 取推子树，
+        推送向上装配回根视图，T84）或 /tree/<dir> 面直连
+  语义：@hashed 寻址零翻译；GitLab 平台面（权限/MR/UI）原样
+
+拓扑 A：GitLab 为主（镜像迁移过渡）
   dev ──push──▶ GitLab ──push mirror──▶ banyan
   Agent/CI ◀──子树 clone── banyan          ← 读加速 + 子树视图价值点
   语义：GitLab→banyan 推的是根历史，verbatim 落地，无损
@@ -95,33 +101,35 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
   语义：GitLab 拉的是根视图（线性织入产物），fsck 干净的合法 git 历史
 ```
 
-两个方向都安全的原因（v5 语义）：
+镜像两方向都安全的原因（v5 语义）：
 
 - **GitLab → banyan**（push mirror）：根仓库 push 走 verbatim 落地，OID 原样；
 - **banyan → GitLab**（pull mirror）：根视图是纯线性、无 merge 脚手架的标准
   git 历史，对 GitLab 是普通仓库；
 - **唯一注意点**：子树视图里的提交 SHA ≠ 根视图 SHA（织入重写，blob 恒等，
   docs/02 §13）。CI 若按 SHA 触发/校验，用根视图 OID（webhook 事件即根视图
-  OID）；开发者在子树视图看到的 SHA 不用于跨系统定位。
+  OID）；开发者在子树视图看到的 SHA 不用于跨系统定位。投影 ref 同理
+  （`refs/banyan/tree/<dir>` 指向子树视图 OID，docs/20 §7）。
 
 拓扑 C（双向双写网关：push 同时 fan-out 两侧）一致性弱、冲突面大，
 **不作为首选**，仅在强需求下评估。
 
-### 3.3 流程集成（L3）：banyan 侧待建能力
+### 3.3 流程集成（L3）：banyan 侧能力现状
 
 | 能力 | 设计 | 现状 |
 |---|---|---|
-| 认证 | token 中间件：Personal Access Token / CI job token 透传（`Authorization` / git URL 凭证）；仓库级 R/W scope | **无认证**（当前 push 自动建仓是 demo 便利，M1 已注明收紧）——**企业集成前置条件 #1** |
-| 命名空间映射 | GitLab `group/project` slug ↔ banyan repo id（MetaStore repos 表加映射列或约定式命名） | repos 表已有，映射待定 |
-| webhook | receive-pack 成功后派发 push event（根视图 OID + ref）→ GitLab trigger API 触发流水线 | 无，gitwire 尾部挂钩即可 |
-| 权限 | 仓库级 token 起步；目录时间线天然提供**路径级写隔离**原语（同目录 CAS 才互斥）——平台 ACL 映射到 banyan 凭证 scope | 设计点，未实现 |
-| CI 取码 | Runner 直连 banyan（协议兼容，可用 `--depth` 减量）或镜像后走 GitLab | 协议侧就绪，无额外开发 |
-| 存储后端直连 | Gitaly gRPC 兼容前端（P1 读+git 传输 → P2 网页写路径）：GitLab 把 banyand 当 Gitaly 存储节点，免镜像、单真相源 | 规划（[05-service-api.md](05-service-api.md) §4） |
+| 认证 | PAT（`banyan_` 前缀、明文一次、sha256 落库、过期/吊销读时判定）；scope read<write<admin 为**上限非旁路**，TokenPolicy 装饰任意策略 | ✅ docs/07 §8（T79/T80） |
+| RPC 分级 | 管理端点走 AdminChecker 可选缝；内容写与 wire 同一条 CanPush；建仓收紧 | ✅ docs/07 §8b |
+| 命名空间映射 | gitaly 模式下 `@hashed/<h2>/<h2>/<sha256(id)>.git` ↔ banyan 仓名 `<hex64>` 零翻译 | ✅（docs/19 §2） |
+| 子树可达 | 投影 ref `refs/banyan/tree/<dir>`（GitLab URL 直取直推+装配）；`/tree/` 面（banyan 自有 URL） | ✅（T84；docs/20 §7） |
+| post-receive→平台回调 | push 事件/pipeline/MR-from-push/缓存失效：向 gitlab-shell 协议 `/api/v4/internal/post_receive` 的适配器 | **待建**（登记 docs/14 M5；gitaly 模式下的最后一块功能缝） |
+| webhook | receive-pack 成功后派发 push event（根视图 OID + ref）→ 平台 trigger API | 待建（与上条同链路） |
+| CI 取码 | Runner 走 GitLab（直连模式下自然）或直连 banyan（`--depth` 减量） | 协议侧就绪 |
 
 ### 3.4 明确的非目标
 
 - praefect 复制/事务协议不承诺（直连单节点 Gitaly 模式先行，多副本走 docs/03 自身路线）；
-  Gitaly 兼容为可选分阶段前端，私有契约随 GitLab 版本的漂移在适配层吸收（docs/05）；
+  Gitaly 兼容为前端之一（已落地），私有契约随 GitLab 版本的漂移在适配层吸收（docs/19 §0）；
 - 不做平台 UI、MR 流水线、组织权限树；
 - 不做双向强一致多主存储（真相源唯一原则）。
 
