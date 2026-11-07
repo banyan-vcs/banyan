@@ -55,7 +55,9 @@ git wire 协议语义，服务端内部自由重构。
 1. **客户端生态**——标准 git CLI（Smart HTTP v1/v2 + git-over-SSH 双传输，
    子树即仓库）、banyan CLI 薄工作区（无 .git，历史在服务端）、Web 管理面；
 2. **接入层**——gitwire（git 协议服务核心：有状态 v0 协商 / v2 命令面 /
-   thin pack / 服务阶梯）与 rpc `/api/v1` 薄层（三前端之一，Gitaly 规划中）；
+   thin pack / 服务阶梯 / 子树投影 ref）与 rpc `/api/v1` 薄层（三前端之一
+   是 Gitaly 兼容层——GitLab 直连存储节点，[19](19-gitaly-compat.md)/
+   [20](20-gitlab-integration.md)）；
    两类端点都只做协议编解码，无业务逻辑；
 3. **授权切面**——`auth.Service` 贯穿所有端点：Basic / SSH 公钥同源解析
    身份，VisibleRefs / CanFetch / CanPush 三粒度决策（nil = 关闭；
