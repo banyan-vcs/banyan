@@ -66,10 +66,6 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 // and pack, then per-ref validation + head CAS with a report-status receipt.
 // A non-nil error is a pre-report protocol failure.
 func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Reader, out *bufWriter, vr VirtualRepo) error {
-	type refUpdate struct {
-		Old, New model.OID
-		Name     string
-	}
 	var updates []refUpdate
 	sawFlush := false
 	for !sawFlush {
@@ -142,15 +138,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	if b, berr := s.Objects.RepoBytes(ctx, vr.Repo); berr == nil {
 		hookBytes = b
 	}
-	hookUpdates := func(list []refUpdate) []hookUpdateInfo {
-		out := make([]hookUpdateInfo, 0, len(list))
-		for _, u := range list {
-			out = append(out, hookUpdateInfo{
-				Old: hookOID(u.Old, s.Algo), New: hookOID(u.New, s.Algo), Ref: u.Name,
-			})
-		}
-		return out
-	}
+	hookUpdates := s.hookUpdates
 	if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "pre-receive", hookUpdates(updates), false); herr != nil {
 		// Wire shape mirrors receive-pack.c: "unpack ok", then every ref
 		// declined with the hook's first output line.
@@ -176,11 +164,21 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			continue
 		}
 		if !strings.HasPrefix(u.Name, "refs/heads/") {
+			// Subtree-projection refs (docs/20 §7): a push to
+			// refs/banyan/tree/<dir> IS a push at that directory's scope —
+			// the same write path the /tree/<dir> face takes (directory
+			// anchoring, upward assembly, rollback guards), exposed in the
+			// parent's ref space so whole-repo front ends (GitLab) can use
+			// it with one URL and one credential.
+			if strings.HasPrefix(u.Name, projectionRefPrefix) {
+				s.reportProjectionPush(ctx, out, id, vr, u, hookBytes, &applied)
+				continue
+			}
 			if s.Auth != nil && !s.Auth.CanPush(id, vr.Repo, string(vr.Sub), "") {
 				_ = WritePacket(out, []byte("ng "+u.Name+" permission denied\n"))
 				continue
 			}
-			if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "update", hookUpdates([]refUpdate{u}), false); herr != nil {
+			if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "update", s.hookUpdates([]refUpdate{u}), false); herr != nil {
 				_ = WritePacket(out, []byte("ng "+u.Name+" "+strings.ReplaceAll(herr.Error(), "\n", " ")+"\n"))
 				continue
 			}
@@ -198,7 +196,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			_ = WritePacket(out, []byte("ng "+u.Name+" empty branch name\n"))
 			continue
 		}
-		if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "update", hookUpdates([]refUpdate{u}), false); herr != nil {
+		if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "update", s.hookUpdates([]refUpdate{u}), false); herr != nil {
 			_ = WritePacket(out, []byte("ng "+u.Name+" "+strings.ReplaceAll(herr.Error(), "\n", " ")+"\n"))
 			continue
 		}
@@ -343,6 +341,75 @@ func (s *Server) warmView(repo string, sub model.AnchorPath, branch string) {
 		_, _, _ = s.Views.SubtreeHead(ctx, repo, sub, branch)
 		_, _ = s.Views.RootTip(ctx, repo, branch)
 	}()
+}
+
+// refUpdate is one ref command of a receive-pack session.
+type refUpdate struct {
+	Old, New model.OID
+	Name     string
+}
+
+// hookUpdates renders ref commands in the hook callback payload shape.
+func (s *Server) hookUpdates(list []refUpdate) []hookUpdateInfo {
+	out := make([]hookUpdateInfo, 0, len(list))
+	for _, u := range list {
+		out = append(out, hookUpdateInfo{
+			Old: hookOID(u.Old, s.Algo), New: hookOID(u.New, s.Algo), Ref: u.Name,
+		})
+	}
+	return out
+}
+
+// reportProjectionPush routes one refs/banyan/tree/<dir> update through the
+// subtree write path: the update ref names the scope, the timeline branch is
+// the subtree view's default (what the /tree/<dir> face pushes), and every
+// guard of that path applies — per-directory auth policy, update hooks,
+// rollback protection, upward assembly. Deletions and nested paths are
+// declined with the same semantics the /tree/ face has.
+func (s *Server) reportProjectionPush(ctx context.Context, out *bufWriter, id auth.Identity, vr VirtualRepo, u refUpdate, hookBytes int64, applied *[]refUpdate) {
+	dir, ok := projectionRefPath(u.Name)
+	if !ok {
+		_ = WritePacket(out, []byte("ng "+u.Name+" projection refs address one top-level directory (refs/banyan/tree/<dir>)\n"))
+		return
+	}
+	if !vr.Sub.IsRoot() {
+		_ = WritePacket(out, []byte("ng "+u.Name+" projection refs only in the root repo\n"))
+		return
+	}
+	if u.New.IsZero() {
+		// Subtree views are derived state; the /tree/ face declines
+		// deletions the same way.
+		_ = WritePacket(out, []byte("ng "+u.Name+" deletion in subtree view not supported\n"))
+		return
+	}
+	if _, _, rerr := s.Objects.Raw(ctx, vr.Repo, u.New); rerr != nil {
+		_ = WritePacket(out, []byte("ng "+u.Name+" head object missing\n"))
+		return
+	}
+	sub := model.AnchorPath("/" + dir)
+	subVR := vr
+	subVR.Sub = sub
+	branch := s.subtreeBranchName(ctx, vr.Repo)
+	if s.Auth != nil && !s.Auth.CanPush(id, vr.Repo, string(sub), branch) {
+		_ = WritePacket(out, []byte("ng "+u.Name+" permission denied\n"))
+		return
+	}
+	if herr := s.fireHooks(ctx, subVR, id.User, hookBytes, "update", s.hookUpdates([]refUpdate{u}), false); herr != nil {
+		_ = WritePacket(out, []byte("ng "+u.Name+" "+strings.ReplaceAll(herr.Error(), "\n", " ")+"\n"))
+		return
+	}
+	if s.Convergence {
+		if res := s.runSubtreeJob(ctx, subVR, branch, u.Old, u.New); res.err != nil {
+			_ = WritePacket(out, []byte("ng "+u.Name+" "+res.err.Error()+"\n"))
+			return
+		}
+	} else if aerr := s.adoptSubtreePush(ctx, subVR, branch, u.Old, u.New); aerr != nil {
+		_ = WritePacket(out, []byte("ng "+u.Name+" "+aerr.Error()+"\n"))
+		return
+	}
+	_ = WritePacket(out, []byte("ok "+u.Name+"\n"))
+	*applied = append(*applied, u)
+	s.warmView(vr.Repo, sub, branch)
 }
 
 // handleAuxRefUpdate stores refs/tags/* and any other non-heads namespace

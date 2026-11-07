@@ -97,8 +97,22 @@ func (s *Server) listRefs(ctx context.Context, repo string) ([]listedRef, error)
 		return nil, status.Errorf(codes.NotFound, "gitaly: repository %q not found", repo)
 	}
 	out := make([]listedRef, 0, len(refs))
+	have := map[string]bool{}
 	for _, r := range refs {
 		out = append(out, listedRef{Name: r.Name, Head: r.Head})
+		have[r.Name] = true
+	}
+	// The subtree projections ride the same advertisement the git wire
+	// serves (workhorse bridges onto it) — the two faces must agree on the
+	// ref space (T60 pins ls-remote == ListRefs).
+	def, derr := s.defaultBranch(ctx, repo)
+	if derr != nil {
+		return nil, derr
+	}
+	for _, r := range s.git.ProjectionRefs(ctx, repo, def) {
+		if !have[r.Name] {
+			out = append(out, listedRef{Name: r.Name, Head: r.OID})
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
