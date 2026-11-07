@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# GitLab-CE ↔ banyan walkthrough (docs/19): every step below is the
+# GitLab-CE ↔ banyan walkthrough (docs/19 §8, operator guide docs/20):
+# every step below is the
 # gitaly protocol surface exercised by real GitLab, not a simulation —
 # project create (CreateRepository), HTTP push (workhorse →
 # PostReceivePack), and the API read-backs the web UI makes

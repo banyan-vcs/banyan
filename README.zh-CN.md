@@ -140,6 +140,9 @@ demo/gitlab/provision.sh                                  # 种子、推送、�
 # GitLab 界面 http://localhost:8180 —— 每个 git 字节都落在 banyan
 ```
 
+接入已有 GitLab-CE（配置、验证清单、故障排查）见
+[docs/20](docs/20-gitlab-integration.md)。
+
 ### HA 集群 demo
 
 一条命令启动拆分部署（docs/10）：refs 服务 + 4 个存储节点 + 无状态网关——
@@ -234,6 +237,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 | [docs/13-testing.md](docs/13-testing.md) | 集成测试矩阵 |
 | [docs/14-roadmap.md](docs/14-roadmap.md) | 里程碑与生产主轴 |
 | [docs/19-gitaly-compat.md](docs/19-gitaly-compat.md) | Gitaly gRPC 兼容层：覆盖矩阵（163 RPC）与设计账本 |
+| [docs/20-gitlab-integration.md](docs/20-gitlab-integration.md) | GitLab 集成指南：接入步骤、验证清单、故障排查 |
 
 ## 开发与提交约定
 
