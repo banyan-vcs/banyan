@@ -105,7 +105,7 @@ directory timelines align both boundaries at the same granularity.
 | Extensible auth: metadata-plane personal access tokens (sha256 at rest, plaintext shown once, expiry/revocation on read; scope read<write<admin is a ceiling, never a bypass — TokenPolicy decorates any policy at the same Service seam), RPC fine-grained authorization (management endpoints behind auth.AdminChecker, content writes behind the same CanPush the wire enforces), path-diff + blame RPCs byte-equal to git diff / git blame | ✅ M5 + M2/M3 (docs/07 §8) |
 | Gitaly gRPC frontend (replace GitLab's gitaly node; protocol v19.5.2, 163/163 RPCs live — every service including the praefect cluster family (cluster-of-one), server-side backups, snapshots, object pools, history rewrite, hooks-over-callbacks and the ssh upload-archive wire protocol — full Operation/Ref/Commit/Diff/Blob services, transport incl. sidechannel, byte-identical git-archive, bundles, blame, conflicts resolution, smart-HTTP remote fetch and mirror push as a client) | ✅ slices 1–11 ([docs/19](docs/19-gitaly-compat.md)) |
 
-92 top-level integration test functions pin the behavior with the **real git CLI** as the client
+96 top-level integration test functions pin the behavior with the **real git CLI** as the client
 ([docs/13](docs/13-testing.md)) — the thin-CLI commit path is cross-verified
 by fresh git clones plus `fsck`; the gitaly frontend is cross-verified
 against git's own answers (T60), a workhorse-shaped gRPC transport emulator
@@ -154,6 +154,19 @@ go run ./cmd/banyan clone http://localhost:8100/r/demo
 # ...or without Go on the host:
 docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
 ```
+
+### GitLab-CE on banyan storage
+
+A real GitLab whose only Gitaly storage node is banyan — project create,
+HTTP push, web UI browsing all served by banyan's gitaly gRPC frontend
+(docs/19; the compatibility layer's live-fire acceptance):
+
+```bash
+docker compose -f demo/gitlab/docker-compose.yml up -d   # GitLab-CE 19.5 + banyan (~4 GiB)
+demo/gitlab/provision.sh                                  # seed, push, read-back walkthrough
+# GitLab UI http://localhost:8180 — every git byte lives in banyan
+```
+
 
 Constrained networks can build through a mirror:
 `docker compose build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/`.

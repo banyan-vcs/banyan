@@ -56,9 +56,12 @@ rename 永不搬数据。
 
 ## 3. 信任模型与配置
 
-- 鉴权 = 共享 Bearer token（`authorization: Bearer <token>` 元数据，
-  恒时比较）；与上游一致：**token 之后全信**，细粒度授权在前端
-  （Rails/console），不走 banyan auth 面（docs/07）。
+- 鉴权 = 共享 Bearer token（`authorization: Bearer <token>` 元数据）。
+  两种受礼形态（§8 实测后补齐）：**v2 HMAC 签名**——Rails GitalyClient
+  16.x 起每次调用现签 `v2.<HMAC-SHA256(secret, issued_at)>.<unix秒>`，
+  ±30s 窗口（上游 auth/token.go）；以及裸 token 恒时比较（旧客户端与
+  banyan 自家 Dial）。与上游一致：**token 之后全信**，细粒度授权在
+  前端（Rails/console），不走 banyan auth 面（docs/07）。
 - ServerSignature：进程内 ed25519（重启即换钥，Rails 会重取）。
 - ServerInfo 上报：`server_version` = vendored 协议版本（19.5.2，可
   `reported_version` 覆盖）；`git_version` = 纯 Go 协议面的特性基线
@@ -287,9 +290,10 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
   目录+可执行位夹具）；tar.gz 为 gzip -n 容器包**同一 payload**（deflate
   流是 zlib 与 Go 的实现差异，逐字节无意义）；zip 为**条目级**等价
   （名/大小/mtime/内容/目录条目；zip 结构头与 extra 字段随标准库）。
-  tar.bz2 无标准库压缩器（Unimplemented）；include_lfs_blobs 无 smudge
-  平面（Unimplemented）；放不进 ustar prefix 的超长路径显式拒绝
-  （git 会落 pax path 记录）。
+  tar.bz2 无标准库压缩器（Unimplemented）；include_lfs_blobs：GitLab 归档
+  端点**无条件发 true**——对无 pointer 的树该旗标是空操作（§8 修齐：
+  仅当树内实际存在 LFS pointer、smudge 会改变字节时才诚实拒绝）；
+  放不进 ustar prefix 的超长路径显式拒绝（git 会落 pax path 记录）。
 - ObjectsSize 报告**未压缩**对象字节和（banyan 对象在 pack 内，per-object
   盘上字节是布局细节）；上游 --disk-usage 是压缩后口径。
 - RepositoryInfo 为单一对象平面的诚实映射（Size 与 RepositorySize 同源、
@@ -520,3 +524,51 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
   upload-archive wire：band-1 重组载荷与 `git archive --format=tar HEAD`
   **逐字节相等**，坏参数=NACK+exit 1（首版 ACK+sideband 混帧被 oracle
   击落）。
+
+## 8. GitLab-CE 活体实测（2026-11-07，T83）
+
+**一键演示**（`demo/gitlab/`）：`docker compose up -d` 拉起真 GitLab-CE
+（19.5.3-ce.0，与 vendored 协议同 minor）+ banyan；`provision.sh` 走查全
+链路——种子 root、铸 PAT、建项目（CreateRepository）、HTTP push
+（workhorse→PostReceivePack）、API 读面（默认支解析/树/提交/裸 blob/
+归档），末尾以 banyan 自有面核对 @hashed 落库。GitLab 侧接线：
+`gitlab_rails['repositories_storages']`（18.0 移除了 `git_data_dirs`），
+token/存储名与 banyan 配置一致。T83（integration，opt-in：
+`BANYAN_GITLAB_URL`+`BANYAN_GITLAB_TOKEN`）是同一循环的 Go 形态，无
+demo 环境即跳过。
+
+**实测揪出并修齐的六处协议缝**（模拟器全绿≠活体绿——每个都有回归
+测试钉住）：
+
+1. **v2 HMAC bearer**：Rails 16.x 起每次调用现签
+   `v2.<HMAC>.<issued_at>`，服务端只做裸比较必拒（首发现象：建项目
+   400 "invalid bearer token"）。修：±30s 窗口验签，裸 token 并存
+   （上游 auth/token.go 语义）。
+2. **FindDefaultBranchName 须答全限定名**：Rails `Gitlab::Git.branch_name`
+   对无 `refs/heads/` 前缀的答案直接 nil——root_ref nil、整站读面视仓
+   为空。修：按上游测试表语义（默认支存在→全名；不存在→首支；无支
+   →空；head_only→恒答 symref 目标含悬空）。
+3. **ListRefs pattern 前缀语义**：Rails 发字面量 `refs/heads/`（尾斜杠
+   非通配），for-each-ref 的 match_name_as_path 三分支命中（前缀止于
+   边界/pattern 自身带尾斜杠/wildmatch）——banyan 只做 glob 必空。
+4. **GetTreeEntries 的 path "."**：Rails 列根目录发 `.`，逐段查找按
+   字面量 miss（现象：tree API NoRepository）。修：splitPath 归一。
+5. **FindTag 缺失须带结构化错**：上游 NotFound 附
+   `FindTagError{TagNotFound}` detail，Rails 映射为可救的
+   ReferenceNotFoundError；裸 NotFound→NoRepository→归档等调用方 500。
+6. **GetArchive 的 include_lfs_blobs**：GitLab 恒发 true，原实现无条件
+   拒。修：树内实有 LFS pointer（smudge 会变字节）才拒，无 pointer
+   即普通归档——含 pointer 的拒绝与不含的放行都有测试钉住。
+
+**已知开放缺口（登记待建）**：post-receive → Rails internal API 回调链
+（活动事件/pipeline/MR-from-push/缓存失效）。walkthrough 以显式
+`expire_all_method_caches` 替身绕过；正解是 banyan 接收路径向 GitLab
+internal API（gitlab-shell 协议 `/api/v4/internal/post_receive`）的适配
+器，形态见 docs/14 M5。
+
+**演示工程杂记**（复用时省时）：omnibus nginx 监听 external_url 端口
+（容器内 8180，映射须同端口）；`GITLAB_OMNIBUS_CONFIG` 仅首 boot 生成
+`/etc/gitlab/gitlab.rb`；root 种子读 `ENV['GITLAB_ROOT_PASSWORD']` 且口
+令过 GitLab 黑名单（"demo"/"pass"/"gitlab" 字样皆拒）；rails runner 须
+`-u git`（postgres peer 认证）；PAT 铸造 `set_token(明文)`（19.x 起带
+参）。
