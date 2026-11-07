@@ -60,6 +60,11 @@ func SubtreeSplit(lookup ObjectLookup, algo HashAlgo, rootCommitOID OID, path An
 		Committer:     c.Committer,
 		Message:       c.Message,
 		ProjectedFrom: rootCommitOID,
+		// Weave provenance rides the projection (docs/02 §13): a root-local
+		// spine commit that is itself a fold of a subtree source stays
+		// recognizable as such inside scoped views, so their folds can skip
+		// the already-embedded source instead of duplicating its subject.
+		WovenFrom: c.WovenFrom,
 	}, nil
 }
 

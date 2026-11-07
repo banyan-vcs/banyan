@@ -44,6 +44,7 @@ type AnchoredCommit struct {
 	Message       string
 	Synthetic     bool // produced by the assembly algorithm (carries a banyan-synthetic trailer)
 	ProjectedFrom OID  // non-zero marks this as a projection commit split from the root timeline
+	WovenFrom     OID  // non-zero marks this as a weave fold of the source commit (source space, docs/02 §13)
 }
 
 // Encode renders the git-compatible commit object body.
@@ -60,6 +61,9 @@ func (c *AnchoredCommit) Encode() []byte {
 	fmt.Fprintf(&b, "committer %s\n", c.Committer.Format())
 	if c.ProjectedFrom != "" {
 		fmt.Fprintf(&b, "banyan-projected-from %s\n", c.ProjectedFrom)
+	}
+	if c.WovenFrom != "" {
+		fmt.Fprintf(&b, "banyan-woven-from %s\n", c.WovenFrom)
 	}
 	if c.Synthetic {
 		b.WriteString("banyan-synthetic true\n")
@@ -111,6 +115,8 @@ func DecodeCommit(content []byte) (*AnchoredCommit, error) {
 			c.Committer = id
 		case "banyan-projected-from":
 			c.ProjectedFrom = OID(val)
+		case "banyan-woven-from":
+			c.WovenFrom = OID(val)
 		case "banyan-synthetic":
 			c.Synthetic = val == "true"
 		default:
