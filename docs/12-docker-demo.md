@@ -4,14 +4,18 @@
 > 本文命令全部 copy-paste 可用，即测试脚本（2026-10-25 Docker 29.x 实测；
 > 协议矩阵另有 T38/T38b 进程内钉住，见 docs/13）。
 
-## 0. 两套 demo 栈
+## 0. 三套 demo 栈
 
 | 栈 | compose 文件 | 演示 | 端口 |
 |---|---|---|---|
 | 授权 + Web（本文） | `docker-compose.yml` | 权限三粒度、个人分支可见性、Web 管理页 | 8100 / 8101 |
 | HA 集群 | `docker-compose.cluster.yml` | 散布多副本、杀节点恢复、动态 R（docs/10，`bash demo/cluster-demo.sh`） | 8100 + 内部 |
+| **GitLab-CE 存储替身** | `demo/gitlab/docker-compose.yml` | 真 GitLab-CE 全功能跑在 banyan 存储上（docs/19 §8；`bash demo/gitlab/provision.sh`） | 8180 / 8170 |
 
-两栈都占 8100，**不能同时跑**——切换前先 `docker compose down -v`。
+前两栈都占 8100，**不能同时跑**——切换前先 `docker compose down -v`；
+GitLab 栈端口独立，可与任一并存（内存 ~4 GiB 起，gitlab.rb 已裁剪）。
+GitLab 栈的一键走查：起栈后 `demo/gitlab/provision.sh`（种子 root、铸
+PAT、建项目、push、读面核对），T83 是其 Go 形态。
 
 认证姿态（docs/07 §0 安全默认）：单体栈挂 `demo/auth-demo.yaml` 走
 **正路**（auth.users 在）；集群 demo 的 gateway 无用户表，以 `-dev`

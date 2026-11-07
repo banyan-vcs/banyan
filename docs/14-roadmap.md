@@ -161,7 +161,15 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
       wire 层零改动；RPC 管理端点走 auth.AdminChecker 可选扩展缝、内容写与 wire 同一条
       CanPush；自动建仓收紧此前已内建（wire 与 RPC 建仓同门）。T79/T80。CI job
       token=按用户铸造的 PAT（属主必须匹配，docs/17 §4 约定）
-- [ ] Gitaly gRPC 兼容前端 P1（Server/Repository/SmartHTTP/Ref/Commit/Blob/Diff 子集；GitLab 直连 banyand 为存储节点，docs/05 §4）
+- [x] Gitaly gRPC 兼容前端 P1（163/163 RPC 全落地后，2026-11-07 以
+      **真 GitLab-CE 活体验收**收官：`demo/gitlab` 一键栈 + provision
+      走查 + T83 opt-in e2e；活体揪出六处模拟器测不出的协议缝并修齐
+      ——v2 HMAC bearer/默认支全限定名/ListRefs 前缀语义/tree path "."/
+      FindTag 结构化错/archive LFS 门（docs/19 §8）。开放缺口登记：
+      post-receive→Rails internal API 回调链）
+- [ ] post-receive → GitLab internal API 适配（push 事件/pipeline/
+      MR-from-push/缓存失效——banyan 接收路径向 gitlab-shell 协议
+      `/api/v4/internal/post_receive` 的回调适配器，docs/19 §8）
 - [ ] webhook 派发（push event → 平台 trigger）
 - [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）
 - [ ] 命名空间映射（平台 group/project ↔ banyan repo）

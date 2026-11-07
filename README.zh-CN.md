@@ -74,7 +74,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 可扩展认证：元数据面 PAT（sha256 落库、明文只现一次、过期/吊销读取时判定；scope read<write<admin 是上限不是旁路——TokenPolicy 在同一 Service 缝装饰任意策略）、RPC 细粒度授权（管理端点走 auth.AdminChecker，内容写与 wire 同一 CanPush）、路径 diff + blame RPC 与 git diff / git blame 逐字节一致 | ✅ M5 + M2/M3（docs/07 §8） |
 | Gitaly gRPC 前端（可直接替换 GitLab 的 gitaly 节点；协议 v19.5.2，163/163 RPC 全部落地——含 praefect 集群族（cluster-of-one）、服务端备份、快照、对象池、历史重写、回调式 hooks 与 ssh upload-archive 线协议——完整 Operation/Ref/Commit/Diff/Blob 服务、含 sidechannel 的传输面、逐字节一致的 git-archive、bundle、blame、冲突解决、作为客户端的 smart-HTTP 远端抓取与镜像推送） | ✅ 切片 1–11（[docs/19](docs/19-gitaly-compat.md)） |
 
-92 个顶层集成测试函数以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
+96 个顶层集成测试函数以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证；gitaly 前端经
 git 自身答案对拍（T60）、workhorse 形态 gRPC 传输模拟器（T61）、真 clone
 所乘的多路复用 sidechannel 传输（T62）交叉验证，diff 面与 git diff
@@ -127,6 +127,18 @@ docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
 
 受限网络可走镜像构建：
 `docker compose build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/`。
+
+### GitLab-CE 跑在 banyan 存储上
+
+一台真 GitLab，唯一的 gitaly 存储节点换成 banyan——建项目、HTTP push、
+Web 界面浏览全部由 banyan 的 gitaly gRPC 前端服务（docs/19，兼容层的
+活体验收）：
+
+```bash
+docker compose -f demo/gitlab/docker-compose.yml up -d   # GitLab-CE 19.5 + banyan（约 4 GiB）
+demo/gitlab/provision.sh                                  # 种子、推送、读面走查
+# GitLab 界面 http://localhost:8180 —— 每个 git 字节都落在 banyan
+```
 
 ### HA 集群 demo
 
