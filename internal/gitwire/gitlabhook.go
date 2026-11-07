@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -134,8 +135,9 @@ type postReceiveChange struct {
 }
 
 // postReceive reports the applied refs; PostReceiveService enqueues the
-// worker that expires caches, records events, and processes push options.
-func (n *gitlabNotifier) postReceive(id GLIdentity, changes []postReceiveChange) {
+// worker that expires caches, records events, and processes push options
+// (params[:push_options] — the -o of git push, verbatim strings).
+func (n *gitlabNotifier) postReceive(id GLIdentity, changes []postReceiveChange, pushOptions []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var b strings.Builder
@@ -147,6 +149,9 @@ func (n *gitlabNotifier) postReceive(id GLIdentity, changes []postReceiveChange)
 		"identifier":    id.ID,
 		"protocol":      id.Protocol,
 		"changes":       b.String(),
+	}
+	if len(pushOptions) > 0 {
+		body["push_options"] = pushOptions
 	}
 	// actor.user resolves from user_id when present (Support::GitAccessActor
 	// prefers it over identifier) — the worker's identify() still uses the
@@ -170,18 +175,22 @@ func digitsOnly(s string) bool {
 
 // allowedResponse is the shape every internal API verdict shares
 // (internal_helpers.rb response_with_status): {status, message, …payload}.
-// Status is a pointer so a missing key reads as "not allowed".
+// Status is a pointer so a missing key reads as "not allowed"; the payload
+// keys ride at the top level (response_with_status merges them).
 type allowedResponse struct {
-	Status  *bool  `json:"status"`
-	Message string `json:"message"`
+	Status           *bool    `json:"status"`
+	Message          string   `json:"message"`
+	GitConfigOptions []string `json:"git_config_options"`
 }
 
-// allowed asks Rails whether this push may proceed — the /allowed check a
+// allowed asks Rails whether this push may proceed — the /allowed call a
 // stock gitaly runs inside its pre-receive hook. GitAccess.check(action,
 // changes) evaluates repo-level access AND the ref-level policy (protected
 // branches first among them); denials arrive as HTTP 401 on purpose, so the
-// message rides through to the git client.
-func (n *gitlabNotifier) allowed(ctx context.Context, id GLIdentity, changes string) (bool, string, error) {
+// message rides through to the git client. The verdict payload carries
+// git_config_options — receive.maxInputSize is the push size cap we enforce
+// (GitLab's "Maximum push size" setting), 0 when unset.
+func (n *gitlabNotifier) allowed(ctx context.Context, id GLIdentity, changes string) (ok bool, msg string, maxInput int64, err error) {
 	buf, err := json.Marshal(map[string]any{
 		"gl_repository": id.Repo,
 		"identifier":    id.ID, // from_params: identifier covers user-N/key-N/deploy-token-N
@@ -190,28 +199,35 @@ func (n *gitlabNotifier) allowed(ctx context.Context, id GLIdentity, changes str
 		"changes":       changes, // ChangesList: newline "old new ref" lines
 	})
 	if err != nil {
-		return false, "", err
+		return false, "", 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimSuffix(n.cfg.URL, "/")+"/api/v4/internal/allowed", bytes.NewReader(buf))
 	if err != nil {
-		return false, "", err
+		return false, "", 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Gitlab-Shell-Api-Request", n.jwt(time.Now()))
 	resp, err := n.hc.Do(req)
 	if err != nil {
-		return false, "", err
+		return false, "", 0, err
 	}
 	defer resp.Body.Close()
 	var verdict allowedResponse
 	if derr := json.NewDecoder(resp.Body).Decode(&verdict); derr != nil {
-		return false, "", fmt.Errorf("gitlab /allowed %s: %w", resp.Status, derr)
+		return false, "", 0, fmt.Errorf("gitlab /allowed %s: %w", resp.Status, derr)
 	}
 	if verdict.Status == nil || !*verdict.Status {
-		return false, verdict.Message, nil
+		return false, verdict.Message, 0, nil
 	}
-	return true, "", nil
+	for _, opt := range verdict.GitConfigOptions {
+		if v, found := strings.CutPrefix(opt, "receive.maxInputSize="); found && digitsOnly(v) {
+			if n, perr := strconv.ParseInt(v, 10, 64); perr == nil {
+				maxInput = n
+			}
+		}
+	}
+	return true, "", maxInput, nil
 }
 
 // glChangeOID renders a change's old/new side for Rails' line protocol.
@@ -241,12 +257,13 @@ func (s *Server) glChanges(updates []refUpdate) string {
 // Rails unreachable means no push through the platform (and pushes cannot
 // reach banyan through workhorse/gitlab-shell while Rails is down anyway).
 // It runs before the local pre-receive hooks and before the counter pair:
-// a declined push never reaches /pre_receive.
-func (s *Server) gitlabAllowed(ctx context.Context, vr VirtualRepo, updates []refUpdate) error {
+// a declined push never reaches /pre_receive. packBytes is the spooled push
+// size, checked against the receive.maxInputSize the verdict carries.
+func (s *Server) gitlabAllowed(ctx context.Context, vr VirtualRepo, updates []refUpdate, packBytes int64) error {
 	if s.glNotif == nil || vr.GL.Repo == "" {
 		return nil
 	}
-	ok, msg, err := s.glNotif.allowed(ctx, vr.GL, s.glChanges(updates))
+	ok, msg, maxInput, err := s.glNotif.allowed(ctx, vr.GL, s.glChanges(updates))
 	if err != nil {
 		log.Printf("gitlab allowed (%s): %v", vr.GL.Repo, err)
 		return errors.New("gitlab policy check unavailable")
@@ -256,6 +273,9 @@ func (s *Server) gitlabAllowed(ctx context.Context, vr VirtualRepo, updates []re
 			msg = "denied by GitLab policy"
 		}
 		return errors.New(msg)
+	}
+	if maxInput > 0 && packBytes > maxInput {
+		return fmt.Errorf("pack exceeds maximum allowed size (%d bytes)", maxInput)
 	}
 	return nil
 }
@@ -279,5 +299,5 @@ func (s *Server) gitlabPostReceive(vr VirtualRepo, applied []refUpdate) {
 	for _, u := range applied {
 		changes = append(changes, postReceiveChange{Old: s.glChangeOID(u.Old), New: s.glChangeOID(u.New), Ref: u.Name})
 	}
-	go s.glNotif.postReceive(vr.GL, changes)
+	go s.glNotif.postReceive(vr.GL, changes, vr.PushOptions)
 }
