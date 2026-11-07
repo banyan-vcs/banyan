@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
+	"github.com/banyan-vcs/banyan/internal/gitwire"
 )
 
 // sshService implements gitaly.SSHService's streamable RPCs: git's SSH
@@ -92,8 +93,9 @@ func (ss *sshService) SSHReceivePack(stream gitalypb.SSHService_SSHReceivePackSe
 		}
 	}()
 
-	code := ss.s.git.ServeSSHSession(ctx, "git-receive-pack", "/r/"+name, gitProtocol,
-		bufio.NewReaderSize(pr, 64<<10), &sshSendWriter{stream: stream})
+	code := ss.s.git.ServeSSHSessionGL(ctx, "git-receive-pack", "/r/"+name, gitProtocol,
+		bufio.NewReaderSize(pr, 64<<10), &sshSendWriter{stream: stream},
+		gitwire.GLIdentity{ID: first.GetGlId(), Repo: first.GetGlRepository(), Protocol: "ssh"})
 	return stream.Send(&gitalypb.SSHReceivePackResponse{
 		ExitStatus: &gitalypb.ExitStatus{Value: int32(code)},
 	})

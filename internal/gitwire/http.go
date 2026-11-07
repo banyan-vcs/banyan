@@ -27,6 +27,7 @@ type VirtualRepo struct {
 	Repo    string
 	Sub     model.AnchorPath
 	RepoDir string // repo segment of the request path (incl. subtree suffix), for endpoint matching
+	GL      GLIdentity // GitLab push identity (gitaly bridge sets it); zero = not platform-mediated
 }
 
 // ParseVirtualRepo parses a /r/... request path (without the endpoint suffix).
@@ -93,13 +94,28 @@ type Server struct {
 	// points the client at partial/shallow clones. 0 = the 100 GiB default;
 	// negative disables the gate.
 	FullCloneMaxBytes int64
+	// GitLab roots the post-receive → internal API adapter (docs/20 §2):
+	// when set, pushes carrying a GitLab identity (the gitaly face threads
+	// workhorse's GlId/GlRepository) notify the platform's push processing.
+	// Nil disables the adapter.
+	GitLab *GitLabConfig
 
-	wf     *workflow
-	wfOnce sync.Once
+	glNotif *gitlabNotifier
+	wf      *workflow
+	wfOnce  sync.Once
 }
 
 func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
 	return &Server{Meta: meta, Objects: objects, Algo: algo, Views: view.New(meta, objects, algo)}
+}
+
+// setGitLab wires the adapter (lazily built notifier).
+func (s *Server) SetGitLab(cfg *GitLabConfig) {
+	if cfg == nil || cfg.URL == "" {
+		return
+	}
+	s.GitLab = cfg
+	s.glNotif = newGitlabNotifier(*cfg)
 }
 
 // requireAuth resolves the request identity: 401 (with the Basic challenge

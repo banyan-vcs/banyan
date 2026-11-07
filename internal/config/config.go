@@ -98,6 +98,13 @@ type Config struct {
 		Token           string `yaml:"token"`            // Bearer token; empty = unauthenticated (dev mode only — production startup refuses)
 		StorageName     string `yaml:"storage_name"`     // virtual storage this node answers as; default "default"
 		ReportedVersion string `yaml:"reported_version"` // ServerInfo server_version; default the vendored protocol (19.5.2)
+		// GitLab roots the post-receive adapter: pushes carrying a platform
+		// identity notify Rails' internal API (events/pipelines/cache expiry,
+		// docs/20 §2). Absent url keeps the adapter off.
+		GitLab struct {
+			URL        string `yaml:"url"`         // GitLab base URL (Rails behind nginx) as reachable from banyan
+			SecretPath string `yaml:"secret_path"` // GitLab's gitlab_shell_secret file (shared trust)
+		} `yaml:"gitlab"`
 	} `yaml:"gitaly"`
 
 	// Dev opts this deployment into development mode: unauthenticated git

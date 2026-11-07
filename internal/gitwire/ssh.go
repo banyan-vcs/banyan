@@ -164,7 +164,7 @@ func (s *Server) serveGitExec(ch ssh.Channel, id auth.Identity, protocol, payloa
 	start := time.Now()
 	br := bufio.NewReaderSize(ch, 64*1024)
 	out := newBufWriter(ch)
-	code := s.serveSessionCore(context.Background(), service, path, protocol, br, out, id)
+	code := s.serveSessionCore(context.Background(), service, path, protocol, br, out, id, GLIdentity{})
 	_ = out.Flush()
 	observeSSHSession(service, code, time.Since(start))
 	return code
@@ -174,10 +174,17 @@ func (s *Server) serveGitExec(ch ssh.Channel, id auth.Identity, protocol, payloa
 // exec-payload-free form frontends without an SSH daemon use (gitaly
 // SSHService, docs/19). path is the repository path as the exec payload
 // would carry it ("<repo>[.git][/tree/…]"); gitProtocol mirrors the
-// GIT_PROTOCOL env ("version=2" selects protocol v2).
+// GIT_PROTOCOL env ("version=2" selects protocol v2). gl carries the
+// platform identity (GitLab's SSHReceivePackRequest sets GlId/GlRepository)
+// for the post-receive adapter; zero = unmediated.
 func (s *Server) ServeSSHSession(ctx context.Context, service, path, gitProtocol string, in *bufio.Reader, out io.Writer) int {
+	return s.ServeSSHSessionGL(ctx, service, path, gitProtocol, in, out, GLIdentity{})
+}
+
+// ServeSSHSessionGL is ServeSSHSession with a platform identity.
+func (s *Server) ServeSSHSessionGL(ctx context.Context, service, path, gitProtocol string, in *bufio.Reader, out io.Writer, gl GLIdentity) int {
 	bw := newBufWriter(out)
-	code := s.serveSessionCore(ctx, service, path, gitProtocol, in, bw, auth.Identity{})
+	code := s.serveSessionCore(ctx, service, path, gitProtocol, in, bw, auth.Identity{}, gl)
 	_ = bw.Flush()
 	return code
 }
@@ -185,7 +192,7 @@ func (s *Server) ServeSSHSession(ctx context.Context, service, path, gitProtocol
 // serveSessionCore is the shared session body behind the SSH channel and the
 // stream-only frontends: errors are written as "ERR" lines onto the session
 // output (git prints them verbatim).
-func (s *Server) serveSessionCore(ctx context.Context, service, path, protocol string, br *bufio.Reader, out *bufWriter, id auth.Identity) int {
+func (s *Server) serveSessionCore(ctx context.Context, service, path, protocol string, br *bufio.Reader, out *bufWriter, id auth.Identity, gl GLIdentity) int {
 	vr, err := ParseVirtualRepo(path)
 	if err != nil {
 		fmt.Fprintf(out, "ERR %v\n", err)
@@ -222,6 +229,7 @@ func (s *Server) serveSessionCore(ctx context.Context, service, path, protocol s
 			return 1
 		}
 		_ = out.Flush()
+		vr.GL = gl
 		if err := s.finishPush(ctx, id, br, out, vr); err != nil {
 			fmt.Fprintf(out, "ERR %v\n", err)
 			return 1

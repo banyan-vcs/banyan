@@ -38,6 +38,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 	if !ok {
 		return
 	}
+	vr.GL = glIdentityFromHeaders(r.Header)
 	// Demo-friendly: auto-create the repo when pushing to a missing repo —
 	// the creation itself requires the push permission under authorization.
 	if _, err := s.Meta.GetRepo(r.Context(), vr.Repo); err != nil {
@@ -148,8 +149,10 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			_ = WritePacket(out, []byte("ng "+u.Name+" "+reason+"\n"))
 		}
 		_ = WriteFlush(out)
+		s.gitlabPreReceive(ctx, vr) // pair the reference counter even on declines
 		return nil
 	}
+	s.gitlabPreReceive(ctx, vr) // pre_receive: counter up before any ref moves
 
 	// ②③ per-ref validation + head CAS. report-status mandates the order:
 	// the first pkt is "unpack ok", followed by per-ref statuses (mirrors receive-pack.c).
@@ -288,6 +291,10 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		pushAccepted.Add(1)
 		_ = s.fireHooks(ctx, vr, id.User, hookBytes, "post-receive", hookUpdates(applied), true)
 	}
+	// GitLab platform processing (events/pipelines/MR/cache expiry) rides
+	// the same post-receive point — sent even when every ref was declined,
+	// so Rails' reference counter pairs (empty changes are a no-op there).
+	s.gitlabPostReceive(vr, applied)
 
 	_ = WriteFlush(out)
 	return nil
