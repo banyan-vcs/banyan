@@ -162,6 +162,7 @@ func startGitaly(cfg *config.Config, meta storage.MetaStore, objects *storage.Ob
 		ReportedVersion:  cfg.Gitaly.ReportedVersion,
 		Convergence:      cfg.Workflow.Convergence == "auto",
 		FullCloneMaxByte: cfg.FullCloneMaxBytes,
+		GitLab:           gitLabAdapter(cfg),
 	})
 	go func() {
 		log.Printf("gitaly: serving %s (storage=%s, protocol %s)", cfg.Gitaly.Listen, cfg.Gitaly.StorageName, gitaly.ProtoVersion)
@@ -170,6 +171,27 @@ func startGitaly(cfg *config.Config, meta storage.MetaStore, objects *storage.Ob
 		}
 	}()
 	return gs
+}
+
+// gitLabAdapter loads the post-receive → internal API adapter config when
+// both a GitLab URL and the shared secret are present (docs/20 §2).
+func gitLabAdapter(cfg *config.Config) *gitwire.GitLabConfig {
+	if cfg.Gitaly.GitLab.URL == "" || cfg.Gitaly.GitLab.SecretPath == "" {
+		return nil
+	}
+	secret, err := os.ReadFile(cfg.Gitaly.GitLab.SecretPath)
+	if err != nil {
+		// A configured-but-unreadable secret is a fatal misconfiguration —
+		// except in dev, where demo stacks boot before the secret volume
+		// is populated (provision arms the adapter with a restart).
+		if !cfg.Dev {
+			log.Fatalf("gitaly.gitlab: read secret %s: %v", cfg.Gitaly.GitLab.SecretPath, err)
+		}
+		log.Printf("gitaly.gitlab: secret not readable yet (%v) — adapter off until restart", err)
+		return nil
+	}
+	log.Printf("gitaly.gitlab: post-receive adapter → %s", cfg.Gitaly.GitLab.URL)
+	return &gitwire.GitLabConfig{URL: cfg.Gitaly.GitLab.URL, Secret: string(secret)}
 }
 
 // staticPolicy builds the demo authorization policy from config (docs/07

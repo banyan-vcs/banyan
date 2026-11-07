@@ -56,6 +56,10 @@ type Options struct {
 	// Token is the bearer token clients must present (authorization:
 	// Bearer <token>); empty disables authentication (development only).
 	Token string
+	// GitLab roots the post-receive → internal API adapter on the internal
+	// gitwire instance (pushes that carry a platform identity notify the
+	// platform's push processing, docs/20). Nil = adapter off.
+	GitLab *gitwire.GitLabConfig
 	// StorageName is the virtual storage this node answers as — must match
 	// the storage name the frontend is configured with. Default "default".
 	StorageName string
@@ -115,6 +119,7 @@ func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo mode
 		signingKey: priv,
 	}
 	s.git = gitwire.NewServer(meta, objects, algo)
+	s.git.SetGitLab(opts.GitLab)
 	s.git.Convergence = opts.Convergence
 	s.git.FullCloneMaxBytes = opts.FullCloneMaxByte
 	s.mux = http.NewServeMux()

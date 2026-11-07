@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
+	"github.com/banyan-vcs/banyan/internal/gitwire"
 )
 
 // smartHTTPService bridges workhorse's git-HTTP traffic onto gitwire: the
@@ -43,7 +44,7 @@ func (sh *smartHTTPService) PostUploadPackWithSidechannel(ctx context.Context, r
 		return nil, status.Errorf(codes.Internal, "gitaly: read fetch request: %v", err)
 	}
 	rec, err := sh.s.httpExchange(http.MethodPost, mappedPath(name)+"/git-upload-pack",
-		"application/x-git-upload-pack-request", req.GetGitProtocol(), body)
+		"application/x-git-upload-pack-request", req.GetGitProtocol(), body, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -60,8 +61,10 @@ func (sh *smartHTTPService) PostUploadPackWithSidechannel(ctx context.Context, r
 }
 
 
-// httpExchange runs one request against the internal gitwire mux.
-func (s *Server) httpExchange(method, urlPath, contentType, gitProtocol string, body []byte) (*httptest.ResponseRecorder, error) {
+// httpExchange runs one request against the internal gitwire mux. gl is
+// the GitLab push identity (workhorse sets GlId/GlRepository/…) — threaded
+// as headers so the receive path can drive the platform's post-receive.
+func (s *Server) httpExchange(method, urlPath, contentType, gitProtocol string, body []byte, gl map[string]string) (*httptest.ResponseRecorder, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
@@ -76,10 +79,18 @@ func (s *Server) httpExchange(method, urlPath, contentType, gitProtocol string, 
 	if gitProtocol != "" {
 		req.Header.Set("Git-Protocol", gitProtocol)
 	}
+	for k, v := range gl {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
+	}
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	return rec, nil
 }
+
+// glHeaders collects the identity fields the wire handlers read.
+
 
 // mappedPath renders the gitwire URL for a mapped repo name.
 func mappedPath(name string) string { return "/r/" + name + ".git" }
@@ -91,7 +102,7 @@ func (sh *smartHTTPService) infoRefs(ctx context.Context, repo *gitalypb.Reposit
 	if err != nil {
 		return err
 	}
-	rec, err := sh.s.httpExchange(http.MethodGet, mappedPath(name)+"/info/refs?service="+service, "", gitProtocol, nil)
+	rec, err := sh.s.httpExchange(http.MethodGet, mappedPath(name)+"/info/refs?service="+service, "", gitProtocol, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -129,6 +140,7 @@ func (sh *smartHTTPService) PostReceivePack(stream gitalypb.SmartHTTPService_Pos
 	var name string
 	var body []byte
 	gitProtocol := ""
+	gl := map[string]string{}
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
@@ -141,6 +153,11 @@ func (sh *smartHTTPService) PostReceivePack(stream gitalypb.SmartHTTPService_Pos
 			if name, err = sh.s.existingRepo(ctx, msg.GetRepository()); err != nil {
 				return err
 			}
+			// Workhorse sends the pusher's platform identity on the first
+			// message — it drives the post-receive adapter (docs/20 §2).
+			gl[gitwire.GlIDHeader] = msg.GetGlId()
+			gl[gitwire.GlRepoHeader] = msg.GetGlRepository()
+			gl[gitwire.GlUsernameHeader] = msg.GetGlUsername()
 		}
 		if gp := msg.GetGitProtocol(); gp != "" {
 			gitProtocol = gp
@@ -148,7 +165,7 @@ func (sh *smartHTTPService) PostReceivePack(stream gitalypb.SmartHTTPService_Pos
 		body = append(body, msg.GetData()...)
 	}
 	rec, err := sh.s.httpExchange(http.MethodPost, mappedPath(name)+"/git-receive-pack",
-		"application/x-git-receive-pack-request", gitProtocol, body)
+		"application/x-git-receive-pack-request", gitProtocol, body, gl)
 	if err != nil {
 		return err
 	}
