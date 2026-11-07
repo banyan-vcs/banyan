@@ -134,7 +134,46 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | 改了挂载的 gitlab.rb 不生效 | `GITLAB_OMNIBUS_CONFIG` 只在**首次 boot** 生成 `/etc/gitlab/gitlab.rb` | 直接改容器内 `/etc/gitlab/gitlab.rb` 再 reconfigure |
 | 拉镜像卡死在大层（1.6GB） | 部分镜像站对大 blob 静默断流（curl 直拉正常） | 手工组装 OCI 归档（逐 blob 摘要校验后 `docker load`），或换镜像源重试 |
 
-## 7. FAQ
+## 7. 子项目（子目录）clone
+
+banyan 的招牌能力——任意子目录本身即仓库——在 GitLab 模式下照样可用：
+GitLab 的 push 经 workhorse→gitaly 落到 banyan 的接收路径，**目录锚定
+照常发生**，子树时间线就在对象平面里。GitLab 的 URL 空间（一项目一仓）
+不表达它，但两条路取得到：
+
+**路径 A · banyan 自有面直取（零配置，live 实证）**。仓名就是
+`@hashed` 的 64hex（= `sha256(<project_id>)`，或从 banyan `/api/v1/repos`
+查）：
+
+```bash
+git clone http://<banyan-host>:8080/r/<64hex>/tree/<dir>   # demo: 8170 端口
+# 例（demo 的 banyan-demo 项目取 src/）：
+git clone http://localhost:8170/r/4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce/tree/src
+```
+
+访问控制走 banyan 自身的授权面（PAT，docs/07 §8）——GitLab 的项目
+权限不覆盖这条路；生产上给 banyan 面配 auth.users/upstream 或按需发
+banyan_ token。
+
+**路径 B · GitLab 拉镜像（GitLab 原生体验）**。把子树 URL 配成一个
+GitLab 项目的 pull mirror——子树物化成真项目，clone/MR/权限/UI 全走
+GitLab（代价：镜像延迟）：
+
+```bash
+curl -X POST -H "PRIVATE-TOKEN: <PAT>" .../api/v4/projects \
+  -d '{"name":"monorepo-src","import_url":"http://<banyan-host>:8080/r/<64hex>/tree/src","mirror":true}'
+```
+
+注意：GitLab 对指向**内网地址**的 import/mirror 有 SSRF 防护
+（"Requests to the local network are not allowed"）——生产上 banyan
+通常在可达网段不触发；同机部署需在 Admin → Settings → Network →
+Outbound requests 放行。
+
+**协议层未来**：M3 的服务端 filter 完整规格（含 `subtree:<path>`，
+docs/14）落地后，可对 GitLab URL 直接 partial clone 子树——无需上面
+任何一条旁路。
+
+## 8. FAQ
 
 - **EE 能用吗？** 协议面一致（gitaly 协议不分 CE/EE），EE 特有存储面
   （如 Gitaly Cluster 拓扑）未验证——单节点形态先行。
