@@ -17,11 +17,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/banyan-vcs/banyan/internal/model"
 )
 
 // GitLabConfig roots the adapter. Nil disables it entirely.
@@ -165,6 +168,98 @@ func digitsOnly(s string) bool {
 	return len(s) > 0
 }
 
+// allowedResponse is the shape every internal API verdict shares
+// (internal_helpers.rb response_with_status): {status, message, …payload}.
+// Status is a pointer so a missing key reads as "not allowed".
+type allowedResponse struct {
+	Status  *bool  `json:"status"`
+	Message string `json:"message"`
+}
+
+// allowed asks Rails whether this push may proceed — the /allowed check a
+// stock gitaly runs inside its pre-receive hook. GitAccess.check(action,
+// changes) evaluates repo-level access AND the ref-level policy (protected
+// branches first among them); denials arrive as HTTP 401 on purpose, so the
+// message rides through to the git client.
+func (n *gitlabNotifier) allowed(ctx context.Context, id GLIdentity, changes string) (bool, string, error) {
+	buf, err := json.Marshal(map[string]any{
+		"gl_repository": id.Repo,
+		"identifier":    id.ID, // from_params: identifier covers user-N/key-N/deploy-token-N
+		"protocol":      id.Protocol,
+		"action":        "git-receive-pack",
+		"changes":       changes, // ChangesList: newline "old new ref" lines
+	})
+	if err != nil {
+		return false, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimSuffix(n.cfg.URL, "/")+"/api/v4/internal/allowed", bytes.NewReader(buf))
+	if err != nil {
+		return false, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Gitlab-Shell-Api-Request", n.jwt(time.Now()))
+	resp, err := n.hc.Do(req)
+	if err != nil {
+		return false, "", err
+	}
+	defer resp.Body.Close()
+	var verdict allowedResponse
+	if derr := json.NewDecoder(resp.Body).Decode(&verdict); derr != nil {
+		return false, "", fmt.Errorf("gitlab /allowed %s: %w", resp.Status, derr)
+	}
+	if verdict.Status == nil || !*verdict.Status {
+		return false, verdict.Message, nil
+	}
+	return true, "", nil
+}
+
+// glChangeOID renders a change's old/new side for Rails' line protocol.
+// The zero side must ride as the full all-zero OID: ChangesList splits on
+// whitespace, so an empty field shifts newrev into the ref slot and feeds
+// garbage revisions to the access checks (a branch creation 500s in
+// LfsCheck, which asks gitaly to resolve the ref name as a revision).
+func (s *Server) glChangeOID(o model.OID) string {
+	if o.IsZero() {
+		return s.Algo.WireZero()
+	}
+	return o.String()
+}
+
+// glChanges renders updates as the "old new ref" line block both /allowed
+// and /post_receive read (Gitlab::ChangesList / GitPostReceive#parse_changes).
+func (s *Server) glChanges(updates []refUpdate) string {
+	var b strings.Builder
+	for _, u := range updates {
+		fmt.Fprintf(&b, "%s %s %s\n", s.glChangeOID(u.Old), s.glChangeOID(u.New), u.Name)
+	}
+	return b.String()
+}
+
+// gitlabAllowed gates the receive path on GitLab's push policy. Unlike the
+// fire-and-forget halves it is fail-closed — upstream behaves the same:
+// Rails unreachable means no push through the platform (and pushes cannot
+// reach banyan through workhorse/gitlab-shell while Rails is down anyway).
+// It runs before the local pre-receive hooks and before the counter pair:
+// a declined push never reaches /pre_receive.
+func (s *Server) gitlabAllowed(ctx context.Context, vr VirtualRepo, updates []refUpdate) error {
+	if s.glNotif == nil || vr.GL.Repo == "" {
+		return nil
+	}
+	ok, msg, err := s.glNotif.allowed(ctx, vr.GL, s.glChanges(updates))
+	if err != nil {
+		log.Printf("gitlab allowed (%s): %v", vr.GL.Repo, err)
+		return errors.New("gitlab policy check unavailable")
+	}
+	if !ok {
+		if msg == "" {
+			msg = "denied by GitLab policy"
+		}
+		return errors.New(msg)
+	}
+	return nil
+}
+
 // gitlabPreReceive fires the counter-increment half (best-effort, inline:
 // it is cheap and the pairing matters more than latency).
 func (s *Server) gitlabPreReceive(ctx context.Context, vr VirtualRepo) {
@@ -182,7 +277,7 @@ func (s *Server) gitlabPostReceive(vr VirtualRepo, applied []refUpdate) {
 	}
 	changes := make([]postReceiveChange, 0, len(applied))
 	for _, u := range applied {
-		changes = append(changes, postReceiveChange{Old: u.Old.String(), New: u.New.String(), Ref: u.Name})
+		changes = append(changes, postReceiveChange{Old: s.glChangeOID(u.Old), New: s.glChangeOID(u.New), Ref: u.Name})
 	}
 	go s.glNotif.postReceive(vr.GL, changes)
 }

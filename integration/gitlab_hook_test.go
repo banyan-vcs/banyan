@@ -48,6 +48,12 @@ func TestT85GitLabPostReceiveAdapter(t *testing.T) {
 		defer mu.Unlock()
 		jwtHeaders = append(jwtHeaders, r.Header.Get("Gitlab-Shell-Api-Request"))
 		switch r.URL.Path {
+		case "/api/v4/internal/allowed":
+			// The policy gate (T86) rides the same chain; T85 arms the
+			// pass-through verdict so the push reaches the counters.
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":true}`))
+			return
 		case "/api/v4/internal/pre_receive":
 			preBody = body
 		case "/api/v4/internal/post_receive":
@@ -133,4 +139,158 @@ func TestT85GitLabPostReceiveAdapter(t *testing.T) {
 	require.NoError(t, json.Unmarshal(claimsRaw, &claims))
 	assert.Equal(t, "gitlab-shell", claims["iss"])
 	assert.Contains(t, claims, "exp", "expiring token (60s TTL)")
+}
+
+// T86 — the /allowed policy gate: a platform-mediated push must pass
+// GitLab's ref-level policy (GitAccess.check(action, changes) — protected
+// branches first) before any ref moves. Contract replayed from the live
+// source (api/internal/base.rb check_allowed + GitAccessActor.from_params +
+// ChangesList): identifier carries the GlId shapes, changes ride as
+// "old new ref" lines, denial is HTTP 401 + {status:false, message} on
+// purpose — Rails picked 401 so the message reaches the git client. A
+// declined push never reaches /pre_receive (upstream ordering: policy
+// precedes the counter pair), and an unreachable/broken Rails fails the
+// push closed, like the upstream hook.
+func TestT86GitLabAllowedGate(t *testing.T) {
+	needGit(t)
+	const secret = "t86-shared-secret"
+
+	var mu sync.Mutex
+	var allowedBody map[string]any
+	var allowedJWT string
+	var preCalls, postCalls int
+	respCode, respBody := http.StatusOK, `{"status":true}`
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/api/v4/internal/allowed":
+			allowedBody = body
+			allowedJWT = r.Header.Get("Gitlab-Shell-Api-Request")
+			w.WriteHeader(respCode)
+			_, _ = w.Write([]byte(respBody))
+		case "/api/v4/internal/pre_receive":
+			preCalls++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		case "/api/v4/internal/post_receive":
+			postCalls++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected internal API call: %s", r.URL.Path)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(fake.Close)
+
+	meta := storage.NewMemoryMetaStore()
+	local := storage.NewLocalShardStore(tempDirQuiet(t))
+	objects := storage.NewObjectService(meta, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
+	gw := gitwire.NewServer(meta, objects, model.SHA1)
+	gw.SetGitLab(&gitwire.GitLabConfig{URL: fake.URL, Secret: secret})
+	mux := http.NewServeMux()
+	gw.Register(mux)
+	front := httptest.NewServer(mux)
+	t.Cleanup(front.Close)
+	s2 := &server{Server: front}
+
+	src := t.TempDir()
+	git(t, src, "init", "-q", "-b", "main", ".")
+	write(t, filepath.Join(src, "README.md"), "t86 seed\n")
+	git(t, src, "add", "-A")
+	git(t, src, "commit", "-qm", "seed")
+
+	// ① No platform identity → no gate: the plain push never consults
+	// /allowed (banyan's own face, authorization unchanged).
+	git(t, src, "push", "-q", s2.repoURL("t86"), "main")
+	mu.Lock()
+	assert.Nil(t, allowedBody, "identity-less push bypasses the policy gate")
+	seedHead := headOf(t, src)
+	mu.Unlock()
+
+	appendLine(t, filepath.Join(src, "README.md"), "blocked\n")
+	git(t, src, "commit", "-qam", "t86 blocked change")
+	blockedHead := headOf(t, src)
+
+	glPushTo := func(refspec string) (string, error) {
+		return gitTry(src,
+			"-c", "http.extraHeader=X-Banyan-Gitlab-Id: user-9",
+			"-c", "http.extraHeader=X-Banyan-Gitlab-Repo: project-43",
+			"-c", "http.extraHeader=X-Banyan-Gitlab-Username: t86-user",
+			"-c", "http.extraHeader=X-Banyan-Gitlab-Protocol: http",
+			"push", s2.repoURL("t86"), refspec)
+	}
+	glPush := func() (string, error) { return glPushTo("main") }
+
+	// ② Denied: Rails answers 401 + the protected-branch message. The push
+	// dies client-side with that message, the ref never moves, and neither
+	// counter half fires.
+	mu.Lock()
+	respCode, respBody = http.StatusUnauthorized, `{"status":false,"message":"GitLab: You are not allowed to push code to protected branches on this project."}`
+	mu.Unlock()
+	out, err := glPush()
+	require.Error(t, err, "the policy denial must fail the push")
+	assert.Contains(t, out, "remote rejected")
+	assert.Contains(t, out, "protected branches", "Rails' message reaches the client")
+	remoteTip := git(t, "", "ls-remote", s2.repoURL("t86"), "refs/heads/main")
+	assert.Contains(t, remoteTip, seedHead, "ref unchanged after denial")
+	assert.NotContains(t, remoteTip, blockedHead)
+	mu.Lock()
+	require.NotNil(t, allowedBody)
+	assert.Equal(t, "user-9", allowedBody["identifier"])
+	assert.Equal(t, "project-43", allowedBody["gl_repository"])
+	assert.Equal(t, "http", allowedBody["protocol"])
+	assert.Equal(t, "git-receive-pack", allowedBody["action"])
+	changes, _ := allowedBody["changes"].(string)
+	assert.Contains(t, changes, seedHead+" "+blockedHead+" refs/heads/main\n", "ChangesList line form")
+	assert.Zero(t, preCalls, "declined push never reaches the counter pair")
+	assert.Zero(t, postCalls)
+	// The gate rides the same signed transport as the counter halves.
+	parts := strings.Split(allowedJWT, ".")
+	require.Len(t, parts, 3)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(parts[0] + "." + parts[1]))
+	sig, serr := base64.RawURLEncoding.DecodeString(parts[2])
+	require.NoError(t, serr)
+	assert.Equal(t, mac.Sum(nil), sig, "/allowed call is JWT-signed")
+	mu.Unlock()
+
+	// ③ Broken Rails (a 500 error page is not a verdict): fail closed.
+	mu.Lock()
+	respCode, respBody = http.StatusInternalServerError, `<html>502</html>`
+	mu.Unlock()
+	_, err = glPush()
+	require.Error(t, err, "no verdict, no push — upstream fails closed too")
+
+	// ④ Allowed: the same platform push sails through and the full chain
+	// fires (allowed → pre counter → post receive).
+	mu.Lock()
+	respCode, respBody = http.StatusOK, `{"status":true}`
+	mu.Unlock()
+	out, err = glPush()
+	require.NoError(t, err, "allowed platform push must succeed: %s", out)
+	mu.Lock()
+	assert.GreaterOrEqual(t, preCalls, 1, "past the gate, the counter increments")
+	mu.Unlock()
+	assert.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return postCalls >= 1
+	}, 10*time.Second, 100*time.Millisecond, "post_receive fires for the allowed push")
+
+	// ⑤ Branch creation rides the same gate with the full all-zero oldrev:
+	// ChangesList splits on whitespace, so an empty field would shift the
+	// ref name into newrev and send Rails' LfsCheck off to resolve
+	// "refs/heads/…" as a revision (live-caught against GitLab 19.5).
+	out, err = glPushTo("HEAD:refs/heads/t86-create")
+	require.NoError(t, err, "branch creation through the gate: %s", out)
+	mu.Lock()
+	assert.Equal(t, strings.Repeat("0", 40)+" "+blockedHead+" refs/heads/t86-create\n",
+		allowedBody["changes"], "creation line carries the all-zero old OID")
+	mu.Unlock()
 }

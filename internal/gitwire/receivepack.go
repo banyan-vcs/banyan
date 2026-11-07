@@ -139,6 +139,20 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	if b, berr := s.Objects.RepoBytes(ctx, vr.Repo); berr == nil {
 		hookBytes = b
 	}
+	// ⓪ GitLab policy gate (docs/20 §2): the /allowed call a stock gitaly
+	// makes inside its pre-receive hook — ref-level policy (protected
+	// branches) lives in Rails, and workhorse's front-door check cannot
+	// see refs. First in the chain, upstream-ordered: a declined push
+	// reaches neither the local hooks nor the /pre_receive counter pair.
+	if aerr := s.gitlabAllowed(ctx, vr, updates); aerr != nil {
+		reason := strings.ReplaceAll(aerr.Error(), "\n", " ")
+		_ = WritePacket(out, []byte("unpack ok\n"))
+		for _, u := range updates {
+			_ = WritePacket(out, []byte("ng "+u.Name+" "+reason+"\n"))
+		}
+		_ = WriteFlush(out)
+		return nil
+	}
 	hookUpdates := s.hookUpdates
 	if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "pre-receive", hookUpdates(updates), false); herr != nil {
 		// Wire shape mirrors receive-pack.c: "unpack ok", then every ref
