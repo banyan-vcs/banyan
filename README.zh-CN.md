@@ -45,7 +45,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 
 ## 当前能力
 
-以下全部已落地，由 **100 个顶层集成测试函数**以真实 git CLI 钉住
+以下全部已落地，由 **101 个顶层集成测试函数**以真实 git CLI 钉住
 （[docs/13](docs/13-testing.md)）；GitLab 模式各条另经真 GitLab-CE 活体验证
 （[docs/19](docs/19-gitaly-compat.md) §8、[docs/20](docs/20-gitlab-integration.md)）。
 

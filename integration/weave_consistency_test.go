@@ -10,7 +10,9 @@
 // tie-break in the (when, anchor, oid) ordering — would fork the synthesized
 // chain OIDs between gateways (the failure mode: gateway A advertises a tip
 // whose closure gateway B never derives). The ResetWoven rebuild path is
-// exercised too, with its known re-fold duplication documented below.
+// exercised too: with graft provenance (banyan-woven-from) the rebuild
+// recovers each source's fold progress from the root-local spine and stays
+// byte-stable — subjects once, re-advertised tip identical.
 package integration
 
 import (
@@ -104,30 +106,33 @@ func TestWeaveRederivationConsistency(t *testing.T) {
 	assert.Equal(t, tipA, headLine(sB), "冷网关重推导的广告 tip 必须与 A 逐字节一致（时间戳输入或非确定平局裁决会在这里分叉 OID）")
 
 	// ② Forced re-derivation on A: wipe the /.woven family — the next
-	// advertisement rebuilds every scope from the timeline tips alone. The
-	// rebuilt view must stay CONTENT-correct and linear for real clients.
-	//
-	// KNOWN ISSUE (registered in docs/13 with this test): the rebuild
-	// re-grafts subtree sources already woven into the root-local spine —
-	// clients commit on woven tips, so the spine embeds the weave's own
-	// grafts; ResetWoven wipes the per-source markers (the only exclusion
-	// in source space) and the fold has no spine-space way to recognize
-	// its embedded grafts — so subtree subjects appear TWICE in the
-	// rebuilt history and the tip OID churns (final content stays correct:
-	// the latest source snapshot grafts last). Byte-stable rebuilds need
-	// graft synthetics to carry source provenance; the fix is design-level
-	// (commit encoding) and deliberately not rushed here. A marker-only
-	// preservation attempt was tried and REJECTED: markers assume the
-	// folded prefix lives in the /.woven output chain, which the reset
-	// itself erases — preserving them silently DROPS untouched sources
-	// from the rebuilt view (T44: nested content lost).
+	// advertisement rebuilds every scope from the timeline tips alone. Graft
+	// provenance (banyan-woven-from) makes the rebuild recover each source's
+	// fold progress from the root-local spine (clients commit on woven tips,
+	// so the spine embeds the weave's own grafts): embedded sources are
+	// recognized and skipped, the spine folds back byte-identically — the
+	// re-advertised tip equals the pre-reset tip and every subject appears
+	// exactly once. (A marker-only preservation fix was tried and REJECTED:
+	// markers assume the folded prefix lives in the /.woven output chain,
+	// which the reset itself erases — preserving them silently DROPS
+	// untouched sources from the rebuilt view; T44: nested content lost.)
 	require.NoError(t, gwA.Views.ResetWoven(context.Background(), "ww", "main"))
+	assert.Equal(t, tipA, headLine(sA), "重建后广告 tip 必须与 reset 前逐字节一致（脊柱经溯源恢复折叠进度）")
 	rebuilt := cloneRepo(t, sA, sA.repoURL("ww"))
 	assert.Equal(t, "a-2\n", readFile(t, filepath.Join(rebuilt, "lib", "a.txt")))
 	assert.Equal(t, "wv-tie\n", readFile(t, filepath.Join(rebuilt, "lib", "nested", "SHARED.txt")))
 	assert.Equal(t, "top-1\n", readFile(t, filepath.Join(rebuilt, "top.txt")))
 	assert.Equal(t, "wv-2\n", readFile(t, filepath.Join(rebuilt, "README.md")))
 	require.Empty(t, strings.TrimSpace(git(t, rebuilt, "log", "--merges", "--format=%s")), "重建视图历史应线性无 merge")
+	rebuiltSubj := map[string]int{}
+	for _, line := range strings.Split(git(t, rebuilt, "log", "--format=%s"), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			rebuiltSubj[line]++
+		}
+	}
+	for s, n := range rebuiltSubj {
+		assert.Equal(t, 1, n, "重建视图中 subject 重复出现 %d 次: %q", n, s)
+	}
 	fsckClean(t, rebuilt)
 
 	// ③ The cold gateway serves the anchored weave to a real client:
