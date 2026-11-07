@@ -138,40 +138,53 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 
 banyan 的招牌能力——任意子目录本身即仓库——在 GitLab 模式下照样可用：
 GitLab 的 push 经 workhorse→gitaly 落到 banyan 的接收路径，**目录锚定
-照常发生**，子树时间线就在对象平面里。GitLab 的 URL 空间（一项目一仓）
-不表达它，但两条路取得到：
+照常发生**，子树时间线就在对象平面里。
 
-**路径 A · banyan 自有面直取（零配置，live 实证）**。仓名就是
-`@hashed` 的 64hex（= `sha256(<project_id>)`，或从 banyan `/api/v1/repos`
-查）：
+**首选 · 子树投影 ref（`refs/banyan/tree/<dir>`，T84）**。默认分支的
+每个**顶层目录**在父项目的 ref 空间里自动获得一个投影 ref，指向
+`/tree/<dir>` 面服务的同一个子树视图——一条 GitLab URL、一套 GitLab
+凭证/权限、实时同一份数据（推送向上装配回根视图）。全部经 GitLab
+URL 活体验证：
 
 ```bash
-git clone http://<banyan-host>:8080/r/<64hex>/tree/<dir>   # demo: 8170 端口
-# 例（demo 的 banyan-demo 项目取 src/）：
-git clone http://localhost:8170/r/4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce/tree/src
+git ls-remote http://gitlab.example.com/group/monorepo.git
+  # refs/banyan/tree/src      ← 顶层目录各一条
+
+# 取子树（git 的 clone -b 只认分支/标签短名——客户端约束，
+# 所以配方是 clone + 一条 fetch refspec）：
+git clone http://gitlab.example.com/group/monorepo.git
+git fetch origin refs/banyan/tree/src:refs/heads/src
+git checkout src                     # 工作区 = src/ 内容，历史仅 src/
+
+# 改完推回（子树工作请在投影血统的分支上做——服务端回滚守卫与
+# git 客户端的 fast-forward 前置检查都要求同血统）：
+git push origin src:refs/banyan/tree/src
+#   → 落入 src/ 目录时间线并向上装配：根视图 main 随之前进
 ```
 
-访问控制走 banyan 自身的授权面（PAT，docs/07 §8）——GitLab 的项目
-权限不覆盖这条路；生产上给 banyan 面配 auth.users/upstream 或按需发
-banyan_ token。
+语义要点：投影集 = 默认分支的**顶层**目录（嵌套目录的变更织入其顶层
+投影）；删投影 ref 不支持（子树视图是派生态）；与根分支的混合推送可
+以同包各走各的命名空间。GitLab 分支/标签列表不受影响（只查
+`refs/heads|tags`）。
 
-**路径 B · GitLab 拉镜像（GitLab 原生体验）**。把子树 URL 配成一个
-GitLab 项目的 pull mirror——子树物化成真项目，clone/MR/权限/UI 全走
-GitLab（代价：镜像延迟）：
+**备选 A · banyan 自有面直取**（运维/调试后门；绕过 GitLab 权限，走
+banyan 自己的 PAT 面，docs/07 §8）：
+
+```bash
+git clone http://<banyan-host>:8080/r/<64hex>/tree/<dir>   # 64hex = sha256(project_id)
+```
+
+**备选 B · GitLab 拉镜像**（把子树物化成一个真 GitLab 项目换取全平台
+能力；代价是镜像延迟、单向副本、要建项目，且同机部署需在 Admin →
+Settings → Network → Outbound requests 放行内网 import）：
 
 ```bash
 curl -X POST -H "PRIVATE-TOKEN: <PAT>" .../api/v4/projects \
   -d '{"name":"monorepo-src","import_url":"http://<banyan-host>:8080/r/<64hex>/tree/src","mirror":true}'
 ```
 
-注意：GitLab 对指向**内网地址**的 import/mirror 有 SSRF 防护
-（"Requests to the local network are not allowed"）——生产上 banyan
-通常在可达网段不触发；同机部署需在 Admin → Settings → Network →
-Outbound requests 放行。
-
 **协议层未来**：M3 的服务端 filter 完整规格（含 `subtree:<path>`，
-docs/14）落地后，可对 GitLab URL 直接 partial clone 子树——无需上面
-任何一条旁路。
+docs/14）落地后，可对 GitLab URL 直接 partial clone 子树。
 
 ## 8. FAQ
 

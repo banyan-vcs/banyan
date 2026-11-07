@@ -575,6 +575,12 @@ demo 环境即跳过。
 internal API（gitlab-shell 协议 `/api/v4/internal/post_receive`）的适配
 器，形态见 docs/14 M5。
 
+**子树投影 ref（T84，docs/20 §7）**：gitaly 面的广告桥接到内建
+gitwire（SmartHTTP SSH 同源），子树投影 `refs/banyan/tree/<dir>` 因此
+对 GitLab 客户端原样可见——ls-remote/fetch/推回全走 GitLab URL 与
+凭证（活体验收）；gitaly 的 listRefs 与 gitwire 广告保持同集（T60
+钉住），投影 ref 的接收在 gitwire 命名空间路由成子树推送。
+
 **演示工程杂记**（复用时省时）：omnibus nginx 监听 external_url 端口
 （容器内 8180，映射须同端口）；`GITLAB_OMNIBUS_CONFIG` 仅首 boot 生成
 `/etc/gitlab/gitlab.rb`；root 种子读 `ENV['GITLAB_ROOT_PASSWORD']` 且口
