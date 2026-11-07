@@ -69,6 +69,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Reader, out *bufWriter, vr VirtualRepo) error {
 	var updates []refUpdate
 	sawFlush := false
+	clientWantsPushOptions := false
 	for !sawFlush {
 		line, flush, err := ReadPacketText(br)
 		if err != nil {
@@ -84,7 +85,10 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			break
 		}
 		// The capability block trails the first command line as "\x00<caps>"; truncate before parsing.
-		cmd, _, _ := strings.Cut(line, "\x00")
+		cmd, caps, _ := strings.Cut(line, "\x00")
+		if caps != "" && strings.Contains(" "+caps+" ", " push-options ") {
+			clientWantsPushOptions = true
+		}
 		fields := strings.Fields(cmd)
 		if len(fields) != 3 {
 			return fmt.Errorf("malformed ref update: %s", line)
@@ -94,6 +98,24 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			New:  model.OID(fields[1]).NormalizeZero(),
 			Name: fields[2],
 		})
+	}
+	// Negotiated push options: one pkt-line each, then a flush, before the
+	// packfile (protocol-capabilities.txt "push-options") — the -o of
+	// git push. They ride the post-receive payload for the platform to act
+	// on (GitLab: merge_request.create, ci.skip, …).
+	if clientWantsPushOptions {
+		for {
+			opt, flush, err := ReadPacketText(br)
+			if err != nil {
+				return fmt.Errorf("read push options: %w", err)
+			}
+			if flush {
+				break
+			}
+			if opt != "" {
+				vr.PushOptions = append(vr.PushOptions, opt)
+			}
+		}
 	}
 
 	fail := func(why string) {
@@ -144,7 +166,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	// branches) lives in Rails, and workhorse's front-door check cannot
 	// see refs. First in the chain, upstream-ordered: a declined push
 	// reaches neither the local hooks nor the /pre_receive counter pair.
-	if aerr := s.gitlabAllowed(ctx, vr, updates); aerr != nil {
+	if aerr := s.gitlabAllowed(ctx, vr, updates, spoolSize); aerr != nil {
 		reason := strings.ReplaceAll(aerr.Error(), "\n", " ")
 		_ = WritePacket(out, []byte("unpack ok\n"))
 		for _, u := range updates {
@@ -156,14 +178,16 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	hookUpdates := s.hookUpdates
 	if herr := s.fireHooks(ctx, vr, id.User, hookBytes, "pre-receive", hookUpdates(updates), false); herr != nil {
 		// Wire shape mirrors receive-pack.c: "unpack ok", then every ref
-		// declined with the hook's first output line.
+		// declined with the hook's first output line. No counter
+		// increment: /pre_receive only fires once every gate has passed
+		// (the paired DECR lives in the post-receive below, which a
+		// declined push never reaches).
 		reason := strings.ReplaceAll(herr.Error(), "\n", " ")
 		_ = WritePacket(out, []byte("unpack ok\n"))
 		for _, u := range updates {
 			_ = WritePacket(out, []byte("ng "+u.Name+" "+reason+"\n"))
 		}
 		_ = WriteFlush(out)
-		s.gitlabPreReceive(ctx, vr) // pair the reference counter even on declines
 		return nil
 	}
 	s.gitlabPreReceive(ctx, vr) // pre_receive: counter up before any ref moves

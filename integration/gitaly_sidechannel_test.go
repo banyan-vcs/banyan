@@ -8,6 +8,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/yamux"
 	"github.com/stretchr/testify/assert"
@@ -268,19 +270,58 @@ func TestT62GitalySidechannelTransport(t *testing.T) {
 	t.Run("ssh upload session over sidechannel", func(t *testing.T) {
 		head := headOf(t, src)
 		sctx := wh.register(ctx, func(sc net.Conn) error {
-			br := newPktReader(sc)
-			// 1) drain the ref advertisement (ends with a flush pkt)
-			for {
-				_, flush, err := br.pkt()
-				if err != nil {
-					return err
+			// gitlab-shell's shape (gitaly internal/stream.ProxyPktLine):
+			// request and response copies run CONCURRENTLY — the git
+			// session bytes ride inside band-1 payloads (its pkt-lines and
+			// flushes included; the sideband layer is a transparent pipe),
+			// stderr rides band 2, anything else is a protocol error, and
+			// the stream close (EOF) is the terminator — a flush-pkt would
+			// be an "invalid sideband packet" upstream.
+			var mu sync.Mutex
+			sess := make([]byte, 0, 64<<10)
+			respErr := make(chan error, 1)
+			go func() {
+				br := newPktReader(sc)
+				for {
+					payload, flush, err := br.pkt()
+					if err != nil {
+						if err == io.EOF {
+							respErr <- nil
+						} else {
+							respErr <- err
+						}
+						return
+					}
+					if flush {
+						respErr <- fmt.Errorf("invalid sideband packet: flush-pkt")
+						return
+					}
+					if len(payload) == 0 {
+						continue
+					}
+					if payload[0] != 1 && payload[0] != 2 {
+						respErr <- fmt.Errorf("unexpected band %d", payload[0])
+						return
+					}
+					if payload[0] == 1 {
+						mu.Lock()
+						sess = append(sess, payload[1:]...)
+						mu.Unlock()
+					}
 				}
-				if flush {
+			}()
+			// Request side: once the advertisement (trailing flush-pkt
+			// included) has arrived, send a minimal v0 fetch and
+			// half-close.
+			for i := 0; i < 1000; i++ {
+				mu.Lock()
+				ready := len(sess) > 0 && bytes.HasSuffix(sess, []byte("0000"))
+				mu.Unlock()
+				if ready {
 					break
 				}
+				time.Sleep(10 * time.Millisecond)
 			}
-			// 2) a minimal v0 fetch: want + flush + done (framed), then the
-			// half-close flush frame
 			req := fmt.Sprintf("%04x", len("want "+head+"\n")+4) + "want " + head + "\n" +
 				"0000" + fmt.Sprintf("%04x", len("done\n")+4) + "done\n"
 			if err := writeFramed(sc, []byte(req)); err != nil {
@@ -289,14 +330,12 @@ func TestT62GitalySidechannelTransport(t *testing.T) {
 			if _, err := io.WriteString(sc, "0000"); err != nil {
 				return err
 			}
-			// 3) response: NAK then the pack
-			resp, err := io.ReadAll(sc)
-			if err != nil {
-				return err
-			}
-			assert.Contains(t, string(resp[:min(64, len(resp))]), "NAK")
-			assert.Contains(t, string(resp), "PACK")
-			return nil
+			err := <-respErr
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Contains(t, string(sess), "NAK", "NAK inside the band-1 session stream")
+			assert.Contains(t, string(sess), "PACK", "pack inside the band-1 session stream")
+			return err
 		})
 		_, err := ssc.SSHUploadPackWithSidechannel(sctx, &gitalypb.SSHUploadPackWithSidechannelRequest{
 			Repository: &gitalypb.Repository{StorageName: "default", RelativePath: "proj"}})

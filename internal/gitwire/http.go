@@ -24,10 +24,11 @@ import (
 //	                          git clients normalize "//" in URLs to "/",
 //	                          so /tree/ is the canonical external form)
 type VirtualRepo struct {
-	Repo    string
-	Sub     model.AnchorPath
-	RepoDir string // repo segment of the request path (incl. subtree suffix), for endpoint matching
-	GL      GLIdentity // GitLab push identity (gitaly bridge sets it); zero = not platform-mediated
+	Repo        string
+	Sub         model.AnchorPath
+	RepoDir     string     // repo segment of the request path (incl. subtree suffix), for endpoint matching
+	GL          GLIdentity // GitLab push identity (gitaly bridge sets it); zero = not platform-mediated
+	PushOptions []string   // negotiated -o push options (receive-pack wire), reported through the adapter
 }
 
 // ParseVirtualRepo parses a /r/... request path (without the endpoint suffix).
@@ -332,6 +333,9 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 		"report-status",
 		"delete-refs", // clients silently drop delete commands when this capability is absent (gitprotocol-pack)
 		"no-thin",     // storage-side packs are self-contained (docs/04 §2)
+		// -o push options: parsed after the command list and handed to the
+		// GitLab adapter (post_receive's push_options → MR-from-push etc.).
+		"push-options",
 	}, " ")
 }
 

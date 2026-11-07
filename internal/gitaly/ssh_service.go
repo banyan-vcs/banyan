@@ -22,9 +22,40 @@ type sshService struct {
 	s *Server
 }
 
+// sidebandSessionWriter frames the git session's output as pkt-line
+// sideband — the server→client session format gitaly's sidechannel client
+// speaks (internal/stream.ProxyPktLine: each pkt payload is a band byte +
+// data; band 1 stdout, band 2 stderr, anything else is a protocol error).
+// Termination is the stream close: the client's copy loop ends on EOF
+// (gitlab-shell explicitly treats copy-response-EOF as benign); a flush-pkt
+// would be an "invalid sideband packet" upstream.
+type sidebandSessionWriter struct {
+	w io.Writer
+}
+
+func (s *sidebandSessionWriter) Write(p []byte) (int, error) {
+	total := len(p)
+	for len(p) > 0 {
+		n := len(p)
+		if n > 32768 {
+			n = 32768
+		}
+		frame := make([]byte, 1+n)
+		frame[0] = 1 // band 1: stdout
+		copy(frame[1:], p[:n])
+		if err := gitwire.WritePacket(s.w, frame); err != nil {
+			return 0, err
+		}
+		p = p[n:]
+	}
+	return total, nil
+}
+
 // SSHUploadPackWithSidechannel runs the interactive upload-pack session over
 // a yamux stream dialed back to the client: advertisement, negotiation
-// rounds, pack — the raw session bytes, no gRPC message framing.
+// rounds, pack. The client→server direction carries the raw session bytes
+// (the framedConn reassembles them); the server→client direction wraps in
+// the sideband framing above.
 func (ss *sshService) SSHUploadPackWithSidechannel(ctx context.Context, req *gitalypb.SSHUploadPackWithSidechannelRequest) (*gitalypb.SSHUploadPackWithSidechannelResponse, error) {
 	name, err := ss.s.existingRepo(ctx, req.GetRepository())
 	if err != nil {
@@ -35,9 +66,9 @@ func (ss *sshService) SSHUploadPackWithSidechannel(ctx context.Context, req *git
 		return nil, err
 	}
 	conn := newFramedConn(raw)
-	defer conn.Close()
+	defer conn.Close() // the stream close terminates the client's copy loop
 	code := ss.s.git.ServeSSHSession(ctx, "git-upload-pack", "/r/"+name, req.GetGitProtocol(),
-		bufio.NewReaderSize(conn, 64<<10), conn)
+		bufio.NewReaderSize(conn, 64<<10), &sidebandSessionWriter{w: conn})
 	if code != 0 {
 		return nil, status.Errorf(codes.Internal, "gitaly: upload-pack session exited %d", code)
 	}
