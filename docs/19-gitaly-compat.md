@@ -541,7 +541,7 @@ token/存储名与 banyan 配置一致。T83（integration，opt-in：
 `BANYAN_GITLAB_URL`+`BANYAN_GITLAB_TOKEN`）是同一循环的 Go 形态，无
 demo 环境即跳过。
 
-**实测揪出并修齐的六处协议缝**（模拟器全绿≠活体绿——每个都有回归
+**实测揪出并修齐的七处协议缝**（模拟器全绿≠活体绿——第七处更只有 UI 浏览面能踩到——每个都有回归
 测试钉住）：
 
 1. **v2 HMAC bearer**：Rails 16.x 起每次调用现签

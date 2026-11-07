@@ -114,10 +114,11 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 #workflow:
 #  convergence: auto
 
-# --- Gitaly 协议前端（docs/19；缺省关闭，仅 all-in-one/gateway 角色生效） ---
+# --- Gitaly 协议前端（docs/19，接入手册 docs/20；缺省关闭，仅 all-in-one/gateway 角色生效） ---
 # 开启后本进程以 gitaly gRPC 协议（v19.5.2）对外服务：GitLab Rails/workhorse
-# 可把 gitaly 节点直接替换为本进程（storage_name 须与 GitLab gitaly.yml 一致，
-# relative_path 原样作为 banyan 仓库名，@hashed 寻址零转换）。
+# 可把 gitaly 节点直接替换为本进程（storage_name 须与 GitLab 侧存储配置一致，
+# relative_path 原样作为 banyan 仓库名，@hashed 寻址零转换）。子树以投影 ref
+# refs/banyan/tree/<dir> 经 GitLab URL 直取直推（T84，docs/20 §7）。
 #gitaly:
 #  listen: "unix:/var/lib/banyan/gitaly.socket"   # 或 "0.0.0.0:9999"
 #  token: "change-me"                             # Bearer 鉴权；空=不鉴权（仅开发）
