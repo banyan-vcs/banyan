@@ -171,9 +171,13 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
       `refs/banyan/tree/<dir>` 投影进父项目 ref 空间——GitLab 等整仓
       前端用一条 URL/一套凭证取推子树，推送向上装配；docs/20 §7，
       经 GitLab URL 活体验收）
-- [ ] post-receive → GitLab internal API 适配（push 事件/pipeline/
-      MR-from-push/缓存失效——banyan 接收路径向 gitlab-shell 协议
-      `/api/v4/internal/post_receive` 的回调适配器，docs/19 §8）
+- [x] post-receive → GitLab internal API 适配（2026-11-07，T85：接收路径
+      以 gitlab-shell 同形契约——JWT（HS256/iss=gitlab-shell）签名的
+      `Gitlab-Shell-Api-Request` 头——调 `/internal/{pre,post}_receive`；
+      身份免费来自 gRPC 请求自带的 GlId/GlRepository（workhorse/gitlab-shell
+      填）。live 实证：经 GitLab 的 push 后**零干预**读面即刻刷新、
+      PostReceiveWorker 跑完（事件/pipeline/MR-from-push/缓存过期全通）。
+      剩余：pre-receive 的 `/allowed` 权限面（保护分支经 HTTP 的强制）未接）
 - [ ] webhook 派发（push event → 平台 trigger）
 - [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）
 - [ ] 命名空间映射（平台 group/project ↔ banyan repo）
