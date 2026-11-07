@@ -167,6 +167,9 @@ demo/gitlab/provision.sh                                  # seed, push, read-bac
 # GitLab UI http://localhost:8180 — every git byte lives in banyan
 ```
 
+Wiring an existing GitLab-CE (config, verification checklist, troubleshooting):
+[docs/20](docs/20-gitlab-integration.md).
+
 
 Constrained networks can build through a mirror:
 `docker compose build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/`.
@@ -267,6 +270,7 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 | [docs/13-testing.md](docs/13-testing.md) | Integration test matrix |
 | [docs/14-roadmap.md](docs/14-roadmap.md) | Milestones & the production-readiness track |
 | [docs/19-gitaly-compat.md](docs/19-gitaly-compat.md) | Gitaly gRPC compat layer: coverage matrix (163 RPCs), design notes |
+| [docs/20-gitlab-integration.md](docs/20-gitlab-integration.md) | GitLab integration guide: wiring steps, verification checklist, troubleshooting |
 
 ## Conventions
 
