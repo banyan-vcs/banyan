@@ -2,11 +2,18 @@ package gitaly
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"net"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -74,10 +81,50 @@ func TestGitalyAuthGate(t *testing.T) {
 	_, _, _, _, addr := startServer(t)
 	ctx := context.Background()
 
-	conn, err := Dial(addr, "wrong-token")
+	// The v2 HMAC bearer form real GitLab Rails sends (gitaly_client.rb
+	// authorization_token): Bearer v2.<hmac>.<unix-seconds>, signed per
+	// call over the timestamp, keyed by the shared secret.
+	v2Token := func(secret string, at time.Time) string {
+		mac := hmac.New(sha256.New, []byte(secret))
+		fmt.Fprintf(mac, "%d", at.Unix())
+		return "v2." + hex.EncodeToString(mac.Sum(nil)) + "." +
+			strconv.FormatInt(at.Unix(), 10)
+	}
+	railsDial := func(token string) (*grpc.ClientConn, error) {
+		return Dial(addr, token)
+	}
+
+	// Fresh v2 token passes; the same token 2 minutes later does not.
+	now := time.Now()
+	conn, err := railsDial(v2Token(testToken, now))
+	require.NoError(t, err)
+	ss := gitalypb.NewServerServiceClient(conn)
+	_, err = ss.ServerInfo(ctx, &gitalypb.ServerInfoRequest{})
+	assert.NoError(t, err, "fresh v2 hmac bearer must pass")
+	conn.Close()
+
+	stale, err := railsDial(v2Token(testToken, now.Add(-2*time.Minute)))
+	require.NoError(t, err)
+	defer stale.Close()
+	_, err = gitalypb.NewServerServiceClient(stale).ServerInfo(ctx, &gitalypb.ServerInfoRequest{})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "expired v2 token must be denied")
+
+	future, err := railsDial(v2Token(testToken, now.Add(2*time.Minute)))
+	require.NoError(t, err)
+	defer future.Close()
+	_, err = gitalypb.NewServerServiceClient(future).ServerInfo(ctx, &gitalypb.ServerInfoRequest{})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "future-issued v2 token must be denied")
+
+	foreign, err := railsDial(v2Token("other-secret", now))
+	require.NoError(t, err)
+	defer foreign.Close()
+	_, err = gitalypb.NewServerServiceClient(foreign).ServerInfo(ctx, &gitalypb.ServerInfoRequest{})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "wrong-secret v2 signature must be denied")
+
+	conn, err = Dial(addr, "wrong-token")
 	require.NoError(t, err)
 	defer conn.Close()
-	ss := gitalypb.NewServerServiceClient(conn)
+	ss = gitalypb.NewServerServiceClient(conn)
 	_, err = ss.ServerInfo(ctx, &gitalypb.ServerInfoRequest{})
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 
@@ -164,10 +211,12 @@ func TestGitalyRefAndCommitSurface(t *testing.T) {
 	t.Run("default branch", func(t *testing.T) {
 		def, err := rs.FindDefaultBranchName(ctx, &gitalypb.FindDefaultBranchNameRequest{Repository: repo})
 		require.NoError(t, err)
-		assert.Equal(t, "main", string(def.GetName()))
+		// fully-qualified: Rails' Gitlab::Git.branch_name nils out anything
+		// without the refs/heads/ prefix (the GitLab-CE demo's root_ref bug)
+		assert.Equal(t, "refs/heads/main", string(def.GetName()))
 		h, err := rs.FindDefaultBranchName(ctx, &gitalypb.FindDefaultBranchNameRequest{Repository: repo, HeadOnly: true})
 		require.NoError(t, err)
-		assert.Equal(t, "HEAD", string(h.GetName()))
+		assert.Equal(t, "refs/heads/main", string(h.GetName()))
 	})
 
 	t.Run("find branch", func(t *testing.T) {
@@ -212,6 +261,26 @@ func TestGitalyRefAndCommitSurface(t *testing.T) {
 		assert.Equal(t, head.String(), names["refs/heads/main"])
 		_, ok := names["refs/heads/nonexistent"]
 		assert.False(t, ok)
+
+		// The Rails form: literal "refs/heads/" (trailing slash, no glob) —
+		// for-each-ref prefix semantics must match the branch (the demo's
+		// empty ref_names bug).
+		for _, pat := range []string{"refs/heads/", "refs/heads"} {
+			stream, err := rs.ListRefs(ctx, &gitalypb.ListRefsRequest{
+				Repository: repo, Patterns: [][]byte{[]byte(pat)}})
+			require.NoError(t, err, pat)
+			var got []string
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					break
+				}
+				for _, r := range resp.GetReferences() {
+					got = append(got, string(r.GetName()))
+				}
+			}
+			assert.Equal(t, []string{"refs/heads/main"}, got, "pattern %q", pat)
+		}
 	})
 
 	t.Run("find refs by oid", func(t *testing.T) {
@@ -309,6 +378,28 @@ func TestGitalyRefAndCommitSurface(t *testing.T) {
 		}
 		require.Len(t, entries, 1)
 		assert.Equal(t, "docs/guide.md", string(entries[0].GetPath()))
+
+		// Rails lists the tree root as path "." — same answer as no path
+		// (the GitLab-CE demo's NoRepository bug).
+		stream, err = cs.GetTreeEntries(ctx, &gitalypb.GetTreeEntriesRequest{
+			Repository: repo, Revision: []byte("main"), Path: []byte(".")})
+		require.NoError(t, err)
+		entries = nil
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				break
+			}
+			entries = append(entries, resp.GetEntries()...)
+		}
+		assert.Equal(t, gitalypb.TreeEntry_TREE, func() gitalypb.TreeEntry_EntryType {
+			for _, e := range entries {
+				if string(e.GetPath()) == "docs" {
+					return e.GetType()
+				}
+			}
+			return -1
+		}(), `path "." must list the root tree`)
 	})
 
 	t.Run("get blob", func(t *testing.T) {

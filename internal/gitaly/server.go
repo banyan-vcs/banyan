@@ -14,11 +14,16 @@ package gitaly
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
+	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -211,12 +216,63 @@ func (s *Server) checkToken(ctx context.Context) error {
 		return status.Error(codes.PermissionDenied, "gitaly: missing metadata")
 	}
 	for _, v := range md.Get("authorization") {
-		if token, ok := strings.CutPrefix(v, bearerPrefix); ok &&
-			subtle.ConstantTimeCompare([]byte(token), []byte(s.Opts.Token)) == 1 {
+		token, ok := strings.CutPrefix(v, bearerPrefix)
+		if !ok {
+			continue
+		}
+		// Two accepted forms. Real GitLab (Rails GitalyClient, since 16.x)
+		// signs a fresh token per call — v2.<hex HMAC>.<unix-seconds>, HMAC
+		// over the timestamp keyed by the shared secret, valid for ±30s
+		// (upstream auth/token.go at the vendored tag). The bare constant
+		// compare is the legacy form gitaly's older clients — and banyan's
+		// own Dial — still present.
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.Opts.Token)) == 1 {
+			return nil
+		}
+		if err := checkV2Token(token, s.Opts.Token, time.Now()); err == nil {
 			return nil
 		}
 	}
 	return status.Error(codes.PermissionDenied, "gitaly: invalid bearer token")
+}
+
+// v2TokenValidity matches upstream's window (30s both directions — the
+// client signs per call, the window only absorbs clock skew).
+const v2TokenValidity = 30 * time.Second
+
+// checkV2Token verifies the HMAC bearer form GitLab Rails sends:
+// "v2.<hex hmac-sha256(secret, issuedAt)>.<issuedAt>". Malformed tokens
+// fail closed; the error text mirrors upstream's reasons for diagnostics.
+func checkV2Token(token, secret string, now time.Time) error {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		return fmt.Errorf("invalid token format")
+	}
+	sigHex, msg := parts[1], parts[2]
+	if parts[0] != "v2" {
+		return fmt.Errorf("invalid token version")
+	}
+	sig, err := hex.DecodeString(sigHex)
+	if err != nil {
+		return fmt.Errorf("invalid token signature")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(msg))
+	if !hmac.Equal(sig, mac.Sum(nil)) {
+		return fmt.Errorf("wrong hmac signature")
+	}
+	ts, err := strconv.ParseInt(msg, 10, 64)
+	if err != nil {
+		return fmt.Errorf("cannot parse timestamp")
+	}
+	issued := time.Unix(ts, 0)
+	if issued.Before(now.Add(-v2TokenValidity)) {
+		return fmt.Errorf("token has expired")
+	}
+	if issued.After(now.Add(v2TokenValidity)) {
+		return fmt.Errorf("token's validity window is in future")
+	}
+	return nil
 }
 
 // Dial is the client counterpart for tests: a plain insecure connection

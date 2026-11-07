@@ -30,10 +30,37 @@ func (rf *refService) FindDefaultBranchName(ctx context.Context, req *gitalypb.F
 	if err != nil {
 		return nil, err
 	}
+	// head_only: the HEAD symref target, full name — even when the ref is
+	// unborn (upstream answers the dangling target for an empty repo).
 	if req.GetHeadOnly() {
-		return &gitalypb.FindDefaultBranchNameResponse{Name: []byte("HEAD")}, nil
+		return &gitalypb.FindDefaultBranchNameResponse{Name: []byte("refs/heads/" + def)}, nil
 	}
-	return &gitalypb.FindDefaultBranchNameResponse{Name: []byte(def)}, nil
+	// Heuristic (upstream's test table): the fully-qualified default branch
+	// when it exists — the contract is the full name: Rails feeds it into
+	// Gitlab::Git.branch_name, which nils anything without the refs/heads/
+	// prefix; when it doesn't, the first existing branch; no branches at
+	// all → empty.
+	refs, err := rf.s.listRefs(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	want := "refs/heads/" + def
+	first := ""
+	for _, r := range refs {
+		if !strings.HasPrefix(r.Name, "refs/heads/") {
+			continue
+		}
+		if r.Name == want {
+			return &gitalypb.FindDefaultBranchNameResponse{Name: []byte(want)}, nil
+		}
+		if first == "" || r.Name < first {
+			first = r.Name
+		}
+	}
+	if first != "" {
+		return &gitalypb.FindDefaultBranchNameResponse{Name: []byte(first)}, nil
+	}
+	return &gitalypb.FindDefaultBranchNameResponse{}, nil
 }
 
 func (rf *refService) FindBranch(ctx context.Context, req *gitalypb.FindBranchRequest) (*gitalypb.FindBranchResponse, error) {
@@ -208,7 +235,19 @@ func (rf *refService) FindTag(ctx context.Context, req *gitalypb.FindTagRequest)
 			return &gitalypb.FindTagResponse{Tag: t}, nil
 		}
 	}
-	return nil, status.Errorf(codes.NotFound, "gitaly: tag %q not found", string(req.GetTagName()))
+	// Missing tags answer NotFound carrying the structured FindTagError
+	// detail — Rails' wraps_gitaly_errors maps the detail to ReferenceNotFoundError,
+	// which find_tag rescues into nil; a bare NotFound would surface as
+	// NoRepository and 500 the caller (the demo's archive bug).
+	st := status.New(codes.NotFound, "tag does not exist")
+	st, _ = st.WithDetails(&gitalypb.FindTagError{
+		Error: &gitalypb.FindTagError_TagNotFound{
+			TagNotFound: &gitalypb.ReferenceNotFoundError{
+				ReferenceName: append([]byte("refs/tags/"), req.GetTagName()...),
+			},
+		},
+	})
+	return nil, st.Err()
 }
 
 func (rf *refService) FindAllRemoteBranches(req *gitalypb.FindAllRemoteBranchesRequest, stream gitalypb.RefService_FindAllRemoteBranchesServer) error {
@@ -310,11 +349,19 @@ func itoa(n uint32) string {
 	return string(b[i:])
 }
 
-// matchAnyGlob applies git-style fnmatch globs (e.g. "refs/heads/*") where
-// '*' spans separators, matching for-each-ref semantics.
+// matchAnyGlob applies for-each-ref argument semantics (git ref-filter's
+// match_name_as_path): a pattern matches when it is a literal prefix of
+// the ref name ending at a path boundary — "refs/heads" and "refs/heads/"
+// both match "refs/heads/main"; this is the form Rails' list_refs sends —
+// or a glob where '*' spans separators.
 func matchAnyGlob(patterns [][]byte, name string) bool {
 	for _, p := range patterns {
-		if globMatch(string(p), name) {
+		pat := string(p)
+		if n := len(pat); n <= len(name) && strings.HasPrefix(name, pat) &&
+			(len(name) == n || name[n] == '/' || (n > 0 && pat[n-1] == '/')) {
+			return true
+		}
+		if globMatch(pat, name) {
 			return true
 		}
 	}
