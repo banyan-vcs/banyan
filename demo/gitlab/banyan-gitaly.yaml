@@ -16,3 +16,8 @@ gitaly:
   listen: "0.0.0.0:8075"
   token: "banyan-gitlab-demo-token"
   storage_name: "default"
+  # post-receive adapter: pushes through GitLab notify the platform's
+  # push processing (events/pipelines/MR-from-push/cache expiry)
+  gitlab:
+    url: "http://banyan-gitlab-ce:8180"
+    secret_path: "/etc/gitlab-shared/gitlab_shell_secret"
