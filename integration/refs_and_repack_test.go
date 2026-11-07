@@ -118,7 +118,7 @@ func TestRepackFragmentMerge(t *testing.T) {
 	// byte assertion pins must dwarf one stray ~74B single-object synthetic
 	// pack, not race it.
 	for i := 1; i <= 3; i++ {
-		appendLine(t, filepath.Join(src, "big.txt"), strings.Repeat("version line for delta compression ", 48)+strings.Repeat("x", i)+"\n")
+		appendLine(t, filepath.Join(src, "big.txt"), strings.Repeat("version line for delta compression ", 160)+strings.Repeat("x", i)+"\n")
 		git(t, src, "add", "-A")
 		git(t, src, "commit", "-qm", "t21: bulk "+string(rune('a'+i)))
 		git(t, src, "push", "-q", s.repoURL("t21"), "main")

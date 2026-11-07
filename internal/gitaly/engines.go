@@ -8,6 +8,7 @@ package gitaly
 import (
 	"context"
 
+	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
 	"github.com/banyan-vcs/banyan/internal/storage"
@@ -15,9 +16,13 @@ import (
 
 // Engines answers a listener-less Server value carrying just the metadata,
 // object plane and service layer — enough to run the diff/blame engines.
-// It registers nothing, listens nowhere, and generates no keys.
+// It registers nothing, listens nowhere, and generates no keys. The
+// internal gitwire instance comes along for the ride: revision resolution
+// consults its advertisement (projection refs included), so engine answers
+// agree with every other face.
 func Engines(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo, svc *service.Service) *Server {
-	return &Server{Meta: meta, Objects: objects, Algo: algo, Svc: svc}
+	return &Server{Meta: meta, Objects: objects, Algo: algo, Svc: svc,
+		git: gitwire.NewServer(meta, objects, algo)}
 }
 
 // DiffText renders the git-format unified diff between two revisions

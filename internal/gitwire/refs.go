@@ -70,10 +70,88 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 			}
 			refs = append(refs, Ref{Name: tl.RefName(), OID: tip})
 		}
+		// Projection refs join the advertisement unless a verbatim aux
+		// ref already owns the name (UpdateReferences could have written
+		// one; first-wins keeps the advertisement free of duplicates).
+		have := map[string]bool{}
+		for _, r := range refs {
+			have[r.Name] = true
+		}
+		for _, r := range s.ProjectionRefs(ctx, vr.Repo, defaultBranch) {
+			if !have[r.Name] {
+				refs = append(refs, r)
+			}
+		}
 		return refs, nil
 	}
 
-	// Subtree repo: subtree timeline view (docs/02 §12, design v4 timeline-first).
+	return s.resolveSubtreeRefs(ctx, vr, defaultBranch)
+}
+
+// projectionRefs lists the subtree-projection refs (docs/20 §7): every
+// top-level directory of the default branch's root view is addressable as a
+// repository of its own inside the parent's ref space — refs/banyan/tree/<dir>
+// points at exactly what the /tree/<dir> face serves (the scoped weave:
+// projection of root-local history plus any local timeline at or below that
+// path). Front ends that only know whole repos — GitLab in gitaly mode —
+// get banyan's signature any-subtree-is-a-repo through the ref namespace,
+// one URL, one credential, one permission surface.
+func (s *Server) ProjectionRefs(ctx context.Context, repo string, defaultBranch string) []Ref {
+	tip, err := s.Views.RootTip(ctx, repo, defaultBranch)
+	if err != nil || tip.IsZero() {
+		return nil // no commits on the default branch: nothing to project
+	}
+	rec, err := s.Objects.Lookup(repo).Commit(tip)
+	if err != nil {
+		return nil
+	}
+	tree, err := s.Objects.Lookup(repo).Tree(rec.TreeOID)
+	if err != nil {
+		return nil
+	}
+	var out []Ref
+	for _, e := range tree.Entries {
+		if !e.IsDir || e.Mode == "160000" {
+			continue // blobs and gitlinks have no subtree view
+		}
+		head, _, serr := s.Views.SubtreeHead(ctx, repo, model.AnchorPath("/"+e.Name), defaultBranch)
+		if serr != nil || head.IsZero() {
+			continue // path never existed in history: /tree/ answers empty too
+		}
+		out = append(out, Ref{Name: projectionRefPrefix + e.Name, OID: head})
+	}
+	return out
+}
+
+// projectionRefPrefix is the reserved namespace for subtree projections.
+const projectionRefPrefix = "refs/banyan/tree/"
+
+// projectionRefPath maps a ref name onto its projected top-level directory,
+// ok only for the single-segment form the advertisement emits.
+func projectionRefPath(ref string) (string, bool) {
+	rest, ok := strings.CutPrefix(ref, projectionRefPrefix)
+	if !ok {
+		return "", false
+	}
+	if rest == "" || strings.Contains(rest, "/") {
+		return "", false
+	}
+	return rest, true
+}
+
+// subtreeBranchName is the timeline branch a projection push lands on: the
+// subtree view's default — the same branch the /tree/<dir> face pushes.
+func (s *Server) subtreeBranchName(ctx context.Context, repo string) string {
+	info, err := s.Meta.GetRepo(ctx, repo)
+	if err != nil || info.DefaultBranch == "" {
+		return "main"
+	}
+	return info.DefaultBranch
+}
+
+// ResolveRefs' subtree branch: the subtree timeline view (docs/02 §12,
+// design v4 timeline-first).
+func (s *Server) resolveSubtreeRefs(ctx context.Context, vr VirtualRepo, defaultBranch string) ([]Ref, error) {
 	head, _, err := s.Views.SubtreeHead(ctx, vr.Repo, vr.Sub, defaultBranch)
 	if err != nil {
 		if errors.Is(err, model.ErrObjectNotFound) {
