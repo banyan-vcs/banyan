@@ -34,6 +34,22 @@ until curl -sf -o /dev/null "$GITLAB_URL/users/sign_in"; do
 done
 echo "healthy after ${SECONDS}s"
 
+# ------------------------------------------------ post-receive adapter ----
+# banyan needs GitLab's gitlab_shell secret to sign internal API calls; it
+# lives outside the shared config volume, so publish it there and bounce
+# banyan (the adapter config refuses to boot on an unreadable secret).
+say "sharing the gitlab_shell secret with banyan (post-receive adapter)"
+docker exec "$GL_CTR" cp //var/opt/gitlab/gitlab-rails/etc/gitlab_shell_secret \
+  //etc/gitlab/gitlab_shell_secret 2>/dev/null || true
+if docker exec banyan-gitlab sh -c '[ ! -f /etc/gitlab-shared/gitlab_shell_secret ]' 2>/dev/null; then
+  echo "note: secret not yet visible — adapter disabled this run"
+else
+  docker restart banyan-gitlab >/dev/null
+  sleep 3
+  docker logs banyan-gitlab 2>&1 | grep -q "post-receive adapter" \
+    && echo "adapter armed" || echo "warning: adapter did not announce itself"
+fi
+
 # ------------------------------------------------------------- root PAT --
 say "seeding the root account if this is a fresh volume"
 users=$(docker exec -u git "$GL_CTR" gitlab-rails runner "print User.count" 2>/dev/null | tail -n1 | tr -dc '0-9')
@@ -104,10 +120,10 @@ fi
 git -C "$work" push -q origin main 2>&1 | grep -v "^warning:" || git -C "$work" push -q "$PUSH_URL" main
 
 # ------------------------------------------------------------ read-back --
-# Rails caches repository reads (root_ref etc.); a stock gitaly expires
-# them through the post-receive → internal-API chain, which is the demo's
-# known open gap — the explicit expiry below stands in for it.
-say "expiring Rails repository caches (post-receive stand-in)"
+# Rails caches repository reads (root_ref etc.); the post-receive adapter
+# (armed above) expires them through the internal-API chain. The explicit
+# expiry below stays as a fallback for runs where the adapter is unarmed.
+say "expiring Rails repository caches (fallback; adapter does this live)"
 docker exec -u git "$GL_CTR" gitlab-rails runner \
   "Project.find_by_full_path(\"root/\#{ARGV[0]}\").repository.expire_all_method_caches" -- "$PROJ" >/dev/null 2>&1 || true
 

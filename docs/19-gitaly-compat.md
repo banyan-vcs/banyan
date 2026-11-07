@@ -569,11 +569,16 @@ demo 环境即跳过。
    banyan 原答零消息空流——Ruby 客户端 `entry.data=` 落 nil 直接 500 整个
    项目页。修：缺失答 NotFound（T63 钉住，注意流式 RPC 错误在 Recv 冒出）。
 
-**已知开放缺口（登记待建）**：post-receive → Rails internal API 回调链
-（活动事件/pipeline/MR-from-push/缓存失效）。walkthrough 以显式
-`expire_all_method_caches` 替身绕过；正解是 banyan 接收路径向 GitLab
-internal API（gitlab-shell 协议 `/api/v4/internal/post_receive`）的适配
-器，形态见 docs/14 M5。
+**post-receive 适配器（T85，原登记缺口已闭合）**：接收路径实现了
+gitlab-shell 的 internal API 契约——JWT（HS256、iss=gitlab-shell、60s
+TTL）以共享 `gitlab_shell_secret` 签名进 `Gitlab-Shell-Api-Request` 头，
+`/internal/pre_receive` 配对引用计数、`/internal/post_receive`（changes
+行式载荷 + identifier/user_id/protocol）触发 Rails 的缓存过期/事件/
+pipeline/MR-from-push。**身份零映射**：协议请求自带 GlId/GlRepository
+（workhorse/gitlab-shell 填，smarthttp/SSH 两面都有），gitaly 桥经
+内部头穿到接收路径。live 实证：经 GitLab 的 push 后零干预读面即刻刷新、
+PostReceiveWorker 完成。剩余登记：pre-receive 的 `/allowed`（保护分支经
+HTTP 推送的强制检查）未接——ref 级策略仍属前端/适配器后续。
 
 **子树投影 ref（T84，docs/20 §7）**：gitaly 面的广告桥接到内建
 gitwire（SmartHTTP SSH 同源），子树投影 `refs/banyan/tree/<dir>` 因此

@@ -27,6 +27,9 @@ services:
     volumes:
       - banyan-gitlab-data:/var/lib/banyan
       - ./banyan-gitaly.yaml:/etc/banyan/banyan-gitaly.yaml:ro
+      # GitLab's generated gitlab_shell secret (shared trust for the
+      # post-receive adapter): read-only peek into the gitlab config volume
+      - gitlab-config:/etc/gitlab-shared:ro
     restart: unless-stopped
 
   gitlab:

@@ -74,7 +74,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 可扩展认证：元数据面 PAT（sha256 落库、明文只现一次、过期/吊销读取时判定；scope read<write<admin 是上限不是旁路——TokenPolicy 在同一 Service 缝装饰任意策略）、RPC 细粒度授权（管理端点走 auth.AdminChecker，内容写与 wire 同一 CanPush）、路径 diff + blame RPC 与 git diff / git blame 逐字节一致 | ✅ M5 + M2/M3（docs/07 §8） |
 | Gitaly gRPC 前端（可直接替换 GitLab 的 gitaly 节点；协议 v19.5.2，163/163 RPC 全部落地——含 praefect 集群族（cluster-of-one）、服务端备份、快照、对象池、历史重写、回调式 hooks 与 ssh upload-archive 线协议——完整 Operation/Ref/Commit/Diff/Blob 服务、含 sidechannel 的传输面、逐字节一致的 git-archive、bundle、blame、冲突解决、作为客户端的 smart-HTTP 远端抓取与镜像推送；子树投影 ref——顶层目录以 refs/banyan/tree/<dir> 经 GitLab URL 直取直推，T84） | ✅ 切片 1–11（[docs/19](docs/19-gitaly-compat.md)） |
 
-97 个顶层集成测试函数以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
+98 个顶层集成测试函数以**真实 git CLI** 作客户端钉住行为（[docs/13](docs/13-testing.md)）；
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证；gitaly 前端经
 git 自身答案对拍（T60）、workhorse 形态 gRPC 传输模拟器（T61）、真 clone
 所乘的多路复用 sidechannel 传输（T62）交叉验证，diff 面与 git diff
