@@ -37,6 +37,7 @@ POST {base}/r/{repo}/git-receive-pack                       # push 数据
 | `thin-pack` | fetch | 增量 fetch 对客户端 haves 出 REF_DELTA（docs/11 P2-6）：基对象限于排除集（客户端可证持有），客户端 index-pack --fix-thin / unpack-objects 本地解析 |
 | `allow-reachable-sha1-in-want` | fetch | 非广告 want（partial clone 惰性取回按 OID 点名 blob/tree）须从广告 tips 可达——`haveClosure` 全闭包走查即为该契约的校验实现 |
 | `no-thin` | push | 拒绝 thin pack（存储侧 pack 必须自包含；M3 可放开） |
+| `push-options` | push | `-o` 选项段（命令表 flush 后、pack 前，pkt-line+flush 结束）：GitLab 适配器以 `push_options` 键上报 post_receive（MR-from-push 等）；纯 banyan 部署解析后暂存 `vr.PushOptions` |
 
 ## 3. upload-pack（服务 fetch/clone）
 

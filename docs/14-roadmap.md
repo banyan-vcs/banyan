@@ -186,6 +186,16 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
       ListBlobs/ListLFSPointers 的 revisions 是 rev-list 参数语法
       （LfsCheck 传 `[newrev, "--not", "--all"]`）——双修后 live 矩阵全过：
       developer→保护分支拒、developer→新分支过、root→保护分支过）
+- [x] GitLab 集成收尾三件（2026-11-07 深夜，T87：① **push options 端到端**
+      ——receive-pack 广告+解析 `push-options` 选项段，经
+      `post_receive.push_options` 上报，`-o merge_request.create` 活体实开
+      MR；② **receive.maxInputSize 强制**——/allowed verdict 的
+      git_config_options 下发 GitLab "Maximum push size" 设置，门对照
+      spool 尺寸拒超限包（live：1MB 设 2MB 包拒）；③ **第九缝**——
+      SSHUploadPackWithSidechannel 的 sidechannel 会话输出须包 pkt-line
+      sideband 帧（band1=stdout、关流 EOF 终结；git 协议整体是 band1
+      载荷），修后 SSH fetch/clone 全净。附带：计数对泄漏修复（本地钩子
+      decline 不再 INCR）。**GitLab 模式功能面至此完整收官**）
 - [ ] webhook 派发（push event → 平台 trigger）
 - [ ] 镜像管理工具（banyan CLI：拓扑 A/B 的建立/巡检/对账）
 - [ ] 命名空间映射（平台 group/project ↔ banyan repo）

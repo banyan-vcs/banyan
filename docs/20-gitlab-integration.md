@@ -117,9 +117,11 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | Web 编辑器提交、分支/tag 管理、MR 合并（含 squash/cherry-pick/revert） | ✅ OperationService 全 16 RPC |
 | 归档下载（tar/tar.gz/zip）、bundle 导入导出、仓库导入（URL/bundle） | ✅（LFS 树见 §6） |
 | wiki、个人 snippet 仓库 | ✅（同为 gitaly 寻址，自动落 banyan） |
-| SSH 推送/拉取（gitlab-shell） | ✅ 同一授权面 |
 | **push 后的活动流/pipeline/MR-from-push 触发/缓存失效** | ✅ **post-receive 适配器**（T85，§2 的 `gitlab.gitlab` 配置节）：经 GitLab 的 push 以 gitlab-shell 同形契约（JWT 签名）调 Rails internal API——缓存自动过期、事件/pipeline/MR-from-push 全触发（live 实证：push 后零干预读面即刻刷新）；不配置则退回"数据正常落库但平台无感" |
-| **ref 级推送策略：保护分支（HTTP 推送的强制）** | ✅ **`/allowed` 策略门**（T86，同一 `gitlab.gitlab` 配置节）：ref 移动前问 Rails `GitAccess.check`——developer 推保护分支被拒且原因上屏、新分支/owner 放行（live 矩阵）；SSH 面由 gitlab-shell 前置检查、HTTP 面由此门补齐 |
+| **ref 级推送策略：保护分支（HTTP 推送的强制）** | ✅ **`/allowed` 策略门**（T86，同一 `gitlab.gitlab` 配置节）：ref 移动前问 Rails `GitAccess.check`——developer 推保护分支被拒且原因上屏、新分支/owner 放行、**分支删除同门**（自有分支删成、默认分支 Rails 原话拒）；SSH 面由 gitlab-shell 前置检查、HTTP 面由此门补齐 |
+| **push options（`-o merge_request.create` 等）** | ✅ receive-pack 广告 `push-options` 并解析选项段，经 `post_receive.push_options` 上报 Rails（live：`-o merge_request.create -o merge_request.title=…` 实开 MR） |
+| **最大推送大小（Maximum push size 设置）** | ✅ /allowed verdict 的 `receive.maxInputSize` 由门强制（live：设 1MB、推 2MB 随机包被拒 `pack exceeds maximum allowed size`，复位即通） |
+| SSH 推送/拉取（gitlab-shell） | ✅ 同一授权面；fetch/clone 走 `SSHUploadPackWithSidechannel`（sidechannel 上再包一层 pkt-line sideband 帧——git 协议整体作为 band1 载荷、关流终结；seam 9 活体修复后 clone+fsck 全净） |
 | 服务端维护（housekeeping/repack） | 空操作语义（对象平面恒 compact，docs/19 §6） |
 
 ## 5. 回退与数据面
@@ -147,6 +149,8 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | 空仓 `FindDefaultBranchName` 答 `refs/heads/main` 但项目页仍"空仓" | 正常契约：无分支时启发式答空 | 先推一个提交 |
 | push 被拒 `! [remote rejected] … (You are not allowed to push code to protected branches…)` | **正常强制**：`/allowed` 策略门在起作用（T86）——保护分支等 ref 级策略由 Rails 判定，消息原样透传 | 无需处置；确需推送走 MR 或放开保护设置 |
 | push 被拒 `gitlab policy check unavailable` | Rails 不可达/答非所问，门 fail-closed（与上游钩子一致） | 查 GitLab 健康（`gitlab-ctl status`）与适配器配置 §2；恢复后重推 |
+| push 被拒 `pack exceeds maximum allowed size (N bytes)` | 正常强制：GitLab 管理设置 Maximum push size（MB）经 `/allowed` verdict 下发 | 管理区调大或拆分提交 |
+| SSH fetch 报 `copy response: unexpected band…` / `invalid sideband packet…` | 旧版 banyan 未按 pkt-line sideband 帧封装 sidechannel 会话输出（seam 9） | 升级 banyan（含本修复起） |
 | Rails runner 连不上（`Peer authentication failed`） | runner 以 root 跑，postgres peer 拒 | `docker exec -u git …` |
 | 种子 root 失败 `Password must not contain commonly used…` | GitLab 黑名单（demo/pass/gitlab 字样都拒） | 随机强口令；种子读 `ENV['GITLAB_ROOT_PASSWORD']` |
 | **omnibus 端口**：宿主 curl 000 但容器健康检查绿 | nginx 监听 `external_url` 的端口（容器内 8180），映射须 `8180:8180` 非 `8180:80` | 改 compose 端口映射 |

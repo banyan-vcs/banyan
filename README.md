@@ -105,7 +105,7 @@ directory timelines align both boundaries at the same granularity.
 | Extensible auth: metadata-plane personal access tokens (sha256 at rest, plaintext shown once, expiry/revocation on read; scope read<write<admin is a ceiling, never a bypass — TokenPolicy decorates any policy at the same Service seam), RPC fine-grained authorization (management endpoints behind auth.AdminChecker, content writes behind the same CanPush the wire enforces), path-diff + blame RPCs byte-equal to git diff / git blame | ✅ M5 + M2/M3 (docs/07 §8) |
 | Gitaly gRPC frontend (replace GitLab's gitaly node; protocol v19.5.2, 163/163 RPCs live; subtree projection refs — every top-level directory addressable as refs/banyan/tree/<dir> through the GitLab URL, T84 — every service including the praefect cluster family (cluster-of-one), server-side backups, snapshots, object pools, history rewrite, hooks-over-callbacks and the ssh upload-archive wire protocol — full Operation/Ref/Commit/Diff/Blob services, transport incl. sidechannel, byte-identical git-archive, bundles, blame, conflicts resolution, smart-HTTP remote fetch and mirror push as a client) | ✅ slices 1–11 ([docs/19](docs/19-gitaly-compat.md)) |
 
-99 top-level integration test functions pin the behavior with the **real git CLI** as the client
+100 top-level integration test functions pin the behavior with the **real git CLI** as the client
 ([docs/13](docs/13-testing.md)) — the thin-CLI commit path is cross-verified
 by fresh git clones plus `fsck`; the gitaly frontend is cross-verified
 against git's own answers (T60), a workhorse-shaped gRPC transport emulator
