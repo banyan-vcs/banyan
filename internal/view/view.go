@@ -330,12 +330,40 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 		kindGraft = 1
 	)
 	entries := map[model.OID]*weaveEntry{}
+	// Provenance-embedded sources (docs/02 §13): every visited input commit
+	// records which source commit it folds (banyan-woven-from). After
+	// ResetWoven the per-source markers are gone, but the root-local spine
+	// carries the weave's own outputs — clients commit on woven tips — so
+	// their provenance recovers each source's fold progress and the rebuild
+	// skips already-embedded sources instead of re-grafting them (duplicate
+	// subjects, churned tips). Collection runs on every visit: the spine
+	// walks first, and grafts feed deeper sources (chained adoption — a
+	// scoped view's graft output pushed back through its own timeline).
+	embedded := map[model.OID]bool{}
 	addEntry := func(oid model.OID, kind int, rel model.AnchorPath) {
 		if _, dup := entries[oid]; dup {
 			return
 		}
 		ci, err := s.Objects.CommitInfo(repo, oid)
 		if err != nil {
+			return
+		}
+		// Skip when the candidate's CHANGE is already folded into the input:
+		// either a visited chain claims to fold the candidate itself
+		// (embedded[oid]), or the candidate is a weave output of a source
+		// that is already embedded — a fold's diff against its parent is
+		// exactly its source's change, so it carries nothing new and folding
+		// it could only duplicate the subject or regress a newer snapshot.
+		// Evaluated BEFORE the collection below so a candidate can never be
+		// skipped by its own claim.
+		skip := embedded[oid] || (ci.WovenFrom != "" && embedded[ci.WovenFrom])
+		// Collect even for skipped candidates: a skipped output still
+		// testifies that ITS source is folded (chained adoption), which
+		// deeper sources rely on.
+		if ci.WovenFrom != "" {
+			embedded[ci.WovenFrom] = true
+		}
+		if skip {
 			return
 		}
 		entries[oid] = &weaveEntry{oid: oid, kind: kind, rel: rel, when: ci.When, ci: ci}
@@ -510,6 +538,17 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 			Committer: c.Committer,
 			Message:   c.Message,
 		}
+		switch e.kind {
+		case kindFull:
+			// Preserve the entry's own provenance: a spine-embedded weave
+			// output must re-fold byte-identically for a post-reset rebuild
+			// to reproduce it verbatim (client commits carry none — unchanged).
+			nc.WovenFrom = c.WovenFrom
+		default:
+			// The graft IS the provenance: record the source commit so later
+			// folds (rebuilds, other scopes) can recognize it as folded.
+			nc.WovenFrom = e.oid
+		}
 		if !prev.IsZero() {
 			nc.Parents = []model.OID{prev}
 		}
@@ -563,7 +602,13 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 // the next materialization rebuilds every scope from scratch: the rewound
 // timeline folds its new chain, dropped commits vanish from ancestor views
 // (history rebuild), and untouched timelines re-weave byte-identically
-// (synthetics reuse source author/committer — no clock input).
+// (synthetics reuse source author/committer — no clock input). Sources
+// already woven into the root-local spine (clients commit on woven tips, so
+// the spine embeds the weave's own grafts) are recognized by their
+// banyan-woven-from provenance and skipped — the rebuild recovers each
+// source's fold progress from the spine instead of re-grafting it. Markers
+// themselves are still erased: keeping them would silently drop un-rewound
+// sources whose folded prefix lived in the erased output chain (T44).
 //
 // Best-effort per timeline: a CAS racing a concurrent materialization is
 // logged and skipped — that scope degrades to an incremental fold over a
