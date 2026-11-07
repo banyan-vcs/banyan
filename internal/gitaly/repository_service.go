@@ -2,6 +2,7 @@ package gitaly
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"google.golang.org/grpc/codes"
@@ -130,6 +131,10 @@ func (rs *repositoryService) WriteRef(ctx context.Context, req *gitalypb.WriteRe
 		return nil, err
 	}
 	if err := rs.s.Svc.UpdateRef(ctx, service.RefUpdate{Repo: name, Name: refName, New: oid}); err != nil {
+		var ierr *service.ErrInvalidArg
+		if errors.As(err, &ierr) {
+			return nil, status.Errorf(codes.InvalidArgument, "gitaly: %v", err)
+		}
 		return nil, status.Errorf(codes.FailedPrecondition, "gitaly: %v", err)
 	}
 	return &gitalypb.WriteRefResponse{}, nil
