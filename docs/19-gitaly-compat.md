@@ -563,6 +563,11 @@ demo 环境即跳过。
 6. **GetArchive 的 include_lfs_blobs**：GitLab 恒发 true，原实现无条件
    拒。修：树内实有 LFS pointer（smudge 会变字节）才拒，无 pointer
    即普通归档——含 pointer 的拒绝与不含的放行都有测试钉住。
+7. **TreeEntry 缺失路径的应答形态**（2026-11-07 晚，**UI 浏览面**击出：
+   API 走查测不到——真项目页恒探测 `.git-blame-ignore-revs`）：上游对
+   缺失答 **NotFound 错误**（Rails blob finder `rescue GRPC::NotFound→nil`）；
+   banyan 原答零消息空流——Ruby 客户端 `entry.data=` 落 nil 直接 500 整个
+   项目页。修：缺失答 NotFound（T63 钉住，注意流式 RPC 错误在 Recv 冒出）。
 
 **已知开放缺口（登记待建）**：post-receive → Rails internal API 回调链
 （活动事件/pipeline/MR-from-push/缓存失效）。walkthrough 以显式

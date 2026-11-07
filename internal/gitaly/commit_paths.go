@@ -178,8 +178,15 @@ func (cs *commitService) TreeEntry(req *gitalypb.TreeEntryRequest, stream gitaly
 		return err
 	}
 	entry, err := cs.s.entryAtPath(ctx, name, rec.Tree, string(req.GetPath()))
-	if err != nil || entry == nil {
-		return nil // absent paths answer nothing, per upstream
+	if err != nil {
+		return err
+	}
+	if entry == nil {
+		// Upstream answers NotFound for absent paths; Rails' blob finder
+		// rescues GRPC::NotFound into nil. An empty stream instead leaves
+		// its entry nil and crashes on `entry.data=` — every project tree
+		// page probes .git-blame-ignore-revs, so this 500'd the whole UI.
+		return status.Error(codes.NotFound, "tree entry not found")
 	}
 	switch {
 	case entry.IsDir:

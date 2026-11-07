@@ -123,7 +123,9 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | 症状 | 原因 | 处置 |
 |---|---|---|
 | 建项目 400 `invalid bearer token` | token 两边不一致 / 时钟漂移 >30s（v2 HMAC 有窗口）/ GitLab 版本过老不会签 v2 | 核对 `repositories_storages` 与 banyan `gitaly.token`；`chrony`/NTP 对时 |
+| **项目页 500**（异常栈 `undefined method 'data=' for nil` → `tree_entry`） | 旧版 banyan 对 TreeEntry 缺失路径答零消息空流（上游答 NotFound；项目页恒探测 `.git-blame-ignore-revs`，API 走查测不到） | 升级 banyan ≥ 04342f3 之后含修复的版本 |
 | Web/API 一切像空仓（tree 404、无默认支） | 读缓存陈旧（正常由 post-receive 链过期——本缺口） | `gitlab-rails runner 'Project.find(<id>).repository.expire_all_method_caches'`（-u git）；已开的替代路径：带显式 `ref` 的 API |
+| 计划删除的项目（路径带 `-deletion_scheduled-N`）还在项目列表 | 正常：CE 默认**缓冲期删除**（7 天后才真删），不是卡死 | 管理区可立即删除或恢复；`pending_delete=false` 属预期 |
 | archive 500（workhorse 日志 `SendArchive: …`） | 树内实有 LFS pointer 且 `include_lfs_blobs`（smudge 面未建，诚实拒绝）；或历史版本缺结构化错 | 前者为能力边界（登记 docs/19 §8）；升级 banyan ≥ 0e137d8 |
 | 空仓 `FindDefaultBranchName` 答 `refs/heads/main` 但项目页仍"空仓" | 正常契约：无分支时启发式答空 | 先推一个提交 |
 | Rails runner 连不上（`Peer authentication failed`） | runner 以 root 跑，postgres peer 拒 | `docker exec -u git …` |

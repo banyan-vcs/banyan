@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/banyan-vcs/banyan/internal/gitaly"
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
@@ -206,6 +208,16 @@ func TestT63GitalyDiffSurface(t *testing.T) {
 			data = append(data, resp.GetData()...)
 		}
 		assert.Equal(t, "brand new file\nwith two lines\n", string(data))
+
+		// Misses answer NotFound — Rails' blob finder rescues GRPC::NotFound
+		// into nil; an empty stream crashes its `entry.data=` (every tree
+		// page probes .git-blame-ignore-revs this way).
+		missStream, err := cs.TreeEntry(ctx, &gitalypb.TreeEntryRequest{
+			Repository: repo, Revision: []byte("main"), Path: []byte(".git-blame-ignore-revs")})
+		require.NoError(t, err) // server-streaming: the error rides the first Recv
+		_, err = missStream.Recv()
+		require.Error(t, err)
+		assert.Equal(t, codes.NotFound, status.Code(err))
 	})
 
 	t.Run("patch id is stable", func(t *testing.T) {
