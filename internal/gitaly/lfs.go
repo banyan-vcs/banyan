@@ -51,6 +51,41 @@ func parseLFSPointer(b []byte) (fileOid []byte, fileSize int64, ok bool) {
 // lfsPointerBatch is the chunked-pointer sender shared by the three RPCs.
 const lfsPointerBatch = 100
 
+// containsLFSPointer reports whether any blob in the tree (recursively) is
+// an LFS pointer — the GetArchive gate for include_lfs_blobs: the flag is
+// a no-op for pointer-free trees (what GitLab's unconditional default
+// sends) and would alter bytes otherwise.
+func (s *Server) containsLFSPointer(ctx context.Context, repo string, treeOID model.OID) (bool, error) {
+	lookup := s.Objects.Lookup(repo)
+	var walk func(model.OID) (bool, error)
+	walk = func(oid model.OID) (bool, error) {
+		t, err := lookup.Tree(oid)
+		if err != nil {
+			return false, status.Errorf(codes.NotFound, "gitaly: tree %s not found", oid)
+		}
+		for _, e := range t.Entries {
+			if e.IsDir {
+				hit, err := walk(e.Target)
+				if err != nil || hit {
+					return hit, err
+				}
+				continue
+			}
+			if e.Mode == "160000" {
+				continue // gitlink, not a blob
+			}
+			if _, raw, err := s.Objects.Raw(ctx, repo, e.Target); err == nil &&
+				len(raw) <= lfsPointerMaxSize {
+				if _, _, ok := parseLFSPointer(raw); ok {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+	return walk(treeOID)
+}
+
 // GetLFSPointers filters the requested blob IDs down to valid LFS pointers.
 // Non-pointer objects (including trees and commits) answer with silence, per
 // upstream; a missing object is an error.

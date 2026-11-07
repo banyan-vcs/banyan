@@ -36,10 +36,6 @@ func (rs *repositoryService) GetArchive(req *gitalypb.GetArchiveRequest, stream 
 	default:
 		return status.Error(codes.InvalidArgument, "gitaly: invalid format")
 	}
-	if req.GetIncludeLfsBlobs() {
-		return status.Error(codes.Unimplemented, "gitaly: include_lfs_blobs requires the LFS smudge plane")
-	}
-
 	commitOID, err := rs.s.resolveRevision(ctx, name, req.GetCommitId())
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "gitaly: invalid commitId: %s", req.GetCommitId())
@@ -61,6 +57,20 @@ func (rs *repositoryService) GetArchive(req *gitalypb.GetArchiveRequest, stream 
 		}
 		treeOID = entry.Target
 		base = root + "/"
+	}
+
+	// include_lfs_blobs: GitLab's archive endpoint sends it unconditionally.
+	// Without LFS pointers in the tree the flag changes nothing — the honest
+	// refusal fires only when a pointer is present and smudging would alter
+	// the bytes (docs/19 §6).
+	if req.GetIncludeLfsBlobs() {
+		has, aerr := rs.s.containsLFSPointer(ctx, name, treeOID)
+		if aerr != nil {
+			return aerr
+		}
+		if has {
+			return status.Error(codes.Unimplemented, "gitaly: include_lfs_blobs requires the LFS smudge plane")
+		}
 	}
 
 	excludes := make([]string, 0, len(req.GetExclude()))

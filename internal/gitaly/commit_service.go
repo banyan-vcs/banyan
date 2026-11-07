@@ -349,10 +349,13 @@ func (cs *commitService) treeEntries(ctx context.Context, repo string, commit mo
 		return nil, status.Errorf(codes.NotFound, "gitaly: commit %s not found", commit)
 	}
 	tree := rec.Tree
-	base := strings.Trim(path, "/")
+	// Paths arrive in git form: Rails lists the tree root as "." — clean
+	// segments (splitPath drops "." and empties) so that is the root walk.
+	segs := splitPath(path)
+	base := strings.Join(segs, "/")
 	if base != "" {
 		lookup := cs.s.Objects.Lookup(repo)
-		for _, seg := range strings.Split(base, "/") {
+		for _, seg := range segs {
 			t, err := lookup.Tree(tree)
 			if err != nil {
 				return nil, status.Errorf(codes.NotFound, "gitaly: path %q not found", path)

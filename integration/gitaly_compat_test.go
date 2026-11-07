@@ -14,11 +14,32 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/banyan-vcs/banyan/internal/gitaly"
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
+
+// statusFromError reports whether the gRPC error carries a detail of the
+// pointed-at type, filling it when present (the structured-error contract
+// Rails' error wrapper keys on).
+func statusFromError(err error, want any) (bool, error) {
+	st, ok := status.FromError(err)
+	if !ok {
+		return false, nil
+	}
+	for _, d := range st.Details() {
+		if v, ok := d.(*gitalypb.FindTagError); ok {
+			if w, ok := want.(**gitalypb.FindTagError); ok {
+				*w = v
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
 
 func TestT60GitalyCompatSurface(t *testing.T) {
 	needGit(t)
@@ -86,7 +107,8 @@ func TestT60GitalyCompatSurface(t *testing.T) {
 	t.Run("default branch", func(t *testing.T) {
 		def, err := rs.FindDefaultBranchName(ctx, &gitalypb.FindDefaultBranchNameRequest{Repository: repo})
 		require.NoError(t, err)
-		assert.Equal(t, "main", string(def.GetName()))
+		// fully qualified — Gitlab::Git.branch_name nils bare names
+		assert.Equal(t, "refs/heads/main", string(def.GetName()))
 	})
 
 	t.Run("commit identity and history", func(t *testing.T) {
@@ -144,6 +166,19 @@ func TestT60GitalyCompatSurface(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, lwOID, tag.GetTag().GetId())
 		assert.Equal(t, lwOID, tag.GetTag().GetTargetCommit().GetId())
+
+		// A missing tag answers NotFound WITH the structured FindTagError
+		// detail — Rails' error wrapper maps that detail to a rescuable
+		// ReferenceNotFoundError; a bare NotFound would 500 callers like
+		// archive (the GitLab-CE demo's bug).
+		_, err = rs.FindTag(ctx, &gitalypb.FindTagRequest{Repository: repo, TagName: []byte("main")})
+		require.Error(t, err)
+		assert.Equal(t, codes.NotFound, status.Code(err))
+		var tagErr *gitalypb.FindTagError
+		found, e := statusFromError(err, &tagErr)
+		require.NoError(t, e)
+		assert.True(t, found, "detail FindTagError must ride the status")
+		assert.Equal(t, "refs/tags/main", string(tagErr.GetTagNotFound().GetReferenceName()))
 	})
 
 	t.Run("tree entries mirror ls-tree", func(t *testing.T) {
@@ -211,13 +246,21 @@ func TestT60GitalyCompatSurface(t *testing.T) {
 		assert.True(t, ex.GetExists())
 		def, err := rs.FindDefaultBranchName(ctx, &gitalypb.FindDefaultBranchNameRequest{Repository: hashed})
 		require.NoError(t, err)
-		assert.Equal(t, "master", string(def.GetName()))
+		// empty repo: the heuristic answers nothing (upstream's table);
+		// head_only still reports the unborn symref target, fully qualified.
+		assert.Equal(t, "", string(def.GetName()))
+		ho, err := rs.FindDefaultBranchName(ctx, &gitalypb.FindDefaultBranchNameRequest{Repository: hashed, HeadOnly: true})
+		require.NoError(t, err)
+		assert.Equal(t, "refs/heads/master", string(ho.GetName()))
 
 		// push through gitwire into the gitaly-created repo, read it back
 		git(t, src, "push", "-q", s.URL+"/r/"+mapped, "main:master")
 		b, err := rs.FindBranch(ctx, &gitalypb.FindBranchRequest{Repository: hashed, Name: []byte("master")})
 		require.NoError(t, err)
 		assert.Equal(t, headOf(t, src), b.GetBranch().GetTargetCommit().GetId())
+		def, err = rs.FindDefaultBranchName(ctx, &gitalypb.FindDefaultBranchNameRequest{Repository: hashed})
+		require.NoError(t, err)
+		assert.Equal(t, "refs/heads/master", string(def.GetName()))
 	})
 
 	t.Run("object format and local branches", func(t *testing.T) {

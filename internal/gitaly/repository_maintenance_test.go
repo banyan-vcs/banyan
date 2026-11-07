@@ -330,9 +330,29 @@ func TestGitalyGetArchive(t *testing.T) {
 		_, err := fetchArchive(&gitalypb.GetArchiveRequest{
 			Repository: repo, CommitId: "main", Format: gitalypb.GetArchiveRequest_TAR_BZ2})
 		assert.Equal(t, codes.Unimplemented, status.Code(err))
-		_, err = fetchArchive(&gitalypb.GetArchiveRequest{
+
+		// GitLab sends include_lfs_blobs unconditionally; for a
+		// pointer-free tree the flag is a no-op and the archive serves.
+		arc, err := fetchArchive(&gitalypb.GetArchiveRequest{
 			Repository: repo, CommitId: "main", Format: gitalypb.GetArchiveRequest_TAR,
 			IncludeLfsBlobs: true})
-		assert.Equal(t, codes.Unimplemented, status.Code(err))
+		require.NoError(t, err)
+		assert.NotEmpty(t, arc)
+
+		// A tree that actually carries an LFS pointer would need smudging —
+		// the honest refusal fires only there.
+		ptrRepo := &gitalypb.Repository{StorageName: "default", RelativePath: "proj-arch-lfs"}
+		pointer := "version https://git-lfs.github.com/spec/v1\n" +
+			"oid sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n" +
+			"size 1048576\n"
+		seedHistory(t, svc, "proj-arch-lfs", map[string]string{"big.bin": pointer}, nil)
+		_, err = fetchArchive(&gitalypb.GetArchiveRequest{
+			Repository: ptrRepo, CommitId: "main", Format: gitalypb.GetArchiveRequest_TAR,
+			IncludeLfsBlobs: true})
+		assert.Equal(t, codes.Unimplemented, status.Code(err), "pointer present: smudge plane required")
+		_, err = fetchArchive(&gitalypb.GetArchiveRequest{
+			Repository: ptrRepo, CommitId: "main", Format: gitalypb.GetArchiveRequest_TAR,
+			IncludeLfsBlobs: false})
+		assert.NoError(t, err, "without the flag the pointer blob archives verbatim")
 	})
 }
