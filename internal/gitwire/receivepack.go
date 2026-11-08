@@ -13,6 +13,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -308,7 +309,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			// landed in between (fetch first, git-equivalent semantics).
 			if curWoven, werr := s.Views.RootTip(ctx, vr.Repo, name); werr == nil &&
 				!u.Old.IsZero() && !curWoven.IsZero() && u.Old != curWoven {
-				_ = WritePacket(out, []byte("ng "+u.Name+" "+storage.ErrNonFastForward.Error()+"\n"))
+				_ = WritePacket(out, []byte("ng "+u.Name+" "+meta.ErrNonFastForward.Error()+"\n"))
 				continue
 			}
 			expected = st.Head
@@ -523,7 +524,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	//     ahead of, not stale against, the root side.
 	if !old.IsZero() {
 		if !s.sameXView(vr, old, curTip) {
-			return storage.ErrNonFastForward
+			return meta.ErrNonFastForward
 		}
 		if projTip, perr := s.Views.ProjectionTip(vr.Repo, vr.Sub, rootLocal); perr == nil &&
 			!projTip.IsZero() && !s.Views.Descends(vr.Repo, old, projTip) && !s.sameXView(vr, old, projTip) {
@@ -532,7 +533,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 				projTree = pci.Tree
 			}
 			if projTree.IsZero() || !s.Views.TreeKnown(vr.Repo, old, projTree) {
-				return storage.ErrNonFastForward
+				return meta.ErrNonFastForward
 			}
 		}
 	}

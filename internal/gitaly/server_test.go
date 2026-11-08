@@ -20,6 +20,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -27,9 +28,9 @@ const testToken = "s3cr3t"
 
 // startServer boots a gitaly compat server over an in-memory banyan stack
 // and returns it with its dial address.
-func startServer(t *testing.T) (*Server, storage.MetaStore, *storage.ObjectService, *service.Service, string) {
+func startServer(t *testing.T) (*Server, meta.MetaStore, *storage.ObjectService, *service.Service, string) {
 	t.Helper()
-	meta := storage.NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(t.TempDir())
 	objects := storage.NewObjectService(meta, local, []storage.Node{{ID: "local-1", Local: true}}, model.SHA1)
 	svc := service.New(meta, objects, model.SHA1)

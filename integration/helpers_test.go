@@ -35,6 +35,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -52,18 +53,18 @@ func newServer(t *testing.T) *server {
 
 // newServerPlane is newServer with the underlying object plane exposed —
 // auxiliary frontends (the gitaly gRPC server) serve the same plane.
-func newServerPlane(t *testing.T) (*server, storage.MetaStore, *storage.ObjectService) {
+func newServerPlane(t *testing.T) (*server, meta.MetaStore, *storage.ObjectService) {
 	t.Helper()
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	nodes := []storage.Node{{ID: "t1", Local: true}}
-	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
+	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
 	mux := http.NewServeMux()
-	gitwire.NewServer(meta, objects, model.SHA1).Register(mux)
-	rpc.NewServer(meta, objects, model.SHA1).Register(mux)
+	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
+	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &server{Server: srv}, meta, objects
+	return &server{Server: srv}, ms, objects
 }
 
 func (s *server) repoURL(name string) string { return s.URL + "/r/" + name + ".git" }

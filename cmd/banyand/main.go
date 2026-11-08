@@ -2,8 +2,8 @@
 //
 //	all-in-one (default)  git smart HTTP + JSON API + local shards + local meta
 //	gateway               the stateless frontend: gitwire + rpc over the
-//	                      refs service (RemoteMeta) and the scattered store
-//	refs                  the serialization point: MetaStore RPC, node health
+//	                      refs service (meta.RemoteMeta) and the scattered store
+//	refs                  the serialization point: meta.MetaStore RPC, node health
 //	                      table, replica reconciler
 //	storage               a pack warehouse: PUT/GET/DELETE by (repo, packOID),
 //	                      heartbeating its address to refs
@@ -29,6 +29,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/refs"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/storenode"
 )
@@ -67,42 +68,42 @@ func main() {
 }
 
 // openMeta builds the process-local metadata backend (all-in-one / refs).
-func openMeta(cfg *config.Config) storage.MetaStore {
+func openMeta(cfg *config.Config) meta.MetaStore {
 	switch cfg.MetaBackend {
 	case "sqlite":
-		ms, err := storage.NewSQLiteMetaStore(cfg.DBPath)
+		ms, err := meta.NewSQLiteMetaStore(cfg.DBPath)
 		if err != nil {
 			log.Fatalf("open sqlite meta store %s: %v", cfg.DBPath, err)
 		}
 		return ms
 	case "mysql", "postgres":
-		ms, err := storage.NewSQLMetaStore(cfg.MetaBackend, cfg.DBPath)
+		ms, err := meta.NewSQLMetaStore(cfg.MetaBackend, cfg.DBPath)
 		if err != nil {
 			log.Fatalf("open %s meta store: %v", cfg.MetaBackend, err)
 		}
 		return ms
 	default:
-		return storage.NewMemoryMetaStore()
+		return meta.NewMemoryMetaStore()
 	}
 }
 
 func runAllInOne(ctx context.Context, cfg *config.Config) {
-	meta := openMeta(cfg)
+	ms := openMeta(cfg)
 	local := storage.NewLocalShardStore(cfg.Root)
 	nodes := []storage.Node{{ID: "local-1", Local: true}}
-	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
+	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
 
 	if cfg.InitRepo != "" {
-		if err := meta.CreateRepo(context.Background(), cfg.InitRepo, model.SHA1); err != nil {
+		if err := ms.CreateRepo(context.Background(), cfg.InitRepo, model.SHA1); err != nil {
 			log.Fatalf("create repo: %v", err)
 		}
 		fmt.Fprintf(os.Stderr, "created repo %q (object-format=sha1)\n", cfg.InitRepo)
 	}
 
 	mux := http.NewServeMux()
-	gw := gitwire.NewServer(meta, objects, model.SHA1)
-	api := rpc.NewServer(meta, objects, model.SHA1)
-	objects.Addressing = storage.NewAddressing(cfg.Storage.Mode, meta)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
+	api := rpc.NewServer(ms, objects, model.SHA1)
+	objects.Addressing = meta.NewAddressing(cfg.Storage.Mode, ms)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
 	switch {
@@ -117,7 +118,7 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		// instance (OAuth2 / PAT) authenticate the HTTP face; identity and
 		// instance-admin status come from /api/v4/user.
 		var svc auth.Service = auth.NewGitLabSSO(cfg.Auth.GitLabSSO)
-		if rs, ok := meta.(storage.SubtreeRuleStore); ok {
+		if rs, ok := ms.(meta.SubtreeRuleStore); ok {
 			svc = &auth.SubtreeRulePolicy{Inner: svc, Rules: rs}
 			log.Printf("auth: subtree rules on (runtime directory access rules, docs/07 §8)")
 		}
@@ -131,13 +132,13 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		// §6): passwords and SSH keys keep working, tokens add scoped
 		// credentials (read/write/admin) — the decorator composes at the
 		// same Service seam the wire layers already enforce through.
-		if tr, ok := meta.(storage.TokenRegistry); ok {
+		if tr, ok := ms.(meta.TokenRegistry); ok {
 			svc = &auth.TokenPolicy{Inner: policy, Tokens: tr}
 			log.Printf("auth: token layer on (personal access tokens, scopes read/write/admin)")
 		}
 		// Runtime directory access rules narrow the whole stack (docs/07
 		// §8): the YAML subtree_access seed stays boot-time only.
-		if rs, ok := meta.(storage.SubtreeRuleStore); ok {
+		if rs, ok := ms.(meta.SubtreeRuleStore); ok {
 			svc = &auth.SubtreeRulePolicy{Inner: svc, Rules: rs}
 			log.Printf("auth: subtree rules on (runtime directory access rules, docs/07 §8)")
 		}
@@ -149,7 +150,7 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 	gw.Register(mux)
 	api.Register(mux)
 	root(mux)
-	gs := startGitaly(cfg, meta, objects)
+	gs := startGitaly(cfg, ms, objects)
 	stopSSH, err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw)
 	if err != nil {
 		log.Fatalf("ssh: %v", err)
@@ -167,14 +168,14 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 // gitaly.listen is configured: a GitLab Rails/workhorse stack can replace
 // its stock gitaly node with this process. Returns the server (nil when the
 // frontend is off) so the caller can drain it at shutdown.
-func startGitaly(cfg *config.Config, meta storage.MetaStore, objects *storage.ObjectService) *gitaly.Server {
+func startGitaly(cfg *config.Config, ms meta.MetaStore, objects *storage.ObjectService) *gitaly.Server {
 	if cfg.Gitaly.Listen == "" {
 		return nil
 	}
 	if cfg.Gitaly.Token == "" {
 		log.Printf("gitaly: WARNING no token set — the frontend accepts unauthenticated gRPC (dev mode)")
 	}
-	gs := gitaly.NewServer(meta, objects, model.SHA1, gitaly.Options{
+	gs := gitaly.NewServer(ms, objects, model.SHA1, gitaly.Options{
 		Token:            cfg.Gitaly.Token,
 		StorageName:      cfg.Gitaly.StorageName,
 		ReportedVersion:  cfg.Gitaly.ReportedVersion,
@@ -233,8 +234,8 @@ func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
 // fetched packs across restarts — the one piece of expendable local state
 // that meaningfully cuts cold-start traffic.
 func runGateway(ctx context.Context, cfg *config.Config) {
-	refsClient := storage.NewRefsClient(cfg.RefsAddr)
-	meta := &storage.RemoteMeta{Refs: refsClient}
+	refsClient := meta.NewRefsClient(cfg.RefsAddr)
+	ms := &meta.RemoteMeta{Refs: refsClient}
 	backend := storage.NewScatteredStore(refsClient, cfg.DefaultR, cfg.WriteAcks)
 	if cfg.Cache.PackDir != "" {
 		cache, err := storage.NewDiskPackCache(cfg.Cache.PackDir, int64(cfg.Cache.PackMaxMB)<<20)
@@ -245,18 +246,18 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 		entries, bytes := cache.Stats()
 		log.Printf("gateway: pack cache %s (%d entries, %.1f MiB)", cfg.Cache.PackDir, entries, float64(bytes)/(1<<20))
 	}
-	objects := storage.NewObjectServiceWithBackend(meta, backend, model.SHA1)
+	objects := storage.NewObjectServiceWithBackend(ms, backend, model.SHA1)
 
 	if cfg.InitRepo != "" {
-		if err := meta.CreateRepo(context.Background(), cfg.InitRepo, model.SHA1); err != nil {
+		if err := ms.CreateRepo(context.Background(), cfg.InitRepo, model.SHA1); err != nil {
 			log.Fatalf("create repo: %v", err)
 		}
 	}
 
 	mux := http.NewServeMux()
-	gw := gitwire.NewServer(meta, objects, model.SHA1)
-	api := rpc.NewServer(meta, objects, model.SHA1)
-	objects.Addressing = storage.NewAddressing(cfg.Storage.Mode, meta)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
+	api := rpc.NewServer(ms, objects, model.SHA1)
+	objects.Addressing = meta.NewAddressing(cfg.Storage.Mode, ms)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
 	switch {
@@ -279,7 +280,7 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 	gw.Register(mux)
 	api.Register(mux)
 	root(mux)
-	gs := startGitaly(cfg, meta, objects)
+	gs := startGitaly(cfg, ms, objects)
 	// Same transport wiring as all-in-one: the gateway decides access
 	// against the synced policy snapshot (keys ride along, docs/07 §4/§7).
 	stopSSH, err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw)
@@ -298,11 +299,11 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 // runRefs serves the serialization point: meta RPC, the health table and
 // the reconciler (single writer; HA story in docs/10 §4).
 func runRefs(ctx context.Context, cfg *config.Config) {
-	meta := openMeta(cfg)
+	ms := openMeta(cfg)
 	if cfg.MetaBackend == "mem" {
 		log.Printf("refs role with meta=%s: metadata is NOT durable across restarts (use -meta sqlite/mysql/postgres)", cfg.MetaBackend)
 	}
-	srv := refs.NewServer(meta, refs.Options{
+	srv := refs.NewServer(ms, refs.Options{
 		DefaultReplicas:  cfg.DefaultR,
 		WriteAcks:        cfg.WriteAcks,
 		SuspectAfter:     time.Duration(cfg.SuspectSec) * time.Second,

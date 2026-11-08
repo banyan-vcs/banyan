@@ -11,7 +11,7 @@
 //	                   moves a byte and never learns a name. The gateway
 //	                   resolves name → key through this Addressing (i.e. the
 //	                   mapping lives at the gateway/meta seam, not on disk).
-package storage
+package meta
 
 import (
 	"context"

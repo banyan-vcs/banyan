@@ -28,6 +28,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -35,14 +36,14 @@ func TestWeaveRederivationConsistency(t *testing.T) {
 	needGit(t)
 	const tiedUnix = int64(1762343471) // 2026-11-05T11:11:11Z — every commit in one second
 
-	// Gateway A's plane, inline: the handles (meta, shard store, gitwire
+	// Gateway A's plane, inline: the handles (ms, shard store, gitwire
 	// server) stay reachable so gateway B can share the durable state.
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	nodes := []storage.Node{{ID: "t1", Local: true}}
-	objectsA := storage.NewObjectService(meta, local, nodes, model.SHA1)
+	objectsA := storage.NewObjectService(ms, local, nodes, model.SHA1)
 	muxA := http.NewServeMux()
-	gwA := gitwire.NewServer(meta, objectsA, model.SHA1)
+	gwA := gitwire.NewServer(ms, objectsA, model.SHA1)
 	gwA.Register(muxA)
 	srvA := httptest.NewServer(muxA)
 	t.Cleanup(srvA.Close)
@@ -50,9 +51,9 @@ func TestWeaveRederivationConsistency(t *testing.T) {
 
 	// Gateway B: cold everything — it may only read persisted bytes and
 	// re-derive. Any clock input in synthesis shows up here as an OID fork.
-	objectsB := storage.NewObjectService(meta, local, nodes, model.SHA1)
+	objectsB := storage.NewObjectService(ms, local, nodes, model.SHA1)
 	muxB := http.NewServeMux()
-	gitwire.NewServer(meta, objectsB, model.SHA1).Register(muxB)
+	gitwire.NewServer(ms, objectsB, model.SHA1).Register(muxB)
 	srvB := httptest.NewServer(muxB)
 	t.Cleanup(srvB.Close)
 	sB := &server{Server: srvB}

@@ -16,6 +16,7 @@ import (
 	"fmt"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/view"
 )
@@ -23,13 +24,13 @@ import (
 // Service wires the storage layer, the view engine and the object service
 // into the domain operations exposed by every frontend.
 type Service struct {
-	Meta    storage.MetaStore
+	Meta    meta.MetaStore
 	Objects *storage.ObjectService
 	Views   *view.Service
 	Algo    model.HashAlgo
 }
 
-func New(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Service {
+func New(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Service {
 	return &Service{Meta: meta, Objects: objects, Views: view.New(meta, objects, algo), Algo: algo}
 }
 
@@ -62,12 +63,12 @@ func Translate(err error) (code string, data any) {
 		return "", nil
 	case errors.As(err, &base):
 		return "CONFLICT_BASE_MOVED", map[string]string{"head": string(base.Current)}
-	case errors.Is(err, storage.ErrNonFastForward):
+	case errors.Is(err, meta.ErrNonFastForward):
 		return "CONFLICT_REF_CAS", nil
-	case errors.Is(err, storage.ErrRepoNotFound),
+	case errors.Is(err, meta.ErrRepoNotFound),
 		errors.Is(err, model.ErrObjectNotFound),
-		errors.Is(err, storage.ErrPackNotFound),
-		errors.Is(err, storage.ErrTimelineUnknown):
+		errors.Is(err, meta.ErrPackNotFound),
+		errors.Is(err, meta.ErrTimelineUnknown):
 		return "NOT_FOUND", nil
 	default:
 		var conflict *ErrSyncConflict
@@ -329,14 +330,14 @@ func (s *Service) GetForcePush(ctx context.Context, repo string) (bool, error) {
 	return info.ForcePush, nil
 }
 
-// healthSource is implemented by the cluster MetaStore (RemoteMeta); in
+// healthSource is implemented by the cluster meta.MetaStore (RemoteMeta); in
 // all-in-one mode Meta does not implement it and cluster status is empty.
 type healthSource interface {
-	HealthyNodes(ctx context.Context) ([]storage.NodeInfo, error)
+	HealthyNodes(ctx context.Context) ([]meta.NodeInfo, error)
 }
 
 // ClusterNodes reports the storage-node health view (cluster mode only).
-func (s *Service) ClusterNodes(ctx context.Context) ([]storage.NodeInfo, error, bool) {
+func (s *Service) ClusterNodes(ctx context.Context) ([]meta.NodeInfo, error, bool) {
 	hs, ok := s.Meta.(healthSource)
 	if !ok {
 		return nil, nil, false

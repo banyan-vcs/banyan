@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/metrics"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
@@ -186,7 +187,7 @@ func (n *NodeClient) PutPack(ctx context.Context, repo string, packOID model.OID
 	if err != nil {
 		return err
 	}
-	if h := encodeIdxHeader(idxBytes); h != "" {
+	if h := meta.EncodeIdxHeader(idxBytes); h != "" {
 		req.Header.Set("X-Banyan-Idx", h)
 	}
 	resp, err := n.HTTP.Do(req)
@@ -216,7 +217,7 @@ func (n *NodeClient) PutPackStream(ctx context.Context, repo string, packOID mod
 	if size > 0 {
 		req.ContentLength = size
 	}
-	if h := encodeIdxHeader(idxBytes); h != "" {
+	if h := meta.EncodeIdxHeader(idxBytes); h != "" {
 		req.Header.Set("X-Banyan-Idx", h)
 	}
 	resp, err := n.HTTP.Do(req)
@@ -381,7 +382,7 @@ func (n *NodeClient) GetObject(ctx context.Context, repo string, packOID, oid mo
 // writes, and reads from any holder. Registration is the fact: PutPack
 // returns exactly the confirmed holder set for the caller to register.
 type ScatteredStore struct {
-	Refs      *RefsClient
+	Refs      *meta.RefsClient
 	DefaultR  int    // cluster default replica target
 	WriteAcks string // "quorum" (default) | "all" | "one"
 	// DiskCache persists whole packs on gateway disk (docs/11 P2-1): a
@@ -391,13 +392,13 @@ type ScatteredStore struct {
 
 	healthyTTL time.Duration
 	healthyMu  sync.Mutex
-	healthy    []NodeInfo
+	healthy    []meta.NodeInfo
 	healthyAt  time.Time
 	clientsMu  sync.Mutex
 	clients    map[string]*NodeClient
 }
 
-func NewScatteredStore(refs *RefsClient, defaultR int, writeAcks string) *ScatteredStore {
+func NewScatteredStore(refs *meta.RefsClient, defaultR int, writeAcks string) *ScatteredStore {
 	if defaultR <= 0 {
 		defaultR = 3
 	}
@@ -426,7 +427,7 @@ func (s *ScatteredStore) client(addr string) *NodeClient {
 
 // healthyNodes caches the refs health view briefly: a stale view at worst
 // costs a failed PUT (that node just doesn't confirm).
-func (s *ScatteredStore) healthyNodes(ctx context.Context) []NodeInfo {
+func (s *ScatteredStore) healthyNodes(ctx context.Context) []meta.NodeInfo {
 	s.healthyMu.Lock()
 	if time.Since(s.healthyAt) < s.healthyTTL && s.healthy != nil {
 		out := s.healthy
@@ -496,14 +497,14 @@ func (s *ScatteredStore) PutPackStream(ctx context.Context, repo string, packOID
 	targets := pickRandom(healthy, replicas)
 
 	type result struct {
-		node NodeInfo
+		node meta.NodeInfo
 		ok   bool
 	}
 	results := make([]result, len(targets))
 	var wg sync.WaitGroup
 	for i, t := range targets {
 		wg.Add(1)
-		go func(i int, t NodeInfo) {
+		go func(i int, t meta.NodeInfo) {
 			defer wg.Done()
 			results[i] = result{node: t, ok: s.client(t.Addr).PutPackStream(ctx, repo, packOID, size, open, idxBytes) == nil}
 		}(i, t)

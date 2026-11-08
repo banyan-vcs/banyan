@@ -17,13 +17,14 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitaly"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/view"
 )
 
 // Server mounts the /api/v1/* endpoints (the httpd frontend of docs/05 §1).
 type Server struct {
-	Meta    storage.MetaStore
+	Meta    meta.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
 	Views   *view.Service // derived-view engine (docs/02 sec.13)
@@ -39,7 +40,7 @@ type Server struct {
 	eng   *gitaly.Server
 }
 
-func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
+func NewServer(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
 	svc := service.New(meta, objects, algo)
 	return &Server{Meta: meta, Objects: objects, Algo: algo, Views: svc.Views, Svc: svc}
 }
@@ -501,7 +502,7 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "hooks": hooks})
 		case http.MethodPut:
-			var hook storage.HookInfo
+			var hook meta.HookInfo
 			if !decodeBody(w, r, &hook) {
 				return
 			}
@@ -532,7 +533,7 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 		// Same admin gate as the other management rows; deployments whose
 		// metadata plane carries no rule store answer 404 (the token-layer
 		// precedent).
-		rs, ok := s.Meta.(storage.SubtreeRuleStore)
+		rs, ok := s.Meta.(meta.SubtreeRuleStore)
 		if !ok {
 			writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "subtree rules not available on this deployment's metadata plane"}})
 			return
@@ -547,7 +548,7 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "rules": rules})
 		case http.MethodPut:
-			var rule storage.SubtreeRule
+			var rule meta.SubtreeRule
 			if !decodeBody(w, r, &rule) {
 				return
 			}
@@ -562,7 +563,7 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		case http.MethodDelete:
 			path := r.URL.Query().Get("path")
-			if !storage.ValidSubtreePath(path) {
+			if !meta.ValidSubtreePath(path) {
 				writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "path query parameter required (anchor form: / or /a/b)"}})
 				return
 			}
@@ -689,7 +690,7 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if nodes == nil {
-		nodes = []storage.NodeInfo{}
+		nodes = []meta.NodeInfo{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cluster": true, "nodes": nodes})
 }
@@ -731,7 +732,7 @@ func (s *Server) handleMetaBackup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "path required"}})
 		return
 	}
-	sql, ok := s.Meta.(*storage.SQLMetaStore)
+	sql, ok := s.Meta.(*meta.SQLMetaStore)
 	if !ok {
 		writeJSON(w, http.StatusConflict, errEnvelope{Error: errBody{Code: "CONFLICT", Message: "metadata backend does not support in-process backup"}})
 		return

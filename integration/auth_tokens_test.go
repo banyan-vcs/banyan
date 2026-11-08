@@ -24,32 +24,33 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
 // newTokenServer boots the full plane with the M5 composition: static
 // users wrapped by the metadata-plane token decorator — passwords, SSH keys
 // and PATs through the same auth.Service seam.
-func newTokenServer(t *testing.T) (*server, *storage.MemoryMetaStore) {
+func newTokenServer(t *testing.T) (*server, *meta.MemoryMetaStore) {
 	t.Helper()
 	policy := &auth.StaticPolicy{
 		Users:  map[string]string{"alice": "a", "bob": "b", "admin": "x"},
 		Admins: []string{"admin"},
 	}
-	meta := storage.NewMemoryMetaStore()
-	objects := storage.NewObjectService(meta, storage.NewLocalShardStore(tempDirQuiet(t)),
+	ms := meta.NewMemoryMetaStore()
+	objects := storage.NewObjectService(ms, storage.NewLocalShardStore(tempDirQuiet(t)),
 		[]storage.Node{{ID: "t1", Local: true}}, model.SHA1)
-	svc := &auth.TokenPolicy{Inner: policy, Tokens: meta}
+	svc := &auth.TokenPolicy{Inner: policy, Tokens: ms}
 	mux := http.NewServeMux()
-	gw := gitwire.NewServer(meta, objects, model.SHA1)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
 	gw.Auth = svc
 	gw.Register(mux)
-	api := rpc.NewServer(meta, objects, model.SHA1)
+	api := rpc.NewServer(ms, objects, model.SHA1)
 	api.Auth = svc
 	api.Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &server{Server: srv}, meta
+	return &server{Server: srv}, ms
 }
 
 // mintToken creates a PAT over the RPC as user.
@@ -75,7 +76,7 @@ func mintToken(t *testing.T, s *server, user, pass, scope string) (plaintext, ha
 
 func TestTokenAuthE2E(t *testing.T) {
 	needGit(t)
-	s, meta := newTokenServer(t)
+	s, ms := newTokenServer(t)
 
 	readTok, readHash := mintToken(t, s, "alice", "a", "read")
 	writeTok, _ := mintToken(t, s, "alice", "a", "write")
@@ -112,7 +113,7 @@ func TestTokenAuthE2E(t *testing.T) {
 	require.Error(t, err, "owner mismatch must reject:\n%s", out)
 
 	// Revocation kills the credential immediately.
-	require.NoError(t, meta.RevokeToken(t.Context(), storage.HashToken(readTok)))
+	require.NoError(t, ms.RevokeToken(t.Context(), meta.HashToken(readTok)))
 	out, err = gitTry("", "-c", "credential.helper=", "clone", "-q", credURL(s, "alice", readTok, "/r/tk.git"), t.TempDir())
 	require.Error(t, err, "revoked token must reject:\n%s", out)
 
@@ -123,7 +124,7 @@ func TestTokenAuthE2E(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	var listed struct {
-		Tokens []storage.TokenInfo `json:"tokens"`
+		Tokens []meta.TokenInfo `json:"tokens"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&listed))
 	assert.Len(t, listed.Tokens, 2, "alice sees her two tokens")

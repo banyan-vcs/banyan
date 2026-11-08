@@ -30,6 +30,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -46,14 +47,14 @@ type consoleStack struct {
 
 func newConsoleStack(t *testing.T) *consoleStack {
 	t.Helper()
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	nodes := []storage.Node{{ID: "t1", Local: true}}
-	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
+	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
 
 	gwMux := http.NewServeMux()
-	gw := gitwire.NewServer(meta, objects, model.SHA1)
-	api := rpc.NewServer(meta, objects, model.SHA1)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
+	api := rpc.NewServer(ms, objects, model.SHA1)
 	gw.Register(gwMux)
 	api.Register(gwMux)
 	gateway := httptest.NewServer(gwMux)

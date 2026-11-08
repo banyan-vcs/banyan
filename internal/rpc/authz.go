@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 // requireAdmin answers whether the caller may manage repo ("" = global:
@@ -60,7 +60,7 @@ func (s *Server) requireWriteRank(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	id := s.Auth.Identify(r)
-	if id.Anonymous() || (id.Scope != "" && storage.ScopeRank(id.Scope) < storage.ScopeRank(storage.ScopeWrite)) {
+	if id.Anonymous() || (id.Scope != "" && meta.ScopeRank(id.Scope) < meta.ScopeRank(meta.ScopeWrite)) {
 		writeJSON(w, http.StatusForbidden, errEnvelope{Error: errBody{Code: "FORBIDDEN", Message: "write-rank credential required"}})
 		return false
 	}
@@ -70,8 +70,8 @@ func (s *Server) requireWriteRank(w http.ResponseWriter, r *http.Request) bool {
 // tokenRegistry answers the metadata-plane token registry, or nil where the
 // deployment has none (gateway behind an upstream console: the console's
 // own PATs apply, docs/17 §4).
-func (s *Server) tokenRegistry() storage.TokenRegistry {
-	tr, _ := s.Meta.(storage.TokenRegistry)
+func (s *Server) tokenRegistry() meta.TokenRegistry {
+	tr, _ := s.Meta.(meta.TokenRegistry)
 	return tr
 }
 
@@ -102,18 +102,18 @@ func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Scope == "" {
-			req.Scope = storage.ScopeWrite
+			req.Scope = meta.ScopeWrite
 		}
-		info := storage.TokenInfo{User: id.User, Name: req.Name, Scope: req.Scope, Created: time.Now().Unix()}
+		info := meta.TokenInfo{User: id.User, Name: req.Name, Scope: req.Scope, Created: time.Now().Unix()}
 		if req.ExpiresDays > 0 {
 			info.Expires = time.Now().Add(time.Duration(req.ExpiresDays) * 24 * time.Hour).Unix()
 		}
-		plaintext, err := storage.NewTokenPlaintext()
+		plaintext, err := meta.NewTokenPlaintext()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, errEnvelope{Error: errBody{Code: "INTERNAL", Message: err.Error()}})
 			return
 		}
-		info.Hash = storage.HashToken(plaintext)
+		info.Hash = meta.HashToken(plaintext)
 		if err := info.Valid(); err != nil {
 			writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: err.Error()}})
 			return

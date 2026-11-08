@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/banyan-vcs/banyan/internal/model"
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 // racedRoot lands seedDir's HEAD commit on the repo's root timeline although
@@ -31,7 +31,7 @@ import (
 // guards cannot close. The commit's objects ride an aux-branch push (a fresh
 // ref is always accepted), the guarded main ref is then CASed directly and
 // the aux timeline dropped.
-func racedRoot(t *testing.T, meta storage.MetaStore, seedDir, repo, url string) {
+func racedRoot(t *testing.T, meta meta.MetaStore, seedDir, repo, url string) {
 	t.Helper()
 	git(t, seedDir, "push", "-q", url, "main:refs/heads/raced-aux")
 	rootTL := model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: "main"}

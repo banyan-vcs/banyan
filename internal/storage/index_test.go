@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
@@ -51,7 +52,7 @@ func buildTestPack(t *testing.T) (blobOID, treeOID, commitOID model.OID, pack []
 func TestIngestPackBuildsIndexesAndWritesIdx(t *testing.T) {
 	blobOID, treeOID, commitOID, pack := buildTestPack(t)
 
-	meta := NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	local := NewLocalShardStore(t.TempDir())
 	objs := NewObjectService(meta, local, []Node{{ID: "n1", Local: true}}, model.SHA1)
 	ctx := context.Background()
@@ -120,7 +121,7 @@ func TestIngestPackBuildsIndexesAndWritesIdx(t *testing.T) {
 func TestGenerationDiamond(t *testing.T) {
 	algo := model.SHA1
 	who := model.Identity{Name: "t", Email: "t@banyan.dev", When: time.Unix(1760000000, 0).UTC()}
-	meta := NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	local := NewLocalShardStore(t.TempDir())
 	svc := NewObjectService(meta, local, []Node{{ID: "n", Local: true}}, algo)
 	ctx := context.Background()

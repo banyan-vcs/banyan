@@ -30,6 +30,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -70,10 +71,10 @@ func TestT85GitLabPostReceiveAdapter(t *testing.T) {
 	// are exactly what the gitaly bridge injects for platform-mediated
 	// pushes (smarthttp_service.go); a plain push without them must not
 	// fire the adapter at all.
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(tempDirQuiet(t))
-	objects := storage.NewObjectService(meta, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
-	gw := gitwire.NewServer(meta, objects, model.SHA1)
+	objects := storage.NewObjectService(ms, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
 	gw.SetGitLab(&gitwire.GitLabConfig{URL: fake.URL, Secret: secret})
 	mux := http.NewServeMux()
 	gw.Register(mux)
@@ -188,10 +189,10 @@ func TestT86GitLabAllowedGate(t *testing.T) {
 	}))
 	t.Cleanup(fake.Close)
 
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(tempDirQuiet(t))
-	objects := storage.NewObjectService(meta, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
-	gw := gitwire.NewServer(meta, objects, model.SHA1)
+	objects := storage.NewObjectService(ms, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
 	gw.SetGitLab(&gitwire.GitLabConfig{URL: fake.URL, Secret: secret})
 	mux := http.NewServeMux()
 	gw.Register(mux)

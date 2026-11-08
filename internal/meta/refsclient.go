@@ -1,4 +1,4 @@
-package storage
+package meta
 
 import (
 	"bytes"
@@ -441,8 +441,8 @@ func (m *RemoteMeta) GetPlacement(ctx context.Context, repo string) (int, error)
 	return out.Replicas, nil
 }
 
-// encodeIdxHeader packs idx bytes into a header value (storage PUT path).
-func encodeIdxHeader(idx []byte) string {
+// EncodeIdxHeader packs idx bytes into a header value (storage PUT path).
+func EncodeIdxHeader(idx []byte) string {
 	if len(idx) == 0 {
 		return ""
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -33,14 +34,14 @@ func newAuthServer(t *testing.T) (*server, *auth.StaticPolicy) {
 		ProtectedBranches: []string{"main"},
 		SubtreeAccess:     map[string][]string{"/secret": {"admin"}},
 	}
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(tempDirQuiet(t))
-	objects := storage.NewObjectService(meta, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
+	objects := storage.NewObjectService(ms, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
 	mux := http.NewServeMux()
-	gw := gitwire.NewServer(meta, objects, model.SHA1)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
 	gw.Auth = policy
 	gw.Register(mux)
-	api := rpc.NewServer(meta, objects, model.SHA1)
+	api := rpc.NewServer(ms, objects, model.SHA1)
 	api.Auth = policy // same wiring as the banyand demo (docs/07 §5)
 	api.Register(mux)
 	srv := httptest.NewServer(mux)

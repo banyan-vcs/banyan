@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
@@ -87,7 +88,7 @@ func TestExtractObjectRoundTrip(t *testing.T) {
 // shard store (pack + idx files on disk) — the all-in-one miss path.
 func TestLocalGetObjectViaDisk(t *testing.T) {
 	ctx := t.Context()
-	meta := NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	require.NoError(t, meta.CreateRepo(ctx, "r", model.SHA1))
 	local := NewLocalShardStore(t.TempDir())
 	svc := NewObjectService(meta, local, []Node{{ID: "n1", Local: true}}, model.SHA1)

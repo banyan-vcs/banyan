@@ -26,6 +26,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -93,8 +94,8 @@ func (h *hookService) snapshot() []hookCall {
 	return append([]hookCall(nil), h.calls...)
 }
 
-// putHook upserts through the public API (rpc → meta), the operator path.
-func putHook(t *testing.T, s *server, repo string, h storage.HookInfo) {
+// putHook upserts through the public API (rpc → ms), the operator path.
+func putHook(t *testing.T, s *server, repo string, h meta.HookInfo) {
 	t.Helper()
 	raw, err := json.Marshal(h)
 	require.NoError(t, err)
@@ -116,13 +117,13 @@ func deleteHook(t *testing.T, s *server, repo, id string) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, "DELETE hook 失败: %v", resp.Status)
 }
 
-func listHooks(t *testing.T, s *server, repo string) []storage.HookInfo {
+func listHooks(t *testing.T, s *server, repo string) []meta.HookInfo {
 	t.Helper()
 	resp, err := http.Get(s.URL + "/api/v1/repos/" + repo + "/hooks")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	var out struct {
-		Hooks []storage.HookInfo `json:"hooks"`
+		Hooks []meta.HookInfo `json:"hooks"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
 	return out.Hooks
@@ -130,13 +131,13 @@ func listHooks(t *testing.T, s *server, repo string) []storage.HookInfo {
 
 func newHookServer(t *testing.T) *server {
 	t.Helper()
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(tempDirQuiet(t)) // async hook writers outlive the server briefly (Linux RemoveAll race)
 	nodes := []storage.Node{{ID: "t1", Local: true}}
-	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
+	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
 	mux := http.NewServeMux()
-	gitwire.NewServer(meta, objects, model.SHA1).Register(mux)
-	rpc.NewServer(meta, objects, model.SHA1).Register(mux)
+	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
+	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return &server{Server: srv}
@@ -159,7 +160,7 @@ func TestHooksReceiveLifecycle(t *testing.T) {
 	hs := newHookService(t)
 	createRepoRPC(t, s, "hr")
 
-	putHook(t, s, "hr", storage.HookInfo{ID: "cap", Events: []string{"pre-receive", "post-receive"}, URL: hs.srv.URL + "/hook"})
+	putHook(t, s, "hr", meta.HookInfo{ID: "cap", Events: []string{"pre-receive", "post-receive"}, URL: hs.srv.URL + "/hook"})
 	hooks := listHooks(t, s, "hr")
 	require.Len(t, hooks, 1, "注册表经公共 API 可读")
 	assert.Equal(t, "cap", hooks[0].ID)
@@ -209,7 +210,7 @@ func TestHooksDecline(t *testing.T) {
 		return c.Event == "pre-receive", "policy: no pushes today"
 	}
 	createRepoRPC(t, s, "hd")
-	putHook(t, s, "hd", storage.HookInfo{ID: "gate", Events: []string{"pre-receive", "update"}, URL: hs.srv.URL + "/hook"})
+	putHook(t, s, "hd", meta.HookInfo{ID: "gate", Events: []string{"pre-receive", "update"}, URL: hs.srv.URL + "/hook"})
 
 	src := t.TempDir()
 	git(t, src, "init", "-q", "-b", "main", ".")
@@ -255,8 +256,8 @@ func TestHooksDirectoryScope(t *testing.T) {
 	git(t, src, "commit", "-qm", "seed")
 	git(t, src, "push", "-q", s.repoURL("scope"), "main")
 
-	putHook(t, s, "scope", storage.HookInfo{ID: "root", Events: []string{"pre-receive"}, URL: hs.srv.URL + "/hook"})
-	putHook(t, s, "scope", storage.HookInfo{ID: "libgate", Dir: "lib", Events: []string{"pre-receive"}, URL: libSvc.srv.URL + "/hook"})
+	putHook(t, s, "scope", meta.HookInfo{ID: "root", Events: []string{"pre-receive"}, URL: hs.srv.URL + "/hook"})
+	putHook(t, s, "scope", meta.HookInfo{ID: "libgate", Dir: "lib", Events: []string{"pre-receive"}, URL: libSvc.srv.URL + "/hook"})
 
 	libView := cloneRepo(t, s, s.treeURL("scope", "lib"))
 	write(t, filepath.Join(libView, "a.txt"), "a-v2\n")
@@ -291,7 +292,7 @@ func TestHooksTimeoutAndSecret(t *testing.T) {
 	hs := newHookService(t)
 	hs.stall = 1500 * time.Millisecond
 	createRepoRPC(t, s, "ht")
-	putHook(t, s, "ht", storage.HookInfo{
+	putHook(t, s, "ht", meta.HookInfo{
 		ID: "slow", Events: []string{"pre-receive"}, URL: hs.srv.URL + "/hook",
 		Secret: "s3cret", TimeoutMS: 300,
 	})

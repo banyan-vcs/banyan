@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
@@ -15,7 +16,7 @@ import (
 // packOrder (metadata-only, ExactPackHit input) keeps every pack.
 func TestMemoizeBudgetEviction(t *testing.T) {
 	ctx := context.Background()
-	inner := NewMemoryMetaStore()
+	inner := meta.NewMemoryMetaStore()
 	local := NewLocalShardStore(t.TempDir())
 	svc := NewObjectService(inner, local, []Node{{ID: "n1", Local: true}}, model.SHA1)
 	require.NoError(t, inner.CreateRepo(ctx, "r", model.SHA1))
@@ -52,7 +53,7 @@ func TestMemoizeBudgetEviction(t *testing.T) {
 func TestRepackByteCapSplitsGroups(t *testing.T) {
 	ctx := context.Background()
 	seed := func(t *testing.T) *ObjectService {
-		inner := NewMemoryMetaStore()
+		inner := meta.NewMemoryMetaStore()
 		local := NewLocalShardStore(t.TempDir())
 		svc := NewObjectService(inner, local, []Node{{ID: "n1", Local: true}}, model.SHA1)
 		require.NoError(t, inner.CreateRepo(ctx, "r", model.SHA1))

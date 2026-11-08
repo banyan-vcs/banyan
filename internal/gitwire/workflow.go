@@ -14,6 +14,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/merge"
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -126,7 +127,7 @@ func (s *Server) adoptOrConverge(ctx context.Context, j *subtreeJob) jobResult {
 			projTree = pci.Tree
 		}
 		if projTree.IsZero() || !s.Views.TreeKnown(j.vr.Repo, j.old, projTree) {
-			return jobResult{err: storage.ErrNonFastForward}
+			return jobResult{err: meta.ErrNonFastForward}
 		}
 	}
 
@@ -134,7 +135,7 @@ func (s *Server) adoptOrConverge(ctx context.Context, j *subtreeJob) jobResult {
 		head, cerr := s.convergeSubtreePush(ctx, j, curTip)
 		return jobResult{newHead: head, err: cerr}
 	}
-	return jobResult{err: storage.ErrNonFastForward}
+	return jobResult{err: meta.ErrNonFastForward}
 }
 
 // convergeSubtreePush replays the client chain onto the combined tip and

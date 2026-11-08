@@ -1,5 +1,5 @@
 // Runtime subtree access rules as a decorator over any auth.Service
-// (docs/07 §8): rules from the metadata plane (storage.SubtreeRuleStore)
+// (docs/07 §8): rules from the metadata plane (meta.SubtreeRuleStore)
 // narrow what the inner policy allows, at directory granularity, for both
 // download and commit. The rule at the SHALLOWEST anchor covering the
 // requested subtree governs — a rule on /src also protects /src/lib, because
@@ -25,14 +25,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 // SubtreeRulePolicy wraps an inner Service with metadata-plane directory
 // access rules. All methods are safe for concurrent use.
 type SubtreeRulePolicy struct {
 	Inner Service
-	Rules storage.SubtreeRuleStore
+	Rules meta.SubtreeRuleStore
 }
 
 func (p *SubtreeRulePolicy) Identify(h *http.Request) Identity {
@@ -49,7 +49,7 @@ func (p *SubtreeRulePolicy) VisibleRefs(id Identity, repo string, refs []Ref) []
 
 // ruleFor answers the shallowest rule covering the anchor (sub "" is the
 // root repo, normalized to "/"), or nil when the path is unmanaged.
-func (p *SubtreeRulePolicy) ruleFor(repo, sub string) *storage.SubtreeRule {
+func (p *SubtreeRulePolicy) ruleFor(repo, sub string) *meta.SubtreeRule {
 	if sub == "" {
 		sub = "/"
 	}
@@ -57,9 +57,9 @@ func (p *SubtreeRulePolicy) ruleFor(repo, sub string) *storage.SubtreeRule {
 	if err != nil {
 		// The rule plane is unavailable: deny quietly rather than fall open
 		// (fail-closed, the same posture as the GitLab /allowed gate).
-		return &storage.SubtreeRule{Path: sub, Users: []string{}}
+		return &meta.SubtreeRule{Path: sub, Users: []string{}}
 	}
-	var found *storage.SubtreeRule
+	var found *meta.SubtreeRule
 	for i := range rules {
 		path := rules[i].Path
 		covers := path == "/" || sub == path || strings.HasPrefix(sub, path+"/")
@@ -77,7 +77,7 @@ func (p *SubtreeRulePolicy) ruleFor(repo, sub string) *storage.SubtreeRule {
 // listed reports whether the identity passes a covering rule: named in the
 // allowlist, or an admin of the inner policy (admins manage the rules, so
 // locking themselves out would brick the management plane).
-func (p *SubtreeRulePolicy) listed(id Identity, repo string, rule *storage.SubtreeRule) bool {
+func (p *SubtreeRulePolicy) listed(id Identity, repo string, rule *meta.SubtreeRule) bool {
 	for _, u := range rule.Users {
 		if u == id.User {
 			return true

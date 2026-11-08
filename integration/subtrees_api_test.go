@@ -21,6 +21,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -139,15 +140,15 @@ func newGitLabSSOServer(t *testing.T) (*server, *httptest.Server) {
 	}))
 	t.Cleanup(gl.Close)
 
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(tempDirQuiet(t))
-	objects := storage.NewObjectService(meta, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
-	policy := &auth.SubtreeRulePolicy{Inner: auth.NewGitLabSSO(gl.URL), Rules: meta}
+	objects := storage.NewObjectService(ms, local, []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
+	policy := &auth.SubtreeRulePolicy{Inner: auth.NewGitLabSSO(gl.URL), Rules: ms}
 	mux := http.NewServeMux()
-	gw := gitwire.NewServer(meta, objects, model.SHA1)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
 	gw.Auth = policy
 	gw.Register(mux)
-	api := rpc.NewServer(meta, objects, model.SHA1)
+	api := rpc.NewServer(ms, objects, model.SHA1)
 	api.Auth = policy
 	api.Register(mux)
 	srv := httptest.NewServer(mux)
@@ -258,7 +259,7 @@ func TestT90SubtreeAccessRules(t *testing.T) {
 	resp = ssoCall(t, "GET", s.URL+"/api/v1/repos/t90/subtree-access", "root-token", "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var rules struct {
-		Rules []storage.SubtreeRule `json:"rules"`
+		Rules []meta.SubtreeRule `json:"rules"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rules))
 	resp.Body.Close()

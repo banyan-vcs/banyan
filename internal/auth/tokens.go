@@ -1,6 +1,6 @@
 // Token authentication as a decorator over any auth.Service (docs/07 §6,
 // docs/14 M5): personal access tokens live in the metadata plane (storage.
-// TokenRegistry — all-in-one and refs-serving deployments own it), the
+// meta.TokenRegistry — all-in-one and refs-serving deployments own it), the
 // wrapped policy keeps providing passwords, SSH keys, visibility and branch
 // rules. This is the extensibility seam in action: the wire layers still
 // only ever see auth.Service; deployments compose
@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 // AdminChecker is the optional management-plane extension of Service: the
@@ -42,7 +42,7 @@ type AdminChecker interface {
 
 type TokenPolicy struct {
 	Inner  Service
-	Tokens storage.TokenRegistry
+	Tokens meta.TokenRegistry
 	// Now overrides the clock (tests).
 	Now func() time.Time
 }
@@ -70,7 +70,7 @@ func (p *TokenPolicy) Identify(h *http.Request) Identity {
 }
 
 func (p *TokenPolicy) identifyToken(user, plaintext string) (Identity, bool) {
-	t, err := p.Tokens.TokenByHash(context.Background(), storage.HashToken(plaintext))
+	t, err := p.Tokens.TokenByHash(context.Background(), meta.HashToken(plaintext))
 	if err != nil || t.Revoked {
 		return Identity{}, false
 	}
@@ -104,7 +104,7 @@ func (p *TokenPolicy) CanFetch(id Identity, repo, sub string) bool {
 // CanPush: the token ceiling is write — a read-scoped token can never push
 // even where the inner policy would allow it.
 func (p *TokenPolicy) CanPush(id Identity, repo, sub, branch string) bool {
-	if id.Scope != "" && storage.ScopeRank(id.Scope) < storage.ScopeRank(storage.ScopeWrite) {
+	if id.Scope != "" && meta.ScopeRank(id.Scope) < meta.ScopeRank(meta.ScopeWrite) {
 		return false
 	}
 	return p.Inner.CanPush(id, repo, sub, branch)
@@ -113,7 +113,7 @@ func (p *TokenPolicy) CanPush(id Identity, repo, sub, branch string) bool {
 // CanAdmin: an admin-scoped token, or the inner policy's own admins.
 func (p *TokenPolicy) CanAdmin(id Identity, repo string) bool {
 	if id.Scope != "" {
-		return storage.ScopeRank(id.Scope) >= storage.ScopeRank(storage.ScopeAdmin)
+		return meta.ScopeRank(id.Scope) >= meta.ScopeRank(meta.ScopeAdmin)
 	}
 	if ac, ok := p.Inner.(AdminChecker); ok {
 		return ac.CanAdmin(id, repo)

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
@@ -152,7 +153,7 @@ func TestStreamEncodePackRejectsBadInput(t *testing.T) {
 
 func TestPlacementsAndPackSizes(t *testing.T) {
 	ctx := t.Context()
-	meta := NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	require.NoError(t, meta.CreateRepo(ctx, "r", model.SHA1))
 	local := NewLocalShardStore(t.TempDir())
 	svc := NewObjectService(meta, local, []Node{{ID: "n1", Local: true}}, model.SHA1)

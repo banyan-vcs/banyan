@@ -13,6 +13,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -66,7 +67,7 @@ type BanyanServer struct {
 }
 
 func StartBanyan(shardRoot string) (*BanyanServer, error) {
-	meta := storage.NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(shardRoot)
 	nodes := []storage.Node{{ID: "b1", Local: true}}
 	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)

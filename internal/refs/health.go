@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 // Node states (docs/10 §8.1): two thresholds plus a planned mode.
@@ -117,21 +117,21 @@ func (h *HealthTable) Snapshot() []NodeStatus {
 	return out
 }
 
-// healthy returns the nodes eligible for placement, as storage.NodeInfo.
-func (h *HealthTable) healthy() []storage.NodeInfo {
+// healthy returns the nodes eligible for placement, as meta.NodeInfo.
+func (h *HealthTable) healthy() []meta.NodeInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	var out []storage.NodeInfo
+	var out []meta.NodeInfo
 	for _, rec := range h.nodes {
 		if rec.State == StateHealthy {
-			out = append(out, storage.NodeInfo{ID: rec.ID, Addr: rec.Addr, State: rec.State})
+			out = append(out, meta.NodeInfo{ID: rec.ID, Addr: rec.Addr, State: rec.State})
 		}
 	}
 	return out
 }
 
 // Healthy exposes the placement-eligible set (tests, status endpoints).
-func (h *HealthTable) Healthy() []storage.NodeInfo { return h.healthy() }
+func (h *HealthTable) Healthy() []meta.NodeInfo { return h.healthy() }
 
 // addrOf resolves a node ID to its address through the table (any state —
 // a dead node's address is still where its files were).
