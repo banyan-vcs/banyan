@@ -112,6 +112,18 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		up := auth.NewUpstreamPolicy(cfg.Auth.Upstream, []byte(cfg.Auth.UpstreamSecret))
 		gw.Auth, api.Auth = up, up
 		log.Printf("auth: upstream console %s (snapshot v2 + signed identity)", cfg.Auth.Upstream)
+	case cfg.Auth.GitLabSSO != "":
+		// GitLab-fronted mode (docs/20): tokens minted by the GitLab
+		// instance (OAuth2 / PAT) authenticate the HTTP face; identity and
+		// instance-admin status come from /api/v4/user.
+		var svc auth.Service = auth.NewGitLabSSO(cfg.Auth.GitLabSSO)
+		if rs, ok := meta.(storage.SubtreeRuleStore); ok {
+			svc = &auth.SubtreeRulePolicy{Inner: svc, Rules: rs}
+			log.Printf("auth: subtree rules on (runtime directory access rules, docs/07 §8)")
+		}
+		gw.Auth = svc
+		api.Auth = svc
+		log.Printf("auth: gitlab sso %s (token → /api/v4/user)", cfg.Auth.GitLabSSO)
 	case staticPolicy(cfg) != nil:
 		policy := staticPolicy(cfg)
 		var svc auth.Service = policy
@@ -122,6 +134,12 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		if tr, ok := meta.(storage.TokenRegistry); ok {
 			svc = &auth.TokenPolicy{Inner: policy, Tokens: tr}
 			log.Printf("auth: token layer on (personal access tokens, scopes read/write/admin)")
+		}
+		// Runtime directory access rules narrow the whole stack (docs/07
+		// §8): the YAML subtree_access seed stays boot-time only.
+		if rs, ok := meta.(storage.SubtreeRuleStore); ok {
+			svc = &auth.SubtreeRulePolicy{Inner: svc, Rules: rs}
+			log.Printf("auth: subtree rules on (runtime directory access rules, docs/07 §8)")
 		}
 		gw.Auth = svc
 		api.Auth = svc

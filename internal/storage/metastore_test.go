@@ -78,7 +78,7 @@ func TestMetaStoreConformance(t *testing.T) {
 // and turns the shared-DB suites order-dependent.
 func dropAllTables(t *testing.T, s *SQLMetaStore) {
 	t.Helper()
-	for _, table := range []string{"rename_fence", "repo_pools", "repo_blobs", "hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos", "tokens"} {
+	for _, table := range []string{"rename_fence", "repo_pools", "repo_blobs", "hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos", "tokens", "subtree_rules"} {
 		if _, err := s.db.Exec("DROP TABLE IF EXISTS " + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -275,6 +275,11 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 	if err := m.SetHook(ctx, "r1", HookInfo{ID: "notify", Events: []string{"pre-receive"}, URL: "http://h"}); err != nil {
 		t.Fatalf("set hook: %v", err)
 	}
+	if rs, ok := m.(SubtreeRuleStore); ok {
+		if err := rs.SetSubtreeRule(ctx, "r1", SubtreeRule{Path: "/secret", Users: []string{"admin"}}); err != nil {
+			t.Fatalf("set subtree rule: %v", err)
+		}
+	}
 	if err := m.LinkPool(ctx, "r1", "@pools/carry/pool", false); err != nil {
 		t.Fatalf("link before rename: %v", err)
 	}
@@ -286,6 +291,11 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 	}
 	if hs, err := m.ListHooks(ctx, "r2"); err != nil || len(hs) != 1 || hs[0].ID != "notify" {
 		t.Fatalf("hooks lost across rename: %v, %v", hs, err)
+	}
+	if rs, ok := m.(SubtreeRuleStore); ok {
+		if rules, err := rs.SubtreeRules(ctx, "r2"); err != nil || len(rules) != 1 || rules[0].Path != "/secret" {
+			t.Fatalf("subtree rules lost across rename: %v, %v", rules, err)
+		}
 	}
 	if err := m.DeleteRepo(ctx, "r2"); err != nil {
 		t.Fatalf("delete repo: %v", err)
@@ -301,6 +311,11 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 	}
 	if hs, err := m.ListHooks(ctx, "r2"); err != nil || len(hs) != 0 {
 		t.Fatalf("deleted hooks = %v, %v", hs, err)
+	}
+	if rs, ok := m.(SubtreeRuleStore); ok {
+		if rules, err := rs.SubtreeRules(ctx, "r2"); err != nil || len(rules) != 0 {
+			t.Fatalf("deleted subtree rules = %v, %v", rules, err)
+		}
 	}
 	// Deletion is idempotent.
 	if err := m.DeleteRepo(ctx, "r2"); err != nil {
@@ -357,6 +372,66 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 	}
 	if got, _ := tr.TokenByHash(ctx, HashToken(plain)); !got.Revoked {
 		t.Fatal("revoked flag must persist")
+	}
+
+	// --- subtree rule store (docs/07 §8): every metadata-owning store ---
+	rs, ok := m.(SubtreeRuleStore)
+	if !ok {
+		t.Fatal("metadata-owning store must implement SubtreeRuleStore")
+	}
+	if err := m.CreateRepo(ctx, "r3", model.SHA1); err != nil {
+		t.Fatalf("create r3: %v", err)
+	}
+	if err := rs.SetSubtreeRule(ctx, "nope", SubtreeRule{Path: "/a", Users: []string{"u"}}); !errors.Is(err, ErrRepoNotFound) {
+		t.Fatalf("rule on unknown repo = %v, want ErrRepoNotFound", err)
+	}
+	if err := rs.SetSubtreeRule(ctx, "r3", SubtreeRule{Path: "a", Users: []string{"u"}}); err == nil {
+		t.Fatal("relative path must fail")
+	}
+	if err := rs.SetSubtreeRule(ctx, "r3", SubtreeRule{Path: "/a/", Users: []string{"u"}}); err == nil {
+		t.Fatal("trailing slash must fail")
+	}
+	if err := rs.SetSubtreeRule(ctx, "r3", SubtreeRule{Path: "/a/..", Users: []string{"u"}}); err == nil {
+		t.Fatal("dot-dot segment must fail")
+	}
+	if err := rs.SetSubtreeRule(ctx, "r3", SubtreeRule{Path: "/a", Users: nil}); err == nil {
+		t.Fatal("empty allowlist must fail")
+	}
+	if err := rs.SetSubtreeRule(ctx, "r3", SubtreeRule{Path: "/lib/deep", Users: []string{"bob", "alice"}}); err != nil {
+		t.Fatalf("set rule: %v", err)
+	}
+	if err := rs.SetSubtreeRule(ctx, "r3", SubtreeRule{Path: "/lib", Users: []string{"alice"}}); err != nil {
+		t.Fatalf("set rule 2: %v", err)
+	}
+	rules, err := rs.SubtreeRules(ctx, "r3")
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("rules = %v, %v", rules, err)
+	}
+	if rules[0].Path != "/lib" || rules[1].Path != "/lib/deep" {
+		t.Fatalf("rules must be path-sorted: %+v", rules)
+	}
+	// Users are stored sorted (stable answers across backends).
+	if got := rules[1].Users; len(got) != 2 || got[0] != "alice" || got[1] != "bob" {
+		t.Fatalf("users must round-trip sorted: %v", got)
+	}
+	// Upsert replaces one path without touching others.
+	if err := rs.SetSubtreeRule(ctx, "r3", SubtreeRule{Path: "/lib", Users: []string{"carol"}}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if rules, _ = rs.SubtreeRules(ctx, "r3"); len(rules) != 2 {
+		t.Fatalf("upsert must not duplicate: %+v", rules)
+	} else if rules[0].Users[0] != "carol" || rules[1].Users[0] != "alice" {
+		t.Fatalf("upsert result = %+v", rules)
+	}
+	// Delete is idempotent; the sibling rule survives.
+	if err := rs.DeleteSubtreeRule(ctx, "r3", "/lib"); err != nil {
+		t.Fatalf("delete rule: %v", err)
+	}
+	if err := rs.DeleteSubtreeRule(ctx, "r3", "/lib"); err != nil {
+		t.Fatalf("delete idempotent: %v", err)
+	}
+	if rules, _ = rs.SubtreeRules(ctx, "r3"); len(rules) != 1 || rules[0].Path != "/lib/deep" {
+		t.Fatalf("post-delete rules = %+v", rules)
 	}
 }
 

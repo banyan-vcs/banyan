@@ -533,7 +533,35 @@ func (s *SQLMetaStore) ddl() []string {
 	default:
 		base = ddlSQLite()
 	}
-	return append(base, s.tokensDDL())
+	return append(base, s.tokensDDL(), s.subtreeRulesDDL())
+}
+
+// subtreeRulesDDL is the runtime directory-access-rule table (docs/07 §8)
+// in this backend's dialect — column names avoid MySQL reserved words.
+func (s *SQLMetaStore) subtreeRulesDDL() string {
+	switch s.d.name {
+	case "mysql":
+		return `CREATE TABLE IF NOT EXISTS subtree_rules(
+	repo  VARCHAR(190) NOT NULL,
+	path  VARCHAR(400) NOT NULL,
+	users TEXT NOT NULL,
+	PRIMARY KEY(repo, path)
+)`
+	case "postgres":
+		return `CREATE TABLE IF NOT EXISTS subtree_rules(
+	repo  VARCHAR(190) NOT NULL,
+	path  VARCHAR(400) NOT NULL,
+	users TEXT NOT NULL,
+	PRIMARY KEY(repo, path)
+)`
+	default:
+		return `CREATE TABLE IF NOT EXISTS subtree_rules(
+	repo  TEXT NOT NULL,
+	path  TEXT NOT NULL,
+	users TEXT NOT NULL,
+	PRIMARY KEY(repo, path)
+) WITHOUT ROWID`
+	}
 }
 
 // tokensDDL is the personal-access-token table (docs/07 §6) in this
@@ -942,7 +970,7 @@ func (s *SQLMetaStore) RenameRepo(ctx context.Context, from, to string) error {
 	} else if err != sql.ErrNoRows {
 		return err
 	}
-	for _, table := range []string{"timelines", "packs", "pack_nodes", "objects", "placement", "hooks", "repo_blobs"} {
+	for _, table := range []string{"timelines", "packs", "pack_nodes", "objects", "placement", "hooks", "repo_blobs", "subtree_rules"} {
 		if _, err := tx.ExecContext(ctx, s.q("UPDATE "+table+" SET repo=? WHERE repo=?"), to, from); err != nil {
 			return err
 		}
@@ -983,7 +1011,7 @@ func (s *SQLMetaStore) DeleteRepo(ctx context.Context, repo string) error {
 	if err := s.fenceRejectTx(ctx, tx, repo); err != nil {
 		return err
 	}
-	for _, table := range []string{"objects", "pack_nodes", "packs", "timelines", "placement", "hooks", "repo_blobs"} {
+	for _, table := range []string{"objects", "pack_nodes", "packs", "timelines", "placement", "hooks", "repo_blobs", "subtree_rules"} {
 		if _, err := tx.ExecContext(ctx, s.q("DELETE FROM "+table+" WHERE repo=?"), repo); err != nil {
 			return err
 		}

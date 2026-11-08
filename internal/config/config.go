@@ -49,6 +49,12 @@ type Config struct {
 		// user table and credentials never reach this process.
 		Upstream       string `yaml:"upstream"`        // console base URL
 		UpstreamSecret string `yaml:"upstream_secret"` // shared HMAC key
+		// GitLabSSO selects GitLab token authentication (docs/20): the base
+		// URL of the GitLab instance whose OAuth2/PAT tokens gate this
+		// server's HTTP face — identity and instance-admin status come from
+		// GET <url>/api/v4/user (fail-closed). Mutually exclusive with the
+		// user table and the console.
+		GitLabSSO string `yaml:"gitlab_sso"`
 		// Users enables the demo authorization policy (docs/07): HTTP Basic
 		// against this static table; absent = authorization off.
 		Users  map[string]string `yaml:"users"`
@@ -320,14 +326,26 @@ func (c *Config) normalize() error {
 		}
 		c.Auth.Upstream = withScheme(c.Auth.Upstream)
 	}
+	if c.Auth.GitLabSSO != "" {
+		if c.Auth.Remote {
+			return fmt.Errorf("config: auth.gitlab_sso and auth.remote are mutually exclusive")
+		}
+		if c.Auth.Upstream != "" {
+			return fmt.Errorf("config: auth.gitlab_sso and auth.upstream are mutually exclusive")
+		}
+		if len(c.Auth.Users) > 0 {
+			return fmt.Errorf("config: auth.gitlab_sso and the demo auth.users table are mutually exclusive")
+		}
+		c.Auth.GitLabSSO = withScheme(strings.TrimRight(c.Auth.GitLabSSO, "/"))
+	}
 	// Production posture (secure by default): the client-facing roles
 	// refuse to start unauthenticated, and the gitaly frontend refuses an
 	// empty token. Dev mode is the explicit opt-out for local/demo
 	// deployments — an open server must be a decision, never an accident.
 	if !c.Dev {
 		if c.Role == "" || c.Role == "all-in-one" || c.Role == "gateway" {
-			if c.Auth.Upstream == "" && len(c.Auth.Users) == 0 {
-				return fmt.Errorf("config: production mode requires authentication (auth.upstream or auth.users); set dev: true for an unauthenticated local deployment")
+			if c.Auth.Upstream == "" && c.Auth.GitLabSSO == "" && len(c.Auth.Users) == 0 {
+				return fmt.Errorf("config: production mode requires authentication (auth.upstream, auth.gitlab_sso or auth.users); set dev: true for an unauthenticated local deployment")
 			}
 		}
 		if c.Gitaly.Listen != "" && c.Gitaly.Token == "" {
