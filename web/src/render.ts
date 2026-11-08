@@ -15,6 +15,32 @@ export function setBase(b: string): void {
   BASE = b.replace(/\/+$/, "");
 }
 
+// The theme follows the deployment mode (setTheme at startup): GitLab mode
+// wears GitLab's palette so the subpage reads as part of the platform —
+// values lifted from GitLab's own rendered CSS (purple-700 #5b46b8 actions,
+// purple-200 #c9beef header links, the dark top bar, the red warn family).
+// Everything else keeps banyan's own green.
+const THEMES: Record<string, Record<string, string>> = {
+  banyan: {
+    "--hd": "#16351f", "--hd-link": "#cfe8d2",
+    "--accent": "#16351f", "--accent-hi": "#2c5e3d",
+    "--pill-bg": "#e8f0ea", "--pill-fg": "#16351f",
+    "--warn-bg": "#f4e8e8", "--warn-fg": "#7a2e2e",
+  },
+  gitlab: {
+    "--hd": "#222733", "--hd-link": "#c9beef",
+    "--accent": "#5b46b8", "--accent-hi": "#483698",
+    "--pill-bg": "#f4f0fc", "--pill-fg": "#483698",
+    "--warn-bg": "#feeef0", "--warn-fg": "#ac203a",
+  },
+};
+let THEME = THEMES.banyan;
+
+// setTheme picks the palette ("banyan" | "gitlab").
+export function setTheme(name: string): void {
+  THEME = THEMES[name] || THEMES.banyan;
+}
+
 // u prefixes an app-absolute path with the base.
 export function u(p: string): string {
   return BASE + p;
@@ -34,30 +60,35 @@ function whenStr(unix?: number): string {
 }
 
 function layout(title: string, user: string, body: string): string {
+  const vars = Object.entries(THEME).map(([k, v]) => `${k}:${v}`).join(";");
   return `<!doctype html>
 <html><head><meta charset="utf-8"><link rel="icon" href="${u("/avatar.png")}" type="image/png"><title>${esc(title)} · banyan</title>
 <style>
+ :root{${vars}}
  body{font-family:ui-sans-serif,system-ui,sans-serif;margin:0;background:#f6f7f9;color:#1c2430}
- header{background:#16351f;color:#fff;padding:10px 20px;display:flex;align-items:center;gap:16px}
- header a{color:#cfe8d2;text-decoration:none}
+ header{background:var(--hd);color:#fff;padding:10px 20px;display:flex;align-items:center;gap:16px}
+ header a{color:var(--hd-link);text-decoration:none}
  header .brand{font-weight:700;color:#fff;font-size:18px}
  main{max-width:960px;margin:24px auto;padding:0 16px}
  table{border-collapse:collapse;width:100%;background:#fff;border:1px solid #e2e5ea;border-radius:6px}
  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #eef0f3;font-size:14px}
  tr:last-child td{border-bottom:none}
  .muted{color:#68758a}
- .pill{display:inline-block;background:#e8f0ea;color:#16351f;border-radius:10px;padding:1px 8px;font-size:12px;margin-left:6px}
- .warn{display:inline-block;background:#f4e8e8;color:#7a2e2e;border-radius:10px;padding:1px 8px;font-size:12px;margin-left:6px}
+ .pill{display:inline-block;background:var(--pill-bg);color:var(--pill-fg);border-radius:10px;padding:1px 8px;font-size:12px;margin-left:6px}
+ .warn{display:inline-block;background:var(--warn-bg);color:var(--warn-fg);border-radius:10px;padding:1px 8px;font-size:12px;margin-left:6px}
  pre{background:#fff;border:1px solid #e2e5ea;border-radius:6px;padding:12px;overflow:auto;font-size:13px}
- .btn{background:#16351f;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:14px;cursor:pointer}
+ .btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:14px;cursor:pointer}
+ .btn.danger{background:var(--warn-fg)}
+ .btn.soft{background:var(--accent-hi)}
+ .btn:hover{background:var(--accent-hi)}
  input{border:1px solid #ccd2da;border-radius:6px;padding:6px 10px;font-size:14px;margin-right:6px}
- .crumbs a{color:#16351f}
+ .crumbs a{color:var(--accent)}
  form.inline{display:inline}
 </style></head><body>
 <header><span class="brand"><img src="${u("/avatar.png")}" alt="" style="width:22px;height:22px;border-radius:5px;vertical-align:-5px"> banyan</span>
  <a href="${u("/")}">repositories</a>
  <span style="flex:1"></span>
- ${user ? `<span class="pill">${esc(user)}</span><form class="inline" method="post" action="${u("/logout")}"><button class="btn" style="background:#2c5e3d">log out</button></form>` : `<a href="${u("/login")}">log in</a>`}
+ ${user ? `<span class="pill">${esc(user)}</span><form class="inline" method="post" action="${u("/logout")}"><button class="btn soft">log out</button></form>` : `<a href="${u("/login")}">log in</a>`}
 </header><main>${body}</main></body></html>`;
 }
 
@@ -193,7 +224,7 @@ export function subtreeDetailPage(
 </form>
 <form method="post" action="${u(`/r/${esc(repo)}/subtree-access/delete`)}">
  <input type="hidden" name="path" value="${esc(sub.path)}">
- <button class="btn" style="background:#7a2e2e">remove rule (open to all)</button>
+ <button class="btn danger">remove rule (open to all)</button>
 </form>`
     : isAdmin
       ? `<h3>Access rule</h3>

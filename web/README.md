@@ -47,7 +47,10 @@ admin, password `demo`).
 identifies the user via `/api/v4/user`; the session's credential is the
 user's GitLab token, validated by banyan's `GitLabSSO` policy
 (`auth.gitlab_sso` in banyan's config) — the same credential shape git
-uses. GitLab instance admins get the rule-management forms.
+uses. GitLab instance admins get the rule-management forms. In SSO mode
+the UI also wears **GitLab's palette** (purple-700 actions, the dark top
+bar — lifted from GitLab's own rendered CSS); standalone keeps banyan's
+green.
 
 In SSO mode the repository list additionally shows GitLab project names
 (`sha256(project_id)` → `path_with_namespace`, fetched with the user's own
