@@ -114,6 +114,8 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | 仓库规模 | `GET /api/v1/repos/<repo>/size` | Repo.Size | **已落地**（docs/11 §6；返回 `{bytes, packs}`，全 clone 预算同源） |
 | 钩子注册表 | `GET/PUT/DELETE /api/v1/repos/<repo>/hooks[?id=]` | Admin.Hooks | **已落地**（docs/04 §7；PUT body `{id,dir,events[],url,secret?,timeout_ms?}`，元数据面存储——多网关一致） |
 | timelines（诊断） | `GET /api/v1/timelines` | Admin.Timelines | **已有**（已接 ListAllTimelines） |
+| subtrees（管理清单） | `GET /api/v1/subtrees?repo=` | Repo.Subtrees | **已落地**（docs/07 §8c：过滤 `/.woven`/aux ref、按锚分组、支线 head 带最近提交、projected=投影 ref 集） |
+| 子树访问规则 | `GET/PUT/DELETE /api/v1/repos/<repo>/subtree-access` | Admin.SubtreeRules | **已落地**（docs/07 §8c：PUT body `{path, users[]}` 锚形路径；元数据面存储，rename/delete 随迁） |
 | admin repack | `POST /api/v1/repack` | Admin.Repack | **已有** |
 
 2026-10-23 落地批次：internal/service + rpc 薄化 + internal/cli（T22/T22b

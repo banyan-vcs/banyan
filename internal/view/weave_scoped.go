@@ -47,7 +47,7 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 	var ancestors []subSrc // strictly above scope: project into scope
 	var keySubs []string
 	for _, tl := range all {
-		if tl.Name != branch || tl.Anchor == model.RootAnchor || isWovenFamily(tl.Anchor) {
+		if tl.Name != branch || tl.Anchor == model.RootAnchor || IsWovenFamily(tl.Anchor) {
 			continue
 		}
 		// Own scope rides the prefix (subtreeTip) and the key (scope@tip);

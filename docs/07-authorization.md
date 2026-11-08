@@ -162,3 +162,36 @@ fetch-trees/resolve）维持认证门。测试：T79（token E2E：read 可取�
 推、write 推过、吊销即刻 401、属主错配拒绝、明文只现一次）、T80
 （RPC 分级：开发者 403 / 管理员 200 / admin token 管理 / read token
 不能建仓不能动 ref）。
+
+## 8c. 运行时子树访问规则 + GitLab SSO（2026-11-08，docs/20 子树管理控制面）
+
+**运行时规则**：`auth.subtree_access`（§2 的 YAML 种子）只在启动时读；
+运行态规则住在元数据面——`storage.SubtreeRuleStore`（可选接口，
+TokenRegistry 先例：memory + SQL 四后端同 conformance，表
+`subtree_rules(repo, path, users)`，随 rename/delete 同事务迁移清理）。
+`SubtreeRulePolicy` 装饰任意策略：**最浅覆盖规则管辖**（`/src` 的规则
+同时管住 `/src/lib`——子树视图闭包向下包含，docs/17"在浅锚收紧"）；
+**fetch 与 push 同门**；无覆盖规则的路径完全委托内层（从未管理规则的
+部署逐字节不变）；规则面不可达=拒绝（fail-closed，与 /allowed 门同姿
+态）；内层管理员恒过（管理员管理规则，锁死自己即锁死管理面）。反向
+不可行是登记边界：`/src/lib` 的规则**不能**遮住 `/src`——浅锚服务整个
+闭包（与 GitLab workhorse 仓库级授权同一结构性事实）。
+
+**管理 RPC**：`GET/PUT/DELETE /api/v1/repos/<repo>/subtree-access`
+（admin 门；PUT body `{path, users[]}`，path 为锚形 `/` 或 `/a/b`，
+users 空数组=拒绝——开放靠删规则）。清单面
+`GET /api/v1/subtrees?repo=`（认证门）：过滤 `/.woven` 内部族与
+aux ref、按锚分组、每支线 head 带最近提交（subject/author/when）、
+`projected` 标记默认支顶层目录的投影 ref 集。
+
+**GitLabSSO 策略**（`auth.gitlab_sso: <url>` 配置才活，与 users 表/
+upstream console 互斥）：HTTP Basic 密码位或 Bearer 头携带 GitLab 签发
+token（OAuth2/PAT 同形），验证=一次 `GET <url>/api/v4/user`（按 token
+sha256 缓存含负缓存，TTL 缺省 60s；GitLab 不可达=匿名 fail-closed）；
+身份=GitLab 用户名，实例管理员（is_admin）应答 CanAdmin——即规则面
+的管理者。SSH 缝保持匿名（GitLab 拓扑里 git-over-SSH 终结在
+gitlab-shell）；分支可见性直通（GitLab 语义：项目成员见全部分支）。
+装配：banyand 组合 `SubtreeRules(GitLabSSO)`；static+token 栈同样可包
+（YAML 种子之外补运行态）。测试：T89（清单：过滤/分组/projected/
+最近提交）、T90（GitLabSSO 假 GitLab + 规则栈：admin 设规则→bob 子树
+clone 拒/过根 clone（边界断言）/push 同门/删规则恢复/非管理员 403）。
