@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 // dirNames lists the direct children of dir ("" when absent).
@@ -153,7 +153,7 @@ func TestStorageModes(t *testing.T) {
 		info, err := c.Meta.GetRepo(context.Background(), "gamma")
 		require.NoError(t, err)
 		assert.NotEmpty(t, info.StorageID, "仓库应有不可变 storage id")
-		assert.Equal(t, map[string]bool{storage.HashedRepoPath(info.StorageID): true},
+		assert.Equal(t, map[string]bool{meta.HashedRepoPath(info.StorageID): true},
 			hashedPackKeys(t, c.Roots), "磁盘键应为 storageID 的 fanout 哈希")
 
 		// Rename: the registry flips; not one byte moves on any node.

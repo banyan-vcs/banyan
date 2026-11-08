@@ -331,11 +331,18 @@ rename 移动期间并发 push——字节落旧名、注册/CAS 也落旧名，
 
 ## 7. 骨架对应
 
+两个包分守两平面（2026-11-08 拆分）：`internal/meta` 承载 §2 的元数据面
+（MetaStore 家族：接口/内存/SQL 三方言/RemoteMeta/refs 客户端/PAT/子树
+规则/寻址映射），`internal/storage` 收窄为对象面（shard/pack/索引/repack）。
+依赖单向：storage → meta（ObjectService 持有 MetaStore 字段），无环。
+
 | 本文档概念 | 代码位置 |
 |---|---|
 | rendezvous / 副本放置 | `internal/storage/shard.go`（完整实现） |
 | ShardStore 接口 + 本地盘实现 | `internal/storage/shardstore.go` |
 | pack/idx 读写封装 | `internal/storage/packfile.go` |
-| MetaStore 接口（四角色组合）+ 内存实现 | `internal/storage/metastore.go` |
-| MetaStore SQLite 实现（WAL + IMMEDIATE CAS） | `internal/storage/metastore_sqlite.go` |
+| MetaStore 接口（四角色组合）+ 内存实现 | `internal/meta/metastore.go` |
+| MetaStore SQL 三方言（含 SQLite WAL + IMMEDIATE CAS） | `internal/meta/metastore_sql.go` / `internal/meta/metastore_sqlite.go` |
+| 元数据远端（refs 角色客户端） | `internal/meta/refsclient.go` |
+| 仓库寻址（named/hashed 映射） | `internal/meta/addressing.go` |
 | repack 骨架 | `internal/storage/repack.go` |

@@ -4,15 +4,15 @@ import (
 	"testing"
 
 	"github.com/banyan-vcs/banyan/internal/model"
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
-func hook(id, dir string, events ...string) storage.HookInfo {
-	return storage.HookInfo{ID: id, Dir: dir, Events: events, URL: "http://hook.example/" + id}
+func hook(id, dir string, events ...string) meta.HookInfo {
+	return meta.HookInfo{ID: id, Dir: dir, Events: events, URL: "http://hook.example/" + id}
 }
 
 func TestMatchHooks(t *testing.T) {
-	hooks := []storage.HookInfo{
+	hooks := []meta.HookInfo{
 		hook("root", "", "pre-receive", "update"),
 		hook("lib", "lib", "pre-receive"),
 		hook("nested", "lib/nested", "pre-receive", "post-receive"),

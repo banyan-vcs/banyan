@@ -5,7 +5,7 @@
 // precedent): only stores that own metadata implement it, and consumers
 // type-assert (meta.(SubtreeRuleStore)) so remote-meta gateways compile
 // unchanged.
-package storage
+package meta
 
 import (
 	"context"

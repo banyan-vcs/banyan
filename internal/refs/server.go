@@ -11,7 +11,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/metrics"
 	"github.com/banyan-vcs/banyan/internal/model"
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 // The refs role's own telemetry plane (served at /metrics): reconciler and
@@ -66,11 +66,11 @@ func (o *Options) fill() {
 	}
 }
 
-// Server is the refs service: meta RPC over the storage MetaStore, the node
+// Server is the refs service: meta RPC over the storage meta.MetaStore, the node
 // health table, and the reconciler. One instance per cluster (the single
 // writer); tests and the all-in-one mode run the same code over SQLite/mem.
 type Server struct {
-	Meta   storage.MetaStore
+	Meta   meta.MetaStore
 	Opt    Options
 	Health *HealthTable
 	Recon  *Reconciler
@@ -80,13 +80,13 @@ type Server struct {
 	Policy *auth.StaticPolicy
 }
 
-func NewServer(meta storage.MetaStore, opt Options) *Server {
+func NewServer(ms meta.MetaStore, opt Options) *Server {
 	opt.fill()
 	health := NewHealthTable(opt.SuspectAfter, opt.DeadAfter)
-	recon := NewReconciler(meta, health, opt.DefaultReplicas, opt.ReconConcurrency)
-	recon.Addressing = storage.NewAddressing(opt.AddressingMode, meta)
+	recon := NewReconciler(ms, health, opt.DefaultReplicas, opt.ReconConcurrency)
+	recon.Addressing = meta.NewAddressing(opt.AddressingMode, ms)
 	return &Server{
-		Meta:   meta,
+		Meta:   ms,
 		Opt:    opt,
 		Health: health,
 		Recon:  recon,
@@ -196,13 +196,13 @@ func writeJSON(w http.ResponseWriter, v any) {
 func writeErr(w http.ResponseWriter, err error) {
 	code, status := "INTERNAL", http.StatusInternalServerError
 	switch {
-	case errors.Is(err, storage.ErrNonFastForward):
+	case errors.Is(err, meta.ErrNonFastForward):
 		code, status = "NON_FAST_FORWARD", http.StatusConflict
-	case errors.Is(err, storage.ErrRepoNotFound):
+	case errors.Is(err, meta.ErrRepoNotFound):
 		code, status = "REPO_NOT_FOUND", http.StatusNotFound
-	case errors.Is(err, storage.ErrTimelineUnknown):
+	case errors.Is(err, meta.ErrTimelineUnknown):
 		code, status = "TIMELINE_UNKNOWN", http.StatusNotFound
-	case errors.Is(err, storage.ErrPackNotFound):
+	case errors.Is(err, meta.ErrPackNotFound):
 		code, status = "PACK_NOT_FOUND", http.StatusNotFound
 	case errors.Is(err, model.ErrObjectNotFound):
 		code, status = "OBJECT_NOT_FOUND", http.StatusNotFound
@@ -221,7 +221,7 @@ func decode[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	return v, true
 }
 
-// --- meta RPC handlers (thin adapters over MetaStore) ---
+// --- meta RPC handlers (thin adapters over meta.MetaStore) ---
 
 func (s *Server) hPutPack(w http.ResponseWriter, r *http.Request) {
 	req, ok := decode[struct {
@@ -273,7 +273,7 @@ func (s *Server) hListPacks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if packs == nil {
-		packs = []storage.PackInfo{}
+		packs = []meta.PackInfo{}
 	}
 	writeJSON(w, map[string]any{"packs": packs})
 }
@@ -346,7 +346,7 @@ func (s *Server) hLocate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	found := map[string]storage.ObjectLocation{}
+	found := map[string]meta.ObjectLocation{}
 	for oid, loc := range locs {
 		found[string(oid)] = loc
 	}
@@ -486,7 +486,7 @@ func (s *Server) hSetDefaultBranch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) hHooks(w http.ResponseWriter, r *http.Request) {
 	req, ok := decode[struct {
 		Repo string           `json:"repo"`
-		Hook *storage.HookInfo `json:"hook"`
+		Hook *meta.HookInfo `json:"hook"`
 	}](w, r)
 	if !ok {
 		return
@@ -633,7 +633,7 @@ func (s *Server) hListRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if repos == nil {
-		repos = []storage.RepoInfo{}
+		repos = []meta.RepoInfo{}
 	}
 	writeJSON(w, map[string]any{"repos": repos})
 }

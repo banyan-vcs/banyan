@@ -6,7 +6,7 @@
 // TokenRegistry is deliberately NOT part of the MetaStore composite: only
 // the stores that own metadata implement it, and consumers type-assert
 // (meta.(TokenRegistry)) so remote-meta gateways compile unchanged.
-package storage
+package meta
 
 import (
 	"context"

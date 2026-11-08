@@ -38,6 +38,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -84,7 +85,7 @@ const maxWireMsg = 1 << 30
 
 // Server is the gitaly-protocol frontend over banyan storage.
 type Server struct {
-	Meta    storage.MetaStore
+	Meta    meta.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
 	Svc     *service.Service
@@ -102,7 +103,7 @@ type Server struct {
 
 // NewServer builds a server registering every gitaly service. Wire it with
 // ListenAndServe; absent listen config keeps it off.
-func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo, opts Options) *Server {
+func NewServer(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo, opts Options) *Server {
 	if opts.StorageName == "" {
 		opts.StorageName = "default"
 	}

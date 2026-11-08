@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,7 +27,7 @@ func TestIngestPackFileEquivalence(t *testing.T) {
 	raw := buf.Bytes()
 
 	mk := func(name string) *ObjectService {
-		inner := NewMemoryMetaStore()
+		inner := meta.NewMemoryMetaStore()
 		require.NoError(t, inner.CreateRepo(ctx, name, model.SHA1))
 		return NewObjectService(inner, NewLocalShardStore(t.TempDir()), []Node{{ID: "n1", Local: true}}, model.SHA1)
 	}

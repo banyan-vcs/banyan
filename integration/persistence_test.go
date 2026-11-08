@@ -15,6 +15,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -29,7 +30,7 @@ func TestSQLiteMetaRestartPersistence(t *testing.T) {
 	dbPath := filepath.Join(dir, "meta.db")
 
 	newSrv := func(t *testing.T) *server {
-		meta, err := storage.NewSQLiteMetaStore(dbPath)
+		meta, err := meta.NewSQLiteMetaStore(dbPath)
 		require.NoError(t, err, "open sqlite meta")
 		t.Cleanup(func() { _ = meta.Close() })
 		local := storage.NewLocalShardStore(shardRoot)

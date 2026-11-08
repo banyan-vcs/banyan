@@ -8,16 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
 // newService builds a full in-memory stack (meta + local shards + views).
 func newService(t *testing.T) *Service {
 	t.Helper()
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(t.TempDir())
-	objects := storage.NewObjectService(meta, local, []storage.Node{{ID: "n1", Local: true}}, model.SHA1)
-	return New(meta, objects, model.SHA1)
+	objects := storage.NewObjectService(ms, local, []storage.Node{{ID: "n1", Local: true}}, model.SHA1)
+	return New(ms, objects, model.SHA1)
 }
 
 // commitRoot creates the repo, uploads the blobs and lands the first commit

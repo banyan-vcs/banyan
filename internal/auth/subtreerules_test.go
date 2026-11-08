@@ -6,13 +6,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
-func newRulePolicy(t *testing.T) (*SubtreeRulePolicy, *storage.MemoryMetaStore) {
+func newRulePolicy(t *testing.T) (*SubtreeRulePolicy, *meta.MemoryMetaStore) {
 	t.Helper()
-	meta := storage.NewMemoryMetaStore()
-	if err := meta.CreateRepo(t.Context(), "r", 0); err != nil {
+	ms := meta.NewMemoryMetaStore()
+	if err := ms.CreateRepo(t.Context(), "r", 0); err != nil {
 		t.Fatal(err)
 	}
 	inner := &StaticPolicy{
@@ -20,11 +20,11 @@ func newRulePolicy(t *testing.T) (*SubtreeRulePolicy, *storage.MemoryMetaStore) 
 		Admins:            []string{"admin"},
 		ProtectedBranches: []string{"main"},
 	}
-	return &SubtreeRulePolicy{Inner: inner, Rules: meta}, meta
+	return &SubtreeRulePolicy{Inner: inner, Rules: ms}, ms
 }
 
 func TestSubtreeRuleChain(t *testing.T) {
-	p, meta := newRulePolicy(t)
+	p, ms := newRulePolicy(t)
 	alice, bob := Identity{User: "alice"}, Identity{User: "bob"}
 
 	// Unmanaged paths delegate to the inner policy: everything open.
@@ -32,7 +32,7 @@ func TestSubtreeRuleChain(t *testing.T) {
 		t.Fatal("no rules yet — inner policy must allow")
 	}
 
-	if err := meta.SetSubtreeRule(t.Context(), "r", storage.SubtreeRule{Path: "/lib", Users: []string{"alice"}}); err != nil {
+	if err := ms.SetSubtreeRule(t.Context(), "r", meta.SubtreeRule{Path: "/lib", Users: []string{"alice"}}); err != nil {
 		t.Fatal(err)
 	}
 	// A rule covers its anchor and everything deeper (closure semantics).
@@ -58,13 +58,13 @@ func TestSubtreeRuleChain(t *testing.T) {
 	}
 
 	// Shallowest rule wins: /lib/deep's own rule is shadowed by /lib.
-	if err := meta.SetSubtreeRule(t.Context(), "r", storage.SubtreeRule{Path: "/lib/deep", Users: []string{"bob"}}); err != nil {
+	if err := ms.SetSubtreeRule(t.Context(), "r", meta.SubtreeRule{Path: "/lib/deep", Users: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
 	if p.CanFetch(bob, "r", "/lib/deep") {
 		t.Fatal("the shallowest covering rule (/lib) must govern /lib/deep")
 	}
-	if err := meta.DeleteSubtreeRule(t.Context(), "r", "/lib"); err != nil {
+	if err := ms.DeleteSubtreeRule(t.Context(), "r", "/lib"); err != nil {
 		t.Fatal(err)
 	}
 	if !p.CanFetch(bob, "r", "/lib/deep") {
@@ -72,7 +72,7 @@ func TestSubtreeRuleChain(t *testing.T) {
 	}
 
 	// The root anchor can be managed too.
-	if err := meta.SetSubtreeRule(t.Context(), "r", storage.SubtreeRule{Path: "/", Users: []string{"alice"}}); err != nil {
+	if err := ms.SetSubtreeRule(t.Context(), "r", meta.SubtreeRule{Path: "/", Users: []string{"alice"}}); err != nil {
 		t.Fatal(err)
 	}
 	if p.CanFetch(bob, "r", "") || p.CanFetch(bob, "r", "/doc") {
@@ -86,8 +86,8 @@ func TestSubtreeRuleChain(t *testing.T) {
 // The inner policy's admins pass every rule — they manage the rules, a lock
 // that could keep them out would brick the management plane.
 func TestSubtreeRuleAdminPasses(t *testing.T) {
-	p, meta := newRulePolicy(t)
-	if err := meta.SetSubtreeRule(t.Context(), "r", storage.SubtreeRule{Path: "/secret", Users: []string{"alice"}}); err != nil {
+	p, ms := newRulePolicy(t)
+	if err := ms.SetSubtreeRule(t.Context(), "r", meta.SubtreeRule{Path: "/secret", Users: []string{"alice"}}); err != nil {
 		t.Fatal(err)
 	}
 	admin := Identity{User: "admin"}
@@ -101,10 +101,10 @@ func TestSubtreeRuleAdminPasses(t *testing.T) {
 
 type brokenRules struct{}
 
-func (brokenRules) SubtreeRules(context.Context, string) ([]storage.SubtreeRule, error) {
+func (brokenRules) SubtreeRules(context.Context, string) ([]meta.SubtreeRule, error) {
 	return nil, errors.New("meta down")
 }
-func (brokenRules) SetSubtreeRule(context.Context, string, storage.SubtreeRule) error { return nil }
+func (brokenRules) SetSubtreeRule(context.Context, string, meta.SubtreeRule) error { return nil }
 func (brokenRules) DeleteSubtreeRule(context.Context, string, string) error           { return nil }
 
 // A rule plane that cannot answer denies: never fall open (fail-closed).

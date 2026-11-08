@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -105,9 +106,9 @@ func hookOID(o model.OID, algo model.HashAlgo) string {
 // matchHooks selects the hooks registered for (pushed directory, event),
 // most specific directory first — dir "" matches every push; "lib"
 // matches pushes to lib and lib/…; a root push matches only "".
-func matchHooks(hooks []storage.HookInfo, dir, event string) []storage.HookInfo {
+func matchHooks(hooks []meta.HookInfo, dir, event string) []meta.HookInfo {
 	dir = strings.Trim(dir, "/")
-	var out []storage.HookInfo
+	var out []meta.HookInfo
 	for _, h := range hooks {
 		if h.Dir != "" && dir != h.Dir && !strings.HasPrefix(dir, h.Dir+"/") {
 			continue // hook scoped to a different subtree
@@ -123,7 +124,7 @@ func matchHooks(hooks []storage.HookInfo, dir, event string) []storage.HookInfo 
 	return out
 }
 
-func hasEvent(h storage.HookInfo, event string) bool {
+func hasEvent(h meta.HookInfo, event string) bool {
 	for _, e := range h.Events {
 		if e == event {
 			return true
@@ -197,7 +198,7 @@ type HookUpdate struct {
 // directory scoping — the gitaly plane addresses repos, not subtrees) and
 // answers the first declination, the same fail-closed rule the serving
 // gateway applies at push time. The gitaly HookService RPCs ride this.
-func FireRepoHooks(ctx context.Context, meta storage.MetaStore, runner *WebhookRunner,
+func FireRepoHooks(ctx context.Context, meta meta.MetaStore, runner *WebhookRunner,
 	repo, event, user string, updates []HookUpdate) error {
 	hooks, err := meta.ListHooks(ctx, repo)
 	if err != nil {
@@ -227,7 +228,7 @@ func FireRepoHooks(ctx context.Context, meta storage.MetaStore, runner *WebhookR
 var defaultWebhookRunner = &WebhookRunner{}
 
 // call delivers one callback and classifies the outcome.
-func (r *WebhookRunner) call(ctx context.Context, h storage.HookInfo, payload hookPayload) error {
+func (r *WebhookRunner) call(ctx context.Context, h meta.HookInfo, payload hookPayload) error {
 	client := http.DefaultClient
 	if r != nil && r.HTTP != nil {
 		client = r.HTTP

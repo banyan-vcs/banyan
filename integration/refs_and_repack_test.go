@@ -19,6 +19,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -85,21 +86,21 @@ func TestTagsAndAuxRefs(t *testing.T) {
 // the test can call storage-level repack and restart the process state.
 func newStack(t *testing.T, shardRoot, dbPath string, sqlite bool) (*server, *storage.ObjectService) {
 	t.Helper()
-	var meta storage.MetaStore
+	var ms meta.MetaStore
 	if sqlite {
-		m, err := storage.NewSQLiteMetaStore(dbPath)
+		m, err := meta.NewSQLiteMetaStore(dbPath)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = m.Close() })
-		meta = m
+		ms = m
 	} else {
-		meta = storage.NewMemoryMetaStore()
+		ms = meta.NewMemoryMetaStore()
 	}
 	local := storage.NewLocalShardStore(shardRoot)
 	nodes := []storage.Node{{ID: "t1", Local: true}}
-	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
+	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
 	mux := http.NewServeMux()
-	gitwire.NewServer(meta, objects, model.SHA1).Register(mux)
-	rpc.NewServer(meta, objects, model.SHA1).Register(mux)
+	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
+	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return &server{Server: srv}, objects
@@ -129,7 +130,7 @@ func TestRepackFragmentMerge(t *testing.T) {
 	git(t, sub, "push", "-q", "origin", "main")
 
 	ctx := context.Background()
-	unionObjs := func(packs []storage.PackInfo) map[model.OID]bool {
+	unionObjs := func(packs []meta.PackInfo) map[model.OID]bool {
 		set := map[model.OID]bool{}
 		for _, p := range packs {
 			objs, err := objects.Meta.PackObjects(ctx, "t21", p.PackOID)
@@ -145,7 +146,7 @@ func TestRepackFragmentMerge(t *testing.T) {
 	// starvation (CI runners run few vCPUs) they can straddle the snapshot
 	// window. Poll until packs and objects stop changing, then freeze the
 	// before-universe both assertions compare against.
-	var before []storage.PackInfo
+	var before []meta.PackInfo
 	var beforeUnion map[model.OID]bool
 	for stable, i := 0, 0; i < 80 && stable < 2; i++ {
 		packs, err := objects.Meta.ListPacks(ctx, "t21")

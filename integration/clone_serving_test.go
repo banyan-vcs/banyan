@@ -28,6 +28,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -45,14 +46,14 @@ func (c *countingBackend) GetPack(ctx context.Context, repo string, packOID mode
 
 func TestCloneShapedServing(t *testing.T) {
 	needGit(t)
-	meta := storage.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(tempDirQuiet(t))
 	backend := &countingBackend{LocalBackend: &storage.LocalBackend{Local: local, NodeID: "t1"}}
-	objects := storage.NewObjectServiceWithBackend(meta, backend, model.SHA1)
+	objects := storage.NewObjectServiceWithBackend(ms, backend, model.SHA1)
 
 	mux := http.NewServeMux()
-	gitwire.NewServer(meta, objects, model.SHA1).Register(mux)
-	rpc.NewServer(meta, objects, model.SHA1).Register(mux)
+	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
+	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -66,7 +67,7 @@ func TestCloneShapedServing(t *testing.T) {
 	subOID := strings.TrimSpace(git(t, sub, "rev-parse", "HEAD"))
 
 	src := t.TempDir()
-	require.NoError(t, meta.CreateRepo(context.Background(), "gl", model.SHA1))
+	require.NoError(t, ms.CreateRepo(context.Background(), "gl", model.SHA1))
 	git(t, src, "init", "-b", "main", ".")
 	require.NoError(t, os.WriteFile(filepath.Join(src, "f.txt"), []byte("body"), 0o644))
 	git(t, src, "add", ".")

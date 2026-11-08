@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -125,7 +126,7 @@ func buildZooRepo(t *testing.T) *zooRepo {
 func ingestZoo(t *testing.T) (*zooRepo, *Server) {
 	t.Helper()
 	z := buildZooRepo(t)
-	meta := storage.NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	require.NoError(t, meta.CreateRepo(t.Context(), "r", model.SHA1))
 	local := storage.NewLocalShardStore(t.TempDir())
 	svc := storage.NewObjectService(meta, local, []storage.Node{{ID: "n1", Local: true}}, model.SHA1)

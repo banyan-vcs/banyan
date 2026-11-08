@@ -7,7 +7,8 @@ import (
 	"os"
 	"sort"
 
-	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
+		"github.com/banyan-vcs/banyan/internal/model"
 )
 
 // Repack merges pack fragments under git's geometric packing strategy
@@ -121,7 +122,7 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int, 
 	// byte cap splits any group whose input bytes would blow the merge
 	// budget (the count rule alone lets equal-sized big packs gang up).
 	type sizedPack struct {
-		info   PackInfo
+		info   meta.PackInfo
 		counts int
 		size   int64
 	}
@@ -149,7 +150,7 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int, 
 		counts[i] = sized[i].counts
 	}
 	max := mergeMax
-	var mergeSets [][]PackInfo
+	var mergeSets [][]meta.PackInfo
 	for _, g := range geometricGroups(counts, 2) {
 		if g[1]-g[0] < 2 {
 			continue
@@ -160,7 +161,7 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int, 
 			if len(cur) < 2 {
 				return
 			}
-			set := make([]PackInfo, 0, len(cur))
+			set := make([]meta.PackInfo, 0, len(cur))
 			for _, sp := range cur {
 				set = append(set, sp.info)
 			}
@@ -203,7 +204,7 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int, 
 // encode one delta pack, register it (registration re-points every object
 // location atomically per object — reads switch as of this call), then drop
 // the old shards (metadata first, then files, then caches).
-func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []PackInfo) (RepackResult, error) {
+func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []meta.PackInfo) (RepackResult, error) {
 	var res RepackResult
 	var blobs, trees, commits, tags = map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}
 	// skipped collects fragments whose bytes could not be read (all holders

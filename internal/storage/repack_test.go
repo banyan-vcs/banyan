@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
@@ -51,7 +52,7 @@ func TestGeometricNewFragmentWalk(t *testing.T) {
 // registered while the readable one merges away.
 func TestRepackUnreadableFragmentSurvives(t *testing.T) {
 	ctx := context.Background()
-	meta := NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	local := NewLocalShardStore(t.TempDir())
 	objects := NewObjectServiceWithBackend(meta, &LocalBackend{Local: local, NodeID: "n1"}, model.SHA1)
 	require.NoError(t, meta.CreateRepo(ctx, "rr", model.SHA1))

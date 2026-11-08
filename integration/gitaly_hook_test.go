@@ -25,13 +25,13 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitaly"
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
 	"github.com/banyan-vcs/banyan/internal/model"
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 func TestT75GitalyHookService(t *testing.T) {
 	needGit(t)
-	s, meta, objects := newServerPlane(t)
-	gs := gitaly.NewServer(meta, objects, model.SHA1, gitaly.Options{Token: "t75"})
+	s, ms, objects := newServerPlane(t)
+	gs := gitaly.NewServer(ms, objects, model.SHA1, gitaly.Options{Token: "t75"})
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	go func() { _ = gs.Serve(lis) }()
@@ -69,7 +69,7 @@ func TestT75GitalyHookService(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	require.NoError(t, meta.SetHook(ctx, repoName, storage.HookInfo{
+	require.NoError(t, ms.SetHook(ctx, repoName, meta.HookInfo{
 		ID: "policy", Events: []string{"pre-receive", "update", "post-receive"}, URL: srv.URL}))
 
 	stdin := strings.Repeat("0", 40) + " abc123 refs/heads/main\n"

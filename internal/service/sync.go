@@ -17,6 +17,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/merge"
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -91,7 +92,7 @@ func (s *Service) SyncSubtree(ctx context.Context, req SyncRequest) (*SyncResult
 
 func (s *Service) syncOnce(ctx context.Context, repo string, sub model.AnchorPath, branch string, localTL model.Timeline) (*SyncResult, bool, error) {
 	st, err := s.Meta.Timeline(ctx, localTL)
-	if errors.Is(err, storage.ErrTimelineUnknown) {
+	if errors.Is(err, meta.ErrTimelineUnknown) {
 		// No local timeline — nothing of ours to align (the view already
 		// tracks the projection; a plain pull fast-forwards).
 		return &SyncResult{Status: "uptodate"}, false, nil
@@ -100,7 +101,7 @@ func (s *Service) syncOnce(ctx context.Context, repo string, sub model.AnchorPat
 		return nil, false, err
 	}
 	rootState, err := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: branch})
-	if errors.Is(err, storage.ErrTimelineUnknown) {
+	if errors.Is(err, meta.ErrTimelineUnknown) {
 		return &SyncResult{Status: "uptodate", Head: st.Head}, false, nil
 	}
 	if err != nil {
@@ -196,11 +197,11 @@ func (s *Service) syncOnce(ctx context.Context, repo string, sub model.AnchorPat
 	// Fork point first (safe under either CAS outcome: Base only bounds the
 	// weave's local zone, and every commit between old and new zone bounds
 	// is root content), then the head CAS.
-	if berr := s.Meta.SetTimelineBase(ctx, localTL, rootLocal); berr != nil && !errors.Is(berr, storage.ErrTimelineUnknown) {
+	if berr := s.Meta.SetTimelineBase(ctx, localTL, rootLocal); berr != nil && !errors.Is(berr, meta.ErrTimelineUnknown) {
 		return nil, false, berr
 	}
 	if cerr := s.Meta.CASHead(ctx, localTL, st.Head, parent); cerr != nil {
-		if errors.Is(cerr, storage.ErrNonFastForward) {
+		if errors.Is(cerr, meta.ErrNonFastForward) {
 			return nil, true, nil // concurrent landing — replay onto the fresh state
 		}
 		return nil, false, cerr

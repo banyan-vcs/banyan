@@ -1,4 +1,4 @@
-package storage
+package meta
 
 // The SQL MetaStore, shared by every backend dialect (docs/03 §2, HA-2):
 // SQLite for the single-binary default, MySQL and PostgreSQL for cluster

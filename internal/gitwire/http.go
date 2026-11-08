@@ -12,6 +12,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/view"
 )
@@ -66,7 +67,7 @@ func ParseVirtualRepo(p string) (VirtualRepo, error) {
 
 // Server mounts the git smart HTTP endpoints.
 type Server struct {
-	Meta    storage.MetaStore
+	Meta    meta.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
 	Views   *view.Service // derived-view engine (docs/02 §13 assembly-on-read)
@@ -106,7 +107,7 @@ type Server struct {
 	wfOnce  sync.Once
 }
 
-func NewServer(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
+func NewServer(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Server {
 	return &Server{Meta: meta, Objects: objects, Algo: algo, Views: view.New(meta, objects, algo)}
 }
 

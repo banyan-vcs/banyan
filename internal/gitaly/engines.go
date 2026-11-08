@@ -11,6 +11,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -20,7 +21,7 @@ import (
 // internal gitwire instance comes along for the ride: revision resolution
 // consults its advertisement (projection refs included), so engine answers
 // agree with every other face.
-func Engines(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo, svc *service.Service) *Server {
+func Engines(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo, svc *service.Service) *Server {
 	return &Server{Meta: meta, Objects: objects, Algo: algo, Svc: svc,
 		git: gitwire.NewServer(meta, objects, algo)}
 }

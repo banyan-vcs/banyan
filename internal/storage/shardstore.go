@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/metrics"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/go-git/go-git/v5/plumbing/format/packfile"
@@ -30,7 +31,7 @@ var (
 // locate (global index) → local cache → cross-node fetch → decode objects.
 // It also implements model.ObjectLookup for direct model-layer assembly/projection use.
 type ObjectService struct {
-	Meta  MetaStore
+	Meta  meta.MetaStore
 	Local *LocalShardStore // all-in-one shard store (nil in gateway mode; tests may use it directly)
 	Algo  model.HashAlgo
 
@@ -42,7 +43,7 @@ type ObjectService struct {
 	// storage keys at this one seam (docs/03 §6): everything below the
 	// ObjectService — backend wire calls and on-disk layouts — speaks keys,
 	// never names. Nil = named addressing (the repo name IS the key).
-	Addressing *Addressing
+	Addressing *meta.Addressing
 
 	mu         sync.Mutex
 	cache      map[string]map[model.OID]*DecodedPack // repo → packOID → decoded result
@@ -67,7 +68,7 @@ type ObjectService struct {
 	// the repo set, and a failed read triggers one invalidate + re-locate to
 	// cover repacks initiated by another gateway.
 	locMu   sync.Mutex
-	loc     map[string]map[model.OID]ObjectLocation
+	loc     map[string]map[model.OID]meta.ObjectLocation
 	locLRU  map[string]*list.List
 	locElem map[string]map[model.OID]*list.Element
 
@@ -136,23 +137,23 @@ type synthObject struct {
 	Data []byte
 }
 
-func NewObjectService(meta MetaStore, local *LocalShardStore, nodes []Node, algo model.HashAlgo) *ObjectService {
+func NewObjectService(ms meta.MetaStore, local *LocalShardStore, nodes []Node, algo model.HashAlgo) *ObjectService {
 	nodeID := "local-1"
 	if len(nodes) > 0 {
 		nodeID = nodes[0].ID
 	}
-	return newObjectService(meta, local, &LocalBackend{Local: local, NodeID: nodeID}, algo)
+	return newObjectService(ms, local, &LocalBackend{Local: local, NodeID: nodeID}, algo)
 }
 
 // NewObjectServiceWithBackend wires a cluster-mode service (gateway): the
 // backend is the scattered store, Local stays nil.
-func NewObjectServiceWithBackend(meta MetaStore, backend ShardBackend, algo model.HashAlgo) *ObjectService {
-	return newObjectService(meta, nil, backend, algo)
+func NewObjectServiceWithBackend(ms meta.MetaStore, backend ShardBackend, algo model.HashAlgo) *ObjectService {
+	return newObjectService(ms, nil, backend, algo)
 }
 
-func newObjectService(meta MetaStore, local *LocalShardStore, backend ShardBackend, algo model.HashAlgo) *ObjectService {
+func newObjectService(ms meta.MetaStore, local *LocalShardStore, backend ShardBackend, algo model.HashAlgo) *ObjectService {
 	return &ObjectService{
-		Meta:      meta,
+		Meta:      ms,
 		Local:     local,
 		Backend:   backend,
 		Algo:      algo,
@@ -161,7 +162,7 @@ func newObjectService(meta MetaStore, local *LocalShardStore, backend ShardBacke
 		packOrder: map[string]map[model.OID][]model.OID{},
 		synth:     map[string]map[model.OID]synthObject{},
 		idx:       map[string]*repoIndex{},
-		loc:       map[string]map[model.OID]ObjectLocation{},
+		loc:       map[string]map[model.OID]meta.ObjectLocation{},
 		locLRU:    map[string]*list.List{},
 		locElem:   map[string]map[model.OID]*list.Element{},
 		batchDep:  map[string]int{},
@@ -381,7 +382,7 @@ func (s *ObjectService) persistSynthOne(repo string, oid model.OID, t model.Obje
 
 // --- location cache (docs/11 P0-1) ---
 
-func (s *ObjectService) locHit(repo string, oid model.OID) (ObjectLocation, bool) {
+func (s *ObjectService) locHit(repo string, oid model.OID) (meta.ObjectLocation, bool) {
 	s.locMu.Lock()
 	defer s.locMu.Unlock()
 	if m := s.loc[repo]; m != nil {
@@ -392,14 +393,14 @@ func (s *ObjectService) locHit(repo string, oid model.OID) (ObjectLocation, bool
 			return loc, true
 		}
 	}
-	return ObjectLocation{}, false
+	return meta.ObjectLocation{}, false
 }
 
-func (s *ObjectService) locPut(repo string, oid model.OID, loc ObjectLocation) {
+func (s *ObjectService) locPut(repo string, oid model.OID, loc meta.ObjectLocation) {
 	s.locMu.Lock()
 	defer s.locMu.Unlock()
 	if s.loc[repo] == nil {
-		s.loc[repo] = map[model.OID]ObjectLocation{}
+		s.loc[repo] = map[model.OID]meta.ObjectLocation{}
 		s.locElem[repo] = map[model.OID]*list.Element{}
 		s.locLRU[repo] = list.New()
 	}
@@ -433,17 +434,17 @@ func (s *ObjectService) locInvalidate(repo string) {
 }
 
 // locate resolves one object's placement, LRU-first (docs/11 P0-1).
-func (s *ObjectService) locate(ctx context.Context, repo string, oid model.OID) (ObjectLocation, error) {
+func (s *ObjectService) locate(ctx context.Context, repo string, oid model.OID) (meta.ObjectLocation, error) {
 	if loc, ok := s.locHit(repo, oid); ok {
 		return loc, nil
 	}
 	locs, err := s.Meta.LocateObjects(ctx, repo, []model.OID{oid})
 	if err != nil {
-		return ObjectLocation{}, err
+		return meta.ObjectLocation{}, err
 	}
 	loc, ok := locs[oid]
 	if !ok {
-		return ObjectLocation{}, fmt.Errorf("%w: %s in repo %s", model.ErrObjectNotFound, oid, repo)
+		return meta.ObjectLocation{}, fmt.Errorf("%w: %s in repo %s", model.ErrObjectNotFound, oid, repo)
 	}
 	s.locPut(repo, oid, loc)
 	return loc, nil
@@ -561,7 +562,7 @@ func objectFromDecoded(dp *DecodedPack, oid model.OID) (model.ObjectType, []byte
 // decode memoizes the pack, docs/11 P2-1), then single-object extraction
 // (docs/11 P1-1), then the whole-pack network fetch + decode as the final
 // fallback (idx-less packs, old nodes, extraction errors).
-func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid model.OID, loc ObjectLocation) (model.ObjectType, []byte, error) {
+func (s *ObjectService) objectFromPack(ctx context.Context, repo string, oid model.OID, loc meta.ObjectLocation) (model.ObjectType, []byte, error) {
 	s.mu.Lock()
 	dp := s.cache[repo][loc.PackOID]
 	s.mu.Unlock()

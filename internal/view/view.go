@@ -27,11 +27,12 @@ import (
 	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
 type Service struct {
-	Meta    storage.MetaStore
+	Meta    meta.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
 
@@ -40,7 +41,7 @@ type Service struct {
 	rootCache map[rootKey]model.OID
 }
 
-func New(meta storage.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Service {
+func New(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Service {
 	return &Service{
 		Meta:      meta,
 		Objects:   objects,
@@ -107,7 +108,7 @@ func (s *Service) SubtreeHead(ctx context.Context, repo string, sub model.Anchor
 	s.Objects.BeginSynthBatch(repo)
 	defer s.Objects.EndSynthBatch(repo)
 	state, err := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: branch})
-	if errors.Is(err, storage.ErrTimelineUnknown) {
+	if errors.Is(err, meta.ErrTimelineUnknown) {
 		return "", "", nil
 	}
 	if err != nil {
@@ -283,7 +284,7 @@ func (s *Service) RootTip(ctx context.Context, repo, branch string) (model.OID, 
 // root history for repos without subtree activity).
 func (s *Service) weave(ctx context.Context, repo, branch string, scope model.AnchorPath) (model.OID, error) {
 	state, err := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: branch})
-	if errors.Is(err, storage.ErrTimelineUnknown) {
+	if errors.Is(err, meta.ErrTimelineUnknown) {
 		return "", nil
 	}
 	if err != nil {

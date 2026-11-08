@@ -27,6 +27,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/refs"
 	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/storenode"
 )
@@ -36,7 +37,7 @@ import (
 type haCluster struct {
 	t        *testing.T
 	dbPath   string
-	Meta     *storage.SQLiteMetaStore // direct handle for assertions
+	Meta     *meta.SQLiteMetaStore // direct handle for assertions
 	RefsSrv  *refs.Server
 	refsLn   net.Listener
 	refsAddr string // host:port, reused across refs restarts (T26)
@@ -84,11 +85,11 @@ func startHAClusterMode(t *testing.T, nodes int, mode string) *haCluster {
 	}
 
 	// gateway: gitwire + rpc over RemoteMeta + ScatteredStore.
-	refsClient := storage.NewRefsClient(c.RefsURL)
-	rmeta := &storage.RemoteMeta{Refs: refsClient}
+	refsClient := meta.NewRefsClient(c.RefsURL)
+	rmeta := &meta.RemoteMeta{Refs: refsClient}
 	backend := storage.NewScatteredStore(refsClient, 3, "quorum")
 	objects := storage.NewObjectServiceWithBackend(rmeta, backend, model.SHA1)
-	objects.Addressing = storage.NewAddressing(c.mode, rmeta)
+	objects.Addressing = meta.NewAddressing(c.mode, rmeta)
 	gmux := http.NewServeMux()
 	gitwire.NewServer(rmeta, objects, model.SHA1).Register(gmux)
 	rpc.NewServer(rmeta, objects, model.SHA1).Register(gmux)
@@ -101,7 +102,7 @@ func (c *haCluster) startRefs(ctx context.Context) {
 	if c.Meta != nil {
 		_ = c.Meta.Close() // restart path: release the sqlite handle (Windows file lock)
 	}
-	meta, err := storage.NewSQLiteMetaStore(c.dbPath)
+	meta, err := meta.NewSQLiteMetaStore(c.dbPath)
 	require.NoError(c.t, err)
 	c.Meta = meta
 	c.RefsSrv = refs.NewServer(meta, refs.Options{
@@ -180,8 +181,8 @@ func (c *haCluster) restartGateway(cacheDir string) {
 	if c.GW != nil {
 		c.GW.Close()
 	}
-	refsClient := storage.NewRefsClient(c.RefsURL)
-	rmeta := &storage.RemoteMeta{Refs: refsClient}
+	refsClient := meta.NewRefsClient(c.RefsURL)
+	rmeta := &meta.RemoteMeta{Refs: refsClient}
 	backend := storage.NewScatteredStore(refsClient, 3, "quorum")
 	if cacheDir != "" {
 		cache, err := storage.NewDiskPackCache(cacheDir, 1<<30)
@@ -189,7 +190,7 @@ func (c *haCluster) restartGateway(cacheDir string) {
 		backend.DiskCache = cache
 	}
 	objects := storage.NewObjectServiceWithBackend(rmeta, backend, model.SHA1)
-	objects.Addressing = storage.NewAddressing(c.mode, rmeta)
+	objects.Addressing = meta.NewAddressing(c.mode, rmeta)
 	gmux := http.NewServeMux()
 	gitwire.NewServer(rmeta, objects, model.SHA1).Register(gmux)
 	rpc.NewServer(rmeta, objects, model.SHA1).Register(gmux)
@@ -782,7 +783,7 @@ func TestHAFleetSweepHashedDeletedRepo(t *testing.T) {
 
 	// Resolve both keys BEFORE the delete — the dead repo's rows go away
 	// with it, but the key itself is what the sweep judges by.
-	addr := storage.NewAddressing("hashed", c.Meta)
+	addr := meta.NewAddressing("hashed", c.Meta)
 	deadKey, err := addr.Key(ctx, "t44h")
 	require.NoError(t, err)
 	liveKey, err := addr.Key(ctx, "t44h-stays")

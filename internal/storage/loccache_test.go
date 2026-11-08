@@ -7,18 +7,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
 // countingMeta wraps a MetaStore and counts LocateObjects round trips (the
 // cluster-mode refs RPC, docs/11 B1).
 type countingMeta struct {
-	MetaStore
+	meta.MetaStore
 	locates int
 	oids    int
 }
 
-func (c *countingMeta) LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]ObjectLocation, error) {
+func (c *countingMeta) LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]meta.ObjectLocation, error) {
 	c.locates++
 	c.oids += len(oids)
 	return c.MetaStore.LocateObjects(ctx, repo, oids)
@@ -48,10 +49,10 @@ func (b *testBuffer) Bytes() []byte               { return b.data }
 //     repack), and the next read re-locates and still resolves correctly.
 func TestLocationCacheHitsAndInvalidation(t *testing.T) {
 	ctx := context.Background()
-	inner := NewMemoryMetaStore()
-	meta := &countingMeta{MetaStore: inner}
+	inner := meta.NewMemoryMetaStore()
+	ms := &countingMeta{MetaStore: inner}
 	local := NewLocalShardStore(t.TempDir())
-	svc := NewObjectService(meta, local, []Node{{ID: "n1", Local: true}}, model.SHA1)
+	svc := NewObjectService(ms, local, []Node{{ID: "n1", Local: true}}, model.SHA1)
 	require.NoError(t, inner.CreateRepo(ctx, "r", model.SHA1))
 
 	pack1 := encodeTestPack(t, "alpha")
@@ -71,26 +72,26 @@ func TestLocationCacheHitsAndInvalidation(t *testing.T) {
 	_, data, err := svc.Raw(ctx, "r", alpha)
 	require.NoError(t, err)
 	assert.Equal(t, "alpha", string(data))
-	first := meta.locates
+	first := ms.locates
 	_, data, err = svc.Raw(ctx, "r", alpha)
 	require.NoError(t, err)
 	assert.Equal(t, "alpha", string(data))
-	assert.Equal(t, first, meta.locates, "重复读同一对象不应重复定位")
+	assert.Equal(t, first, ms.locates, "重复读同一对象不应重复定位")
 
 	// Prefetch: one batched locate covers many oids.
-	meta.locates = 0
+	ms.locates = 0
 	svc.Prefetch(ctx, "r", []model.OID{beta, gamma})
-	assert.Equal(t, 1, meta.locates, "Prefetch 应一次 RPC 批量定位")
+	assert.Equal(t, 1, ms.locates, "Prefetch 应一次 RPC 批量定位")
 	_, data, err = svc.Raw(ctx, "r", beta)
 	require.NoError(t, err)
 	assert.Equal(t, "beta", string(data))
-	assert.Equal(t, 1, meta.locates, "预取后读不应再定位")
+	assert.Equal(t, 1, ms.locates, "预取后读不应再定位")
 
 	// Known: batch existence without object fetches.
-	meta.locates = 0
+	ms.locates = 0
 	unknown := model.OID("deadbeefcafedeadbeefcafedeadbeefcafe")
 	known := svc.Known(ctx, "r", []model.OID{alpha, beta, unknown})
-	assert.Equal(t, 1, meta.locates, "Known 应一次批量定位")
+	assert.Equal(t, 1, ms.locates, "Known 应一次批量定位")
 	assert.True(t, known[alpha] && known[beta], "已知对象")
 	assert.False(t, known[unknown], "未知对象")
 
@@ -98,11 +99,11 @@ func TestLocationCacheHitsAndInvalidation(t *testing.T) {
 	// invalidates, the next read re-locates and still resolves.
 	_, rerr := svc.Repack(ctx, "r", 2, 0)
 	require.NoError(t, rerr)
-	meta.locates = 0
+	ms.locates = 0
 	_, data, err = svc.Raw(ctx, "r", alpha)
 	require.NoError(t, err)
 	assert.Equal(t, "alpha", string(data))
-	assert.Greater(t, meta.locates, 0, "repack 失效后应重新定位")
+	assert.Greater(t, ms.locates, 0, "repack 失效后应重新定位")
 	_, data, err = svc.Raw(ctx, "r", gamma)
 	require.NoError(t, err)
 	assert.Equal(t, "gamma", string(data))
@@ -114,7 +115,7 @@ func TestLocationCacheHitsAndInvalidation(t *testing.T) {
 // readable afterwards.
 func TestSynthBatchPacksOnce(t *testing.T) {
 	ctx := context.Background()
-	meta := NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	local := NewLocalShardStore(t.TempDir())
 	svc := NewObjectService(meta, local, []Node{{ID: "n1", Local: true}}, model.SHA1)
 	require.NoError(t, meta.CreateRepo(ctx, "r", model.SHA1))

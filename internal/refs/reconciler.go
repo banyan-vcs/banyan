@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -18,14 +19,14 @@ import (
 // leaves at worst an over-replicated pack, never a registered holder without
 // data, never a delete below the target.
 type Reconciler struct {
-	Meta        storage.MetaStore
+	Meta        meta.MetaStore
 	Health      *HealthTable
 	DefaultR    int
 	Concurrency int
 	// Addressing resolves repo names to storage keys for node calls
 	// (docs/03 §6): hashed mode copies/trims under the opaque key while the
 	// registry stays name-keyed. Nil = named (identity).
-	Addressing *storage.Addressing
+	Addressing *meta.Addressing
 
 	clientsMu sync.Mutex
 	clients   map[string]*storage.NodeClient
@@ -39,7 +40,7 @@ type ReconResult struct {
 	Failed          int `json:"failed"`           // packs that could not converge this pass
 }
 
-func NewReconciler(meta storage.MetaStore, health *HealthTable, defaultR, concurrency int) *Reconciler {
+func NewReconciler(meta meta.MetaStore, health *HealthTable, defaultR, concurrency int) *Reconciler {
 	if defaultR <= 0 {
 		defaultR = 3
 	}
@@ -99,8 +100,8 @@ func (r *Reconciler) RunOnce(ctx context.Context) ReconResult {
 
 // convergePack applies one pack's under/over-replication fix. Returns whether
 // work was dispatched (all bookkeeping is under mu).
-func (r *Reconciler) convergePack(ctx context.Context, repo string, p storage.PackInfo, target int,
-	dead map[string]bool, healthy []storage.NodeInfo, res *ReconResult, mu *sync.Mutex, wg *sync.WaitGroup, sem chan struct{}) bool {
+func (r *Reconciler) convergePack(ctx context.Context, repo string, p meta.PackInfo, target int,
+	dead map[string]bool, healthy []meta.NodeInfo, res *ReconResult, mu *sync.Mutex, wg *sync.WaitGroup, sem chan struct{}) bool {
 
 	holders := p.Nodes
 	var alive []string
@@ -141,7 +142,7 @@ func (r *Reconciler) convergePack(ctx context.Context, repo string, p storage.Pa
 		for _, id := range holders {
 			holding[id] = true
 		}
-		var targets []storage.NodeInfo
+		var targets []meta.NodeInfo
 		for _, n := range healthy {
 			if !holding[n.ID] {
 				targets = append(targets, n)
@@ -343,7 +344,7 @@ func newestOf(packs []storage.NodePackEntry) time.Time {
 // is verified by a streaming trailer-hash pass, then each target streams
 // its own copy straight from the source (the node's landing verifies the
 // trailer + OID again on receipt). Register the new holder set last.
-func (r *Reconciler) copyPack(ctx context.Context, repo string, packOID model.OID, aliveSrc []string, targets []storage.NodeInfo) error {
+func (r *Reconciler) copyPack(ctx context.Context, repo string, packOID model.OID, aliveSrc []string, targets []meta.NodeInfo) error {
 	key := r.nodeKey(ctx, repo)
 	var srcAddr string
 	for _, id := range aliveSrc {

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/banyan-vcs/banyan/internal/storage"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 func tokenRequest(t *testing.T, user, pass string) *http.Request {
@@ -15,11 +15,11 @@ func tokenRequest(t *testing.T, user, pass string) *http.Request {
 	return r
 }
 
-// memTokens is the smallest TokenRegistry: the memory meta store already
+// memTokens is the smallest meta.TokenRegistry: the memory meta store already
 // implements it; this exercises TokenPolicy against it unchanged.
-func newTokenPolicy(t *testing.T) (*TokenPolicy, *storage.MemoryMetaStore) {
+func newTokenPolicy(t *testing.T) (*TokenPolicy, *meta.MemoryMetaStore) {
 	t.Helper()
-	meta := storage.NewMemoryMetaStore()
+	meta := meta.NewMemoryMetaStore()
 	inner := &StaticPolicy{
 		Users:             map[string]string{"alice": "a", "admin": "x"},
 		Admins:            []string{"admin"},
@@ -29,14 +29,14 @@ func newTokenPolicy(t *testing.T) (*TokenPolicy, *storage.MemoryMetaStore) {
 	return p, meta
 }
 
-func putToken(t *testing.T, meta storage.TokenRegistry, user, scope string, expires int64) string {
+func putToken(t *testing.T, tr meta.TokenRegistry, user, scope string, expires int64) string {
 	t.Helper()
-	plain, err := storage.NewTokenPlaintext()
+	plain, err := meta.NewTokenPlaintext()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := meta.PutToken(t.Context(), storage.TokenInfo{
-		Hash: storage.HashToken(plain), User: user, Name: "t", Scope: scope, Expires: expires, Created: 1,
+	if err := tr.PutToken(t.Context(), meta.TokenInfo{
+		Hash: meta.HashToken(plain), User: user, Name: "t", Scope: scope, Expires: expires, Created: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -44,10 +44,10 @@ func putToken(t *testing.T, meta storage.TokenRegistry, user, scope string, expi
 }
 
 func TestTokenPolicyIdentify(t *testing.T) {
-	p, meta := newTokenPolicy(t)
-	read := putToken(t, meta, "alice", storage.ScopeRead, 0)
+	p, m := newTokenPolicy(t)
+	read := putToken(t, m, "alice", meta.ScopeRead, 0)
 
-	if id := p.Identify(tokenRequest(t, "alice", read)); id.User != "alice" || id.Scope != storage.ScopeRead {
+	if id := p.Identify(tokenRequest(t, "alice", read)); id.User != "alice" || id.Scope != meta.ScopeRead {
 		t.Fatalf("token identity = %+v", id)
 	}
 	// The CI-job shape (any username, token as password) is rejected like
@@ -69,13 +69,13 @@ func TestTokenPolicyIdentify(t *testing.T) {
 		t.Fatalf("password identity = %+v", id)
 	}
 	// Expiry is enforced at read time (unix 1000 is long past any clock).
-	exp := putToken(t, meta, "alice", storage.ScopeWrite, 1000)
+	exp := putToken(t, m, "alice", meta.ScopeWrite, 1000)
 	if id := p.Identify(tokenRequest(t, "alice", exp)); !id.Anonymous() {
 		t.Fatalf("expired = %+v, want anonymous", id)
 	}
 	// Revocation kills the token, not the user.
-	rev := putToken(t, meta, "alice", storage.ScopeWrite, 0)
-	if err := meta.RevokeToken(t.Context(), storage.HashToken(rev)); err != nil {
+	rev := putToken(t, m, "alice", meta.ScopeWrite, 0)
+	if err := m.RevokeToken(t.Context(), meta.HashToken(rev)); err != nil {
 		t.Fatal(err)
 	}
 	if id := p.Identify(tokenRequest(t, "alice", rev)); !id.Anonymous() {
@@ -87,10 +87,10 @@ func TestTokenPolicyIdentify(t *testing.T) {
 }
 
 func TestTokenPolicyScopeCeiling(t *testing.T) {
-	p, meta := newTokenPolicy(t)
-	read := putToken(t, meta, "alice", storage.ScopeRead, 0)
-	write := putToken(t, meta, "alice", storage.ScopeWrite, 0)
-	adminTok := putToken(t, meta, "admin", storage.ScopeAdmin, 0)
+	p, m := newTokenPolicy(t)
+	read := putToken(t, m, "alice", meta.ScopeRead, 0)
+	write := putToken(t, m, "alice", meta.ScopeWrite, 0)
+	adminTok := putToken(t, m, "admin", meta.ScopeAdmin, 0)
 
 	aliceRead := p.Identify(tokenRequest(t, "alice", read))
 	aliceWrite := p.Identify(tokenRequest(t, "alice", write))
