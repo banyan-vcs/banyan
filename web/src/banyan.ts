@@ -2,7 +2,9 @@
 // (docs/05, docs/07 §5). Every call carries the logged-in user's Basic
 // credentials, so the SAME authorization rules apply to the web pages as to
 // git clients: branch visibility, directory access, everything — the web
-// tier never re-implements policy, it forwards identity.
+// tier never re-implements policy, it forwards identity. In GitLab-SSO mode
+// the "password" is the user's GitLab token and banyan's GitLabSSO policy
+// validates it — the same credential git uses.
 
 export interface Session {
   user: string;
@@ -31,6 +33,32 @@ export interface TreeEntry {
   name: string;
   oid: string;
   isDir: boolean;
+}
+
+// Subtree management listing (docs/07 §8c): /api/v1/subtrees.
+export interface SubtreeBranch {
+  name: string;
+  head: string;
+  subject?: string;
+  author?: string;
+  when?: number;
+}
+
+export interface SubtreeSummary {
+  path: string;
+  projected: boolean;
+  branches: SubtreeBranch[];
+}
+
+export interface SubtreeListing {
+  repo: string;
+  defaultBranch: string;
+  subtrees: SubtreeSummary[];
+}
+
+export interface SubtreeRule {
+  path: string;
+  users: string[];
 }
 
 function basic(sess: Session): string {
@@ -70,8 +98,14 @@ export async function createRepo(base: string, sess: Session, name: string): Pro
   await call(base, sess, "POST", "/api/v1/repos", { name });
 }
 
-export async function log(base: string, sess: Session, repo: string, limit: number): Promise<LogEntry[]> {
-  const out = await call<{ entries: LogEntry[] }>(base, sess, "POST", "/api/v1/log", { repo, limit });
+// log answers the history query — GET with query params (the endpoint reads
+// r.URL.Query only; a POST body is invisible to it). path ("/a/b" anchor
+// form) filters to commits touching that subtree — the subtree detail page's
+// activity feed.
+export async function log(base: string, sess: Session, repo: string, limit: number, path = ""): Promise<LogEntry[]> {
+  const q = new URLSearchParams({ repo, limit: String(limit) });
+  if (path) q.set("path", path);
+  const out = await call<{ entries: LogEntry[] }>(base, sess, "GET", `/api/v1/log?${q.toString()}`);
   return out.entries || [];
 }
 
@@ -88,6 +122,27 @@ export async function resolve(
 export async function objectBytes(base: string, sess: Session, repo: string, oid: string): Promise<Buffer> {
   const buf = await call<ArrayBuffer>(base, sess, "GET", `/api/v1/objects?repo=${encodeURIComponent(repo)}&oid=${oid}`);
   return Buffer.from(buf);
+}
+
+// subtrees is the management listing (docs/07 §8c): directory timelines
+// grouped by anchor, heads decorated, projected marks the projection refs.
+export async function subtrees(base: string, sess: Session, repo: string): Promise<SubtreeListing> {
+  return call<SubtreeListing>(base, sess, "GET", `/api/v1/subtrees?repo=${encodeURIComponent(repo)}`);
+}
+
+// subtreeRules lists the runtime access rules. Admin-only on the server —
+// callers surface a 403 HttpError and treat it as "no management view".
+export async function subtreeRules(base: string, sess: Session, repo: string): Promise<SubtreeRule[]> {
+  const out = await call<{ rules: SubtreeRule[] }>(base, sess, "GET", `/api/v1/repos/${encodeURIComponent(repo)}/subtree-access`);
+  return out.rules || [];
+}
+
+export async function putSubtreeRule(base: string, sess: Session, repo: string, path: string, users: string[]): Promise<void> {
+  await call(base, sess, "PUT", `/api/v1/repos/${encodeURIComponent(repo)}/subtree-access`, { path, users });
+}
+
+export async function deleteSubtreeRule(base: string, sess: Session, repo: string, path: string): Promise<void> {
+  await call(base, sess, "DELETE", `/api/v1/repos/${encodeURIComponent(repo)}/subtree-access?path=${encodeURIComponent(path)}`);
 }
 
 // listRefs parses the smart-HTTP v1 ref advertisement — the SAME filtered
