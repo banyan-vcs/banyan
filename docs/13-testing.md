@@ -1,26 +1,23 @@
 # 13 · 集成测试
 
 六轮手工测试（MVP → 统一 DAG → 轮询协商 → 交叉压测 → 多人协作）的
-全部验证点已固化为**可自动回归的集成测试**（`integration/`，断言用
-testify，文件按测试目标拆分）：
+全部验证点已固化为**可自动回归的集成测试**（断言用 testify）。2026-11-09
+起按功能域拆为**子包**（每包=独立测试进程，go test 并行调度；跨包共享
+基建沉淀在 `integration/support`）：
 
-| 文件 | 测试目标 |
-|---|---|
-| `helpers_test.go` | 共享基建：进程内服务端装配、git CLI 封装、种子/克隆/断言辅助 |
-| `transport_basic_test.go` | 基础传输：根/子树克隆往返、引用操作、增量推送拉取（T1–T4） |
-| `subtree_collaboration_test.go` | 子树协作语义：线性织入、连续推送、非干扰/路径内互斥、多用户同文件、多作用域稳定性（T5/T7/T8/T10/T18） |
-| `push_guards_test.go` | 服务端守卫与协商：v1 have 协商终态 ACK、竞态窗口 sameXView 兜底（T8b/T9） |
-| `protocol_compat_test.go` | git 协议兼容矩阵：版本降级、partial clone、浅化 deepen/unshallow（T13–T16） |
-| `persistence_test.go` | SQLite 重启持久化（T17） |
-| `rpc_log_test.go` | /api/v1/log 路径过滤（T11） |
-| `packing_efficiency_test.go` | 索引与打包效率：have 减除增量包精确构成（T19）、serve 路径 delta 化（T29） |
-| `refs_and_repack_test.go` | tags/自定义命名空间端到端 + repack 碎片合并/delta/重启（T20/T21/T21b） |
-| `cli_workspace_test.go` | 薄工作区 CLI：最小化 clone/status/commit/pull/log/cat + 冲突恢复 + 子树工作区（T22/T22b） |
-| `cli_snapshot_test.go` | CLI 快照：checkpoint/restore 逐字节还原、--force、缓存清空后的服务端回填、基漂移提示（T91） |
-| `cli_stack_test.go` | CLI 栈式变更：路径分片 push/pop、逐条落台、冲突保全与 pull 续落（T92） |
-| `sync_test.go` | 子树→根显式对齐：TOCTOU 竞态夹具、重放+Base 推进+/.woven 重置、吸收孪生、冲突/merge 链/根工作区边界（T93） |
-| `ha_cluster_test.go` | HA 集群（docs/10）：进程内 refs+storage×4+gateway，散布放置/节点宕恢复/动态副本/refs 重启（T23-T26） |
-| `protocol_v2_test.go` | protocol v2 命令面（docs/04 §9b）：裸 pkt 断言（广告/ls-refs/fetch 段组帧/协商轮/可达性门）+ 真实 git 全链路（clone/fetch/浅化/partial/子树，GIT_TRACE_PACKET 证明 v2 生效） |
+| 子包 | 文件（节选） | 功能域 |
+|---|---|---|
+| `support/` | support.go | 共享基建：进程内服务端装配、git CLI 封装、种子/克隆/断言辅助 + 跨包助手（GitDated/GitV2/NewStack） |
+| `basic/` | transport_basic、protocol_compat | 基础传输（T1–T4）与协议兼容矩阵（T13–T16） |
+| `streaming/` | streaming_{clone,zoo,deepen}、gzbody、fullclone、import、clone_serving | 流式服务与内存链（T48/T53/T55/T57/T58/T59/T82） |
+| `protocol/` | push_guards、force_push、workflow、protocol_v2、packing_efficiency、hooks | 写路径协议面：守卫/收敛/force-push、v2 命令面、打包效率、服务端 hook（T8b/T9/T19/T29/T30/T34/T35/T37/T41/T42/T43/T44/T47） |
+| `subtree/` | subtree_collaboration、projection_refs、subtrees_api、weave_{consistency,provenance} | 子树协作语义与织入一致性（T5/T7/T8/T10/T18/T52/T78/T84/T88/T89/T90） |
+| `ha/` | ha_cluster、refs_and_repack、persistence、storage_modes、memory_chain | HA 集群/存储模式/持久化/小内存链（T17/T20/T21/T23–T26/T31/T36/T40/T46） |
+| `authz/` | auth、auth_tokens、ssh | 授权矩阵、token 细粒度、SSH 传输（T38/T38b/T39/T79–T81） |
+| `cli/` | cli_workspace、cli_snapshot、cli_stack、sync | 薄工作区 CLI 全家（T22*/T91/T92/T93） |
+| `gitalyrpc/` | 17 个 gitaly_*_test.go | gitaly gRPC 兼容面（T60–T76） |
+| `gitlab/` | gitlab_demo、gitlab_hook、gitlab_pushopts | GitLab 活体集成（T83/T85/T86/T87） |
+| `ops/` | rpc_log、console、ops_plane、metrics | RPC 读面/控制面/可观测（T11/T50/T54 + metrics） |
 
 ## 形态
 
@@ -137,16 +134,19 @@ testify，文件按测试目标拆分）：
 ## 运行
 
 ```bash
-go test ./integration/ -v          # 全量（~24s，需 PATH 中有 git）
-go test ./integration/ -run TestMultiUserSameFileCollaboration -v   # 单用例
+go test ./integration/... -v        # 全量（子包并行；墙钟≈最慢子包，需 PATH 中有 git）
+go test ./integration/subtree/ -run TestMultiUserSameFileCollaboration -v   # 单用例（-run 前先选子包）
 go test ./...                       # 单元 + 集成
 ```
 
-无 git CLI 的环境自动跳过（`needGit` → `t.Skip`）。
+无 git CLI 的环境自动跳过（`support.NeedGit` → `t.Skip`）。拆包后每个
+子包是独立测试进程：expvar（/debug/vars）注册表按进程隔离，包内测试
+仍串行——T54 的增量断言语义不变且更干净。
 
 ## 新增功能的测试约定
 
-新能力落地时同步新增集成用例（命名 `Test<场景>`，种子用 `seedRepo`），
+新能力落地时同步新增集成用例（命名 `Test<场景>`，种子用 `support.SeedRepo`），
+文件**落到上表对应功能域的子包**（跨包子包共享基建走 `integration/support`），
 并在此表登记防回归点。手工场景（大仓压测/带宽测量）不进 CI，保留在
 `F:\Workspace\test\`（README 记录复现命令）。
 
