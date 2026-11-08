@@ -82,7 +82,7 @@ pack 协商留给 git 协议面（含 have 减除，docs/09 §3.1）。
 | 命令 | 对标 | 里程碑 |
 |---|---|---|
 | `banyan snapshot` | `git stash`（快照式本地状态） | M4 ·**已落地**（§3.7，T91） |
-| `banyan stack` | 栈式变更（stacked changes） | M4 |
+| `banyan stack` | 栈式变更（stacked changes） | M4 ·**已落地**（§3.8，T92） |
 | `banyan sync` / `merge` / `rebase` | 服务端合并/重放（子树对根对齐） | M3/M4 |
 | `banyan auth login` | token（PAT / CI job token） | M5 |
 | `banyan admin repack / mirror ...` | 运维面（拓扑 A/B 建立/巡检/对账） | M5 |
@@ -197,3 +197,24 @@ banyan snapshot ls | apply <name> [--force] | drop <name>
 
 与 git stash 的偏差（有意）：不自动回退工作树、apply 不做三方合并、untracked
 默认捕获。纯本地离线（仅"缓存被清后的干净文件回填"一条路径需网络）。
+
+### 3.8 栈式变更 stack（2026-11-08 落地，T92）
+
+```
+banyan stack push -m <msg> [path...]     # 捕获选中脏路径为一个变更集条目并本地回退
+banyan stack ls | pop | drop <id>        # 检视 / 顶条写回工作树 / 弃条
+banyan stack commit [<id>]               # 逐条落台（默认全部，oldest-first）
+```
+
+本地变更队列 + 按路径分片：push 把选中的脏路径（精确匹配或目录前缀；无参数
+= 全部，含 untracked——banyan 无 ignore 清单，与 status/snapshot 同口径）存为
+一条 changeset（字节进 `.banyan/stack-blobs/` 内容寻址库，独立于可清缓存），
+**并把这些路径本地回退**（tracked 从 manifest OID 物化，untracked 删除——字节
+已在栈里）。commit 经普通 `/api/v1/commit` 逐条落台并**把内容写回工作树**
+（checkout 与 manifest 一起前进，runCommit 同款契约）；changeset 是路径级重
+放，服务端在当前头上重组——基被动过时首条即 `CONFLICT_BASE_MOVED`（exit 1，
+未落地条目原样保留），`pull` 后重试即在新基上全部落地，无需 rebase。
+
+顺带补齐了"部分提交"：`stack push -m x -- path` 即按路径分片暂存，落台时机自
+选。边界：pop 在受影响路径当前有改动时拒绝（exit 1）；无 ignore 机制（见
+上）；条目不跨工作区（`.banyan/` 局部状态，docs/06 §2 立场）。

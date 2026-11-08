@@ -45,7 +45,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 
 ## 当前能力
 
-以下全部已落地，由 **104 个顶层集成测试函数**以真实 git CLI 钉住
+以下全部已落地，由 **105 个顶层集成测试函数**以真实 git CLI 钉住
 （[docs/13](docs/13-testing.md)）；GitLab 模式各条另经真 GitLab-CE 活体验证
 （[docs/19](docs/19-gitaly-compat.md) §8、[docs/20](docs/20-gitlab-integration.md)）。
 
@@ -67,7 +67,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 |---|---|
 | 任意子目录即仓库 | `/r/{repo}/tree/{subdir}`，完整投影历史——`log / show / fsck` 全可用 |
 | 目录时间线 | 一次 push 只 CAS 一条时间线——零跨目录锁；根视图读时织入（v5） |
-| 目录级工作流（M4） | 同目录队列 + 服务端收敛：突发零拒绝、冲突按票隔离；`banyan snapshot` 工作区快照——逐字节时间机、离线可用（[docs/15](docs/15-workflow.md)、[docs/06](docs/06-cli.md) §3.7） |
+| 目录级工作流（M4） | 同目录队列 + 服务端收敛：突发零拒绝、冲突按票隔离；`banyan snapshot` 工作区快照（逐字节时间机、离线）与 `banyan stack` 路径分片变更队列（排队+择机落台）（[docs/15](docs/15-workflow.md)、[docs/06](docs/06-cli.md) §3.7-3.8） |
 | 个人分支命名空间 | `refs/heads/<user>/*` 仅本人可见——monorepo 分支过多解法 |
 | repack | 碎片合并 + delta 编码 |
 | 有界内存服务 | 精确命中 verbatim 直传、类型化枚举 + 逐对象窗口编码，任意仓规模（[docs/03](docs/03-storage.md) §3） |

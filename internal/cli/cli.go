@@ -26,6 +26,8 @@ workspace commands (run inside a clone — any subdirectory — or with -C):
   fetch-objects <oid>...                                      backfill objects into the cache
   snapshot [save] [-m msg] [-n name]                          checkpoint the working state (offline)
   snapshot ls | apply <name> [--force] | drop <name>          inspect / restore / remove checkpoints
+  stack push -m <msg> [path...]                               capture dirty paths as a queued changeset
+  stack ls | pop | drop <id> | commit [<id>]                  land entries oldest-first via /api/v1/commit
   branch | tag                                                list remote refs
   repo ls                                                     list server repos (needs a workspace or BANYAN_SERVER)
   import <repo> <url> [--branch b] [--segment-bytes 3G] [--dry-run]
@@ -60,6 +62,8 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return runPull(wsRoot, rest, stdout, stderr)
 	case "snapshot":
 		return runSnapshot(wsRoot, rest, stdout, stderr)
+	case "stack":
+		return runStack(wsRoot, rest, stdout, stderr)
 	case "log":
 		return runLog(wsRoot, rest, stdout, stderr)
 	case "cat":

@@ -95,7 +95,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 - [x] M4.3 收敛：路径级合并 + 同文件 diff3 + 冲突隔离 + OCC 环（2026-10-25；workflow.convergence auto 默认/reject 可关）
 - [ ] M4.4 指标 + agent-burst bench 场景 + SLO 门 + 一次 CAS 批追加 + treeKnown 索引
 - [x] 快照式本地状态：`banyan snapshot`（checkpoint/restore 时间机语义，2026-11-08，T91；status 既有）
-- [ ] 栈式变更（banyan stack）
+- [x] 栈式变更：`banyan stack`（本地变更队列 + 路径分片 + 逐条落台，2026-11-08，T92）
 - [ ] `banyan sync`（子目录显式 rebase 对齐根）
 
 ## 风险登记

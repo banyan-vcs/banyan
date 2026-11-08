@@ -76,7 +76,7 @@ directory timelines align both boundaries at the same granularity.
 
 ## What works today
 
-Everything below is landed and pinned by **104 top-level integration test
+Everything below is landed and pinned by **105 top-level integration test
 functions** driving the real git CLI ([docs/13](docs/13-testing.md));
 GitLab-mode rows are additionally verified against a real GitLab-CE
 ([docs/19](docs/19-gitaly-compat.md) §8, [docs/20](docs/20-gitlab-integration.md)).
@@ -99,7 +99,7 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 |---|---|
 | Any subdirectory is a repo | `/r/{repo}/tree/{subdir}`, full projected history — `log / show / fsck` all work on it |
 | Per-directory timelines | a push CASes exactly one timeline — zero cross-directory locks; the root view is woven on read (v5) |
-| Directory workflow (M4) | per-timeline queue + server-side convergence: bursts land with zero rejections, conflicts isolated per ticket; `banyan snapshot` workspace checkpoints — byte-exact time machine, offline ([docs/15](docs/15-workflow.md), [docs/06](docs/06-cli.md) §3.7) |
+| Directory workflow (M4) | per-timeline queue + server-side convergence: bursts land with zero rejections, conflicts isolated per ticket; `banyan snapshot` workspace checkpoints and `banyan stack` path-scoped changeset queue — offline time machine + staged landing ([docs/15](docs/15-workflow.md), [docs/06](docs/06-cli.md) §3.7-3.8) |
 | Personal branch namespaces | `refs/heads/<user>/*` visible to their owner alone — the monorepo too-many-branches answer |
 | Repack | fragment merge + delta encoding |
 | Bounded-memory serving | exact-pack verbatim streams; typed enumeration + windowed encode at any repo size ([docs/03](docs/03-storage.md) §3) |
