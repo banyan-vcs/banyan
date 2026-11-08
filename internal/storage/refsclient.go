@@ -397,6 +397,12 @@ func (m *RemoteMeta) EnsureTimeline(ctx context.Context, tl model.Timeline, head
 	}, nil)
 }
 
+func (m *RemoteMeta) SetTimelineBase(ctx context.Context, tl model.Timeline, base model.OID) error {
+	return m.Refs.call(ctx, "/internal/meta/timeline-base", map[string]string{
+		"repo": tl.Repo, "anchor": string(tl.Anchor), "name": tl.Name, "base": string(base),
+	}, nil)
+}
+
 func (m *RemoteMeta) ListTimelines(ctx context.Context, repo string, anchor model.AnchorPath) ([]model.Timeline, error) {
 	var out struct {
 		Timelines []model.Timeline `json:"timelines"`

@@ -206,6 +206,24 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 	if err := m.CASHead(ctx, sub, "", "s2"); err != nil {
 		t.Fatalf("create via zero expected: %v", err)
 	}
+	// Fork-point advance (SetTimelineBase, docs/02 §12 explicit rebase): the
+	// base moves while the head stays, a later CAS preserves the new base,
+	// and unknown timelines reject.
+	if err := m.SetTimelineBase(ctx, sub, "h9"); err != nil {
+		t.Fatalf("set base: %v", err)
+	}
+	if st, err := m.Timeline(ctx, sub); err != nil || st.Head != "s2" || st.Base != "h9" {
+		t.Fatalf("after set base = %+v, %v", st, err)
+	}
+	if err := m.CASHead(ctx, sub, "s2", "s3"); err != nil {
+		t.Fatalf("cas after set base: %v", err)
+	}
+	if st, err := m.Timeline(ctx, sub); err != nil || st.Head != "s3" || st.Base != "h9" {
+		t.Fatalf("cas dropped base = %+v, %v", st, err)
+	}
+	if err := m.SetTimelineBase(ctx, model.Timeline{Repo: "r1", Anchor: "/lib", Name: "ghost"}, "h"); !errors.Is(err, ErrTimelineUnknown) {
+		t.Fatalf("set base unknown = %v, want ErrTimelineUnknown", err)
+	}
 
 	// --- CAS race: N concurrent writers, exactly one wins ---
 	var wins atomic.Int32

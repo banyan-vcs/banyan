@@ -1463,6 +1463,34 @@ func (s *SQLMetaStore) EnsureTimeline(ctx context.Context, tl model.Timeline, he
 	return tx.Commit()
 }
 
+// SetTimelineBase advances an existing timeline's fork point (explicit-rebase
+// bookkeeping, docs/02 §12). RowsAffected distinguishes the unknown-timeline
+// rejection across all three dialects.
+func (s *SQLMetaStore) SetTimelineBase(ctx context.Context, tl model.Timeline, base model.OID) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.fenceRejectTx(ctx, tx, tl.Repo); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, s.q(
+		"UPDATE timelines SET base=? WHERE repo=? AND anchor=? AND name=?"),
+		string(base), tl.Repo, string(tl.Anchor), tl.Name)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrTimelineUnknown
+	}
+	return tx.Commit()
+}
+
 func (s *SQLMetaStore) ListTimelines(ctx context.Context, repo string, anchor model.AnchorPath) ([]model.Timeline, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(
 		"SELECT anchor, name FROM timelines WHERE repo=? AND anchor=? ORDER BY name"),

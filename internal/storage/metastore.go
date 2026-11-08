@@ -200,6 +200,12 @@ type TimelineStore interface {
 	// EnsureTimeline idempotent init: creates with (head, base) when absent
 	// (before a subtree timeline's first push, its head is the projection head; base records the fork point).
 	EnsureTimeline(ctx context.Context, tl model.Timeline, head, base model.OID) error
+	// SetTimelineBase advances the recorded fork point of an existing
+	// timeline (explicit-rebase bookkeeping, docs/02 §12: after a subtree
+	// sync the local chain sits on the current projection, so the weave's
+	// local zone shrinks to exactly the rebased locals). An unknown timeline
+	// returns ErrTimelineUnknown.
+	SetTimelineBase(ctx context.Context, tl model.Timeline, base model.OID) error
 	ListTimelines(ctx context.Context, repo string, anchor model.AnchorPath) ([]model.Timeline, error)
 	// ListAllTimelines enumerates every timeline of the repo across anchors
 	// (root view materialization input, docs/02 §13).
@@ -822,6 +828,20 @@ func (m *MemoryMetaStore) EnsureTimeline(_ context.Context, tl model.Timeline, h
 		return nil // already exists (incl. locally committed): don't overwrite
 	}
 	m.timelines[tl.Repo][tl] = model.TimelineState{Head: head, Base: base}
+	return nil
+}
+
+func (m *MemoryMetaStore) SetTimelineBase(_ context.Context, tl model.Timeline, base model.OID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fenceHit(tl.Repo) {
+		return fenceErr(tl.Repo)
+	}
+	st, ok := m.timelines[tl.Repo][tl]
+	if !ok {
+		return ErrTimelineUnknown
+	}
+	m.timelines[tl.Repo][tl] = model.TimelineState{Head: st.Head, Base: base}
 	return nil
 }
 

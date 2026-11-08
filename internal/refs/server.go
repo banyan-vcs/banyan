@@ -124,6 +124,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/timeline", s.hTimeline)
 	meta.HandleFunc("/internal/meta/cas-head", s.hCASHead)
 	meta.HandleFunc("/internal/meta/ensure-timeline", s.hEnsureTimeline)
+	meta.HandleFunc("/internal/meta/timeline-base", s.hSetTimelineBase)
 	meta.HandleFunc("/internal/meta/list-timelines", s.hListTimelines)
 	meta.HandleFunc("/internal/meta/list-all-timelines", s.hListAllTimelines)
 	meta.HandleFunc("/internal/meta/set-placement", s.hSetPlacement)
@@ -683,6 +684,26 @@ func (s *Server) hEnsureTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	tl := model.Timeline{Repo: req.Repo, Anchor: model.AnchorPath(req.Anchor), Name: req.Name}
 	if err := s.Meta.EnsureTimeline(r.Context(), tl, model.OID(req.Head), model.OID(req.Base)); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// hSetTimelineBase advances an existing timeline's fork point (explicit-rebase
+// bookkeeping, docs/02 §12 — the sync path lands here in cluster mode).
+func (s *Server) hSetTimelineBase(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Repo   string `json:"repo"`
+		Anchor string `json:"anchor"`
+		Name   string `json:"name"`
+		Base   string `json:"base"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	tl := model.Timeline{Repo: req.Repo, Anchor: model.AnchorPath(req.Anchor), Name: req.Name}
+	if err := s.Meta.SetTimelineBase(r.Context(), tl, model.OID(req.Base)); err != nil {
 		writeErr(w, err)
 		return
 	}
