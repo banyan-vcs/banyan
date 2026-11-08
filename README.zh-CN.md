@@ -108,10 +108,14 @@ git 自身答案对拍（T60）、workhorse 形态传输模拟器（T61）、真
 cmd/banyand/        服务端守护进程（git smart HTTP + JSON API）
 cmd/banyan/         薄工作区 CLI
 internal/model/     核心数据模型（anchored commit / timeline / assembly / projection）
-internal/storage/   分布式 pack 存储（shard / metastore / packfile / index / repack）
+internal/meta/       元数据面（MetaStore：memory / SQL / sqlite、refs 客户端、
+                    PAT、子树规则、寻址映射）
+internal/storage/   对象面（分片 pack 存储：shard / packfile / index / repack）
 internal/view/      读时视图引擎（v5 织入、子树视图）
 internal/gitwire/   git wire 协议（smart HTTP v1 / upload-pack / receive-pack）
-internal/gitaly/   gitaly gRPC 前端（GitLab 直接替换，docs/19）
+internal/gitaly/   gitaly gRPC 前端壳（鉴权/生命周期）+ 按协议服务家族的子包
+                    （repository/commit/ref/object/operations/transport/backup/
+                    node + kit 共享层），GitLab 直接替换，docs/19
 internal/gitalypb/ vendored gitaly 协议（v19.5.2，生成代码）
 internal/service/   协议无关服务层（三前端共核心，docs/05）
 internal/rpc/       httpd JSON 前端（/api/v1）

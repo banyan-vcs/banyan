@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/banyan-vcs/banyan/internal/gitaly/kit"
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
 )
 
@@ -257,7 +258,7 @@ func TestGitalyGetArchive(t *testing.T) {
 		raw, err := fetchArchive(&gitalypb.GetArchiveRequest{
 			Repository: repo, CommitId: "main", Prefix: "proj", Format: gitalypb.GetArchiveRequest_TAR})
 		require.NoError(t, err)
-		assert.Equal(t, 0, len(raw)%tarBlockSize, "records pad to 10240")
+		assert.Equal(t, 0, len(raw)%kit.TarBlockSize, "records pad to 10240")
 
 		// pax_global_header block: name, mode 0666, typeflag 'g', comment body.
 		assert.Equal(t, "pax_global_header", strings.TrimRight(string(raw[0:20]), "\x00"))

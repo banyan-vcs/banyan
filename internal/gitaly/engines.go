@@ -8,10 +8,13 @@ package gitaly
 import (
 	"context"
 
+	"github.com/banyan-vcs/banyan/internal/gitaly/commit"
+	"github.com/banyan-vcs/banyan/internal/gitaly/kit"
+	"github.com/banyan-vcs/banyan/internal/gitaly/object"
 	"github.com/banyan-vcs/banyan/internal/gitwire"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
-	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -21,9 +24,12 @@ import (
 // internal gitwire instance comes along for the ride: revision resolution
 // consults its advertisement (projection refs included), so engine answers
 // agree with every other face.
-func Engines(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo, svc *service.Service) *Server {
-	return &Server{Meta: meta, Objects: objects, Algo: algo, Svc: svc,
-		git: gitwire.NewServer(meta, objects, algo)}
+func Engines(ms meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo, svc *service.Service) *Server {
+	b := &kit.Base{Meta: ms, Objects: objects, Algo: algo, Svc: svc}
+	s := &Server{Base: b}
+	s.git = gitwire.NewServer(ms, objects, algo)
+	b.Git = s.git
+	return s
 }
 
 // DiffText renders the git-format unified diff between two revisions
@@ -31,44 +37,11 @@ func Engines(meta meta.MetaStore, objects *storage.ObjectService, algo model.Has
 // path filters the output: an exact file path, or a directory prefix when
 // it carries a trailing slash; "" = the whole tree diff.
 func (s *Server) DiffText(ctx context.Context, repo, from, to, path string) (string, error) {
-	ds := &diffService{s: s}
-	changes, err := ds.diffBetween(ctx, repo, from, to)
-	if err != nil {
-		return "", err
-	}
-	var b []byte
-	for _, c := range changes {
-		if !pathMatch(path, c.path) {
-			continue
-		}
-		b = append(b, ds.gitFormatPatch(ctx, repo, c)...)
-	}
-	return string(b), nil
+	return object.DiffText(ctx, s.Base, repo, from, to, path)
 }
 
 // BlameText renders `git blame --line-porcelain` text for one path at one
 // revision: recursive first-parent walk with per-step diff attribution.
 func (s *Server) BlameText(ctx context.Context, repo, rev, path string) (string, error) {
-	cs := &commitService{s: s}
-	tip, err := s.resolveRevision(ctx, repo, rev)
-	if err != nil {
-		return "", err
-	}
-	lines, chain, owner, origNo, err := cs.blameLines(ctx, repo, tip, path)
-	if err != nil {
-		return "", err
-	}
-	return blamePorcelain(lines, chain, owner, origNo, path), nil
-}
-
-// pathMatch: "" matches everything; a trailing slash matches the directory
-// prefix; otherwise the exact path.
-func pathMatch(filter, path string) bool {
-	if filter == "" || filter == path {
-		return true
-	}
-	if len(filter) > 1 && filter[len(filter)-1] == '/' {
-		return len(path) > len(filter) && path[:len(filter)] == filter
-	}
-	return false
+	return commit.BlameText(ctx, s.Base, repo, rev, path)
 }

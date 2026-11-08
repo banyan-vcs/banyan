@@ -6,6 +6,10 @@
 // bearer token — authorization happens in the frontend (Rails/console), not
 // here. The banyan auth plane (docs/07) is bypassed by design.
 //
+// Structure (2026-11-08 split): this package is the shell — server
+// lifecycle, bearer-token auth, the gRPC mux — while each protocol service
+// family lives in its own sub-package (repository, commit, ref, object,
+// operations, transport, backup, node) over the shared kit.Base plane.
 // Coverage grows in vertical slices; every service is registered from the
 // start and unimplemented RPCs fail with codes.Unimplemented so clients see
 // a stable contract, never a connection error.
@@ -17,9 +21,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/x509"
 	"encoding/hex"
-	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -27,78 +29,56 @@ import (
 	"strings"
 	"time"
 
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/banyan-vcs/banyan/internal/gitalypb"
+	"github.com/banyan-vcs/banyan/internal/gitaly/backup"
+	"github.com/banyan-vcs/banyan/internal/gitaly/commit"
+	"github.com/banyan-vcs/banyan/internal/gitaly/kit"
+	"github.com/banyan-vcs/banyan/internal/gitaly/node"
+	"github.com/banyan-vcs/banyan/internal/gitaly/object"
+	"github.com/banyan-vcs/banyan/internal/gitaly/operations"
+	"github.com/banyan-vcs/banyan/internal/gitaly/ref"
+	"github.com/banyan-vcs/banyan/internal/gitaly/repository"
+	"github.com/banyan-vcs/banyan/internal/gitaly/transport"
 	"github.com/banyan-vcs/banyan/internal/gitwire"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
-	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// ProtoVersion is the vendored gitaly protocol (internal/gitalypb) this
-// server speaks. ServerInfo reports it as server_version; Rails requires a
-// minimum gitaly version, so the compat layer pins to the vendored minor.
-const ProtoVersion = "19.5.2"
+// ProtoVersion is the vendored gitaly protocol this server speaks (kit
+// owns the value; ServerInfo reports it as server_version).
+const ProtoVersion = kit.ProtoVersion
 
-// GitVersionReported is what ServerInfo reports as git_version. Banyan has
-// no git binary — this states the git feature baseline its pure-Go protocol
-// surface implements, for frontends that gate on it.
-const GitVersionReported = "2.45.2"
+// GitVersionReported is what ServerInfo reports as git_version (kit owns
+// the value).
+const GitVersionReported = kit.GitVersionReported
 
-// Options configures the compat server.
-type Options struct {
-	// Token is the bearer token clients must present (authorization:
-	// Bearer <token>); empty disables authentication (development only).
-	Token string
-	// GitLab roots the post-receive → internal API adapter on the internal
-	// gitwire instance (pushes that carry a platform identity notify the
-	// platform's push processing, docs/20). Nil = adapter off.
-	GitLab *gitwire.GitLabConfig
-	// StorageName is the virtual storage this node answers as — must match
-	// the storage name the frontend is configured with. Default "default".
-	StorageName string
-	// ReportedVersion overrides ProtoVersion in ServerInfo (rare; e.g.
-	// impersonating an older node).
-	ReportedVersion string
-	// Convergence and FullCloneMaxBytes mirror the node's workflow/budget
-	// knobs onto the internal gitwire instance (push semantics + the
-	// clone-budget gate apply to gitaly traffic exactly as to /r/).
-	Convergence      bool
-	FullCloneMaxByte int64
-	// BackupDir roots the server-side backup sink (the local-directory
-	// stand-in for upstream's go-cloud blob sink). Empty = server-side
-	// backups off: the backup RPCs answer FailedPrecondition, like an
-	// unconfigured upstream node.
-	BackupDir string
-}
+// Options configures the compat server (kit owns the shape; the alias
+// keeps NewServer's signature stable for callers).
+type Options = kit.Options
 
 // maxWireMsg matches upstream's large-message posture: a fetch response or
 // push body rides in few/one protobuf messages, not 4MiB defaults.
 const maxWireMsg = 1 << 30
 
-// Server is the gitaly-protocol frontend over banyan storage.
+// Server is the gitaly-protocol frontend over banyan storage: the shell
+// (auth, mux, lifecycle) around the per-service families, all sharing the
+// embedded kit.Base plane.
 type Server struct {
-	Meta    meta.MetaStore
-	Objects *storage.ObjectService
-	Algo    model.HashAlgo
-	Svc     *service.Service
-	Opts    Options
+	*kit.Base
 
 	// git/mux: an internal gitwire instance serving the git wire protocol;
-	// smart-HTTP/SSH RPCs bridge onto it (docs/19 §1).
-	git *gitwire.Server
-	mux *http.ServeMux
-
-	signingKey ed25519.PrivateKey
-	grpcSrv    *grpc.Server
-	lis        net.Listener
+	// smart-HTTP/SSH RPCs bridge onto it (docs/19 §1). The Base mirrors
+	// both (Git, Handler) for the families.
+	git     *gitwire.Server
+	grpcSrv *grpc.Server
+	lis     net.Listener
 }
 
 // NewServer builds a server registering every gitaly service. Wire it with
@@ -111,47 +91,38 @@ func NewServer(meta meta.MetaStore, objects *storage.ObjectService, algo model.H
 		opts.ReportedVersion = ProtoVersion
 	}
 	_, priv, _ := ed25519.GenerateKey(nil) // sign(); rotation = restart, Rails refetches
-	s := &Server{
+	b := &kit.Base{
 		Meta:       meta,
 		Objects:    objects,
 		Algo:       algo,
 		Svc:        service.New(meta, objects, algo),
 		Opts:       opts,
-		signingKey: priv,
+		SigningKey: priv,
 	}
+	s := &Server{Base: b}
 	s.git = gitwire.NewServer(meta, objects, algo)
 	s.git.SetGitLab(opts.GitLab)
 	s.git.Convergence = opts.Convergence
 	s.git.FullCloneMaxBytes = opts.FullCloneMaxByte
-	s.mux = http.NewServeMux()
-	s.git.Register(s.mux)
+	b.Git = s.git
+	mux := http.NewServeMux()
+	s.git.Register(mux)
+	b.Handler = mux
 	s.grpcSrv = grpc.NewServer(
-		grpc.Creds(muxCredentials{}),
+		grpc.Creds(transport.MuxCredentials{}),
 		grpc.ChainUnaryInterceptor(s.authUnary),
 		grpc.ChainStreamInterceptor(s.authStream),
 		grpc.MaxRecvMsgSize(maxWireMsg),
 		grpc.MaxSendMsgSize(maxWireMsg),
 	)
-	gitalypb.RegisterServerServiceServer(s.grpcSrv, &serverService{s: s})
-	gitalypb.RegisterRepositoryServiceServer(s.grpcSrv, &repositoryService{s: s})
-	gitalypb.RegisterRefServiceServer(s.grpcSrv, &refService{s: s})
-	gitalypb.RegisterCommitServiceServer(s.grpcSrv, &commitService{s: s})
-	gitalypb.RegisterBlobServiceServer(s.grpcSrv, &blobService{s: s})
-	gitalypb.RegisterDiffServiceServer(s.grpcSrv, &diffService{s: s})
-	gitalypb.RegisterSmartHTTPServiceServer(s.grpcSrv, &smartHTTPService{s: s})
-	gitalypb.RegisterSSHServiceServer(s.grpcSrv, &sshService{s: s})
-	gitalypb.RegisterOperationServiceServer(s.grpcSrv, &operationService{s: s})
-	gitalypb.RegisterHookServiceServer(s.grpcSrv, &hookService{s: s})
-	gitalypb.RegisterConflictsServiceServer(s.grpcSrv, &conflictsService{s: s})
-	gitalypb.RegisterRemoteServiceServer(s.grpcSrv, &remoteService{s: s})
-	gitalypb.RegisterCleanupServiceServer(s.grpcSrv, &cleanupService{s: s})
-	gitalypb.RegisterObjectPoolServiceServer(s.grpcSrv, &objectPoolService{s: s})
-	gitalypb.RegisterInternalGitalyServer(s.grpcSrv, &internalGitalyService{s: s})
-	gitalypb.RegisterBackupServiceServer(s.grpcSrv, &backupService{s: s})
-	gitalypb.RegisterPartitionServiceServer(s.grpcSrv, &partitionService{s: s})
-	gitalypb.RegisterAnalysisServiceServer(s.grpcSrv, &analysisService{s: s})
-	gitalypb.RegisterPraefectInfoServiceServer(s.grpcSrv, &praefectInfoService{s: s})
-	gitalypb.RegisterRefTransactionServer(s.grpcSrv, &refTransactionService{s: s})
+	repository.Register(s.grpcSrv, b)
+	ref.Register(s.grpcSrv, b)
+	commit.Register(s.grpcSrv, b)
+	object.Register(s.grpcSrv, b)
+	operations.Register(s.grpcSrv, b)
+	transport.Register(s.grpcSrv, b)
+	backup.Register(s.grpcSrv, b)
+	node.Register(s.grpcSrv, b)
 	return s
 }
 
@@ -299,19 +270,4 @@ func tokenStreamInterceptor(token string) grpc.StreamClientInterceptor {
 	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 		return streamer(metadata.AppendToOutgoingContext(ctx, "authorization", bearerPrefix+token), desc, cc, method, opts...)
 	}
-}
-
-// openSSHPublicKey renders an ed25519 public key in authorized_keys form —
-// the format callers of ServerSignature expect.
-func openSSHPublicKey(pub ed25519.PublicKey) ([]byte, error) {
-	der, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		return nil, err
-	}
-	block := &pem.Block{Type: "PUBLIC KEY", Bytes: der}
-	var out strings.Builder
-	if err := pem.Encode(&out, block); err != nil {
-		return nil, err
-	}
-	return []byte(strings.TrimSpace(out.String())), nil
 }

@@ -306,17 +306,17 @@ func TestGitalyOperationsAndLFS(t *testing.T) {
 			"docs/manual.md":   "guide v2",
 			"somedir/.gitkeep": "",
 		} {
-			entry, err := srv.entryAtPath(ctx, repoName, c.TreeOID, path)
+			entry, err := srv.EntryAtPath(ctx, repoName, c.TreeOID, path)
 			require.NoError(t, err, path)
 			require.NotNil(t, entry, path)
 			_, data, err := objects.Raw(ctx, repoName, entry.Target)
 			require.NoError(t, err)
 			assert.Equal(t, want, string(data), path)
 		}
-		entry, err := srv.entryAtPath(ctx, repoName, c.TreeOID, "hello.txt")
+		entry, err := srv.EntryAtPath(ctx, repoName, c.TreeOID, "hello.txt")
 		require.NoError(t, err)
 		assert.Nil(t, entry, "deleted")
-		exec, err := srv.entryAtPath(ctx, repoName, c.TreeOID, "web/new.txt")
+		exec, err := srv.EntryAtPath(ctx, repoName, c.TreeOID, "web/new.txt")
 		require.NoError(t, err)
 		assert.Equal(t, "100755", exec.Mode, "CREATE with ExecuteFilemode")
 	})

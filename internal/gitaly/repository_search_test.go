@@ -30,11 +30,11 @@ func TestGitalySearchSurface(t *testing.T) {
 	repoName := "proj-search"
 	_, _ = seedHistory(t, svc, repoName,
 		map[string]string{
-			"hello.txt":       "hello gitaly\n",
-			"docs/guide.md":   "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\niota\nkappa\n",
-			"LICENSE":         mitLicense,
-			".gitattributes":  "*.md text\n*.go -merge\nbuild/** binary\n",
-			"src/main.go":     "package main\n",
+			"hello.txt":      "hello gitaly\n",
+			"docs/guide.md":  "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\niota\nkappa\n",
+			"LICENSE":        mitLicense,
+			".gitattributes": "*.md text\n*.go -merge\nbuild/** binary\n",
+			"src/main.go":    "package main\n",
 		},
 		map[string]string{"src/main.go": "package main\n\nfunc main() {}\n"})
 	repo := &gitalypb.Repository{StorageName: "default", RelativePath: repoName}
