@@ -76,7 +76,7 @@ directory timelines align both boundaries at the same granularity.
 
 ## What works today
 
-Everything below is landed and pinned by **101 top-level integration test
+Everything below is landed and pinned by **103 top-level integration test
 functions** driving the real git CLI ([docs/13](docs/13-testing.md));
 GitLab-mode rows are additionally verified against a real GitLab-CE
 ([docs/19](docs/19-gitaly-compat.md) §8, [docs/20](docs/20-gitlab-integration.md)).

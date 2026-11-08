@@ -48,6 +48,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/objects", s.authn(s.handleObjects))
 	mux.HandleFunc("/api/v1/objects/content", s.authn(s.handleObjectsContent))
 	mux.HandleFunc("/api/v1/timelines", s.authn(s.handleTimelines))
+	mux.HandleFunc("/api/v1/subtrees", s.authn(s.handleSubtrees)) // subtree listing (docs/07 §8)
 	mux.HandleFunc("/api/v1/log", s.authn(s.handleLog))
 	mux.HandleFunc("/api/v1/repack", s.authn(s.handleRepack))
 	mux.HandleFunc("/api/v1/fetch-trees", s.authn(s.handleFetchTrees))
@@ -264,6 +265,34 @@ func (s *Server) handleTimelines(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "timelines": tls})
 }
 
+// --- GET /api/v1/subtrees: the repo's directory timelines as a management
+// listing (docs/07 §8, docs/20) — /.woven internals and aux refs filtered,
+// branch heads decorated with their last commit, projected marks the
+// refs/banyan/tree/<dir> projection set. ---
+
+func (s *Server) handleSubtrees(w http.ResponseWriter, r *http.Request) {
+	repo := r.URL.Query().Get("repo")
+	if repo == "" {
+		writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "repo required"}})
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET"}})
+		return
+	}
+	subs, err := s.Svc.Subtrees(r.Context(), repo)
+	if err != nil {
+		writeServiceErr(w, err)
+		return
+	}
+	branch, err := s.Svc.DefaultBranch(r.Context(), repo)
+	if err != nil {
+		writeServiceErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "defaultBranch": branch, "subtrees": subs})
+}
+
 // --- POST /api/v1/repack: merge a repo's pack fragments (docs/03 §5, docs/09 §3.2) ---
 
 type repackRequest struct {
@@ -419,8 +448,8 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
-	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks") {
-		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks)"}})
+	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks" && parts[1] != "subtree-access") {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access)"}})
 		return
 	}
 	// Repo management is admin territory (docs/07 §5); size stays a plain
@@ -458,6 +487,56 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := s.Meta.DeleteHook(r.Context(), repo, id); err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET, PUT or DELETE"}})
+		}
+		return
+	}
+	if parts[1] == "subtree-access" {
+		// Runtime directory access rules (docs/07 §8): fetch AND push of a
+		// subtree anchor (and everything deeper) restricted to an allowlist.
+		// Same admin gate as the other management rows; deployments whose
+		// metadata plane carries no rule store answer 404 (the token-layer
+		// precedent).
+		rs, ok := s.Meta.(storage.SubtreeRuleStore)
+		if !ok {
+			writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "subtree rules not available on this deployment's metadata plane"}})
+			return
+		}
+		repo := parts[0]
+		switch r.Method {
+		case http.MethodGet:
+			rules, err := rs.SubtreeRules(r.Context(), repo)
+			if err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "rules": rules})
+		case http.MethodPut:
+			var rule storage.SubtreeRule
+			if !decodeBody(w, r, &rule) {
+				return
+			}
+			if err := rule.Valid(); err != nil {
+				writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: err.Error()}})
+				return
+			}
+			if err := rs.SetSubtreeRule(r.Context(), repo, rule); err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		case http.MethodDelete:
+			path := r.URL.Query().Get("path")
+			if !storage.ValidSubtreePath(path) {
+				writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "path query parameter required (anchor form: / or /a/b)"}})
+				return
+			}
+			if err := rs.DeleteSubtreeRule(r.Context(), repo, path); err != nil {
 				writeServiceErr(w, err)
 				return
 			}

@@ -70,8 +70,10 @@ func srcMarker(view, src model.AnchorPath) model.AnchorPath {
 	return model.AnchorPath(string(wovenAnchor) + string(view) + "@" + string(src))
 }
 
-// isWovenFamily reports whether an anchor belongs to the internal /.woven family.
-func isWovenFamily(a model.AnchorPath) bool {
+// IsWovenFamily reports whether an anchor belongs to the internal /.woven
+// family. Exported for the service layer's subtree listing (docs/07 §8):
+// those timelines are materialization bookkeeping, not user-visible history.
+func IsWovenFamily(a model.AnchorPath) bool {
 	return strings.HasPrefix(string(a), string(wovenAnchor))
 }
 
@@ -300,7 +302,7 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 	var subs []subSrc
 	var keySubs []string
 	for _, tl := range all {
-		if tl.Name != branch || tl.Anchor == model.RootAnchor || isWovenFamily(tl.Anchor) {
+		if tl.Name != branch || tl.Anchor == model.RootAnchor || IsWovenFamily(tl.Anchor) {
 			continue
 		}
 		if scope != model.RootAnchor && tl.Anchor != scope && !isStrictlyBelow(tl.Anchor, scope) {
@@ -619,7 +621,7 @@ func (s *Service) ResetWoven(ctx context.Context, repo, branch string) error {
 		return err
 	}
 	for _, tl := range all {
-		if tl.Name != branch || !isWovenFamily(tl.Anchor) {
+		if tl.Name != branch || !IsWovenFamily(tl.Anchor) {
 			continue
 		}
 		st, terr := s.Meta.Timeline(ctx, tl)
