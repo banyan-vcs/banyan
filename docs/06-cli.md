@@ -81,7 +81,7 @@ pack 协商留给 git 协议面（含 have 减除，docs/09 §3.1）。
 
 | 命令 | 对标 | 里程碑 |
 |---|---|---|
-| `banyan snapshot` | `git stash`（快照式本地状态） | M4 |
+| `banyan snapshot` | `git stash`（快照式本地状态） | M4 ·**已落地**（§3.7，T91） |
 | `banyan stack` | 栈式变更（stacked changes） | M4 |
 | `banyan sync` / `merge` / `rebase` | 服务端合并/重放（子树对根对齐） | M3/M4 |
 | `banyan auth login` | token（PAT / CI job token） | M5 |
@@ -178,3 +178,22 @@ banyan import <local-repo> <url> [--branch main] [--segment-bytes 3G] [--dry-run
 即全新导入（首推自动建仓）。段规划用 `rev-list --objects | cat-file
 --batch-check` 度量排他对象字节、指数探测扩张（实现细节：batch-check 不带
 `%(rest)` 时整行即对象名，树/blob 行须裁到首字段）。源仓只读不改。
+
+### 3.7 快照 checkpoint/restore（2026-11-08 落地，T91）
+
+```
+banyan snapshot [save] [-m msg] [-n name]     # 存档当前工作态（默认名 snap-<N>）
+banyan snapshot ls | apply <name> [--force] | drop <name>
+```
+
+语义是**时间机**而非 stash-apply：save 把脏集（M/D/??）字节原样拷进
+`.banyan/snapshots/<name>/files/`（`snapshot.json` 同时记录当时的 manifest 全量
+拷贝），工作树不动——不隐含回退；apply 把工作区**逐字节还原到快照时刻**：脏
+文件取镜像字节、快照时干净的文件按 OID 从内容寻址缓存取（缓存被清则向服务端
+回填），快照之后才 tracked 的文件本地消失（服务端仍持有），apply 从不销毁快
+照外的 untracked 字节。脏树上 apply 拒绝（exit 1，`--force` 覆盖）。基漂移
+（快照后发生过 commit/pull）时 apply 会把 manifest 指针拨回旧视图并提示：还原
+态必须先 commit 才能 pull 保住——要把旧改动**叠加**到新头，用 stack（§3.8）。
+
+与 git stash 的偏差（有意）：不自动回退工作树、apply 不做三方合并、untracked
+默认捕获。纯本地离线（仅"缓存被清后的干净文件回填"一条路径需网络）。

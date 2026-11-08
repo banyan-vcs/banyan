@@ -122,9 +122,14 @@ func git(t *testing.T, dir string, args ...string) string {
 }
 
 // gitTry tolerates failure (for asserting rejection behavior); returns combined output.
+// The empty credential.helper resets any host helper on every call: embedded-credential
+// URLs succeed without one, and a dev machine's Git Credential Manager would otherwise
+// run on the approve/reject path — its store failures (Windows 0x8) print fatal lines
+// that pollute output parsed by ref-count assertions (auth_test.go's ls-remote).
 func gitTry(dir string, args ...string) (string, error) {
 	full := append([]string{
 		"-c", "core.autocrlf=false",
+		"-c", "credential.helper=",
 		"-c", "user.name=it", "-c", "user.email=it@banyan.dev",
 	}, args...)
 	cmd := exec.Command("git", full...)
