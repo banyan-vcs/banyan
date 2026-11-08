@@ -316,8 +316,15 @@ func runPull(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
+	return pullCore(ws, st, newClient(ws.cfg.Server), stdout, stderr)
+}
 
-	c := newClient(ws.cfg.Server)
+// pullCore materializes the current view head over the manifest tree
+// (docs/06 §4.1): server-side tree-diff ("the download equals the checkout
+// difference"), the untracked-overwrite guard, then a hard checkout of the
+// delta. Shared by pull and sync — sync always finishes with the
+// materialization of whatever head it produced.
+func pullCore(ws *workspace, st *status, c *client, stdout, stderr io.Writer) int {
 	res, err := c.fetchTrees(ws.cfg.Repo, ws.cfg.Sub, ws.cfg.Branch, ws.man.Tree, nil)
 	if err != nil {
 		return cmdErr(stderr, err)

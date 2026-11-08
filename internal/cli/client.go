@@ -283,6 +283,25 @@ func (c *client) commit(repo, sub, branch, base, message, name, email string, ch
 	return &out, nil
 }
 
+type syncResponse struct {
+	Status   string `json:"status"` // uptodate | rebased
+	Rebased  int    `json:"rebased"`
+	Head     string `json:"head"`
+	RootView string `json:"rootView"`
+}
+
+func (c *client) sync(repo, sub, branch string) (*syncResponse, error) {
+	req := map[string]any{"repo": repo, "sub": sub}
+	if branch != "" {
+		req["branch"] = branch
+	}
+	var out syncResponse
+	if err := c.post("/api/v1/sync", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 type refEntry struct {
 	Name string `json:"name"`
 	Head string `json:"head"`

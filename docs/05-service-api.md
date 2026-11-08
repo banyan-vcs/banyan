@@ -100,6 +100,7 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | fetch-objects / cat / restore 回填 | `POST /api/v1/objects`（批量定位）/ `GET /api/v1/objects?repo&oid` | Object.BatchMeta / Get | 批量**已有**，GET **已落地** |
 | commit（blob 上传） | `POST /api/v1/objects/content` | Object.Put | **已落地** |
 | commit | `POST /api/v1/commit` | Commit.Create | **已落地** |
+| sync | `POST /api/v1/sync` | Timeline.Sync | **已落地**（2026-11-08，docs/02 §12 真分叉显式对齐；body `{repo, sub, branch?}`，与 commit 同推送授权门；409 `CONFLICT_SYNC_CONFLICT` 具名提交+路径，400 `SYNC_UNSUPPORTED`=merge 链） |
 | log | `POST /api/v1/log` | History.Log | **已有**（已下沉 service） |
 | show | `POST /api/v1/log`（n=1）+ `GET /api/v1/diff` | Log + Diff | **已落地**（diff 引擎与 gitaly 同源） |
 | diff | `GET /api/v1/diff?repo&from&to&path` | History.Diff | **已落地**（2026-11-06；字节对 `git diff`，T81；path 支持目录前缀 `lib/`） |

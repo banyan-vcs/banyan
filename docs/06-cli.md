@@ -83,7 +83,7 @@ pack 协商留给 git 协议面（含 have 减除，docs/09 §3.1）。
 |---|---|---|
 | `banyan snapshot` | `git stash`（快照式本地状态） | M4 ·**已落地**（§3.7，T91） |
 | `banyan stack` | 栈式变更（stacked changes） | M4 ·**已落地**（§3.8，T92） |
-| `banyan sync` / `merge` / `rebase` | 服务端合并/重放（子树对根对齐） | M3/M4 |
+| `banyan sync` / `merge` / `rebase` | 服务端合并/重放（子树对根对齐） | sync **已落地**（§3.9，T93）；merge/rebase 待建 |
 | `banyan auth login` | token（PAT / CI job token） | M5 |
 | `banyan admin repack / mirror ...` | 运维面（拓扑 A/B 建立/巡检/对账） | M5 |
 
@@ -218,3 +218,30 @@ banyan stack commit [<id>]               # 逐条落台（默认全部，oldest-
 顺带补齐了"部分提交"：`stack push -m x -- path` 即按路径分片暂存，落台时机自
 选。边界：pop 在受影响路径当前有改动时拒绝（exit 1）；无 ignore 机制（见
 上）；条目不跨工作区（`.banyan/` 局部状态，docs/06 §2 立场）。
+
+### 3.9 子树→根显式对齐 sync（2026-11-08 落地，T93）
+
+```
+banyan sync        # 仅子树工作区；服务端重放 + 自动 pull
+```
+
+docs/02 §12 的"真分叉 → root 侧等待显式 sync"落地：薄客户端没有历史对象，
+rebase 只能在服务端做——`POST /api/v1/sync`（与 commit 同推送授权门）把子树
+时间线的**本地段**（自头回溯至投影祖先=合流点；仅线性链）逐提交三方重放
+（internal/merge，与收敛列车同引擎）到根当前投影尖，先推进 Base（织入本地带
+收窄到重放段）再 CAS 时间线头，并重置 /.woven 标记族——换头=回退形，分歧期
+已折入 /.woven 的旧折痕若不清，重放 subject 会被重复折入。重放后的链正是
+push 守卫第三形态（docs/02 §13"rebase 恢复后持投影跨视图重写"）。CLI 随后走
+普通 pull 物化。
+
+判定（后裔规则同源）：本地含投影（ahead）或投影含本地（落后——pull 即 FF）
+→ `uptodate`；变更已经由 peer 的 pull 吸收进根本地链（吸收孪生）→ treeKnown
+复用 → `uptodate`。
+
+**语义边界**：真分歧冲突 = 409 `CONFLICT_SYNC_CONFLICT`（具名提交+路径，
+exit 1），v1 无半程续传（`--continue` 形态登记 v2）；人工路径 = git 克隆根仓
+库、为冲突路径推一个使本地 diff 可净应用的和解读提交（或改写本地侧），再
+sync。本地段含 merge 提交 → 400 `SYNC_UNSUPPORTED`（exit 2）。根工作区 →
+exit 2。**何时遇到真分歧**：所有顺序入口都有守卫（thin commit 的
+base-moved、子树 push 的投影守卫、root push 的织入尖守卫）——该状态只产生
+于守卫过检后、CAS 落地前的并发窗口；sync 即该窗口的收口工具。

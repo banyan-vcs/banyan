@@ -53,6 +53,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/repack", s.authn(s.handleRepack))
 	mux.HandleFunc("/api/v1/fetch-trees", s.authn(s.handleFetchTrees))
 	mux.HandleFunc("/api/v1/commit", s.authn(s.handleCommit))
+	mux.HandleFunc("/api/v1/sync", s.authn(s.handleSync)) // subtree→root alignment (docs/02 §12)
 	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
 	mux.HandleFunc("/api/v1/repos/", s.authn(s.handleRepoSub)) // /api/v1/repos/<repo>/placement
@@ -124,8 +125,10 @@ type errEnvelope struct {
 
 func statusFor(code string) int {
 	switch code {
-	case "CONFLICT_BASE_MOVED", "CONFLICT_REF_CAS":
+	case "CONFLICT_BASE_MOVED", "CONFLICT_REF_CAS", "CONFLICT_SYNC_CONFLICT":
 		return http.StatusConflict
+	case "SYNC_UNSUPPORTED":
+		return http.StatusBadRequest
 	case "NOT_FOUND":
 		return http.StatusNotFound
 	case "INVALID_ARG":
@@ -363,6 +366,33 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.Svc.CreateCommit(r.Context(), req)
+	if err != nil {
+		writeServiceErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// --- POST /api/v1/sync: explicit subtree→root alignment (docs/02 §12) ---
+
+// handleSync replays a subtree timeline's local-only commits onto the root's
+// current projection (docs/06 §3.9). The same push rule the commit endpoint
+// enforces: sync rewrites the timeline head.
+func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
+	var req service.SyncRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	branch := req.Branch
+	if branch == "" {
+		if info, err := s.Meta.GetRepo(r.Context(), req.Repo); err == nil && info.DefaultBranch != "" {
+			branch = info.DefaultBranch
+		}
+	}
+	if !s.requirePush(w, r, req.Repo, req.Sub, branch) {
+		return
+	}
+	res, err := s.Svc.SyncSubtree(r.Context(), req)
 	if err != nil {
 		writeServiceErr(w, err)
 		return

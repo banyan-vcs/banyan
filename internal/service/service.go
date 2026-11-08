@@ -70,6 +70,14 @@ func Translate(err error) (code string, data any) {
 		errors.Is(err, storage.ErrTimelineUnknown):
 		return "NOT_FOUND", nil
 	default:
+		var conflict *ErrSyncConflict
+		if errors.As(err, &conflict) {
+			return "CONFLICT_SYNC_CONFLICT", map[string]any{"commit": string(conflict.Commit), "paths": conflict.Paths}
+		}
+		var unsupported *ErrSyncUnsupported
+		if errors.As(err, &unsupported) {
+			return "SYNC_UNSUPPORTED", nil
+		}
 		var bad *ErrInvalidArg
 		if errors.As(err, &bad) {
 			return "INVALID_ARG", nil
