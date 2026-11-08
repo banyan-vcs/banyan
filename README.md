@@ -142,10 +142,14 @@ git diff (T63).
 cmd/banyand/        server daemon (git smart HTTP + JSON API)
 cmd/banyan/         thin-workspace CLI
 internal/model/     core data model (anchored commit / timeline / assembly / projection)
-internal/storage/   sharded pack storage (shard / metastore / packfile / index / repack)
+internal/meta/       metadata plane (MetaStore: memory / SQL / sqlite, refs client,
+                    PAT registry, subtree rules, addressing)
+internal/storage/   object plane (sharded packs: shard / packfile / index / repack)
 internal/view/      read-time view engine (v5 weave, subtree views)
 internal/gitwire/   git wire protocol (smart HTTP v1 / upload-pack / receive-pack)
-internal/gitaly/   gitaly gRPC frontend (GitLab drop-in, docs/19)
+internal/gitaly/   gitaly gRPC frontend shell (auth/lifecycle) over per-service
+                    families (repository/commit/ref/object/operations/transport/
+                    backup/node + kit shared plane), GitLab drop-in, docs/19
 internal/gitalypb/ vendored gitaly protocol (v19.5.2, generated)
 internal/service/   protocol-agnostic service layer (shared by all frontends, docs/05)
 internal/rpc/       httpd JSON frontend (/api/v1)

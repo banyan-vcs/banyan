@@ -34,6 +34,11 @@
   `LICENSE.gitaly`）。升级 = 整目录替换 + 全量回归。
 - `internal/gitaly/`：兼容层。同一对象平面（MetaStore + ObjectService +
   service 视图），与 gitwire / JSON API 并列的第三个前端。
+  （2026-11-08 结构分组：根包保留 Server 壳——生命周期/鉴权/gRPC mux；
+  各协议服务家族自成子包 repository/commit/ref/object/operations/
+  transport/backup/node，跨家族共享机械（repo 解析/树 diff/历史行走/
+  归档渲染/bundle 读写）沉淀在 internal/gitaly/kit 的 Base 上，家族经
+  嵌入提升获得——对外导出面 NewServer/Engines/DiffText/BlameText 不变。）
 - 依赖：`google.golang.org/grpc v1.85.0`、`protobuf v1.36.12`（首批外部
   gRPC 依赖）。
 - 生命周期：SIGTERM 时 gRPC 面 GracefulStop（宽限后降级 Stop），在途
@@ -137,7 +142,7 @@ InfoRefsUploadPack ✅ · InfoRefsReceivePack ✅ · PostReceivePack ✅
 （bidi：body 流入 mux 桥、响应流回；工作方式 = 内建 gitwire mux +
 recorder，一次 HTTP 交换一条 gRPC 消息流，stateless-rpc 契约） ·
 **PostUploadPackWithSidechannel ✅（fetch 通路解锁）**——sidechannel 传输
-（internal/gitaly/muxcreds.go + sidechannel.go）：连接首字节 "backchannel"
+（internal/gitaly/transport/：muxcreds.go + sidechannel.go）：连接首字节 "backchannel"
 魔数 → yamux 会话（gRPC 走流 1）→ 服务端反向开流，魔数 "sidechannel"+BE
 int64 id+"ok" 确认交换；**数据相位非对称帧**（客户端→服务端 pkt-line 分帧
 ≤65531B/帧、裸 "0000" 帧模拟半关闭；服务端→客户端裸字节）。同一监听器经

@@ -18,9 +18,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
-	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
