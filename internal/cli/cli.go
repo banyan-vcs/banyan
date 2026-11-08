@@ -21,6 +21,7 @@ workspace commands (run inside a clone — any subdirectory — or with -C):
   status                                                      manifest vs worktree (offline)
   commit -m <msg> [--name n] [--email e]                      scan → upload → server-side assembly
   pull                                                        server tree-diff increment
+  sync                                                        subtree→root alignment (server-side rebase, then pull)
   log [path] [-n N]                                           remote history, zero download
   cat [rev:]<path>                                            object content (HEAD resolves locally)
   fetch-objects <oid>...                                      backfill objects into the cache
@@ -60,6 +61,8 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return runCommit(wsRoot, rest, stdout, stderr)
 	case "pull":
 		return runPull(wsRoot, rest, stdout, stderr)
+	case "sync":
+		return runSync(wsRoot, rest, stdout, stderr)
 	case "snapshot":
 		return runSnapshot(wsRoot, rest, stdout, stderr)
 	case "stack":

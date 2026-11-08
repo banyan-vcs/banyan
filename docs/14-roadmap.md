@@ -96,7 +96,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 - [ ] M4.4 指标 + agent-burst bench 场景 + SLO 门 + 一次 CAS 批追加 + treeKnown 索引
 - [x] 快照式本地状态：`banyan snapshot`（checkpoint/restore 时间机语义，2026-11-08，T91；status 既有）
 - [x] 栈式变更：`banyan stack`（本地变更队列 + 路径分片 + 逐条落台，2026-11-08，T92）
-- [ ] `banyan sync`（子目录显式 rebase 对齐根）
+- [x] `banyan sync`（子树→根显式重放对齐：服务端三方重放 + Base 推进 + /.woven 重置，2026-11-08，T93）
 
 ## 风险登记
 

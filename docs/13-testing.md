@@ -18,6 +18,7 @@ testify，文件按测试目标拆分）：
 | `cli_workspace_test.go` | 薄工作区 CLI：最小化 clone/status/commit/pull/log/cat + 冲突恢复 + 子树工作区（T22/T22b） |
 | `cli_snapshot_test.go` | CLI 快照：checkpoint/restore 逐字节还原、--force、缓存清空后的服务端回填、基漂移提示（T91） |
 | `cli_stack_test.go` | CLI 栈式变更：路径分片 push/pop、逐条落台、冲突保全与 pull 续落（T92） |
+| `sync_test.go` | 子树→根显式对齐：TOCTOU 竞态夹具、重放+Base 推进+/.woven 重置、吸收孪生、冲突/merge 链/根工作区边界（T93） |
 | `ha_cluster_test.go` | HA 集群（docs/10）：进程内 refs+storage×4+gateway，散布放置/节点宕恢复/动态副本/refs 重启（T23-T26） |
 | `protocol_v2_test.go` | protocol v2 命令面（docs/04 §9b）：裸 pkt 断言（广告/ls-refs/fetch 段组帧/协商轮/可达性门）+ 真实 git 全链路（clone/fetch/浅化/partial/子树，GIT_TRACE_PACKET 证明 v2 生效） |
 
@@ -119,6 +120,7 @@ testify，文件按测试目标拆分）：
 | T90 | `TestT90SubtreeAccessRules` | **运行时子树访问规则 + GitLabSSO**（docs/07 §8c，2026-11-08）：假 GitLab（/api/v4/user：root=管理员/alice/bob）+ `SubtreeRulePolicy(GitLabSSO)` 栈——Bearer 与 Basic(token) 双凭证形态；root（实例管理员）PUT 规则 `/secret→[alice]`、非管理员 403；bob 经 `/r/<repo>.git/tree/secret` clone **拒**、alice 过；**根 clone 不受影响**（边界断言：深规则不能遮浅锚——根锚服务全闭包，docs/17 同构）；push 同门（alice 血统分支经 bob 凭证拒、经 alice 凭证落）；删规则即恢复开放；清单往返 users 排序；相对路径 400 |
 | T91 | `TestCLISnapshot` | **CLI 快照 checkpoint/restore**（docs/06 §3.7，2026-11-08）：干净树 no-op；M/D/?? 三态存档**不动工作树**（非 stash 式回退）；ls 带 message；脏树 apply 拒（exit 1）；`--force` 逐字节还原（脏字节取镜像、删除文件自缓存复活、untracked 归位，status 回到快照脏集）；落地快照态后**清空缓存**再干净树 apply——干净文件经服务端回填 + 基漂移提示（manifest 拨回旧视图）；drop 后 ls 空、apply 缺名 exit 2 |
 | T92 | `TestCLIStack` | **CLI 栈式变更**（docs/06 §3.8，2026-11-08）：路径分片 push 只回退选中路径（untracked 捕获+删除）；全量 push 后树净；ls oldest-first；pop 顶条写回离栈；`stack commit` 逐条落台**写回工作树**（真 git 克隆交叉验证：subject 顺序、untracked 落成 tracked、fsck、栈 blob 库回收）；peer 推动头后 commit→exit 1 条目原样保留→pull→重试全落地（路径级重放无需 rebase） |
+| T93 | `TestSyncSubtree` | **子树→根显式对齐 sync**（docs/02 §12 / docs/06 §3.9，2026-11-08）：真分歧夹具=TOCTOU 竞态确定性模拟（对象搭 aux 分支推送入库+root 时间线直 CAS，夹具注释说明守卫无法顺序构造该状态）→ sync 重放 1 提交+pull 物化两侧；**Base 推进到同步时刻根头**；根视图 git 克隆交叉验证（内容两侧齐全、每 subject 恰一次、fsck）——/.woven 重置防旧折痕重复是该测试钉住的修复；吸收孪生（peer pull 带走本地内容）→ uptodate；同文件双改 → exit 1 具名路径、时间线头与 Base 不动；merge 链 → exit 2（SYNC_UNSUPPORTED）；根工作区 → exit 2 |
 
 | T43 | `TestForcePushRevivalRejected` / `…Recovery` / `TestRootForcePushViewMonotonic` | **子树 force push 回滚守卫**（docs/04 §6a）：wire 无 force 信号、old 恒=广告值——回滚/重写丢他人内容的 force push 以连续 push 形态到达；四种形态（adopt/收敛 × 纯回滚/回滚+己方提交）真实 git 客户端全拒绝（non-fast-forward: would rewind，旧代码上实证全部 forced-update 落地）；拒后 pull --rebase 恢复路线畅通；根仓库 force push 放行（git 原生 verbatim）但织入视图单调——root-local 内容与目录时间线内容均不回魂 |
 | T44 | `TestForcePushOptIn` | **仓库级 force push 开关 + 织入重建**（docs/04 §6a）：PUT /api/v1/repos/&lt;repo&gt;/force-push 运行时生效——关（默认）回滚仍拒（T43 语义不回归）；开后回滚链落地（forced update）且 `/.woven` 家族重置全量重织：lib 时间线回滚（a.txt 回退）而**下层 lib/nested 独立时间线内容保留**（时间线边界=回滚边界）、根视图历史**重建**（被回滚提交的织入体从 log 消失、nested 织入保留）、回滚后正常 push 即刻恢复；开关再关守卫重新武装 |
