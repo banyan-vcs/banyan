@@ -79,6 +79,9 @@ function loadOAuth(): OAuthCfg | null {
   return null;
 }
 const OAUTH = loadOAuth();
+// GitLab mode wears GitLab's palette (the subpage reads as part of the
+// platform); standalone keeps banyan's own style.
+render.setTheme(OAUTH ? "gitlab" : "banyan");
 
 // Sessions live in process memory (demo tier): id → credentials. The id
 // rides an HttpOnly cookie; credentials never leave the server except as
