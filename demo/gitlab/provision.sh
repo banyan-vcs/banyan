@@ -75,6 +75,38 @@ PAT=$(docker exec -u git "$GL_CTR" gitlab-rails runner '
 [ -n "$PAT" ] || { echo "no PAT minted"; exit 1; }
 echo "PAT: ${PAT:0:6}…"
 
+# ---------------------------------------- subtree-management subpage ----
+# The control plane lives UNDER the GitLab URL (docs/20 §7b): an nginx
+# location routes /-/banyan/ to the banyan-web service, and login is
+# GitLab SSO via an OAuth application minted here (secret answered once,
+# dropped into the web container's /config volume, service bounced).
+say "wiring the /-/banyan/ subpage (nginx location + OAuth application)"
+here="$(cd "$(dirname "$0")" && pwd)"
+docker cp "$here/banyan-subpage.conf" "$GL_CTR"://var/opt/gitlab/nginx/conf/gitlab-http.d/banyan.conf
+docker exec "$GL_CTR" gitlab-ctl hup nginx
+
+# Reruns recreate the application (the old secret is gone for good —
+# Doorkeeper never shows it again), so drop any previous one by name.
+for aid in $(api GET "/applications" | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+'); do
+  api DELETE "/applications/$aid" >/dev/null 2>&1 || true
+done
+app=$(curl -sf -X POST -H "PRIVATE-TOKEN: $PAT" -H "Content-Type: application/json" \
+  -d '{"name":"banyan-subtree-console","redirect_uri":"http://localhost:8180/-/banyan/auth/callback","scopes":"read_api"}' \
+  "$GITLAB_URL/api/v4/applications")
+appid=$(grep -oE '"application_id":"[a-f0-9]+"' <<<"$app" | head -n1 | grep -oE '[a-f0-9]+')
+appsecret=$(grep -oE '"secret":"[^"]+"' <<<"$app" | head -n1 | cut -d'"' -f4)
+if [ -n "$appid" ] && [ -n "$appsecret" ]; then
+  # url = what the web container dials (docker network); external_url =
+  # what the browser reaches (the GitLab URL users type).
+  printf '{"url":"http://banyan-gitlab-ce:8180","external_url":"%s","client_id":"%s","client_secret":"%s"}\n' \
+    "$GITLAB_URL" "$appid" "$appsecret" \
+    | docker exec -i banyan-gitlab-web sh -c 'cat > /config/gitlab-oauth.json'
+  docker restart banyan-gitlab-web >/dev/null
+  echo "OAuth application $appid wired into banyan-gitlab-web"
+else
+  echo "warning: OAuth application not minted — /-/banyan/ stays on local login"
+fi
+
 api() { # api METHOD path [json-body]
   local m=$1 p=$2 b=${3:-}
   if [ -n "$b" ]; then
@@ -134,6 +166,16 @@ echo "-- commits:";        api GET "/projects/$proj_id/repository/commits?per_pa
 echo "-- blob:";           api GET "/projects/$proj_id/repository/files/README.md/raw?ref=main"
 
 say "banyan's own face sees the same repo (@hashed → storage id)"
-curl -sf "$BANYAN_URL/api/v1/repos" | grep -oE '"id":"[0-9a-f]{16}[^"]*"' | head -5
+# The face authenticates GitLab tokens now (auth.gitlab_sso, docs/07 §8c).
+curl -sf -H "Authorization: Bearer $PAT" "$BANYAN_URL/api/v1/repos" | grep -oE '"id":"[0-9a-f]{16}[^"]*"' | head -5
+
+say "subtree management checks (docs/20 §7b)"
+# The subpage answers under the GitLab URL: 302 to GitLab's authorize
+# endpoint once SSO is wired (login follows in the browser).
+code=$(curl -s -o /dev/null -w '%{http_code}' "$GITLAB_URL/-/banyan/")
+echo "GET /-/banyan/ → $code (302 → GitLab authorize when SSO is armed)"
+# The subtree listing for the demo project: repo = sha256(project_id).
+repo=$(printf '%s' "$proj_id" | sha256sum | cut -d' ' -f1)
+curl -sf -H "Authorization: Bearer $PAT" "$BANYAN_URL/api/v1/subtrees?repo=$repo" | head -c 300; echo
 
 say "walkthrough complete — GitLab-CE is running on banyan storage"

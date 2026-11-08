@@ -31,9 +31,10 @@ user's git client sees. Credentials live only in server-side sessions.
 | `PORT` | `3000` | listen port |
 | `BANYAN_URL` | `http://127.0.0.1:8080` | the banyan server |
 | `BASE_PATH` | `""` | mount everything under a URL prefix (no trailing slash), e.g. `/-/banyan` behind GitLab nginx — full-path passthrough, links/redirects/cookie path all follow |
-| `BANYAN_GITLAB_URL` | — | GitLab base URL; with the two client vars below, switches login to GitLab OAuth2 SSO (scope `read_api`) |
+| `BANYAN_GITLAB_URL` | — | GitLab base URL this process dials (token exchange, `/api/v4`); with the two client vars below, switches login to GitLab OAuth2 SSO (scope `read_api`) |
+| `BANYAN_GITLAB_EXTERNAL_URL` | = `BANYAN_GITLAB_URL` | the GitLab URL the BROWSER reaches (authorize redirect) — differs on docker networks (web dials `http://gitlab:8180`, users see the public URL) |
 | `BANYAN_GITLAB_CLIENT_ID` / `BANYAN_GITLAB_CLIENT_SECRET` | — | the OAuth2 application (or use the config file below instead of env) |
-| `OAUTH_CONFIG_FILE` | `/config/gitlab-oauth.json` | demo provisioning writes `{url, client_id, client_secret}` here (dynamically minted application); env wins when both exist |
+| `OAUTH_CONFIG_FILE` | `/config/gitlab-oauth.json` | demo provisioning writes `{url, external_url, client_id, client_secret}` here (dynamically minted application); env wins when both exist |
 
 ## Auth modes
 

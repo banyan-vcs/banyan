@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 授权 + Web（本文） | `docker-compose.yml` | 权限三粒度、个人分支可见性、Web 管理页 | 8100 / 8101 |
 | HA 集群 | `docker-compose.cluster.yml` | 散布多副本、杀节点恢复、动态 R（docs/10，`bash demo/cluster-demo.sh`） | 8100 + 内部 |
-| **GitLab-CE 存储替身** | `demo/gitlab/docker-compose.yml` | 真 GitLab-CE 全功能跑在 banyan 存储上（docs/19 §8，接入手册 docs/20；`bash demo/gitlab/provision.sh`） | 8180 / 8170 |
+| **GitLab-CE 存储替身** | `demo/gitlab/docker-compose.yml` | 真 GitLab-CE 全功能跑在 banyan 存储上 + `/-/banyan/` 子树管理控制面（GitLab SSO，docs/20 §7b；`bash demo/gitlab/provision.sh`） | 8180 / 8170 |
 
 前两栈都占 8100，**不能同时跑**——切换前先 `docker compose down -v`；
 GitLab 栈端口独立，可与任一并存（内存 ~4 GiB 起，gitlab.rb 已裁剪）。
