@@ -7,10 +7,12 @@ listen: "0.0.0.0:8080"
 root: "/var/lib/banyan"
 meta: sqlite
 
-# Demo posture: banyan's own HTTP face stays open (GitLab is the front end
-# here — the gitaly token below is the security boundary that matters).
-# A production storage node drops this key and configures auth.
-dev: true
+# GitLab SSO gates banyan's own HTTP face (docs/07 §8c): GitLab-issued
+# tokens (OAuth2 / PAT) authenticate — identity and instance-admin status
+# come from GET /api/v4/user (fail-closed). Runtime subtree access rules
+# (docs/07 §8c) load on top automatically.
+auth:
+  gitlab_sso: "http://banyan-gitlab-ce:8180"
 
 gitaly:
   listen: "0.0.0.0:8075"

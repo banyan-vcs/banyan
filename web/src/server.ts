@@ -44,6 +44,12 @@ render.setBase(BASE);
 // — the provision script mints the application and drops the file here).
 interface OAuthCfg {
   url: string;
+  // externalUrl is what the BROWSER must reach for the authorize redirect
+  // (the public GitLab URL); url is what THIS process dials (token exchange,
+  // /api/v4). Same by default — they differ when the web tier sits on the
+  // docker network next to GitLab (url=http://gitlab:8180,
+  // externalUrl=http://gitlab.example.com:8180).
+  externalUrl: string;
   clientId: string;
   clientSecret: string;
 }
@@ -52,12 +58,20 @@ function loadOAuth(): OAuthCfg | null {
   const url = process.env.BANYAN_GITLAB_URL;
   const id = process.env.BANYAN_GITLAB_CLIENT_ID;
   const sec = process.env.BANYAN_GITLAB_CLIENT_SECRET;
-  if (url && id && sec) return { url: url.replace(/\/+$/, ""), clientId: id, clientSecret: sec };
+  const ext = process.env.BANYAN_GITLAB_EXTERNAL_URL || url;
+  if (url && id && sec) {
+    return { url: url.replace(/\/+$/, ""), externalUrl: (ext || url).replace(/\/+$/, ""), clientId: id, clientSecret: sec };
+  }
   const file = process.env.OAUTH_CONFIG_FILE || "/config/gitlab-oauth.json";
   try {
     const j = JSON.parse(fs.readFileSync(file, "utf8"));
     if (j.url && j.client_id && j.client_secret) {
-      return { url: String(j.url).replace(/\/+$/, ""), clientId: String(j.client_id), clientSecret: String(j.client_secret) };
+      return {
+        url: String(j.url).replace(/\/+$/, ""),
+        externalUrl: String(j.external_url || j.url).replace(/\/+$/, ""),
+        clientId: String(j.client_id),
+        clientSecret: String(j.client_secret),
+      };
     }
   } catch {
     /* no config file — local auth mode */
@@ -206,7 +220,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
           scope: "read_api",
           state,
         });
-        return redirect(res, `${OAUTH.url}/oauth/authorize?${q.toString()}`);
+        return redirect(res, `${OAUTH.externalUrl}/oauth/authorize?${q.toString()}`);
       }
       return send(res, render.loginPage());
     }

@@ -113,6 +113,7 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 | Push policy gate | protected branches and friends enforced via `/internal/allowed`; Rails' rejection message reaches the git client verbatim |
 | Platform callbacks | post-receive adapter: activity events, pipelines, cache expiry, MR-from-push (`-o merge_request.create` verified live) |
 | Subtree projection refs | `refs/banyan/tree/<dir>` — one GitLab URL and one credential per subtree; pushes assemble upward into the root view |
+| Subtree management console | `/-/banyan/` under the GitLab URL (an nginx subpage reusing the banyan web tier): subtree listings, activity, clone recipes and **runtime access rules** — GitLab SSO login ([docs/20](docs/20-gitlab-integration.md) §7b) |
 | GitLab push size limit | the Maximum-push-size setting enforced via `receive.maxInputSize` |
 
 **Production and operations**:
@@ -189,6 +190,7 @@ HTTP push, web UI browsing all served by banyan's gitaly gRPC frontend
 docker compose -f demo/gitlab/docker-compose.yml up -d   # GitLab-CE 19.5 + banyan (~4 GiB)
 demo/gitlab/provision.sh                                  # seed, push, read-back walkthrough
 # GitLab UI http://localhost:8180 — every git byte lives in banyan
+# Subtree console http://localhost:8180/-/banyan/ — GitLab SSO login
 ```
 
 Wiring an existing GitLab-CE (config, verification checklist, troubleshooting):

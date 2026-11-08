@@ -81,6 +81,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 推送策略门 | 保护分支等 ref 级策略经 `/internal/allowed` 强制，Rails 拒绝原话透传到 git 客户端 |
 | 平台回调 | post-receive 适配器：活动事件、pipeline、缓存过期、MR-from-push（`-o merge_request.create` 活体实证） |
 | 子树投影 ref | `refs/banyan/tree/<dir>`——一个 GitLab URL、一套凭证取推任意子树；推送向上装配回根视图 |
+| 子树管理控制面 | GitLab 域名下 `/-/banyan/`（nginx 子页面，复用 banyan web）：子树清单/活动/克隆配方 + **运行时访问规则**——GitLab SSO 登录（[docs/20](docs/20-gitlab-integration.md) §7b） |
 | 推送大小上限 | GitLab Maximum push size 设置经 `receive.maxInputSize` 强制 |
 
 **生产与运维**：
@@ -159,6 +160,7 @@ Web 界面浏览全部由 banyan 的 gitaly gRPC 前端服务（docs/19，兼容
 docker compose -f demo/gitlab/docker-compose.yml up -d   # GitLab-CE 19.5 + banyan（约 4 GiB）
 demo/gitlab/provision.sh                                  # 种子、推送、读面走查
 # GitLab 界面 http://localhost:8180 —— 每个 git 字节都落在 banyan
+# 子树管理 http://localhost:8180/-/banyan/ —— GitLab SSO 登录
 ```
 
 接入已有 GitLab-CE（配置、验证清单、故障排查）见

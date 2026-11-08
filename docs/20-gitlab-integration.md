@@ -47,6 +47,10 @@ demo/gitlab/provision.sh
 listen: "0.0.0.0:8080"        # banyan 自有管理面（可只绑内网）
 root: "/var/lib/banyan"
 meta: postgres                 # 生产缺省；sqlite 单机显式选择
+auth:
+  gitlab_sso: "http://<gitlab>:8180"   # banyan HTTP 面复用 GitLab token
+                                        # （子树规则的身份底座，§7b；不配
+                                        # 则该面沿用自有认证/dev 形态）
 gitaly:
   listen: "0.0.0.0:8075"       # 对 Rails/workhorse 的 gRPC 面
   token: "<共享密钥>"
@@ -122,6 +126,7 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | **push options（`-o merge_request.create` 等）** | ✅ receive-pack 广告 `push-options` 并解析选项段，经 `post_receive.push_options` 上报 Rails（live：`-o merge_request.create -o merge_request.title=…` 实开 MR） |
 | **最大推送大小（Maximum push size 设置）** | ✅ /allowed verdict 的 `receive.maxInputSize` 由门强制（live：设 1MB、推 2MB 随机包被拒 `pack exceeds maximum allowed size`，复位即通） |
 | SSH 推送/拉取（gitlab-shell） | ✅ 同一授权面；fetch/clone 走 `SSHUploadPackWithSidechannel`（sidechannel 上再包一层 pkt-line sideband 帧——git 协议整体作为 band1 载荷、关流终结；seam 9 活体修复后 clone+fsck 全净） |
+| **子树管理控制面（`/-/banyan/`）** | ✅ GitLab 域名下的 nginx 子页面（§7b）：每仓子树清单/活动/克隆配方 + **运行时访问规则**管理，GitLab SSO 登录 |
 | 服务端维护（housekeeping/repack） | 空操作语义（对象平面恒 compact，docs/19 §6） |
 
 ## 5. 回退与数据面
@@ -156,6 +161,9 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | **omnibus 端口**：宿主 curl 000 但容器健康检查绿 | nginx 监听 `external_url` 的端口（容器内 8180），映射须 `8180:8180` 非 `8180:80` | 改 compose 端口映射 |
 | 改了挂载的 gitlab.rb 不生效 | `GITLAB_OMNIBUS_CONFIG` 只在**首次 boot** 生成 `/etc/gitlab/gitlab.rb` | 直接改容器内 `/etc/gitlab/gitlab.rb` 再 reconfigure |
 | 拉镜像卡死在大层（1.6GB） | 部分镜像站对大 blob 静默断流（curl 直拉正常） | 手工组装 OCI 归档（逐 blob 摘要校验后 `docker load`），或换镜像源重试 |
+| `/-/banyan/` 502 | banyan-web 服务未起，或 nginx location 未装 | `docker compose -f demo/gitlab/docker-compose.yml up -d`；重跑 provision.sh（装 location + 铸 OAuth app） |
+| `/-/banyan/` 登录跳 GitLab 报 redirect_uri 不匹配 | OAuth application 登记的 redirect_uri 与实际访问 URL 不一致（换了对外域名/端口） | 删除旧 application 后重跑 provision（以最终对外 URL 重建） |
+| banyan 面（8170/API）一律 401 | 正常强制：`auth.gitlab_sso` 只认 GitLab 签发 token | `curl -H "Authorization: Bearer <GitLab PAT>" …`（git 客户端用 `http://oauth2:<PAT>@…`） |
 
 ## 7. 子项目（子目录）clone
 
@@ -208,6 +216,35 @@ curl -X POST -H "PRIVATE-TOKEN: <PAT>" .../api/v4/projects \
 
 **协议层未来**：M3 的服务端 filter 完整规格（含 `subtree:<path>`，
 docs/14）落地后，可对 GitLab URL 直接 partial clone 子树。
+
+## 7b. 子树管理控制面（`/-/banyan/` 子页面）
+
+GitLab UI 看不到目录时间线与投影 ref（只查 `refs/heads|tags`）——
+banyan 的子树管理面以 **GitLab 域名下的 nginx 子页面**形态补位
+（demo 栈 provision.sh 自动接线；接入已有 GitLab 时照搬三步：nginx
+location（`demo/gitlab/banyan-subpage.conf` 放进
+`/var/opt/gitlab/nginx/conf/gitlab-http.d/` + `gitlab-ctl hup nginx`）、
+起 banyan-web 服务（`BASE_PATH=/-/banyan`）、铸 OAuth application）：
+
+- **URL**：`http://<gitlab>/-/banyan/`——`/-/` 是 GitLab 保留应用命名
+  空间（与 `/-/health` 同族），group 不可能叫 "-"，永不遮蔽项目路由；
+  nginx location 全路径透传，web 侧 BASE_PATH 对齐。
+- **登录 = GitLab SSO**：web 走 OAuth2 授权码流程（scope `read_api`，
+  state 防 CSRF），会话凭证即用户的 GitLab token；banyan 侧
+  `auth.gitlab_sso`（§2）验证同一 token——**实例管理员（is_admin）即
+  规则管理者**。项目名自动映射（`sha256(project_id)` → 项目路径，用
+  用户自己的 token 拉取，可见性天然同源）。
+- **能力**（docs/07 §8c）：每仓子树清单（目录时间线 × 支线 × 最近
+  提交 × projected 标记）、子树详情（路径过滤活动流、两份克隆配方）、
+  **运行时访问规则**——fetch 与 push 同门，最浅覆盖规则管辖（`/src`
+  的规则管住 `/src/lib`），管理员经表单或
+  `/api/v1/repos/<repo>/subtree-access` 管理。
+
+**信任边界**：GitLab 自身 URL 上的投影 ref fetch 权限仍是 GitLab
+项目级（workhorse 授权看不见 ref 名）——**目录级强制只发生在 banyan
+自有 `/r/` 面**（GitLab token 认证 + 子树规则）；根锚 clone 服务整个
+闭包，深层规则不能遮浅层（与 docs/17 同一结构性边界）。GitLab 不可达
+时 token 验证与规则面均 fail-closed。
 
 ## 8. FAQ
 
