@@ -154,7 +154,7 @@ async function gitlabNames(sess: banyan.Session): Promise<Map<string, string>> {
   if (hit && hit.expires > Date.now()) return hit.names;
   const names = new Map<string, string>();
   try {
-    const resp = await fetch(`${OAUTH.url}/api/v4/projects?membership=true&simple=true&per_page=100&pagination=keyset`, {
+    const resp = await fetch(`${OAUTH.url}/api/v4/projects?membership=true&simple=true&per_page=100`, {
       headers: { Authorization: `Bearer ${sess.pass}` },
     });
     if (resp.ok) {

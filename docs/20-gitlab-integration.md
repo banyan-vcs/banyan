@@ -222,9 +222,12 @@ docs/14）落地后，可对 GitLab URL 直接 partial clone 子树。
 GitLab UI 看不到目录时间线与投影 ref（只查 `refs/heads|tags`）——
 banyan 的子树管理面以 **GitLab 域名下的 nginx 子页面**形态补位
 （demo 栈 provision.sh 自动接线；接入已有 GitLab 时照搬三步：nginx
-location（`demo/gitlab/banyan-subpage.conf` 放进
-`/var/opt/gitlab/nginx/conf/gitlab-http.d/` + `gitlab-ctl hup nginx`）、
-起 banyan-web 服务（`BASE_PATH=/-/banyan`）、铸 OAuth application）：
+location（CE 19.5 的 omnibus server 块**没有** conf.d include——把
+`demo/gitlab/banyan-subpage.conf` 的 location 拼进渲染产物
+`/var/opt/gitlab/nginx/conf/service_conf/gitlab-rails.conf`（provision
+锚定 health-partial include 拼接）+ `gitlab-ctl hup nginx`，reconfigure
+重渲染后需重拼）、起 banyan-web 服务（`BASE_PATH=/-/banyan`）、铸
+OAuth application）：
 
 - **URL**：`http://<gitlab>/-/banyan/`——`/-/` 是 GitLab 保留应用命名
   空间（与 `/-/health` 同族），group 不可能叫 "-"，永不遮蔽项目路由；

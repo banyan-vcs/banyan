@@ -75,14 +75,28 @@ PAT=$(docker exec -u git "$GL_CTR" gitlab-rails runner '
 [ -n "$PAT" ] || { echo "no PAT minted"; exit 1; }
 echo "PAT: ${PAT:0:6}…"
 
+api() { # api METHOD path [json-body]
+  local m=$1 p=$2 b=${3:-}
+  if [ -n "$b" ]; then
+    curl -sf -X "$m" -H "PRIVATE-TOKEN: $PAT" -H "Content-Type: application/json" \
+      -d "$b" "$GITLAB_URL/api/v4$p"
+  else
+    curl -sf -X "$m" -H "PRIVATE-TOKEN: $PAT" "$GITLAB_URL/api/v4$p"
+  fi
+}
+
 # ---------------------------------------- subtree-management subpage ----
 # The control plane lives UNDER the GitLab URL (docs/20 §7b): an nginx
 # location routes /-/banyan/ to the banyan-web service, and login is
 # GitLab SSO via an OAuth application minted here (secret answered once,
 # dropped into the web container's /config volume, service bounced).
 say "wiring the /-/banyan/ subpage (nginx location + OAuth application)"
-here="$(cd "$(dirname "$0")" && pwd)"
-docker cp "$here/banyan-subpage.conf" "$GL_CTR"://var/opt/gitlab/nginx/conf/gitlab-http.d/banyan.conf
+# GitLab-CE 19.5's omnibus nginx has no conf.d inside the server block —
+# splice the location into the rendered gitlab-rails.conf, anchored on the
+# health-partial include (the server block's last include). Anchored on
+# content, not line numbers; idempotent; a re-render (gitlab-ctl
+# reconfigure) drops the splice, re-running provision re-applies it.
+docker exec "$GL_CTR" sh -c 'grep -q banyan-gitlab-web /var/opt/gitlab/nginx/conf/service_conf/gitlab-rails.conf || sed -i "s#  include /var/opt/gitlab/nginx/conf/service_conf/gitlab-health.partial;#  location ^~ /-/banyan/ {\n      proxy_pass http://banyan-gitlab-web:3000;\n      # \$http_host carries the port (\$host strips it) — the web tier derives\n      # the OAuth redirect_uri from the Host header, and GitLab matches it\n      # exactly.\n      proxy_set_header Host \$http_host;\n      proxy_set_header X-Real-IP \$remote_addr;\n      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n      proxy_set_header X-Forwarded-Proto \$scheme;\n  }\n&#" /var/opt/gitlab/nginx/conf/service_conf/gitlab-rails.conf'
 docker exec "$GL_CTR" gitlab-ctl hup nginx
 
 # Reruns recreate the application (the old secret is gone for good —
@@ -93,8 +107,12 @@ done
 app=$(curl -sf -X POST -H "PRIVATE-TOKEN: $PAT" -H "Content-Type: application/json" \
   -d '{"name":"banyan-subtree-console","redirect_uri":"http://localhost:8180/-/banyan/auth/callback","scopes":"read_api"}' \
   "$GITLAB_URL/api/v4/applications")
-appid=$(grep -oE '"application_id":"[a-f0-9]+"' <<<"$app" | head -n1 | grep -oE '[a-f0-9]+')
-appsecret=$(grep -oE '"secret":"[^"]+"' <<<"$app" | head -n1 | cut -d'"' -f4)
+# Flatten the response first (pretty/wrapped JSON breaks line greps), then
+# strip the key — a bare '[a-f0-9]+' grep also shreds the KEY name's hex
+# letters ("a","ca","d"…) into the value.
+app_flat=$(tr -d '\n\t ' <<<"$app")
+appid=$(sed -nE 's/.*"application_id":"([a-f0-9]+)".*/\1/p' <<<"$app_flat" | head -n1)
+appsecret=$(sed -nE 's/.*"secret":"([^"]+)".*/\1/p' <<<"$app_flat" | head -n1)
 if [ -n "$appid" ] && [ -n "$appsecret" ]; then
   # url = what the web container dials (docker network); external_url =
   # what the browser reaches (the GitLab URL users type).
@@ -106,16 +124,6 @@ if [ -n "$appid" ] && [ -n "$appsecret" ]; then
 else
   echo "warning: OAuth application not minted — /-/banyan/ stays on local login"
 fi
-
-api() { # api METHOD path [json-body]
-  local m=$1 p=$2 b=${3:-}
-  if [ -n "$b" ]; then
-    curl -sf -X "$m" -H "PRIVATE-TOKEN: $PAT" -H "Content-Type: application/json" \
-      -d "$b" "$GITLAB_URL/api/v4$p"
-  else
-    curl -sf -X "$m" -H "PRIVATE-TOKEN: $PAT" "$GITLAB_URL/api/v4$p"
-  fi
-}
 
 # --------------------------------------------------------- create repo --
 say "creating project $PROJ (Rails → gitaly CreateRepository → banyan)"
@@ -170,10 +178,16 @@ say "banyan's own face sees the same repo (@hashed → storage id)"
 curl -sf -H "Authorization: Bearer $PAT" "$BANYAN_URL/api/v1/repos" | grep -oE '"id":"[0-9a-f]{16}[^"]*"' | head -5
 
 say "subtree management checks (docs/20 §7b)"
-# The subpage answers under the GitLab URL: 302 to GitLab's authorize
-# endpoint once SSO is wired (login follows in the browser).
-code=$(curl -s -o /dev/null -w '%{http_code}' "$GITLAB_URL/-/banyan/")
-echo "GET /-/banyan/ → $code (302 → GitLab authorize when SSO is armed)"
+# The subpage answers under the GitLab URL. Two hops: an anonymous hit
+# bounces to the login page, and the LOGIN PAGE must hand off to GitLab's
+# authorize endpoint once SSO is wired (staying on the local form = the
+# OAuth config didn't reach the web container).
+loc=$(curl -s -o /dev/null -w '%{redirect_url}' "$GITLAB_URL/-/banyan/")
+loc=$(curl -s -o /dev/null -w '%{redirect_url}' "$loc")
+case "$loc" in
+  *"/oauth/authorize"*) echo "GET /-/banyan/ (anon) → GitLab authorize (SSO armed)" ;;
+  *) echo "GET /-/banyan/ (anon) → $loc — WARNING: expected the GitLab authorize redirect" ;;
+esac
 # The subtree listing for the demo project: repo = sha256(project_id).
 repo=$(printf '%s' "$proj_id" | sha256sum | cut -d' ' -f1)
 curl -sf -H "Authorization: Bearer $PAT" "$BANYAN_URL/api/v1/subtrees?repo=$repo" | head -c 300; echo
