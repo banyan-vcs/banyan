@@ -37,12 +37,12 @@ type MetaStore interface {
 // metadata plane so every gateway sees the same hooks — no gateway-local
 // state in multi-gateway deployments.
 type HookInfo struct {
-	ID     string   `json:"id"`      // operator-chosen stable key (upsert by it)
-	Dir    string   `json:"dir"`     // scope: "" = repo level, "lib" = directory subtree
-	Events []string `json:"events"`  // pre-receive | update | post-receive
-	URL    string   `json:"url"`     // callback target (2xx = allow)
-	Secret string   `json:"secret,omitempty"`  // sent as X-Banyan-Hook-Secret
-	TimeoutMS int   `json:"timeout_ms,omitempty"` // 0 = default 10s
+	ID        string   `json:"id"`                   // operator-chosen stable key (upsert by it)
+	Dir       string   `json:"dir"`                  // scope: "" = repo level, "lib" = directory subtree
+	Events    []string `json:"events"`               // pre-receive | update | post-receive
+	URL       string   `json:"url"`                  // callback target (2xx = allow)
+	Secret    string   `json:"secret,omitempty"`     // sent as X-Banyan-Hook-Secret
+	TimeoutMS int      `json:"timeout_ms,omitempty"` // 0 = default 10s
 }
 
 // Valid hook event names.
@@ -255,35 +255,37 @@ var (
 // MemoryMetaStore is the single-node in-memory implementation (M1). WAL semantics
 // = atomic reads/writes under one mutex; object writes skip the WAL (CAS idempotent); only head/index commits enter it.
 type MemoryMetaStore struct {
-	mu         sync.Mutex
-	repos      map[string]RepoInfo
-	packs      map[string]map[model.OID][]string    // repo → packOID → nodes
-	packObjs   map[string]map[model.OID][]model.OID // repo → packOID → objects
-	index      map[string]map[model.OID]ObjectLocation
-	timelines  map[string]map[model.Timeline]model.TimelineState
-	placements map[string]int             // repo → replica target (0 = cluster default)
-	hooks      map[string]map[string]HookInfo // repo → hook ID → registration
-	repoBlobs  map[string]map[string][]byte  // repo → blob key → bytes (gitaly custom-hooks)
-	pools      map[string]PoolInfo          // member repo → pool record
-	renames    map[string]string            // fence: from → to (rename in flight, docs/03 §6b)
-	retired    map[string]string            // tombstone: from → to (rename completed)
-	tokens     map[string]TokenInfo         // sha256 → token (docs/07 §6)
+	mu           sync.Mutex
+	repos        map[string]RepoInfo
+	packs        map[string]map[model.OID][]string    // repo → packOID → nodes
+	packObjs     map[string]map[model.OID][]model.OID // repo → packOID → objects
+	index        map[string]map[model.OID]ObjectLocation
+	timelines    map[string]map[model.Timeline]model.TimelineState
+	placements   map[string]int                 // repo → replica target (0 = cluster default)
+	hooks        map[string]map[string]HookInfo // repo → hook ID → registration
+	repoBlobs    map[string]map[string][]byte   // repo → blob key → bytes (gitaly custom-hooks)
+	pools        map[string]PoolInfo            // member repo → pool record
+	renames      map[string]string              // fence: from → to (rename in flight, docs/03 §6b)
+	retired      map[string]string              // tombstone: from → to (rename completed)
+	tokens       map[string]TokenInfo           // sha256 → token (docs/07 §6)
+	subtreeRules map[string]map[string][]string // repo → anchor path → allowed users (docs/07 §8)
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
 	return &MemoryMetaStore{
-		repos:      map[string]RepoInfo{},
-		packs:      map[string]map[model.OID][]string{},
-		packObjs:   map[string]map[model.OID][]model.OID{},
-		index:      map[string]map[model.OID]ObjectLocation{},
-		timelines:  map[string]map[model.Timeline]model.TimelineState{},
-		placements: map[string]int{},
-		repoBlobs:  map[string]map[string][]byte{},
-		hooks:      map[string]map[string]HookInfo{},
-		tokens:     map[string]TokenInfo{},
-		pools:      map[string]PoolInfo{},
-		renames:    map[string]string{},
-		retired:    map[string]string{},
+		repos:        map[string]RepoInfo{},
+		packs:        map[string]map[model.OID][]string{},
+		packObjs:     map[string]map[model.OID][]model.OID{},
+		index:        map[string]map[model.OID]ObjectLocation{},
+		timelines:    map[string]map[model.Timeline]model.TimelineState{},
+		placements:   map[string]int{},
+		repoBlobs:    map[string]map[string][]byte{},
+		hooks:        map[string]map[string]HookInfo{},
+		tokens:       map[string]TokenInfo{},
+		pools:        map[string]PoolInfo{},
+		renames:      map[string]string{},
+		retired:      map[string]string{},
+		subtreeRules: map[string]map[string][]string{},
 	}
 }
 
@@ -402,6 +404,10 @@ func (m *MemoryMetaStore) RenameRepo(_ context.Context, from, to string) error {
 		m.hooks[to] = h
 		delete(m.hooks, from)
 	}
+	if r, ok := m.subtreeRules[from]; ok {
+		m.subtreeRules[to] = r
+		delete(m.subtreeRules, from)
+	}
 	if b, ok := m.repoBlobs[from]; ok {
 		m.repoBlobs[to] = b
 		delete(m.repoBlobs, from)
@@ -441,6 +447,7 @@ func (m *MemoryMetaStore) DeleteRepo(_ context.Context, repo string) error {
 	delete(m.placements, repo)
 	delete(m.hooks, repo)
 	delete(m.repoBlobs, repo)
+	delete(m.subtreeRules, repo)
 	// A deleted repo leaves its pool (as member) and takes its pool records
 	// with it (as pool): members of a vanished pool become unlinked.
 	delete(m.pools, repo)
