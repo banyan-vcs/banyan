@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="800" viewBox="0 0 1160 800" font-family="'Microsoft YaHei','Noto Sans CJK SC','PingFang SC',sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16351f"/>
+    </marker>
+  </defs>
+
+  <rect width="1160" height="800" fill="#ffffff"/>
+  <text x="48" y="48" font-size="23" font-weight="700" fill="#16351f">banyan — git 兼容的代码存储服务端</text>
+  <text x="48" y="72" font-size="13.5" fill="#68758a">目录锚定时间线 · 分片 pack CAS + 中心元数据 · 根视图读时织入</text>
+
+  <!-- 客户端 -->
+  <rect x="40" y="94" width="1080" height="98" rx="10" fill="#f6f7f9"/>
+  <text x="54" y="112" font-size="11" font-weight="700" letter-spacing="1" fill="#68758a">客户端 —— 不要求任何人离开 git</text>
+  <g>
+    <rect x="56" y="124" width="252" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="72" y="147" font-size="14" font-weight="600" fill="#1c2430">git CLI · IDE · CI · Agent</text>
+    <text x="72" y="167" font-size="11.5" fill="#4a5568">纯 git —— clone、fetch、push</text>
+    <rect x="330" y="124" width="252" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="346" y="147" font-size="14" font-weight="600" fill="#1c2430">GitLab / Gitea</text>
+    <text x="346" y="167" font-size="11.5" fill="#4a5568">banyan 作为它们的存储节点</text>
+    <rect x="604" y="124" width="252" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="620" y="147" font-size="14" font-weight="600" fill="#1c2430">banyan CLI</text>
+    <text x="620" y="167" font-size="11.5" fill="#4a5568">薄工作区 · 最小下载</text>
+    <rect x="878" y="124" width="252" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="894" y="147" font-size="14" font-weight="600" fill="#1c2430">Web 控制台</text>
+    <text x="894" y="167" font-size="11.5" fill="#4a5568">零依赖 Web 层</text>
+  </g>
+
+  <line x1="182" y1="192" x2="182" y2="230" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="194" y="216" font-size="11.5" fill="#16351f">Smart HTTP v1/v2 · SSH</text>
+  <line x1="456" y1="192" x2="456" y2="230" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="468" y="216" font-size="11.5" fill="#16351f">Gitaly gRPC —— 163 个 RPC</text>
+  <line x1="730" y1="192" x2="730" y2="230" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="742" y="216" font-size="11.5" fill="#16351f">JSON /api/v1</text>
+  <line x1="1004" y1="192" x2="1004" y2="230" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="1016" y="216" font-size="11.5" fill="#16351f">会话</text>
+
+  <!-- 网关 -->
+  <rect x="40" y="230" width="1080" height="86" rx="10" fill="#f2f6f3"/>
+  <text x="54" y="248" font-size="11" font-weight="700" letter-spacing="1" fill="#68758a">无状态网关 ×N —— 自由横向扩缩</text>
+  <rect x="60" y="258" width="1040" height="46" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+  <text x="76" y="277" font-size="13.5" font-weight="600" fill="#16351f">只做协议端点 —— 任意负载均衡后面随加随删</text>
+  <text x="76" y="296" font-size="11.5" fill="#4a5568">每个缝隙都有授权：仓库 / 目录 / 分支三粒度</text>
+
+  <line x1="310" y1="316" x2="310" y2="352" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="322" y="340" font-size="11.5" fill="#16351f">ref RPC —— 小事务串行</text>
+  <line x1="850" y1="316" x2="850" y2="352" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="862" y="340" font-size="11.5" fill="#16351f">pack RPC —— 大流量，任一持有者服务</text>
+
+  <!-- refs 服务 -->
+  <rect x="40" y="352" width="524" height="246" rx="10" fill="#f2f6f3"/>
+  <text x="54" y="370" font-size="11" font-weight="700" letter-spacing="1" fill="#68758a">REFS 服务 —— 中心元数据</text>
+  <rect x="58" y="380" width="488" height="202" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+  <text x="76" y="406" font-size="15" font-weight="700" fill="#16351f">唯一串行点</text>
+  <text x="76" y="430" font-size="12.5" fill="#33424f">时间线 head CAS —— 一次 push 只锁一个目录时间线</text>
+  <text x="76" y="452" font-size="12.5" fill="#33424f">对象索引：oid → pack 分片 + 持有节点</text>
+  <text x="76" y="474" font-size="12.5" fill="#33424f">策略、节点健康、reconciler</text>
+  <rect x="76" y="492" width="452" height="36" rx="6" fill="#f6f7f9"/>
+  <text x="92" y="514" font-size="12" fill="#33424f">元数据存于 SQLite · MySQL · Postgres —— HA 交给数据库</text>
+
+  <!-- 散布存储 -->
+  <rect x="596" y="352" width="524" height="246" rx="10" fill="#f6f7f9"/>
+  <text x="610" y="370" font-size="11" font-weight="700" letter-spacing="1" fill="#68758a">散布 PACK 存储 ×N</text>
+  <rect x="614" y="380" width="488" height="202" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+  <text x="632" y="406" font-size="15" font-weight="700" fill="#16351f">字节面零共识</text>
+  <text x="632" y="430" font-size="12.5" fill="#33424f">不可变内容寻址分片 —— 写一次，永不改写</text>
+  <text x="632" y="452" font-size="12.5" fill="#33424f">R 副本随机散布，仓库与节点零亲和</text>
+  <text x="632" y="474" font-size="12.5" fill="#33424f">节点宕机 → 任一持有者继续服务；reconciler 补齐</text>
+  <rect x="632" y="492" width="452" height="36" rx="6" fill="#f2f6f3"/>
+  <text x="648" y="514" font-size="12" fill="#33424f">一体化与集群同一对象服务，无特例路径</text>
+
+  <!-- 核心创新 -->
+  <rect x="40" y="614" width="1080" height="170" rx="10" fill="#e8f0ea" stroke="#2c5e3d" stroke-width="1.2"/>
+  <text x="54" y="632" font-size="11" font-weight="700" letter-spacing="1" fill="#2c5e3d">核心创新 —— 目录锚定时间线</text>
+
+  <text x="76" y="668" font-size="12.5" font-weight="600" fill="#1c2430">services/</text>
+  <line x1="146" y1="664" x2="252" y2="664" stroke="#2c5e3d" stroke-width="1.8"/>
+  <circle cx="160" cy="664" r="5" fill="#2c5e3d"/><circle cx="196" cy="664" r="5" fill="#2c5e3d"/><circle cx="232" cy="664" r="5" fill="#2c5e3d"/>
+  <line x1="252" y1="664" x2="420" y2="664" stroke="#2c5e3d" stroke-width="1.4" opacity="0.55"/>
+
+  <text x="76" y="704" font-size="12.5" font-weight="600" fill="#1c2430">tools/</text>
+  <line x1="146" y1="700" x2="252" y2="700" stroke="#2c5e3d" stroke-width="1.8"/>
+  <circle cx="160" cy="700" r="5" fill="#2c5e3d"/><circle cx="196" cy="700" r="5" fill="#2c5e3d"/><circle cx="232" cy="700" r="5" fill="#2c5e3d"/>
+  <line x1="252" y1="700" x2="420" y2="700" stroke="#2c5e3d" stroke-width="1.4" opacity="0.55"/>
+
+  <text x="76" y="740" font-size="12.5" font-weight="600" fill="#1c2430">docs/</text>
+  <line x1="146" y1="736" x2="252" y2="736" stroke="#2c5e3d" stroke-width="1.8"/>
+  <circle cx="160" cy="736" r="5" fill="#2c5e3d"/><circle cx="196" cy="736" r="5" fill="#2c5e3d"/><circle cx="232" cy="736" r="5" fill="#2c5e3d"/>
+  <line x1="252" y1="736" x2="420" y2="736" stroke="#2c5e3d" stroke-width="1.4" opacity="0.55"/>
+
+  <line x1="420" y1="664" x2="420" y2="736" stroke="#2c5e3d" stroke-width="1.4" opacity="0.55"/>
+  <line x1="420" y1="700" x2="470" y2="700" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+
+  <rect x="478" y="658" width="300" height="84" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="2"/>
+  <text x="494" y="684" font-size="14" font-weight="700" fill="#16351f">根仓库</text>
+  <text x="494" y="706" font-size="12" fill="#33424f">读时线性织入 ——</text>
+  <text x="494" y="724" font-size="12" fill="#33424f">git clone 看到一条干净历史</text>
+
+  <text x="812" y="660" font-size="13" font-weight="600" fill="#1c2430">任何子目录都是完整仓库</text>
+  <text x="812" y="679" font-size="12" fill="#4a5568">投影历史 —— log、fsck、clone</text>
+  <text x="812" y="703" font-size="13" font-weight="600" fill="#1c2430">push 只碰一条时间线</text>
+  <text x="812" y="722" font-size="12" fill="#4a5568">跨目录零锁</text>
+  <text x="812" y="746" font-size="13" font-weight="600" fill="#1c2430">权限边界 = 时间线边界</text>
+  <text x="812" y="765" font-size="12" fill="#4a5568">目录粒度的治理</text>
+</svg>

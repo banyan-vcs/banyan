@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="800" viewBox="0 0 1160 800" font-family="system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16351f"/>
+    </marker>
+  </defs>
+
+  <rect width="1160" height="800" fill="#ffffff"/>
+  <text x="48" y="48" font-size="23" font-weight="700" fill="#16351f">banyan — git-compatible code storage</text>
+  <text x="48" y="72" font-size="13.5" fill="#68758a">directory-anchored timelines · sharded pack CAS + central metadata · the root view woven on read</text>
+
+  <!-- clients -->
+  <rect x="40" y="94" width="1080" height="98" rx="10" fill="#f6f7f9"/>
+  <text x="54" y="112" font-size="11" font-weight="700" letter-spacing="1" fill="#68758a">CLIENTS — NOBODY LEAVES GIT</text>
+  <g>
+    <rect x="56" y="124" width="252" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="72" y="147" font-size="14" font-weight="600" fill="#1c2430">git · IDE · CI · AI agents</text>
+    <text x="72" y="167" font-size="11.5" fill="#4a5568">plain git — clone, fetch, push</text>
+    <rect x="330" y="124" width="252" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="346" y="147" font-size="14" font-weight="600" fill="#1c2430">GitLab / Gitea</text>
+    <text x="346" y="167" font-size="11.5" fill="#4a5568">banyan is their storage node</text>
+    <rect x="604" y="124" width="252" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="620" y="147" font-size="14" font-weight="600" fill="#1c2430">banyan CLI</text>
+    <text x="620" y="167" font-size="11.5" fill="#4a5568">thin workspace · minimal download</text>
+    <rect x="878" y="124" width="252" height="54" rx="8" fill="#ffffff" stroke="#cfe8d2" stroke-width="1.5"/>
+    <text x="894" y="147" font-size="14" font-weight="600" fill="#1c2430">web console</text>
+    <text x="894" y="167" font-size="11.5" fill="#4a5568">zero-dependency web tier</text>
+  </g>
+
+  <line x1="182" y1="192" x2="182" y2="230" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="194" y="216" font-size="11.5" fill="#16351f">Smart HTTP v1/v2 · SSH</text>
+  <line x1="456" y1="192" x2="456" y2="230" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="468" y="216" font-size="11.5" fill="#16351f">Gitaly gRPC — 163 RPCs</text>
+  <line x1="730" y1="192" x2="730" y2="230" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="742" y="216" font-size="11.5" fill="#16351f">JSON /api/v1</text>
+  <line x1="1004" y1="192" x2="1004" y2="230" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="1016" y="216" font-size="11.5" fill="#16351f">sessions</text>
+
+  <!-- gateways -->
+  <rect x="40" y="230" width="1080" height="86" rx="10" fill="#f2f6f3"/>
+  <text x="54" y="248" font-size="11" font-weight="700" letter-spacing="1" fill="#68758a">STATELESS GATEWAYS ×N</text>
+  <rect x="60" y="258" width="1040" height="46" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+  <text x="76" y="277" font-size="13.5" font-weight="600" fill="#16351f">protocol endpoints only — add or remove behind any load balancer</text>
+  <text x="76" y="296" font-size="11.5" fill="#4a5568">authorization at every seam: repo / directory / branch granularity</text>
+
+  <line x1="310" y1="316" x2="310" y2="352" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="322" y="340" font-size="11.5" fill="#16351f">ref RPC — small serialized transactions</text>
+  <line x1="850" y1="316" x2="850" y2="352" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="862" y="340" font-size="11.5" fill="#16351f">pack RPC — bulk streams, any holder</text>
+
+  <!-- refs service -->
+  <rect x="40" y="352" width="524" height="246" rx="10" fill="#f2f6f3"/>
+  <text x="54" y="370" font-size="11" font-weight="700" letter-spacing="1" fill="#68758a">REFS SERVICE — CENTRAL METADATA</text>
+  <rect x="58" y="380" width="488" height="202" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+  <text x="76" y="406" font-size="15" font-weight="700" fill="#16351f">the only serialization point</text>
+  <text x="76" y="430" font-size="12.5" fill="#33424f">timeline head CAS — a push locks exactly one directory timeline</text>
+  <text x="76" y="452" font-size="12.5" fill="#33424f">object index: oid → pack shard + holder nodes</text>
+  <text x="76" y="474" font-size="12.5" fill="#33424f">policy, node health, reconciler</text>
+  <rect x="76" y="492" width="452" height="36" rx="6" fill="#f6f7f9"/>
+  <text x="92" y="514" font-size="12" fill="#33424f">metadata in SQLite · MySQL · Postgres — HA left to the database</text>
+
+  <!-- scattered storage -->
+  <rect x="596" y="352" width="524" height="246" rx="10" fill="#f6f7f9"/>
+  <text x="610" y="370" font-size="11" font-weight="700" letter-spacing="1" fill="#68758a">SCATTERED PACK STORAGE ×N</text>
+  <rect x="614" y="380" width="488" height="202" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="1.5"/>
+  <text x="632" y="406" font-size="15" font-weight="700" fill="#16351f">no consensus on bytes</text>
+  <text x="632" y="430" font-size="12.5" fill="#33424f">immutable content-addressed shards — write once, never rewrite</text>
+  <text x="632" y="452" font-size="12.5" fill="#33424f">R replicas scattered randomly, zero repo↔node affinity</text>
+  <text x="632" y="474" font-size="12.5" fill="#33424f">a node dies → any holder keeps serving; reconciler restores R</text>
+  <rect x="632" y="492" width="452" height="36" rx="6" fill="#f2f6f3"/>
+  <text x="648" y="514" font-size="12" fill="#33424f">the same object service in all-in-one and cluster sizes</text>
+
+  <!-- the core idea -->
+  <rect x="40" y="614" width="1080" height="170" rx="10" fill="#e8f0ea" stroke="#2c5e3d" stroke-width="1.2"/>
+  <text x="54" y="632" font-size="11" font-weight="700" letter-spacing="1" fill="#2c5e3d">THE CORE IDEA — DIRECTORY-ANCHORED TIMELINES</text>
+
+  <text x="76" y="668" font-size="12.5" font-weight="600" fill="#1c2430">services/</text>
+  <line x1="146" y1="664" x2="252" y2="664" stroke="#2c5e3d" stroke-width="1.8"/>
+  <circle cx="160" cy="664" r="5" fill="#2c5e3d"/><circle cx="196" cy="664" r="5" fill="#2c5e3d"/><circle cx="232" cy="664" r="5" fill="#2c5e3d"/>
+  <line x1="252" y1="664" x2="420" y2="664" stroke="#2c5e3d" stroke-width="1.4" opacity="0.55"/>
+
+  <text x="76" y="704" font-size="12.5" font-weight="600" fill="#1c2430">tools/</text>
+  <line x1="146" y1="700" x2="252" y2="700" stroke="#2c5e3d" stroke-width="1.8"/>
+  <circle cx="160" cy="700" r="5" fill="#2c5e3d"/><circle cx="196" cy="700" r="5" fill="#2c5e3d"/><circle cx="232" cy="700" r="5" fill="#2c5e3d"/>
+  <line x1="252" y1="700" x2="420" y2="700" stroke="#2c5e3d" stroke-width="1.4" opacity="0.55"/>
+
+  <text x="76" y="740" font-size="12.5" font-weight="600" fill="#1c2430">docs/</text>
+  <line x1="146" y1="736" x2="252" y2="736" stroke="#2c5e3d" stroke-width="1.8"/>
+  <circle cx="160" cy="736" r="5" fill="#2c5e3d"/><circle cx="196" cy="736" r="5" fill="#2c5e3d"/><circle cx="232" cy="736" r="5" fill="#2c5e3d"/>
+  <line x1="252" y1="736" x2="420" y2="736" stroke="#2c5e3d" stroke-width="1.4" opacity="0.55"/>
+
+  <line x1="420" y1="664" x2="420" y2="736" stroke="#2c5e3d" stroke-width="1.4" opacity="0.55"/>
+  <line x1="420" y1="700" x2="470" y2="700" stroke="#16351f" stroke-width="2" marker-end="url(#ar)"/>
+
+  <rect x="478" y="658" width="300" height="84" rx="8" fill="#ffffff" stroke="#2c5e3d" stroke-width="2"/>
+  <text x="494" y="684" font-size="14" font-weight="700" fill="#16351f">root repository</text>
+  <text x="494" y="706" font-size="12" fill="#33424f">woven linearly on read —</text>
+  <text x="494" y="724" font-size="12" fill="#33424f">git clone sees one clean history</text>
+
+  <text x="812" y="660" font-size="13" font-weight="600" fill="#1c2430">any subtree is a full repo</text>
+  <text x="812" y="679" font-size="12" fill="#4a5568">projected history — log, fsck, clone</text>
+  <text x="812" y="703" font-size="13" font-weight="600" fill="#1c2430">push touches one timeline</text>
+  <text x="812" y="722" font-size="12" fill="#4a5568">zero cross-directory locks</text>
+  <text x="812" y="746" font-size="13" font-weight="600" fill="#1c2430">permissions = timeline boundaries</text>
+  <text x="812" y="765" font-size="12" fill="#4a5568">governance at directory granularity</text>
+</svg>
