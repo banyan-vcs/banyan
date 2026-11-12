@@ -56,6 +56,27 @@ code lives and how it is served efficiently"; collaboration flows stay on
 the platforms, organization and permissions stay with the enterprise —
 directory timelines align both boundaries at the same granularity.
 
+## Architecture
+
+<p align="center">
+  <img src="docs/architecture-simple.svg" width="800" alt="banyan simplified architecture: git, GitLab and thin-CLI clients over stateless gateways; a refs service as the only serialization point beside scattered pack storage; directory timelines woven into the root repository on read" />
+</p>
+
+The four moves that make it work:
+
+- **Directory-anchored timelines** — every directory owns its commit
+  history, so any subtree is a semantically complete repo and a permission
+  boundary is a timeline boundary.
+- **Weave-on-read** — a push CASes exactly one directory timeline (zero
+  cross-directory locks); the root repository is woven linearly when it is
+  read, never merged on write.
+- **Sharded pack CAS + central metadata** — immutable content-addressed
+  pack shards scattered across N storage nodes with R replicas; a refs
+  service is the only serialization point, so bytes never need consensus.
+- **Thin fronts, one core** — git Smart HTTP v1/v2 + SSH, Gitaly gRPC
+  (163 RPCs — a GitLab drop-in) and the JSON API all delegate to the same
+  protocol-agnostic service core.
+
 ## Design goals
 
 1. **Drop-in git compatibility** — plain `git clone / fetch / push` just works
