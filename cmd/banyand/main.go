@@ -15,6 +15,8 @@
 //	                    binary, docs/17): users, tokens, the logical repository
 //	                    tree, the git front door
 //	banyand bench      the performance harness (docs/11 §3, formerly banyan-bench)
+//	banyand web        the web tier (internal/webapp): sessions, OAuth login,
+//	                    repo import, the SPA — the standalone control plane
 //
 // Configuration resolves as defaults < YAML (-config) < explicit flags
 // (internal/config).
@@ -56,6 +58,9 @@ func main() {
 			return
 		case "bench":
 			runBench(os.Args[2:])
+			return
+		case "web":
+			runWeb(os.Args[2:])
 			return
 		}
 	}

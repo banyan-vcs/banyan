@@ -2,13 +2,11 @@
   "name": "banyan-web",
   "private": true,
   "version": "1.0.0",
-  "description": "banyan web console — React SPA behind a zero-dependency Node session/proxy BFF",
+  "description": "banyan web console — React SPA served by banyand web (internal/webapp)",
   "scripts": {
-    "build": "tsc --noEmit -p tsconfig.json && tsc -p tsconfig.server.json && vite build",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
     "test": "vitest run",
-    "dev": "vite",
-    "bff": "tsc -p tsconfig.server.json && node server-dist/server.js",
-    "bff:watch": "tsc -p tsconfig.server.json && node --watch server-dist/server.js"
+    "dev": "vite"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",

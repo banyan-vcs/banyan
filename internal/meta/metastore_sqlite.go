@@ -24,6 +24,12 @@ func sqliteDSN(path string) string {
 		"&_txlock=immediate"
 }
 
+// SQLiteDSN is sqliteDSN exported for services that open the SAME database
+// file as the metadata plane (the web tier shares the gateway's sqlite in
+// demo deployments): the pragmas — WAL, busy_timeout, immediate
+// transactions — are the multi-process contract for that sharing.
+func SQLiteDSN(path string) string { return sqliteDSN(path) }
+
 // SQLiteMetaStore is the SQLMetaStore on the SQLite backend — the alias
 // keeps the historical name at call sites; the implementation, schema and
 // dialect handling live in metastore_sql.go.

@@ -26,19 +26,27 @@ services:
 
   web:
     build:
-      context: web
+      context: .
+      dockerfile: web/Dockerfile
       args:
-        # Constrained networks point this at a mirror, e.g.
-        #   https://registry.npmmirror.com
+        # Constrained networks point these at mirrors, e.g.
+        #   https://registry.npmmirror.com / https://mirrors.aliyun.com/goproxy/
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     image: banyan-web:dev
     container_name: banyan-web
     environment:
       BANYAN_URL: http://banyan:8080
+      # The web tier SHARES the gateway's sqlite database in this demo
+      # (sessions/imports live in web_* tables beside the meta tables) —
+      # one fewer instance, the sharing contract being WAL + busy_timeout.
+      BANYAN_WEB_DB: sqlite:/var/lib/banyan/banyan.db
     ports:
       - "8101:3000"
     depends_on:
       - banyan
+    volumes:
+      - banyan-data:/var/lib/banyan
     restart: unless-stopped
 
 volumes:
