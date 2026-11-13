@@ -426,3 +426,36 @@ func TestInterruptedImportsSweep(t *testing.T) {
 		t.Fatalf("swept job = %+v", jobs[0])
 	}
 }
+
+func TestSourceAuthorizationWraps(t *testing.T) {
+	db, err := OpenDB("sqlite:" + filepath.Join(t.TempDir(), "web.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	srv := New(Options{Gateway: "http://127.0.0.1:1", DistDir: t.TempDir(), DB: db})
+	local := Session{Username: "alice", Credential: "demo"}
+	glSess := Session{Username: "alice", Credential: "glpat-x", ProviderID: "gitlab", ProviderKind: "gitlab"}
+	cases := []struct {
+		sess  Session
+		url   string
+		mode  string
+		token string
+		want  string
+	}{
+		{glSess, "https://gitlab.com/g/r.git", "session", "", "Basic " + base64Of("oauth2:glpat-x")},
+		{local, "https://github.com/o/r.git", "token", "ghp_x", "Basic " + base64Of("x-access-token:ghp_x")},
+		{local, "https://gitlab.internal/g/r.git", "token", "glpat-9", "Basic " + base64Of("oauth2:glpat-9")},
+		{local, "http://banyan:8080/r/platform.git", "token", "banyan_PAT", "Basic " + base64Of("alice:banyan_PAT")},
+	}
+	for i, c := range cases {
+		got, err := srv.sourceAuthorization(c.sess, c.url, c.mode, c.token)
+		if err != nil || got != c.want {
+			t.Fatalf("case %d: got %q err=%v want %q", i, got, err, c.want)
+		}
+	}
+	// A local session's password never travels to a source host.
+	if _, err := srv.sourceAuthorization(local, "https://gitlab.com/g/r.git", "session", ""); err == nil {
+		t.Fatal("session mode on a local login must be refused")
+	}
+}

@@ -88,7 +88,7 @@ func Fetch(ctx context.Context, objs *storage.ObjectService, svc *service.Servic
 
 	req := packp.NewUploadPackRequest()
 	for name, hash := range refs.References {
-		if name == "HEAD" {
+		if name == "HEAD" || reservedRefName(name) {
 			continue
 		}
 		if !includeTags && strings.HasPrefix(name, "refs/tags/") {
@@ -131,7 +131,7 @@ func Fetch(ctx context.Context, objs *storage.ObjectService, svc *service.Servic
 
 	written := 0
 	for name, hash := range refs.References {
-		if name == "HEAD" || !strings.HasPrefix(name, "refs/") {
+		if name == "HEAD" || !strings.HasPrefix(name, "refs/") || reservedRefName(name) {
 			continue
 		}
 		if !includeTags && strings.HasPrefix(name, "refs/tags/") {
@@ -144,6 +144,14 @@ func Fetch(ctx context.Context, objs *storage.ObjectService, svc *service.Servic
 		written++
 	}
 	return &Result{Refs: written, DefaultBranch: defaultBranchOf(refs)}, nil
+}
+
+// reservedRefName reports the banyan-local namespaces an import must not
+// copy: refs/banyan/* is DERIVED state (subtree projections) — the target
+// repo derives its own from the imported timelines, a verbatim copy would
+// shadow them with phantom aux refs (the UpdateRef guard agrees).
+func reservedRefName(name string) bool {
+	return strings.HasPrefix(name, "refs/banyan/")
 }
 
 // defaultBranchOf reads the advertisement's symref capability (HEAD →

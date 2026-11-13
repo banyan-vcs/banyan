@@ -43,13 +43,20 @@ func (s *Server) sourceAuthorization(sess Session, rawURL, mode, token string) (
 		}
 		return sess.Basic(), nil
 	case "token":
-		if strings.TrimSpace(token) == "" {
+		token = strings.TrimSpace(token)
+		if token == "" {
 			return "", fmt.Errorf("token mode requires a token")
 		}
-		if kind == "github" {
-			return "Basic " + base64Of("x-access-token:"+strings.TrimSpace(token)), nil
+		// banyan's own PATs carry the console convention (docs/17 §4): the
+		// Basic username must be the token's owner — the importing session's
+		// user; a token minted by anyone else simply fails to authenticate.
+		if strings.HasPrefix(token, "banyan_") {
+			return "Basic " + base64Of(sess.Username+":"+token), nil
 		}
-		return "Basic " + base64Of("oauth2:"+strings.TrimSpace(token)), nil
+		if kind == "github" {
+			return "Basic " + base64Of("x-access-token:"+token), nil
+		}
+		return "Basic " + base64Of("oauth2:"+token), nil
 	default:
 		return "", fmt.Errorf("auth mode %q: want session|token", mode)
 	}
