@@ -58,6 +58,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/sync", s.authn(s.handleSync)) // subtree→root alignment (docs/02 §12)
 	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
+	mux.HandleFunc("/api/v1/imports", s.authn(s.handleImports)) // server-side repo import (docs/web)
 	mux.HandleFunc("/api/v1/repos/", s.authn(s.handleRepoSub)) // /api/v1/repos/<repo>/placement
 	mux.HandleFunc("/api/v1/cluster/nodes", s.authn(s.handleClusterNodes))
 	mux.HandleFunc("/api/v1/meta/backup", s.authn(s.handleMetaBackup))
