@@ -6,7 +6,6 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { apiText, qs } from "../api/client";
 import { parseBlame } from "../api/blame";
 import { BlameView } from "../components/BlameView";
-import { RepoTabs } from "../components/RepoTabs";
 import { ErrorBox, Spinner } from "../components/ui";
 
 export function BlamePage(): ReactNode {
@@ -28,7 +27,6 @@ export function BlamePage(): ReactNode {
         blame · <code>{path}</code>
         {ref ? <span className="muted"> @ {ref}</span> : null}
       </h1>
-      <RepoTabs repo={repo} current="" />
       <p className="pad">
         <Link to={`/r/${repo}/tree/${path}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>← back to the file</Link>
       </p>

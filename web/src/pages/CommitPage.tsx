@@ -7,7 +7,6 @@ import { api, apiText, qs } from "../api/client";
 import { parseUnifiedDiff } from "../api/diff";
 import type { LogResponse } from "../api/types";
 import { DiffView } from "../components/DiffView";
-import { RepoTabs } from "../components/RepoTabs";
 import { ErrorBox, Spinner, whenStr } from "../components/ui";
 
 export function CommitPage(): ReactNode {
@@ -32,7 +31,6 @@ export function CommitPage(): ReactNode {
       <h1>
         <code>{oid.slice(0, 12)}</code>
       </h1>
-      <RepoTabs repo={repo} current="history" />
       {commit.isPending && <Spinner />}
       {commit.isError && <ErrorBox error={commit.error} />}
       {commit.isSuccess && !entry && <p className="muted pad">commit not found.</p>}

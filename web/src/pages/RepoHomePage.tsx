@@ -7,7 +7,6 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, qs } from "../api/client";
 import { branchesOf, listRefs } from "../api/gitrefs";
 import type { LogResponse } from "../api/types";
-import { RepoTabs } from "../components/RepoTabs";
 import { ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 
 export function RepoHomePage(): ReactNode {
@@ -32,7 +31,6 @@ export function RepoHomePage(): ReactNode {
         <code>{repo}</code>
         {defaultBranch && <Pill>default: {defaultBranch}</Pill>}
       </h1>
-      <RepoTabs repo={repo} current="" />
       {cloneBase === "" && null}
       <div className="two-col">
         <section>

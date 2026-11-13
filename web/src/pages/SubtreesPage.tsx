@@ -7,7 +7,6 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api, qs } from "../api/client";
 import type { LogResponse, SubtreeListing, SubtreeRule, SubtreeSummary } from "../api/types";
-import { RepoTabs } from "../components/RepoTabs";
 import { Empty, ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 
 export function SubtreesPage(): ReactNode {
@@ -37,7 +36,7 @@ export function SubtreesPage(): ReactNode {
     retry: false,
   });
 
-  const ruleOf = (path: string): SubtreeRule | undefined => rules.data?.rules.find((r) => r.path === path);
+  const ruleOf = (path: string): SubtreeRule | undefined => (rules.data?.rules || []).find((r) => r.path === path);
   const putRule = useMutation({
     mutationFn: (r: { path: string; users: string[] }) =>
       api(`/api/v1/repos/${encodeURIComponent(repo)}/subtree-access`, { method: "PUT", body: JSON.stringify(r) }),
@@ -66,7 +65,6 @@ export function SubtreesPage(): ReactNode {
       <h1>
         subtrees · <code>{repo}</code>
       </h1>
-      <RepoTabs repo={repo} current="subtrees" />
       <p className="muted">every directory that owns a commit history. <code>projected</code> marks the projection refs (refs/banyan/tree/&lt;dir&gt;) — one URL, one credential per subtree.</p>
       {error && <div className="error-box">{error}</div>}
       {listing.isPending && <Spinner />}

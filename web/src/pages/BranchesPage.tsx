@@ -5,7 +5,6 @@ import { Link, useParams } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
 import { branchesOf, listRefs } from "../api/gitrefs";
-import { RepoTabs } from "../components/RepoTabs";
 import { ErrorBox, Pill, Spinner, shortOid } from "../components/ui";
 
 export function BranchesPage(): ReactNode {
@@ -55,7 +54,6 @@ export function BranchesPage(): ReactNode {
       <h1>
         branches · <code>{repo}</code>
       </h1>
-      <RepoTabs repo={repo} current="branches" />
       {error && <div className="error-box">{error}</div>}
       <form
         className="create-branch"

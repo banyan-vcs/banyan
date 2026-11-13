@@ -5,7 +5,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
-import { RepoTabs } from "../components/RepoTabs";
 import { ErrorBox, Spinner, sizeStr } from "../components/ui";
 
 export function SettingsPage(): ReactNode {
@@ -66,7 +65,6 @@ export function SettingsPage(): ReactNode {
       <h1>
         settings · <code>{repo}</code>
       </h1>
-      <RepoTabs repo={repo} current="settings" />
       {error && <div className="error-box">{error}</div>}
       {note && <div className="ok-box">{note}</div>}
 

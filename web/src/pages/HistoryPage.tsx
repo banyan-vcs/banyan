@@ -5,7 +5,6 @@ import type { ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, qs } from "../api/client";
 import type { LogResponse } from "../api/types";
-import { RepoTabs } from "../components/RepoTabs";
 import { ErrorBox, Spinner, shortOid, whenStr } from "../components/ui";
 
 const PAGE = 30;
@@ -30,7 +29,6 @@ export function HistoryPage(): ReactNode {
       <h1>
         history{branch ? <> · <code>{branch}</code></> : null}
       </h1>
-      <RepoTabs repo={repo} current="history" />
       <form
         className="path-filter"
         onSubmit={(e) => {

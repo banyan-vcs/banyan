@@ -1,40 +1,12 @@
-// FileIcon.tsx — a tiny glyph per entry kind (directories, files, links,
-// submodules), text-styled to match the console's plain aesthetic.
+// FileIcon.tsx — a small inline glyph per entry kind: a folder for trees
+// (accent-tinted via .entry-icon.tree), a page for blobs, an arrow for
+// links and a box for submodules.
+import type { ReactNode } from "react";
+import { FileIcon16, FolderIcon, LinkFileIcon, SubmoduleIcon } from "./icons";
 
-const BY_EXT: Record<string, string> = {
-  go: "go",
-  ts: "ts",
-  tsx: "ts",
-  js: "js",
-  mjs: "js",
-  json: "{}",
-  md: "md",
-  yaml: "yml",
-  yml: "yml",
-  py: "py",
-  rs: "rs",
-  java: "jv",
-  c: "c",
-  h: "c",
-  cpp: "c++",
-  sql: "sql",
-  sh: "sh",
-  css: "css",
-  html: "html",
-  svg: "svg",
-  png: "img",
-  jpg: "img",
-  jpeg: "img",
-  gif: "img",
-  txt: "txt",
-  mod: "go",
-  sum: "go",
-};
-
-export function FileIcon({ name, kind, mode }: { name: string; kind: "tree" | "blob" | "commit"; mode: string }): string {
-  if (kind === "tree") return "/";
-  if (mode === "160000") return "⊕";
-  if (mode === "120000") return "→";
-  const ext = name.includes(".") ? name.split(".").pop()! : "";
-  return BY_EXT[ext] || "·";
+export function FileIcon({ kind, mode }: { name: string; kind: "tree" | "blob" | "commit"; mode: string }): ReactNode {
+  if (kind === "tree") return <FolderIcon />;
+  if (mode === "160000") return <SubmoduleIcon />;
+  if (mode === "120000") return <LinkFileIcon />;
+  return <FileIcon16 />;
 }

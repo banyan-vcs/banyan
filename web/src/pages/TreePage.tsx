@@ -9,7 +9,6 @@ import { branchesOf, listRefs } from "../api/gitrefs";
 import type { TreeResponse } from "../api/types";
 import { BlobView } from "../components/Blob";
 import { FileIcon } from "../components/FileIcon";
-import { RepoTabs } from "../components/RepoTabs";
 import { ErrorBox, Pill, Spinner, sizeStr } from "../components/ui";
 
 interface ResolveResult {
@@ -70,7 +69,6 @@ export function TreePage(): ReactNode {
           ))}
         </select>
       </h1>
-      <RepoTabs repo={repo} current="" />
       <div className="crumbs">
         <Link to={`/r/${repo}/tree${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>{repo}</Link>
         {crumbs.map((seg, i) => {
