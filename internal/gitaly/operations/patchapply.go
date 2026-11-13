@@ -1,6 +1,6 @@
 package operations
 
-// Mailbox splitting and unified-diff application (UserApplyPatch, docs/19):
+// Mailbox splitting and unified-diff application (UserApplyPatch, docs/integration/gitaly-compat.md):
 // the web-editor patch flow sends an mbox stream whose mails carry one
 // unified diff each. Everything here is pure Go — parsing mirrors
 // git mailsplit/mailinfo's essential shape (From-lines, RFC-822 headers,

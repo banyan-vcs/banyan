@@ -1,4 +1,4 @@
-// Path diff and blame on the JSON surface (docs/05 §3, docs/14 M2/M3):
+// Path diff and blame on the JSON surface (docs/gateway/service-api.md §3, docs/project/roadmap.md M2/M3):
 // /api/v1/diff and /api/v1/blame delegate to the same engines the gitaly
 // frontend serves (internal/gitaly.Engines) — the text answers are
 // byte-pinned against git itself (T81), so API consumers see exactly what

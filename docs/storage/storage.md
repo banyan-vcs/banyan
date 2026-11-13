@@ -1,4 +1,4 @@
-# 03 · 分布式 pack 存储
+# 分布式 pack 存储
 
 ## 设计约束（用户原话锚定）
 
@@ -116,7 +116,7 @@ type MetaStore      interface { 上述全部 }                              // c
 - 方言层（2026-10-27，HA-2）：MySQL（go-sql-driver）/PG（pgx）共享一套 schema 与全部语句，分歧点=DLL 类型与索引长度/OR IGNORE 与 UPSERT 拼写/占位符 rebind（?→$N）/唯一冲突判定（1062/23505）；CAS 在 MVCC 后端改为 SELECT...FOR UPDATE + 插入竞态按 PK 冲突归 ErrNonFastForward；conformance 矩阵四后端同一套（env 门控 BANYAN_TEST_{MYSQL,POSTGRES}_DSN）。
 - PRAGMA：`journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=5000`。
 - `objects` 表 `WITHOUT ROWID`（主键聚簇，点查即索引扫描）；插入按 500 行/事务分块。
-- CAS：`BEGIN IMMEDIATE` 内 SELECT-比-UPDATE/DELETE，失败回滚映射 `ErrNonFastForward`（与 git push 语义一致，docs/02 §4.3）。
+- CAS：`BEGIN IMMEDIATE` 内 SELECT-比-UPDATE/DELETE，失败回滚映射 `ErrNonFastForward`（与 git push 语义一致，docs/design/data-model.md §4.3）。
 - 幂等：packs/objects 一律 `INSERT OR IGNORE`（首写者胜；pack 不可变 ⇒ 无冲突语义）。
 
 ## 3. 读路径（服务一次 fetch，2026-10-25 起窗口化）
@@ -133,7 +133,7 @@ wants = 客户端协商所得对象集合
          该 pack 流式直传（节点盘 → 网络 → 响应，256KiB 窗口；
          网关磁盘缓存命中则盘 → 响应，未命中边流边写穿缓存）
        ——闭包（对象字节驻留）完全跳过
-  ⓪' 多 pack clone 形态（精确命中 miss，docs/03 §3a 流式编码）：
+  ⓪' 多 pack clone 形态（精确命中 miss，docs/storage/storage.md §3a 流式编码）：
        响应缓存前置（同 wants 重复克隆免走查——旧路径命中缓存
        仍要付全量 closure 计算）→ 类型化枚举（⓪ 同款）→
        Placements 按 pack 分组（组内/组间排序定序，合成对象居首）
@@ -154,7 +154,7 @@ wants = 客户端协商所得对象集合
      （PackSize 探测：网关缓存索引 / 节点 HEAD；大小不可变故缓存）
      ——大包永不整包驻留网关内存；单对象读的"8 次翻转整包"
      仅集群线（PrefersWholePack：每次单对象读是 RPC），本地后端
-     永不翻转（抽取即文件读；T50 复盘，见 docs/17 §7）
+     永不翻转（抽取即文件读；T50 复盘，见 docs/web/console.md §7）
   ⑤ 在线合成响应 pack（含响应缓存 / thin；走 closure，小仓主路径）
   ⑥ side-band 流式回写
 ```
@@ -229,7 +229,7 @@ receive-pack 收到 (ref 命令行, pack 流)
 空 pack（0 对象）是合法 wire 形态（客户端推服务端已有对象）——直接
 跳过落库。步骤 ④⑥ 并行；串行点只有 ⑤ 的 head CAS。
 
-**存量大仓分批导入**（`banyan import`，2026-10-27，docs/06 §3.6）：客户端
+**存量大仓分批导入**（`banyan import`，2026-10-27，docs/client/cli.md §3.6）：客户端
 编排工具把源仓按拓扑序切成字节预算内的段逐段 push——每段走一遍上述流式
 写路径，内存 ∝ 段大小；段间碎片一等公民（repack 前 ExactPackHit/流式
 编码器照常服务）。断点续传=重跑从远端 tip 起算。
@@ -273,7 +273,7 @@ SQLite，老库打开时自动 ALTER+回填）；hashed 键 = 它的哈希 fanou
 因此 **rename 后键不变**，新旧名共享同一存储树。元数据行（timelines/
 packs/objects/placement…）仍按名字键控，rename 为单事务全表改名。
 
-**rename 语义**（`POST /api/v1/repos/<repo>/rename`，docs/07 §5 认证门）：
+**rename 语义**（`POST /api/v1/repos/<repo>/rename`，docs/gateway/authorization.md §5 认证门）：
 - hashed：refs 注册表一次翻转；
 - named：网关向健康视图内**所有**节点发 `POST /internal/pack/rename`
   （缺源目录=OK 幂等），全部确认后才翻转注册表——数据始终先于名字。
@@ -285,7 +285,7 @@ packs/objects/placement…）仍按名字键控，rename 为单事务全表改�
 
 | 组件 | 选型 | 说明 |
 |---|---|---|
-| 元数据服务 | 独立 ref 服务承载前序判断（[10-ha.md](10-ha.md) §0 v0.3 定稿：与 pack 存储分离；后端 MySQL/PG 或内嵌 raft） | WAL 与 CAS 需要线性化；pack 大流量不经串行点 |
+| 元数据服务 | 独立 ref 服务承载前序判断（[ha.md](ha.md) §0 v0.3 定稿：与 pack 存储分离；后端 MySQL/PG 或内嵌 raft） | WAL 与 CAS 需要线性化；pack 大流量不经串行点 |
 | 存储节点 | 无状态 HTTP 服务，底层对象存储（S3 类）或本地盘 | pack 不可变，S3 语义天然契合 |
 | 副本策略 | rendezvous × R，或对象存储自带 EC | pack 大且不可变，纠删码收益高 |
 | 缓存层 | 独立 cache 进程（LRU by pack_oid） | 三层同构，见 §3 |

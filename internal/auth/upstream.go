@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// The console control plane (docs/17) fronts the gateway and delegates the
+// The console control plane (docs/web/console.md) fronts the gateway and delegates the
 // deep enforcement to it, through two artifacts:
 //
 //   - a signed identity header (X-Banyan-Identity): the console verifies the
@@ -25,7 +25,7 @@ import (
 //     endpoint: usernames (personal-branch ownership), instance admins, and
 //     per-repo anchors carrying direct memberships. The gateway derives
 //     effective roles with the same max-over-prefix-chain formula the console
-//     uses (docs/17 §4), so aggregation semantics live in one shape only.
+//     uses (docs/web/console.md §4), so aggregation semantics live in one shape only.
 
 // AnonymousUser is the pseudo-identity the console signs for unauthenticated
 // access to public repositories: the gateway keeps a single enforcement path
@@ -133,7 +133,7 @@ func anchorPrefix(a, sub string) bool {
 
 // UpstreamPolicy is the gateway-side auth.Service for console-fronted
 // deployments: identity arrives as the signed header, rules as snapshot v2.
-// Behavior mirrors RemotePolicy (docs/07 §4): last snapshot stays in effect
+// Behavior mirrors RemotePolicy (docs/gateway/authorization.md §4): last snapshot stays in effect
 // on sync failure; no snapshot yet = fail closed. A repo absent from the
 // snapshot triggers one out-of-band refresh (bounded to once per second) so
 // a just-created project is usable without waiting out the TTL.
@@ -181,7 +181,7 @@ func (p *UpstreamPolicy) Identify(h *http.Request) Identity {
 }
 
 // IdentifyKey stays closed in this topology: SSH terminates at the console
-// (docs/17 §5, M6.3); key material never reaches the gateway.
+// (docs/web/console.md §5, M6.3); key material never reaches the gateway.
 func (p *UpstreamPolicy) IdentifyKey(string, []byte) Identity { return Identity{} }
 
 // snapshot returns the current policy image, refreshing when stale; force
@@ -243,7 +243,7 @@ func (p *UpstreamPolicy) isAdmin(id Identity) bool {
 }
 
 // effRole aggregates the direct memberships over the anchor prefix chain of
-// sub — the same max walk the console performs (docs/17 §4).
+// sub — the same max walk the console performs (docs/web/console.md §4).
 func (p *UpstreamPolicy) effRole(id Identity, r UpstreamRepo, sub string) int {
 	if p.isAdmin(id) {
 		return RoleRank("owner")
@@ -288,7 +288,7 @@ func (p *UpstreamPolicy) VisibleRefs(id Identity, _ string, refs []Ref) []Ref {
 }
 
 // wireSub normalizes the subtree argument gitwire passes (an anchor path
-// like "/" or "/services/auth", docs/02 §2) into the snapshot's anchor-key
+// like "/" or "/services/auth", docs/design/data-model.md §2) into the snapshot's anchor-key
 // shape ("" or "services/auth").
 func wireSub(sub string) string {
 	return strings.TrimPrefix(sub, "/")
@@ -318,14 +318,14 @@ func (p *UpstreamPolicy) CanPush(id Identity, repo, sub, branch string) bool {
 	if rank == 0 {
 		return false
 	}
-	// Personal branches are exclusive to their owner and admins (docs/07
+	// Personal branches are exclusive to their owner and admins (docs/gateway/authorization.md
 	// §3): rank never buys someone else's namespace.
 	if owner, _, ok := strings.Cut(branch, "/"); ok && p.knownUser(owner) {
 		return owner == id.User || p.isAdmin(id)
 	}
 	// Protected branches guard the project's integration branch at the ROOT
 	// anchor. Subtree timelines have their own collaboration semantics
-	// (convergence queues, docs/15); pushing a subtree's main is ordinary
+	// (convergence queues, docs/design/workflow.md); pushing a subtree's main is ordinary
 	// anchor-granularity work, not an integration-branch move.
 	if sub == "" {
 		for _, b := range r.ProtectedBranches {

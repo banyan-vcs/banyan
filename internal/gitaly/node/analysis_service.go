@@ -15,7 +15,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// AnalysisService (docs/19). CheckBlobsGenerated runs the same generated-
+// AnalysisService (docs/integration/gitaly-compat.md). CheckBlobsGenerated runs the same generated-
 // file heuristic upstream uses — go-enry's IsGenerated over the first 2KiB
 // of each blob (extension and content markers: lockfiles, minified JS,
 // generated-code banners) — answering one row per requested revision.

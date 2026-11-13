@@ -14,7 +14,7 @@ import (
 )
 
 // Reconciler converges actual pack holders toward each repo's replica target
-// (docs/10 §8.3). Ordering discipline is the whole correctness argument:
+// (docs/storage/ha.md §8.3). Ordering discipline is the whole correctness argument:
 // COPY first, REGISTER the new holder set, DELETE last — any interruption
 // leaves at worst an over-replicated pack, never a registered holder without
 // data, never a delete below the target.
@@ -24,7 +24,7 @@ type Reconciler struct {
 	DefaultR    int
 	Concurrency int
 	// Addressing resolves repo names to storage keys for node calls
-	// (docs/03 §6): hashed mode copies/trims under the opaque key while the
+	// (docs/storage/storage.md §6): hashed mode copies/trims under the opaque key while the
 	// registry stays name-keyed. Nil = named (identity).
 	Addressing *meta.Addressing
 
@@ -178,7 +178,7 @@ func (r *Reconciler) convergePack(ctx context.Context, repo string, p meta.PackI
 	return false
 }
 
-// nodeKey resolves the storage key for node-facing calls (docs/03 §6);
+// nodeKey resolves the storage key for node-facing calls (docs/storage/storage.md §6);
 // identity under named addressing, the opaque @hashed path otherwise.
 // Resolution failure degrades to the name — the call fails on the node
 // instead of blocking the whole convergence pass.
@@ -191,7 +191,7 @@ func (r *Reconciler) nodeKey(ctx context.Context, repo string) string {
 	return key
 }
 
-// SweepOptions tunes one fleet-sweep pass (docs/10 §8.7).
+// SweepOptions tunes one fleet-sweep pass (docs/storage/ha.md §8.7).
 type SweepOptions struct {
 	// MinAge protects in-flight writes: a byte-land → register span is one
 	// sequential call chain measured in milliseconds, while a sweep pass is
@@ -217,7 +217,7 @@ func (o *SweepOptions) fill() {
 	}
 }
 
-// SweepOnce reclaims orphan bytes across the fleet (docs/10 §8.7) — the GC
+// SweepOnce reclaims orphan bytes across the fleet (docs/storage/ha.md §8.7) — the GC
 // arm the reconciler never had: bytes a registry row no longer vouches for.
 // Two phases per node, registry-driven:
 //

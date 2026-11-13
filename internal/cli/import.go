@@ -1,7 +1,7 @@
 package cli
 
 // import — bulk migration of an existing git repository into a banyan
-// server, segment by segment (docs/03 §5): each push carries one
+// server, segment by segment (docs/storage/storage.md §5): each push carries one
 // topologically contiguous slice under a byte budget, so server memory
 // stays bounded no matter the history size (streamed ingest), and the root
 // timeline fast-forwards once per segment — the multi-pack model keeps the

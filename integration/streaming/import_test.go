@@ -1,7 +1,7 @@
 package streaming
 
-// T59 (docs/13): banyan import — bulk migration of an existing git
-// repository, segment by segment (docs/03 §5 分批导入). A six-commit repo of
+// T59 (docs/operations/testing.md): banyan import — bulk migration of an existing git
+// repository, segment by segment (docs/storage/storage.md §5 分批导入). A six-commit repo of
 // incompressible 40 KiB blobs under a 60 KiB segment budget must arrive as
 // ≥2 segments (each push its own pack — the fragments are first-class, no
 // repack), the imported history must be byte-faithful to the source, and a

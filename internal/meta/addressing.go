@@ -1,4 +1,4 @@
-// Repository addressing modes (docs/03 §6): how a repo name becomes the
+// Repository addressing modes (docs/storage/storage.md §6): how a repo name becomes the
 // on-disk / on-wire storage key every pack path is nested under.
 //
 //	named  (default)  key = repo name. Human-readable storage trees; a
@@ -60,7 +60,7 @@ func NewAddressing(mode string, meta MetaStore) *Addressing {
 	return &Addressing{Mode: mode, Meta: meta, keys: map[string]string{}}
 }
 
-// Key maps a repo name to its storage key (docs/03 §6).
+// Key maps a repo name to its storage key (docs/storage/storage.md §6).
 func (a *Addressing) Key(ctx context.Context, repo string) (string, error) {
 	if a == nil || a.Mode != "hashed" {
 		return repo, nil

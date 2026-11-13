@@ -1,4 +1,4 @@
-// T60 — gitaly protocol compat e2e (docs/19): the same object plane the git
+// T60 — gitaly protocol compat e2e (docs/integration/gitaly-compat.md): the same object plane the git
 // smart-HTTP path serves is read back through the gitaly gRPC frontend, and
 // every answer must equal what the real git client computes locally. The
 // oracle is git itself: refs from ls-remote, commits from rev-parse/log,
@@ -237,7 +237,7 @@ func TestT60GitalyCompatSurface(t *testing.T) {
 
 	t.Run("create repository and serve it", func(t *testing.T) {
 		// GitLab's canonical hashed path: the trailing oid becomes the banyan
-		// repo name (zero-translation addressing, docs/19 §2).
+		// repo name (zero-translation addressing, docs/integration/gitaly-compat.md §2).
 		hashed := &gitalypb.Repository{StorageName: "default", RelativePath: "@hashed/6b/86/6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b.git"}
 		mapped := "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
 		_, err := rps.CreateRepository(ctx, &gitalypb.CreateRepositoryRequest{Repository: hashed, DefaultBranch: []byte("master")})

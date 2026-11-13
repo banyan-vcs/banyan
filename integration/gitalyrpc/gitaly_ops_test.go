@@ -1,5 +1,5 @@
 // T64 — OperationService ref slice, UserCommitFiles and the LFS-pointer
-// trio (docs/19 slice 5). Git is the oracle: branch/tag moves verify via
+// trio (docs/integration/gitaly-compat.md slice 5). Git is the oracle: branch/tag moves verify via
 // ls-remote and cat-file on fetched objects, the web-edit commit verifies
 // as an ordinary commit git can fetch and read back.
 package gitalyrpc

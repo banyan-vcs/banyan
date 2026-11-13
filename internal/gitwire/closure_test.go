@@ -16,7 +16,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// Unit coverage for the streaming-serve primitives (docs/03 §3/§3a): the
+// Unit coverage for the streaming-serve primitives (docs/storage/storage.md §3/§3a): the
 // type-directed closure enumeration, the serve-rung counter classification,
 // and the two tryStreamingServe pre-conditions that decide the rung before
 // any byte moves (response cache first; small-repo cutoff). The multi-pack
@@ -279,7 +279,7 @@ func TestStreamingServeSmallRepoFallsBack(t *testing.T) {
 	z, srv := ingestZoo(t)
 	var out bytes.Buffer
 	assert.False(t, srv.tryStreamingServe(t.Context(), &out, VirtualRepo{Repo: "r"}, []model.OID{z.commit2}, false),
-		"small pack-group keeps the closure ladder (docs/03 §3a cutoff)")
+		"small pack-group keeps the closure ladder (docs/storage/storage.md §3a cutoff)")
 	assert.Zero(t, out.Len(), "no bytes may move before the fallback decision")
 }
 

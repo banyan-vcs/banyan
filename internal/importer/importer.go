@@ -3,9 +3,9 @@
 // ingest path a push rides (storage.IngestPackFile + service.UpdateRef), so
 // an imported repo and a pushed repo are indistinguishable afterwards.
 //
-// The engine grew out of the gitaly FetchRemote surface (docs/19) and is
+// The engine grew out of the gitaly FetchRemote surface (docs/integration/gitaly-compat.md) and is
 // shared by it; the web tier's repo-import API is the other caller. SSH
-// remotes are refused — the registered limitation lives in docs/19.
+// remotes are refused — the registered limitation lives in docs/integration/gitaly-compat.md.
 package importer
 
 import (
@@ -52,7 +52,7 @@ type Result struct {
 }
 
 // ErrSSHRemote mirrors the gitaly surface's registered limitation.
-var ErrSSHRemote = errors.New("ssh remotes are not served (docs/19)")
+var ErrSSHRemote = errors.New("ssh remotes are not served (docs/integration/gitaly-compat.md)")
 
 // ErrInvalidURL marks a remote URL that never reached the wire (bad
 // endpoint or unsupported protocol) so callers can keep their old

@@ -7,7 +7,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// In-memory derived indexes (complement to the docs/03 §1.3 global index + docs/08 commit-graph):
+// In-memory derived indexes (complement to the docs/storage/storage.md §1.3 global index + docs/design/derived-data.md commit-graph):
 //
 //   - CommitGraph: oid → (tree, parents, when); closure computation and
 //     projection traversal no longer decode raw commit bytes per object; built
@@ -29,7 +29,7 @@ type CommitInfo struct {
 	Tree      model.OID
 	Parents   []model.OID
 	When      int64     // committer unix time (for ordering/generation)
-	WovenFrom model.OID // weave provenance: this commit is the fold of that source commit (docs/02 §13); zero = none
+	WovenFrom model.OID // weave provenance: this commit is the fold of that source commit (docs/design/data-model.md §13); zero = none
 }
 
 type repoIndex struct {
@@ -46,7 +46,7 @@ type repoIndex struct {
 	// total memory O(commits)). Uncapped on purpose: a capped list can miss
 	// the one ancestor carrying the tree and flip TreeKnown to false.
 	treeCommits map[model.OID][]model.OID
-	// Lightweight commit index (docs/02 §11, design v3): git oid → (tree edge, bmsg ref).
+	// Lightweight commit index (docs/design/data-model.md §11, design v3): git oid → (tree edge, bmsg ref).
 	// Envelopes dedupe by content addressing; built at push with per-commit byte-level render verification (renderFails should stay 0).
 	records     map[model.OID]*model.CommitRecord
 	msgs        map[model.OID][]byte
@@ -101,7 +101,7 @@ func (s *ObjectService) buildIndex(repo string, dp *DecodedPack) {
 // synthetic table and the push-built commit/tree indexes. No IO: a miss
 // (blob, tag, or a cold process before any push) simply reports unknown and
 // the caller falls back to a real read. The clone-shaped enumeration probe
-// (docs/03 §5) uses this to type want tips without inflating object bodies.
+// (docs/storage/storage.md §5) uses this to type want tips without inflating object bodies.
 func (s *ObjectService) IndexTypeOf(repo string, oid model.OID) (model.ObjectType, bool) {
 	s.synthMu.Lock()
 	if so, ok := s.synth[repo][oid]; ok {

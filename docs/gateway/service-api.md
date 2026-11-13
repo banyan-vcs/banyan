@@ -1,13 +1,13 @@
-# 05 · 服务层抽象与 API 服务层（httpd / Gitaly 双前端）
+# 服务层抽象与 API 服务层（httpd / Gitaly 双前端）
 
 > 背景（用户决策）：banyand 抽象中间层，前端可插拔——**httpd** 为本地 demo 服务
 > （git smart HTTP + `/api/v1` JSON，也是 **CLI 的一等契约**）；另规划 **Gitaly gRPC
 > 兼容前端**，使 GitLab 可直接把 banyand 当作底层存储节点。本文设计 CLI 所需的
-> API 服务层，命令面见 [06-cli.md](06-cli.md)。
+> API 服务层，命令面见 [cli.md](../client/cli.md)。
 
 ## 0. 决策变更记录
 
-docs/01 初版把 Gitaly RPC 列为非目标（私有契约跟随者风险）。本篇改为**可选、
+docs/design/big-picture.md 初版把 Gitaly RPC 列为非目标（私有契约跟随者风险）。本篇改为**可选、
 分阶段兼容**：私有契约的差异与版本漂移被隔离在 gitaly 适配层内，核心服务与
 CLI 契约不受影响。协议原生（标准 git 远端）仍是第一优先路线，Gitaly 兼容是
 加深 GitLab 集成的第二路线（比 08 §3.2 镜像拓扑更深一层：无需镜像，单真相源）。
@@ -94,13 +94,13 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 
 ### 3.1 端点总表（命令 → 端点 → service 方法）
 
-| 命令（docs/06） | 端点 | service 方法 | 状态 |
+| 命令（docs/client/cli.md） | 端点 | service 方法 | 状态 |
 |---|---|---|---|
 | clone / fetch / pull | `POST /api/v1/fetch-trees` | Tree.Fetch | **已落地** |
 | fetch-objects / cat / restore 回填 | `POST /api/v1/objects`（批量定位）/ `GET /api/v1/objects?repo&oid` | Object.BatchMeta / Get | 批量**已有**，GET **已落地** |
 | commit（blob 上传） | `POST /api/v1/objects/content` | Object.Put | **已落地** |
 | commit | `POST /api/v1/commit` | Commit.Create | **已落地** |
-| sync | `POST /api/v1/sync` | Timeline.Sync | **已落地**（2026-11-08，docs/02 §12 真分叉显式对齐；body `{repo, sub, branch?}`，与 commit 同推送授权门；409 `CONFLICT_SYNC_CONFLICT` 具名提交+路径，400 `SYNC_UNSUPPORTED`=merge 链） |
+| sync | `POST /api/v1/sync` | Timeline.Sync | **已落地**（2026-11-08，docs/design/data-model.md §12 真分叉显式对齐；body `{repo, sub, branch?}`，与 commit 同推送授权门；409 `CONFLICT_SYNC_CONFLICT` 具名提交+路径，400 `SYNC_UNSUPPORTED`=merge 链） |
 | log | `POST /api/v1/log` | History.Log | **已有**（已下沉 service） |
 | show | `POST /api/v1/log`（n=1）+ `GET /api/v1/diff` | Log + Diff | **已落地**（diff 引擎与 gitaly 同源） |
 | diff | `GET /api/v1/diff?repo&from&to&path` | History.Diff | **已落地**（2026-11-06；字节对 `git diff`，T81；path 支持目录前缀 `lib/`） |
@@ -109,14 +109,14 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | cat（非 HEAD rev / 缓存脱靶） | `POST /api/v1/resolve` | Resolve | **已落地**（计划外增补：rev:path → 对象指针） |
 | branch / tag | `GET /api/v1/refs` / `POST /api/v1/refs` | Ref.List / Ref.CAS | **已落地**（POST 限根仓库） |
 | repo create/ls | `GET /api/v1/repos` | Repo.List | GET **已落地**；create 配合 M5 |
-| repo rename | `POST /api/v1/repos/<repo>/rename` | Repo.Rename | **已落地**（docs/03 §6） |
-| 副本数 | `GET/PUT /api/v1/repos/<repo>/placement` | Admin.Placement | **已落地**（docs/10 §6） |
-| force-push 开关 | `GET/PUT /api/v1/repos/<repo>/force-push` | Repo.ForcePush | **已落地**（docs/04 §6a；PUT body `{"enabled":bool}`，运行时生效无需重启） |
-| 仓库规模 | `GET /api/v1/repos/<repo>/size` | Repo.Size | **已落地**（docs/11 §6；返回 `{bytes, packs}`，全 clone 预算同源） |
-| 钩子注册表 | `GET/PUT/DELETE /api/v1/repos/<repo>/hooks[?id=]` | Admin.Hooks | **已落地**（docs/04 §7；PUT body `{id,dir,events[],url,secret?,timeout_ms?}`，元数据面存储——多网关一致） |
+| repo rename | `POST /api/v1/repos/<repo>/rename` | Repo.Rename | **已落地**（docs/storage/storage.md §6） |
+| 副本数 | `GET/PUT /api/v1/repos/<repo>/placement` | Admin.Placement | **已落地**（docs/storage/ha.md §6） |
+| force-push 开关 | `GET/PUT /api/v1/repos/<repo>/force-push` | Repo.ForcePush | **已落地**（docs/gateway/git-compat.md §6a；PUT body `{"enabled":bool}`，运行时生效无需重启） |
+| 仓库规模 | `GET /api/v1/repos/<repo>/size` | Repo.Size | **已落地**（docs/operations/performance.md §6；返回 `{bytes, packs}`，全 clone 预算同源） |
+| 钩子注册表 | `GET/PUT/DELETE /api/v1/repos/<repo>/hooks[?id=]` | Admin.Hooks | **已落地**（docs/gateway/git-compat.md §7；PUT body `{id,dir,events[],url,secret?,timeout_ms?}`，元数据面存储——多网关一致） |
 | timelines（诊断） | `GET /api/v1/timelines` | Admin.Timelines | **已有**（已接 ListAllTimelines） |
-| subtrees（管理清单） | `GET /api/v1/subtrees?repo=` | Repo.Subtrees | **已落地**（docs/07 §8c：过滤 `/.woven`/aux ref、按锚分组、支线 head 带最近提交、projected=投影 ref 集） |
-| 子树访问规则 | `GET/PUT/DELETE /api/v1/repos/<repo>/subtree-access` | Admin.SubtreeRules | **已落地**（docs/07 §8c：PUT body `{path, users[]}` 锚形路径；元数据面存储，rename/delete 随迁） |
+| subtrees（管理清单） | `GET /api/v1/subtrees?repo=` | Repo.Subtrees | **已落地**（docs/gateway/authorization.md §8c：过滤 `/.woven`/aux ref、按锚分组、支线 head 带最近提交、projected=投影 ref 集） |
+| 子树访问规则 | `GET/PUT/DELETE /api/v1/repos/<repo>/subtree-access` | Admin.SubtreeRules | **已落地**（docs/gateway/authorization.md §8c：PUT body `{path, users[]}` 锚形路径；元数据面存储，rename/delete 随迁） |
 | admin repack | `POST /api/v1/repack` | Admin.Repack | **已有** |
 
 2026-10-23 落地批次：internal/service + rpc 薄化 + internal/cli（T22/T22b
@@ -149,12 +149,12 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 ← { "trees": {"<oid>": "<raw>"}, "blobs": {"<oid>": "<raw，≤256KiB 内联>"},
     "pending": ["<大 blob oid，走 GET /api/v1/objects>"] }
 // format:"bin"（薄 CLI 默认）→ Content-Type: application/x-banyan-fetch-trees，
-// 二进制帧（docs/11 P1-2，JSON base64 的 +33% 消失）：
+// 二进制帧（docs/operations/performance.md P1-2，JSON base64 的 +33% 消失）：
 //   "banyan-fetch-1
 " + JSON 头行（branch/head/tree/full/pending/algo）
 //   + *记录：kind('t'|'b') + 原始 oid（20/32B）+ uvarint 长度 + 内容；省略 format 走 JSON（兼容）
 
-// POST /api/v1/commit —— changeset 语义，服务端组装（docs/06 §4.2）
+// POST /api/v1/commit —— changeset 语义，服务端组装（docs/client/cli.md §4.2）
 → { "repo": "demo", "sub": "/src/lib", "base": "sha…", "message": "…",
     "author": {"name": "…", "email": "…"},
     "changes": [{"path": "core/x.go", "blob": "sha…"}, {"path": "old.go", "delete": true}] }
@@ -204,7 +204,7 @@ internal API（PreReceive/PostReceive）完成。banyand 不跑 git hook——gi
 ### 4.4 明确不承诺
 
 praefect 复制/事务协议（RefTransaction/Replication，直连单节点模式先行）、
-ObjectPool、Wiki、Conflicts（远期评估）。多副本走 banyan 自身路线（docs/03
+ObjectPool、Wiki、Conflicts（远期评估）。多副本走 banyan 自身路线（docs/storage/storage.md
 分布式规划），不借 praefect。
 
 ## 5. banyand 装配与配置
@@ -252,16 +252,16 @@ debug:
 
 ### 5b. 集群内部端点与 `/metrics`（2026-11-05 登记）
 
-`/api/v1` 与 git 面之外，集群内部有两套平面（设计细节归 docs/03/10，
+`/api/v1` 与 git 面之外，集群内部有两套平面（设计细节归 docs/storage/storage.md/10，
 本节是总册登记）：
 
 **refs 服务内部面**（`/internal/*`）：
 
 | 端点 | 用途 |
 |---|---|
-| `POST /internal/meta/begin-rename` · `abort-rename` | rename 写屏障两段式（docs/03 §6b：围栏+墓碑） |
-| `POST /internal/sweep {"min_age_sec":n,"dry_run":b}` | fleet GC 两阶段（docs/10 §8.7）；周期化见 docs/14 P1 |
-| `/internal/heartbeat` · `/internal/health/nodes` · `/internal/reconcile` · `/internal/authz/policy` · `/internal/meta/*` | 既有平面（docs/10） |
+| `POST /internal/meta/begin-rename` · `abort-rename` | rename 写屏障两段式（docs/storage/storage.md §6b：围栏+墓碑） |
+| `POST /internal/sweep {"min_age_sec":n,"dry_run":b}` | fleet GC 两阶段（docs/storage/ha.md §8.7）；周期化见 docs/project/roadmap.md P1 |
+| `/internal/heartbeat` · `/internal/health/nodes` · `/internal/reconcile` · `/internal/authz/policy` · `/internal/meta/*` | 既有平面（docs/storage/ha.md） |
 
 **存储节点内部面**（storenode）：`/internal/pack`（GET 整包/流式）、
 `/internal/object`（单对象）、`/internal/pack/list`（带 mtime，sweep 用）、

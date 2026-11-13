@@ -1,4 +1,4 @@
-# 11 · 性能优化改进方案
+# 性能优化改进方案
 
 > 依据：与同类目录锚定系统的对比分析（2026-10-24）中与性能直接
 > 相关的三条硬教训 + banyan 代码现状逐条审计。方案只规划不实施；每项标注
@@ -21,10 +21,10 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 | B4 | **fetch-trees base64 膨胀**：树/blob 字节走 JSON []byte = +33% 传输 | fetch.go:37（map[string][]byte） | 薄 CLI clone/pull 全程 |
 | B5 | **应答零 delta**：serve 路径 EncodePack 固定 delta=false | uploadpack.go:160 | 非 ExactPackHit 命中的大 fetch |
 | B6 | **网关冷启动**：pack/解码/视图缓存全内存，重启即冷 | ObjectService.cache/packOrder 内存态 | 重启后首个 clone 全量重算+重传 |
-| B7 | **同目录写竞争**：last-writer-wins，无队列/退避 | docs/02 §13 开放项 | Agent 同目录高频提交 |
+| B7 | **同目录写竞争**：last-writer-wins，无队列/退避 | docs/design/data-model.md §13 开放项 | Agent 同目录高频提交 |
 | B8 | **无 thin pack / delta-against-haves**：增量 fetch 对象集已最优（have 减除），但每个对象全量发送——git 服务器对照客户端已有对象出 REF_DELTA（客户端 --fix-thin 修补），源码 delta 比 2–5× | uploadpack 在线 EncodePack 零 delta（同 B5 的根因，但 thin pack 是独立缺口） | git 协议增量 fetch 字节效率 |
-| B9 | **子树 clone 恒在线编码**：投影/织入对象 OID ≠ 任何存储包，ExactPackHit 永不命中 | 投影链合成提交（docs/02 §12） | 子树虚拟仓库 clone；跨请求无缓存复用 |
-| B10 | **服务端 filter 未广告**：partial clone 客户端（--filter=blob:none）退化为全量拉取 | filter.go 就绪未广告（docs/04 §8） | 大仓 clone 带宽 |
+| B9 | **子树 clone 恒在线编码**：投影/织入对象 OID ≠ 任何存储包，ExactPackHit 永不命中 | 投影链合成提交（docs/design/data-model.md §12） | 子树虚拟仓库 clone；跨请求无缓存复用 |
+| B10 | **服务端 filter 未广告**：partial clone 客户端（--filter=blob:none）退化为全量拉取 | filter.go 就绪未广告（docs/gateway/git-compat.md §8） | 大仓 clone 带宽 |
 
 ## 1. 参照系的三条硬教训（三方对比报告直接命中）
 
@@ -98,10 +98,10 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 ### P2（perf-3：2026-10-25 主体落地，P2-4/P2-5 分别归 HA-2/M4）
 
 **P2-1 网关磁盘 pack cache（治 B6）✅**
-- `cache.pack_dir`（gateway 角色）：内容寻址磁盘 LRU（docs/03 三层缓存
+- `cache.pack_dir`（gateway 角色）：内容寻址磁盘 LRU（docs/storage/storage.md 三层缓存
   第一层），重启重扫重建索引；对象读走"廉价整包"路径（磁盘命中 → 一次
   解码全包 memoize），单对象读同一 pack 连续 8 次后自动翻转为整包取回
-  ——冷网关克隆从 N 次单对象 RPC 降为 8+1；T36（缓存命中后节点请求冻结）。翻转仅集群线（backend.PrefersWholePack：集群每次单对象读是 RPC round trip）；all-in-one 本地后端永不翻转——idx 抽取即文件读，翻转只会把整包驻留内存（T50 复盘，docs/17 §7）。
+  ——冷网关克隆从 N 次单对象 RPC 降为 8+1；T36（缓存命中后节点请求冻结）。翻转仅集群线（backend.PrefersWholePack：集群每次单对象读是 RPC round trip）；all-in-one 本地后端永不翻转——idx 抽取即文件读，翻转只会把整包驻留内存（T50 复盘，docs/web/console.md §7）。
 
 **P2-2 闭包响应包缓存（治 B9）✅**
 - clone 形态（无 haves/无浅化/无 filter）的响应包是 wants 的纯函数 →
@@ -123,7 +123,7 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 
 | 项 | 治 | 状态 |
 |---|---|---|
-| P2-4 写路径扇出下沉 | docs/10 HA-2 | 归 HA-2（主节点写+节点间扇出，砍网关出带宽 R×） |
+| P2-4 写路径扇出下沉 | docs/storage/ha.md HA-2 | 归 HA-2（主节点写+节点间扇出，砍网关出带宽 R×） |
 | P2-5 同目录写队列 | B7 | 归 M4（tekeburak 形态 change request 状态机 + 投机流水线） |
 
 ## 3. 基准设计与实测（P1-3 落地 + 2026-10-25 v2 扩展：`banyand bench`）
@@ -322,23 +322,23 @@ repack 写放大与维护（限速已设计）、对象级保留缺失（远期�
 - 豁免形态：增量 fetch（有 haves）、浅化（depth）、partial lazy 单对象
   fetch（want 非 tip）、子树视图 clone（天然有界）。
 - 统计失败 fail-open（规模查不到不阻断 fetch）；`repo_bytes`
-  同值注入 hook 回调 payload（docs/04 §7），规模策略可写在回调服务里。
+  同值注入 hook 回调 payload（docs/gateway/git-compat.md §7），规模策略可写在回调服务里。
 
-动机：多 pack 大仓的完整 clone 走 O(闭包) 在线编码路径（曾是 docs/03
+动机：多 pack 大仓的完整 clone 走 O(闭包) 在线编码路径（曾是 docs/storage/storage.md
 开放项）——预算闸门先于该路径把最坏情况挡在门外。**2026-10-27 更新**：
-该路径已流式化（docs/03 §3a，T55——72MiB/3 pack clone 在 64MiB 软限制
+该路径已流式化（docs/storage/storage.md §3a，T55——72MiB/3 pack clone 在 64MiB 软限制
 下峰值 12.3MiB），预算闸门保留为规模治理手段而非内存兜底。**同日二轮**：
 deepen/unshallow（浅化豁免形态里唯一会拉全史的）也已流式化——同一
 rung、类型化枚举带深度/嫁接/have 裁剪、与 ladder 集合等价（T58：
 54MiB/3 pack unshallow 峰值 12.2MiB）；节点客户端超时分层（Transport
 级拨号/响应头预算 + ctx 管总量，取代全局 5 分钟 Timeout——GB 级 pack
 传输不再被无进展无关的墙钟掐断）。剩余开放项：带 haves 增量 fetch 的
-极端无公共提交形态（见 docs/03 §3）。
+极端无公共提交形态（见 docs/storage/storage.md §3）。
 
 ## 7. 运维面观测（2026-10-26，T54）
 
 性能排查不再依赖进程内插桩：`debug.pprof_addr`（独立辅助监听，
-docs/05 §5a）开放 pprof 全家 + `/debug/stats`（GOMEMLIMIT 读数与
+docs/gateway/service-api.md §5a）开放 pprof 全家 + `/debug/stats`（GOMEMLIMIT 读数与
 MemStats 精要）+ `/debug/vars` 的**服务路径计数器**（fetch 五级阶梯
 与 push 计数）——"实际走的哪级服务阶梯"从日志考古变成即时读数；
 T46/T50 式内存链测量也从测试专有采样（BANYAN_HEAPPROF）获得生产

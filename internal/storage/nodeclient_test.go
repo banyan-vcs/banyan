@@ -13,7 +13,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// The node client's timeout layering (docs/10 §3): fixed budgets for the
+// The node client's timeout layering (docs/storage/ha.md §3): fixed budgets for the
 // phases without progress signal (dial, response headers), ctx alone for
 // body streaming. A global client Timeout used to kill multi-GB pack
 // transfers at the 5-minute mark mid-body; these tests pin the new contract.

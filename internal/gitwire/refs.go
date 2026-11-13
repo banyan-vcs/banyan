@@ -10,13 +10,13 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Ref is one externally exposed ref view (docs/04 §6).
+// Ref is one externally exposed ref view (docs/gateway/git-compat.md §6).
 type Ref struct {
 	Name string // git-visible name, e.g. refs/heads/main
 	OID  model.OID
 }
 
-// ResolveRefs generates the ref list for a (virtual) repo (docs/04 §6, docs/02 §13):
+// ResolveRefs generates the ref list for a (virtual) repo (docs/gateway/git-compat.md §6, docs/design/data-model.md §13):
 //
 //	Root repo: the woven root view per branch — a pure function of the
 //	timeline tips (root-local + all subtree timelines), materialized on read.
@@ -88,7 +88,7 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 	return s.resolveSubtreeRefs(ctx, vr, defaultBranch)
 }
 
-// projectionRefs lists the subtree-projection refs (docs/20 §7): every
+// projectionRefs lists the subtree-projection refs (docs/integration/gitlab-integration.md §7): every
 // top-level directory of the default branch's root view is addressable as a
 // repository of its own inside the parent's ref space — refs/banyan/tree/<dir>
 // points at exactly what the /tree/<dir> face serves (the scoped weave:
@@ -149,7 +149,7 @@ func (s *Server) subtreeBranchName(ctx context.Context, repo string) string {
 	return info.DefaultBranch
 }
 
-// ResolveRefs' subtree branch: the subtree timeline view (docs/02 §12,
+// ResolveRefs' subtree branch: the subtree timeline view (docs/design/data-model.md §12,
 // design v4 timeline-first).
 func (s *Server) resolveSubtreeRefs(ctx context.Context, vr VirtualRepo, defaultBranch string) ([]Ref, error) {
 	head, _, err := s.Views.SubtreeHead(ctx, vr.Repo, vr.Sub, defaultBranch)

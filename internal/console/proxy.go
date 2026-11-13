@@ -13,7 +13,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/auth"
 )
 
-// --- git traffic (docs/17 §1-§2) ---
+// --- git traffic (docs/web/console.md §1-§2) ---
 
 // handleGit routes /{group}/{project}[/path][.git]/{info/refs,git-upload-pack,
 // git-receive-pack}: resolve the logical location, authenticate the PAT,
@@ -226,7 +226,7 @@ func proxyTransport() *http.Transport {
 	return sharedTransport
 }
 
-// --- management-API passthrough (docs/17 §6) ---
+// --- management-API passthrough (docs/web/console.md §6) ---
 
 // proxyAPI forwards every /api/v1 request the console does not own to the
 // gateway, remapping the repo argument wherever it appears: as the path

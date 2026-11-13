@@ -1,5 +1,5 @@
 // weave_consistency_test.go — T78: the cluster-correctness invariant
-// docs/02 §13 leans on — weave materialization is a pure function of the
+// docs/design/data-model.md §13 leans on — weave materialization is a pure function of the
 // timeline tips, so a second gateway with fully cold in-process state
 // (fresh ObjectService: synth table, decoded-pack memo, location cache; and
 // a fresh view.Service rootCache) must derive byte-identical woven views
@@ -62,7 +62,7 @@ func TestWeaveRederivationConsistency(t *testing.T) {
 	// Fixture: activity on two subtree timelines interleaved with
 	// root-local commits, every commit tied to one committer second.
 	// Root-side edits stay outside lib so subtree pushes never need pull
-	// (the docs/02 §12 non-interference contract keeps the sequence push-clean).
+	// (the docs/design/data-model.md §12 non-interference contract keeps the sequence push-clean).
 	src := t.TempDir()
 	support.GitDated(t, src, tiedUnix, "init", "-q", "-b", "main", ".")
 	support.Write(t, filepath.Join(src, "README.md"), "wv-1\n")

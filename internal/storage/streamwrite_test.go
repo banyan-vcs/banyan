@@ -17,7 +17,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Unit coverage for the streaming-serve primitives (docs/03 §3a): the
+// Unit coverage for the streaming-serve primitives (docs/storage/storage.md §3a): the
 // delta-free streaming pack writer and the placement/size probes that pick
 // the rung. Multi-pack serving over the wire is T55/T57 (integration).
 

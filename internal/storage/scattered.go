@@ -22,7 +22,7 @@ import (
 )
 
 // NodeClient is the gateway's / reconciler's HTTP client to one storage node
-// (docs/10 §3): packs are raw bodies, content-addressed by query params.
+// (docs/storage/ha.md §3): packs are raw bodies, content-addressed by query params.
 type NodeClient struct {
 	Addr string
 	HTTP *http.Client
@@ -36,7 +36,7 @@ var mHolderFallback = metrics.GetCounter("banyan_pack_holder_fallbacks_total",
 
 func noteHolderFallback() { mHolderFallback.With().Inc() }
 
-// Node request timeouts are layered (docs/10 §3): connection setup and
+// Node request timeouts are layered (docs/storage/ha.md §3): connection setup and
 // response headers get fixed transport budgets — the only phases with no
 // progress signal — while body streaming is governed by the caller's ctx
 // alone. A whole-client Timeout would cap every body read: a multi-GB pack
@@ -64,7 +64,7 @@ func (n *NodeClient) packURL(repo string, packOID model.OID) string {
 }
 
 // RenameRepo asks a node to move a repo directory between storage keys
-// (named addressing, docs/03 §6). A node without the source answers OK —
+// (named addressing, docs/storage/storage.md §6). A node without the source answers OK —
 // the move is idempotent per node.
 func (n *NodeClient) RenameRepo(ctx context.Context, from, to string) error {
 	body := []byte(`{"from":` + strconv.Quote(from) + `,"to":` + strconv.Quote(to) + `}`)
@@ -106,7 +106,7 @@ func (n *NodeClient) DeleteRepo(ctx context.Context, repo string) error {
 }
 
 // ListKeys enumerates the storage keys present on the node (fleet sweep
-// whole-key phase, docs/10 §8.7).
+// whole-key phase, docs/storage/ha.md §8.7).
 func (n *NodeClient) ListKeys(ctx context.Context) ([]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, n.Addr+"/internal/keys", nil)
 	if err != nil {
@@ -353,7 +353,7 @@ func AlgoFromQuery(v string) model.HashAlgo {
 	return model.SHA1
 }
 
-// GetObject extracts one object on the node via its local idx (docs/11
+// GetObject extracts one object on the node via its local idx (docs/operations/performance.md
 // P1-1): the response body is the object, X-Banyan-Type carries its type.
 func (n *NodeClient) GetObject(ctx context.Context, repo string, packOID, oid model.OID, algo model.HashAlgo) (model.ObjectType, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, n.objectURL(repo, packOID, oid, algo), nil)
@@ -376,7 +376,7 @@ func (n *NodeClient) GetObject(ctx context.Context, repo string, packOID, oid mo
 	return model.ObjectType(resp.Header.Get("X-Banyan-Type")), data, nil
 }
 
-// --- ScatteredStore: the gateway's shard backend (docs/10 §3/§5) ---
+// --- ScatteredStore: the gateway's shard backend (docs/storage/ha.md §3/§5) ---
 
 // ScatteredStore places each pack on R random healthy nodes, confirms W
 // writes, and reads from any holder. Registration is the fact: PutPack
@@ -385,7 +385,7 @@ type ScatteredStore struct {
 	Refs      *meta.RefsClient
 	DefaultR  int    // cluster default replica target
 	WriteAcks string // "quorum" (default) | "all" | "one"
-	// DiskCache persists whole packs on gateway disk (docs/11 P2-1): a
+	// DiskCache persists whole packs on gateway disk (docs/operations/performance.md P2-1): a
 	// restart serves its first clones from disk instead of re-transferring
 	// from storage nodes. Optional — nil disables.
 	DiskCache *DiskPackCache
@@ -449,7 +449,7 @@ func (s *ScatteredStore) healthyNodes(ctx context.Context) []meta.NodeInfo {
 	return out
 }
 
-// pickRandom draws n distinct entries at random (placement, docs/10 §3).
+// pickRandom draws n distinct entries at random (placement, docs/storage/ha.md §3).
 func pickRandom[T any](items []T, n int) []T {
 	if n >= len(items) {
 		return append([]T(nil), items...)
@@ -524,7 +524,7 @@ func (s *ScatteredStore) PutPackStream(ctx context.Context, repo string, packOID
 	return confirmed, nil
 }
 
-// OpenPack streams one pack for verbatim serve (exact-pack hit, docs/03
+// OpenPack streams one pack for verbatim serve (exact-pack hit, docs/storage/storage.md
 // §5): gateway disk cache first; else the body lands through a VERIFYING
 // pass — SpoolVerifiedCopy into the cache temp file (or a plain temp file
 // on a cache-less gateway), trailer checked at EOF, and only a verified
@@ -653,7 +653,7 @@ func (s *ScatteredStore) PackSize(ctx context.Context, repo string, packOID mode
 }
 
 func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error) {
-	// Disk cache first (docs/11 P2-1): content-addressed by pack OID, so a
+	// Disk cache first (docs/operations/performance.md P2-1): content-addressed by pack OID, so a
 	// hit is the pack and no node round trip is needed.
 	if s.DiskCache != nil {
 		if raw, ok := s.DiskCache.Get(repo, packOID); ok {
@@ -697,7 +697,7 @@ func (s *ScatteredStore) GetPack(ctx context.Context, repo string, packOID model
 	return nil, errNoHolder(packOID, holders)
 }
 
-// CheapPack: a disk-cache hit IS the pack (content-addressed, docs/11
+// CheapPack: a disk-cache hit IS the pack (content-addressed, docs/operations/performance.md
 // P2-1) — but only when small: a cached big pack is NOT cheap to load
 // (whole-pack decode + memoize would park it in gateway memory), so
 // GetCapped routes big packs back to the single-object path.
@@ -708,7 +708,7 @@ func (s *ScatteredStore) CheapPack(_ context.Context, repo string, packOID model
 	return s.DiskCache.GetCapped(repo, packOID, packMemoMaxBytes)
 }
 
-// GetObject single-object extraction with holder fallback (docs/11 P1-1):
+// GetObject single-object extraction with holder fallback (docs/operations/performance.md P1-1):
 // the holder resolves the object via its local idx — the wire carries one
 // object instead of the whole pack. Any failure surfaces as an error; the
 // caller falls back to GetPack.
@@ -756,7 +756,7 @@ func (s *ScatteredStore) DeletePack(ctx context.Context, repo string, packOID mo
 }
 
 // RenameRepo fans a directory move out to every node in the current health
-// view (named addressing, docs/03 §6). Idempotent per node: a holder without
+// view (named addressing, docs/storage/storage.md §6). Idempotent per node: a holder without
 // the source answers OK, so a re-run after a partial failure only reaches
 // laggards. Any refusal aborts before the registry flip at the caller.
 func (s *ScatteredStore) RenameRepo(ctx context.Context, from, to string) error {

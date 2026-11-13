@@ -43,7 +43,7 @@ func (ss *serverService) ServerSignature(context.Context, *gitalypb.ServerSignat
 func (ss *serverService) DiskStatistics(context.Context, *gitalypb.DiskStatisticsRequest) (*gitalypb.DiskStatisticsResponse, error) {
 	// Byte-level filesystem stats are a monitoring nicety; the object plane
 	// reports usage through /api/v1/repos/<repo>/size. Wired when the ops
-	// plane grows a volume probe (docs/19 roadmap).
+	// plane grows a volume probe (docs/integration/gitaly-compat.md roadmap).
 	return &gitalypb.DiskStatisticsResponse{
 		StorageStatuses: []*gitalypb.DiskStatisticsResponse_StorageStatus{{
 			StorageName: ss.Opts.StorageName,

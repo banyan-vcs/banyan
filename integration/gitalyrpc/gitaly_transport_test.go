@@ -1,4 +1,4 @@
-// T61 — gitaly transport slice e2e (docs/19 §5 slice 2): workhorse-shaped
+// T61 — gitaly transport slice e2e (docs/integration/gitaly-compat.md §5 slice 2): workhorse-shaped
 // git-HTTP traffic flows through the gRPC SmartHTTPService (a local emulator
 // plays workhorse: HTTP in → gRPC stream → gitwire mux), and the SSHService
 // batch session runs a real receive-pack advertisement. Oracle = the direct

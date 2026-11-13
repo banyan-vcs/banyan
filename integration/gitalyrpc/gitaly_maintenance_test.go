@@ -1,4 +1,4 @@
-// T67 — RepositoryService maintenance slice (docs/19 slice 8). Git is the
+// T67 — RepositoryService maintenance slice (docs/integration/gitaly-compat.md slice 8). Git is the
 // oracle: GetArchive answers byte-identical tar/tar.gz streams against
 // `git archive`, checksums recompute from `git show-ref --head`, raw
 // changes match `git diff --raw`, and a removed repository stops existing.

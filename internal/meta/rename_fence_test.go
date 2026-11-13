@@ -9,7 +9,7 @@ import (
 )
 
 // TestRenameFenceRejectsMutations pins the write barrier's reject side
-// (docs/03 §6b): while the fence stands every mutating operation on either
+// (docs/storage/storage.md §6b): while the fence stands every mutating operation on either
 // name fails with ErrRepoRenaming (a racing push fails cleanly instead of
 // landing a confirmed-but-invisible write), reads keep answering, the flip
 // lifts the fence, AbortRename lifts it, and only a DIFFERENT overlapping

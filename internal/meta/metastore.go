@@ -17,7 +17,7 @@ import (
 var mCASConflicts = metrics.GetCounter("banyan_cas_conflicts_total",
 	"ref CAS attempts rejected with non-fast-forward (contention gauge)")
 
-// MetaStore is the central metadata service interface (docs/03 §2.1): a
+// MetaStore is the central metadata service interface (docs/storage/storage.md §2.1): a
 // composite of four role interfaces, each with its own data shape and access
 // pattern, so a backend can swap per block later without gitwire noticing.
 // M1 in-memory / M2 SQLite implementations are swappable; callers can't tell.
@@ -32,7 +32,7 @@ type MetaStore interface {
 	PoolRegistry
 }
 
-// HookInfo is one registered receive hook (docs/04 §7): an HTTP callback
+// HookInfo is one registered receive hook (docs/gateway/git-compat.md §7): an HTTP callback
 // evaluated by the serving gateway at push time. Configuration lives in the
 // metadata plane so every gateway sees the same hooks — no gateway-local
 // state in multi-gateway deployments.
@@ -49,7 +49,7 @@ type HookInfo struct {
 var HookEvents = map[string]bool{"pre-receive": true, "update": true, "post-receive": true}
 
 type HookRegistry interface {
-	// ListHooks returns the repo's registered hooks (docs/04 §7).
+	// ListHooks returns the repo's registered hooks (docs/gateway/git-compat.md §7).
 	ListHooks(ctx context.Context, repo string) ([]HookInfo, error)
 	// SetHook upserts one hook by ID. Validates events/ID shape.
 	SetHook(ctx context.Context, repo string, h HookInfo) error
@@ -66,7 +66,7 @@ type RepoBlobStore interface {
 	GetRepoBlob(ctx context.Context, repo, key string) ([]byte, bool, error)
 }
 
-// PoolInfo records one repository↔object-pool relationship (docs/19). A
+// PoolInfo records one repository↔object-pool relationship (docs/integration/gitaly-compat.md). A
 // repository is a member of at most one pool; the member that seeded the
 // pool carries Upstream — the pool's origin in GitLab's fork dedup flow.
 type PoolInfo struct {
@@ -124,14 +124,14 @@ type RepoRegistry interface {
 	GetRepo(ctx context.Context, repo string) (RepoInfo, error)
 	// ListRepos enumerates all repos (CLI repo ls / Gitaly RepositoryService).
 	ListRepos(ctx context.Context) ([]RepoInfo, error)
-	// RenameRepo renames a repository across the registry (docs/03 §6):
+	// RenameRepo renames a repository across the registry (docs/storage/storage.md §6):
 	// every repo-keyed row moves in one transaction; the immutable StorageID
 	// rides along untouched. Storage-layer moves (named addressing) happen
 	// BETWEEN BeginRename and this call — see ObjectService.RenameRepo. The
 	// flip also lifts any rename fence covering `from`.
 	RenameRepo(ctx context.Context, from, to string) error
 	// BeginRename installs the rename fence — the write barrier's reject
-	// side (docs/03 §6b). While the fence stands, every mutating operation
+	// side (docs/storage/storage.md §6b). While the fence stands, every mutating operation
 	// touching either name fails with ErrRepoRenaming, so a concurrent push
 	// that started under the old name fails cleanly instead of landing a
 	// confirmed-but-invisible write under the name that is about to die.
@@ -146,7 +146,7 @@ type RepoRegistry interface {
 	// bytes are reclaimed separately via ObjectService.DeleteRepo. A missing
 	// repo is a successful no-op — deletion is idempotent by contract.
 	DeleteRepo(ctx context.Context, repo string) error
-	// SetForcePush toggles the repo-level force-push switch (docs/04 §6a):
+	// SetForcePush toggles the repo-level force-push switch (docs/gateway/git-compat.md §6a):
 	// off (default) keeps the rollback guard; on, a rewind-shaped subtree
 	// update lands and rebuilds the woven views from the new source chains.
 	SetForcePush(ctx context.Context, repo string, enabled bool) error
@@ -171,12 +171,12 @@ type PackRegistry interface {
 	// next repack cleans up.
 	DropPack(ctx context.Context, repo string, packOID model.OID) error
 	// SetPackNodes atomically replaces a pack's holder set (reconciler
-	// holder swap after re-replication / trim — docs/10 §8.3). The pack must
+	// holder swap after re-replication / trim — docs/storage/ha.md §8.3). The pack must
 	// already be registered.
 	SetPackNodes(ctx context.Context, repo string, packOID model.OID, nodes []string) error
 }
 
-// PlacementStore is the per-repo replica target (docs/10 §3/§6): 0 or a
+// PlacementStore is the per-repo replica target (docs/storage/ha.md §3/§6): 0 or a
 // missing row means "use the cluster default". R is adjustable at any time;
 // the reconciler converges actual holders toward it.
 type PlacementStore interface {
@@ -185,7 +185,7 @@ type PlacementStore interface {
 }
 
 // ObjectIndex is the global object index (distributed lookup entry,
-// docs/03 §1.3): batch point lookup oid → (pack, node).
+// docs/storage/storage.md §1.3): batch point lookup oid → (pack, node).
 type ObjectIndex interface {
 	LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]ObjectLocation, error)
 }
@@ -201,14 +201,14 @@ type TimelineStore interface {
 	// (before a subtree timeline's first push, its head is the projection head; base records the fork point).
 	EnsureTimeline(ctx context.Context, tl model.Timeline, head, base model.OID) error
 	// SetTimelineBase advances the recorded fork point of an existing
-	// timeline (explicit-rebase bookkeeping, docs/02 §12: after a subtree
+	// timeline (explicit-rebase bookkeeping, docs/design/data-model.md §12: after a subtree
 	// sync the local chain sits on the current projection, so the weave's
 	// local zone shrinks to exactly the rebased locals). An unknown timeline
 	// returns ErrTimelineUnknown.
 	SetTimelineBase(ctx context.Context, tl model.Timeline, base model.OID) error
 	ListTimelines(ctx context.Context, repo string, anchor model.AnchorPath) ([]model.Timeline, error)
 	// ListAllTimelines enumerates every timeline of the repo across anchors
-	// (root view materialization input, docs/02 §13).
+	// (root view materialization input, docs/design/data-model.md §13).
 	ListAllTimelines(ctx context.Context, repo string) ([]model.Timeline, error)
 }
 
@@ -229,17 +229,17 @@ type RepoInfo struct {
 	ID            string         `json:"id"`
 	Algo          model.HashAlgo `json:"algo"`
 	DefaultBranch string         `json:"default_branch"`
-	// StorageID is the immutable per-repo storage identity (docs/03 §6):
+	// StorageID is the immutable per-repo storage identity (docs/storage/storage.md §6):
 	// hashed addressing derives its opaque on-disk key from it, so renames
 	// never move data. Empty only for rows predating the column.
 	StorageID string `json:"storage_id,omitempty"`
-	// ForcePush is the repo-level force-push switch (docs/04 §6a): off
+	// ForcePush is the repo-level force-push switch (docs/gateway/git-compat.md §6a): off
 	// (default) keeps the subtree rollback guard; on, rewind-shaped subtree
 	// updates land and rebuild the woven views.
 	ForcePush bool `json:"force_push,omitempty"`
 }
 
-// ErrNonFastForward mirrors git push non-fast-forward (docs/02 §4.3).
+// ErrNonFastForward mirrors git push non-fast-forward (docs/design/data-model.md §4.3).
 var ErrNonFastForward = fmt.Errorf("non-fast-forward: timeline head moved")
 
 // ErrRepoNotFound / ErrTimelineUnknown / ErrPackNotFound / ErrRepoRenaming.
@@ -247,7 +247,7 @@ var (
 	ErrRepoNotFound    = fmt.Errorf("repo not found")
 	ErrTimelineUnknown = fmt.Errorf("timeline unknown")
 	ErrPackNotFound    = fmt.Errorf("pack not found")
-	// ErrRepoRenaming: a rename fence covers this name (docs/03 §6b) — the
+	// ErrRepoRenaming: a rename fence covers this name (docs/storage/storage.md §6b) — the
 	// caller retries; pushes surface it as a retryable failure so the client
 	// re-negotiates under the settled name.
 	ErrRepoRenaming = fmt.Errorf("repo rename in progress")
@@ -271,10 +271,10 @@ type MemoryMetaStore struct {
 	hooks        map[string]map[string]HookInfo // repo → hook ID → registration
 	repoBlobs    map[string]map[string][]byte   // repo → blob key → bytes (gitaly custom-hooks)
 	pools        map[string]PoolInfo            // member repo → pool record
-	renames      map[string]string              // fence: from → to (rename in flight, docs/03 §6b)
+	renames      map[string]string              // fence: from → to (rename in flight, docs/storage/storage.md §6b)
 	retired      map[string]string              // tombstone: from → to (rename completed)
-	tokens       map[string]TokenInfo           // sha256 → token (docs/07 §6)
-	subtreeRules map[string]map[string][]string // repo → anchor path → allowed users (docs/07 §8)
+	tokens       map[string]TokenInfo           // sha256 → token (docs/gateway/authorization.md §6)
+	subtreeRules map[string]map[string][]string // repo → anchor path → allowed users (docs/gateway/authorization.md §8)
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
@@ -321,7 +321,7 @@ func (m *MemoryMetaStore) CreateRepo(_ context.Context, repo string, algo model.
 	if m.fenceHit(repo) {
 		return fenceErr(repo)
 	}
-	// Rename tombstone (docs/03 §6b): a retired name must not be
+	// Rename tombstone (docs/storage/storage.md §6b): a retired name must not be
 	// resurrected — a late push under it would ack into a fresh,
 	// disconnected repository.
 	if to, ok := m.retired[repo]; ok {
@@ -334,7 +334,7 @@ func (m *MemoryMetaStore) CreateRepo(_ context.Context, repo string, algo model.
 	return nil
 }
 
-// BeginRename installs the fence (docs/03 §6b). Fail-fast checks — source
+// BeginRename installs the fence (docs/storage/storage.md §6b). Fail-fast checks — source
 // exists, target free, no overlapping rename — run here so a doomed rename
 // never blocks the repo.
 func (m *MemoryMetaStore) BeginRename(_ context.Context, from, to string) error {

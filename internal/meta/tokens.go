@@ -1,8 +1,8 @@
-// Personal access tokens in the metadata plane (docs/07 §6, docs/14 M5):
+// Personal access tokens in the metadata plane (docs/gateway/authorization.md §6, docs/project/roadmap.md M5):
 // the plaintext exists only at creation (returned once to the operator);
 // the store keeps its sha256. Tokens are cluster state — any gateway with
 // the metadata (all-in-one, refs-serving node) validates them; the gateway
-// behind an upstream console uses the console's own PATs instead (docs/17).
+// behind an upstream console uses the console's own PATs instead (docs/web/console.md).
 // TokenRegistry is deliberately NOT part of the MetaStore composite: only
 // the stores that own metadata implement it, and consumers type-assert
 // (meta.(TokenRegistry)) so remote-meta gateways compile unchanged.
@@ -208,7 +208,7 @@ func HashToken(token string) string {
 }
 
 // NewTokenPlaintext mints one `banyan_`-prefixed random token (crypto/rand,
-// 32 bytes base64url — the same shape the console issues, docs/17 §4).
+// 32 bytes base64url — the same shape the console issues, docs/web/console.md §4).
 func NewTokenPlaintext() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

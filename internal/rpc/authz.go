@@ -1,4 +1,4 @@
-// RPC-layer authorization (docs/07 §5, docs/14 M5): the JSON surface keeps
+// RPC-layer authorization (docs/gateway/authorization.md §5, docs/project/roadmap.md M5): the JSON surface keeps
 // its authentication gate on every /api/v1 route, and management/write
 // operations additionally consult the policy — repo/cluster management
 // through the optional auth.AdminChecker extension, content writes (commit,
@@ -18,7 +18,7 @@ import (
 
 // requireAdmin answers whether the caller may manage repo ("" = global:
 // cluster and metadata-plane operations). Without the AdminChecker
-// extension the authenticated-only behavior stands (docs/07 §5).
+// extension the authenticated-only behavior stands (docs/gateway/authorization.md §5).
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request, repo string) bool {
 	if s.Auth == nil {
 		return true
@@ -69,7 +69,7 @@ func (s *Server) requireWriteRank(w http.ResponseWriter, r *http.Request) bool {
 
 // tokenRegistry answers the metadata-plane token registry, or nil where the
 // deployment has none (gateway behind an upstream console: the console's
-// own PATs apply, docs/17 §4).
+// own PATs apply, docs/web/console.md §4).
 func (s *Server) tokenRegistry() meta.TokenRegistry {
 	tr, _ := s.Meta.(meta.TokenRegistry)
 	return tr
@@ -122,7 +122,7 @@ func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, errEnvelope{Error: errBody{Code: "INTERNAL", Message: err.Error()}})
 			return
 		}
-		// The plaintext exists only in this response (docs/07 §6).
+		// The plaintext exists only in this response (docs/gateway/authorization.md §6).
 		writeJSON(w, http.StatusOK, map[string]any{"token": plaintext, "hash": info.Hash, "scope": info.Scope, "expires": info.Expires})
 	case r.Method == http.MethodGet && rest == "":
 		user := id.User

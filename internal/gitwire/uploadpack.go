@@ -23,7 +23,7 @@ type fetchReq struct {
 	wants          []model.OID
 	haves          []model.OID
 	clientShallow  []model.OID // client's current shallow boundary (reported by deepen/unshallow requests)
-	filter         *FilterSpec // active partial-clone filter (blob:none / tree:0, docs/04 §4)
+	filter         *FilterSpec // active partial-clone filter (blob:none / tree:0, docs/gateway/git-compat.md §4)
 	clientOfsDelta bool        // client accepted OFS_DELTA (v1 want-line capability)
 	clientThin     bool        // client asked for a thin pack (v1 cap / v2 arg)
 	depth          int         // deepen N; 0 = no deepen
@@ -32,7 +32,7 @@ type fetchReq struct {
 
 // applyFetchLine folds one request pkt-line into st. Returns a wire error
 // message ("" = ok) and whether the transport should surface it as an ERR
-// pkt (true — the filter contract, docs/04 §4) or as a protocol error
+// pkt (true — the filter contract, docs/gateway/git-compat.md §4) or as a protocol error
 // (HTTP 400 / session failure).
 func applyFetchLine(st *fetchReq, line string) (string, bool) {
 	switch {
@@ -78,7 +78,7 @@ func applyFetchLine(st *fetchReq, line string) (string, bool) {
 	return "", false
 }
 
-// serveUploadPack serves the fetch/clone data phase (docs/04 §3).
+// serveUploadPack serves the fetch/clone data phase (docs/gateway/git-compat.md §3).
 //
 // v1 session (mirrors the upload-pack.c state machine):
 //
@@ -176,10 +176,10 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 }
 
 // finishFetch serves the pack for an accumulated request: authorization
-// gates, closure, thin-pack plan and the serve ladder (docs/11 P2-2).
+// gates, closure, thin-pack plan and the serve ladder (docs/operations/performance.md P2-2).
 // Shared by the HTTP and SSH transports.
 func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo, id auth.Identity, st *fetchReq) {
-	// Authorization gates (docs/07): identity + repository/directory fetch
+	// Authorization gates (docs/gateway/authorization.md): identity + repository/directory fetch
 	// permission, then the want-coverage check against the identity's
 	// VISIBLE tips — with auth on this replaces (and strengthens) the
 	// reachability gate: an oid reachable only through someone else's
@@ -205,9 +205,9 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 		return
 	}
 
-	// Clone-shaped fast path (docs/03 §5): no haves, depth, filter or
+	// Clone-shaped fast path (docs/storage/storage.md §5): no haves, depth, filter or
 	// shallow — the client wants a whole history. Oversized repos are
-	// refused first (full-clone budget, docs/11 §6), then one stored pack
+	// refused first (full-clone budget, docs/operations/performance.md §6), then one stored pack
 	// may hold exactly that object set and stream verbatim without building
 	// the closure: multi-hundred-MB repos serve in a small memory window.
 	if len(st.haves) == 0 && st.depth == 0 && st.filter == nil && len(st.clientShallow) == 0 {
@@ -220,7 +220,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 			log.Printf("upload-pack %s%s: %d wants → %s (closure skipped)", vr.Repo, vr.Sub, len(st.wants), served)
 			return
 		}
-		// Multi-pack closure: streaming encode (docs/03 §3) — nothing beyond
+		// Multi-pack closure: streaming encode (docs/storage/storage.md §3) — nothing beyond
 		// the current object resident, small repos fall back to the closure
 		// ladder below.
 		if s.tryStreamingServe(ctx, out, vr, st.wants, st.clientOfsDelta) {
@@ -229,7 +229,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 		}
 	}
 
-	// Deepen-shaped (docs/03 §3): shallow clone / deepen / unshallow carry
+	// Deepen-shaped (docs/storage/storage.md §3): shallow clone / deepen / unshallow carry
 	// depth/shallow state — the ladder's closure would materialize every
 	// object body, the streaming rung carries the same depth/graft/have
 	// pruning typed (the shallow section is already on the wire above).
@@ -249,7 +249,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 		_ = out.Flush()
 		return
 	}
-	// Thin pack (docs/11 P2-6): with haves and a thin-pack client, delta the
+	// Thin pack (docs/operations/performance.md P2-6): with haves and a thin-pack client, delta the
 	// served objects against same-path predecessors the client holds.
 	var plan *thinPackPlan
 	if st.clientThin && len(st.haves) > 0 {
@@ -259,7 +259,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 		}
 	}
 	encodeStart := time.Now()
-	// Hot-path serve ladder (docs/03 §5, docs/11 P2-2): stored-pack verbatim
+	// Hot-path serve ladder (docs/storage/storage.md §5, docs/operations/performance.md P2-2): stored-pack verbatim
 	// → clone-shaped response cache → online encoding (delta past threshold).
 	cacheable := len(st.haves) == 0 && st.depth == 0 && st.filter == nil
 	served := s.serveClosurePack(ctx, out, vr, st.wants, blobs, trees, commits, tags, cacheable, st.clientOfsDelta, plan)
@@ -271,7 +271,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 }
 
 // serveDeltaMinBytes is the raw-payload threshold at which the online serve
-// path switches from delta-free to delta encoding (docs/11 P1-4/B5): below
+// path switches from delta-free to delta encoding (docs/operations/performance.md P1-4/B5): below
 // it the pack-objects window cost buys almost nothing, above it similar
 // blobs/trees compress 2-5×.
 const serveDeltaMinBytes = 64 << 10
@@ -296,7 +296,7 @@ func serveObjectPack(w io.Writer, blobs, trees, commits, tags map[model.OID][]by
 }
 
 // defaultFullCloneMaxBytes is the repo-scale budget for full clones when
-// the server doesn't override it (docs/11 §6): a clone-shaped fetch of a
+// the server doesn't override it (docs/operations/performance.md §6): a clone-shaped fetch of a
 // repo at or above it is rejected with a pointer to partial/shallow
 // clones. Lazy single-object fetches (partial clones), shallow/deepen and
 // incremental fetches are never affected — only the "send me everything"
@@ -381,7 +381,7 @@ type enumerateOpts struct {
 }
 
 // enumerateClosure walks the want closure collecting OIDs and their types
-// only (docs/03 §5, the streaming-serve enumeration) — type-directed, so
+// only (docs/storage/storage.md §5, the streaming-serve enumeration) — type-directed, so
 // object bodies never enter memory: commits and trees resolve through the
 // metadata indexes, tree entries classify their children by mode (dir →
 // subtree, gitlink → a commit in another repo this store does not hold,
@@ -510,7 +510,7 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 	return types, nil
 }
 
-// tryExactPackStream is the clone-shaped fast path (docs/03 §5): enumerate
+// tryExactPackStream is the clone-shaped fast path (docs/storage/storage.md §5): enumerate
 // the wanted set (OIDs + types), probe for a stored pack with exactly that
 // object set, and stream the pack verbatim — node disk → network →
 // response in one small window, the closure's object bytes never resident
@@ -550,12 +550,12 @@ func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr Virtu
 // hold" judgment the memoize ladder makes).
 const streamServeMinPackBytes = 32 << 20
 
-// tryStreamingServe is the multi-pack clone-shaped rung (docs/03 §3, the
+// tryStreamingServe is the multi-pack clone-shaped rung (docs/storage/storage.md §3, the
 // "way in is the way out" fix for streamed imports): the exact-pack fast
 // path missed because the closure spans packs, and no stored pack equals
 // the set. Three stages, none of which holds the closure:
 //
-//  1. clone-shaped response cache (docs/11 P2-2) — checked BEFORE any
+//  1. clone-shaped response cache (docs/operations/performance.md P2-2) — checked BEFORE any
 //     enumeration; the old path paid the full closure computation even on
 //     a cache hit, this one answers a repeat clone of the same wants with
 //     zero walking.
@@ -586,7 +586,7 @@ func (s *Server) tryStreamingServe(ctx context.Context, out io.Writer, vr Virtua
 	return s.streamTypedPack(ctx, out, vr, typed, "clone", len(wants))
 }
 
-// tryDeepenServe is the deepen-shaped streaming rung (docs/03 §3): shallow
+// tryDeepenServe is the deepen-shaped streaming rung (docs/storage/storage.md §3): shallow
 // clones, deepen and unshallow carry depth/shallow state instead of plain
 // clone shape, and the ladder's closure materializes every object body —
 // the last O(closure bytes) serving hazard. The typed enumeration carries
@@ -691,7 +691,7 @@ func (s *Server) streamTypedPack(ctx context.Context, out io.Writer, vr VirtualR
 // serveClosurePack writes the response pack for a computed closure:
 //
 //	thin (client-held bases, only when requested) → whole-pack verbatim →
-//	clone-shaped response cache (docs/11 P2-2) → online encoding.
+//	clone-shaped response cache (docs/operations/performance.md P2-2) → online encoding.
 //
 // Thin outranks the verbatim serve deliberately: a stored pack is
 // self-contained (receive advertises no-thin), so its objects are whole —
@@ -836,18 +836,18 @@ func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included
 }
 
 // closure collects the object closure from wants: commits expand along all parents, trees
-// expand along all entries, blobs are just collected (docs/02 §5 — root repo and subtree repo share one
+// expand along all entries, blobs are just collected (docs/design/data-model.md §5 — root repo and subtree repo share one
 // traversal path: a projection commit's tree is the subtree, parents already rewritten at projection time).
 // Pruning: depth > 0 prunes parent chains at the shallowing boundary; with no deepen but a client-reported
 // shallow boundary (plain fetch from a shallow clone) the client boundary is the prune point — matching the
 // reference server's have-subtracted pack shape (objects below the graft layer stay out of the pack).
 //
-// Partial-clone filtering (docs/04 §4): blob:none drops blobs, tree:0 drops
+// Partial-clone filtering (docs/gateway/git-compat.md §4): blob:none drops blobs, tree:0 drops
 // trees and blobs; dropped trees are not expanded (their contents cannot
 // survive anyway). Explicit wants are exempt — lazy-fetch requests name the
 // missing object directly and must receive it.
 //
-// Have subtraction (git upload-pack.c mark-uninteresting semantics, docs/09 §3):
+// Have subtraction (git upload-pack.c mark-uninteresting semantics, docs/storage/indexing-packing.md §3):
 // the client's haves bound the set of objects it provably already has (a git
 // repo holding commit X holds X's full closure); every object reachable from
 // the known haves' commits is therefore excluded from the pack, and the main
@@ -857,7 +857,7 @@ func (s *Server) shallowCut(repo string, wants []model.OID, depth int) (included
 // wants themselves are never excluded (a degenerate client that wants
 // something it also has must still receive it). Server cost: one extra
 // traversal of the have side per fetch — the same trade git makes without
-// reachability bitmaps (docs/09 §3.3).
+// reachability bitmaps (docs/storage/indexing-packing.md §3.3).
 func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID, depth int, clientShallow, haves []model.OID, filter *FilterSpec) (
 	blobs map[model.OID][]byte, trees map[model.OID][]byte, commits map[model.OID][]byte, tags map[model.OID][]byte, exclude map[model.OID]bool, err error) {
 	blobs = map[model.OID][]byte{}
@@ -870,7 +870,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 		delete(exclude, w)
 		wantSet[w] = true
 	}
-	// Batch-locate the walk's known inputs up front (docs/11 P0-1): wants +
+	// Batch-locate the walk's known inputs up front (docs/operations/performance.md P0-1): wants +
 	// haves in one Meta round trip instead of one per object.
 	s.Objects.Prefetch(ctx, vr.Repo, append(append([]model.OID{}, wants...), haves...))
 	visited := map[model.OID]bool{}
@@ -926,7 +926,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 		switch t {
 		case model.CommitType:
 			commits[oid] = raw
-			// Go through the commit-graph index: commits are no longer decoded one by one (docs/08).
+			// Go through the commit-graph index: commits are no longer decoded one by one (docs/design/derived-data.md).
 			ci, err := s.Objects.CommitInfo(vr.Repo, oid)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
@@ -947,7 +947,7 @@ func (s *Server) closure(ctx context.Context, vr VirtualRepo, wants []model.OID,
 			if err != nil {
 				return nil, nil, nil, nil, nil, fmt.Errorf("closure: tree %s: %w", oid, err)
 			}
-			// Tree expansion is the natural batching point (docs/11 P0-1):
+			// Tree expansion is the natural batching point (docs/operations/performance.md P0-1):
 			// all children locate in one Meta round trip, so cold-walk RPC
 			// count falls from O(objects) to O(trees).
 			children := make([]model.OID, 0, len(entries))
@@ -1075,7 +1075,7 @@ func (s *Server) unadvertisedWant(ctx context.Context, vr VirtualRepo, wants []m
 }
 
 // wantsBeyondTips validates wants against the identity's VISIBLE view of the
-// advertised refs (docs/07): an oid that is neither a visible tip nor
+// advertised refs (docs/gateway/authorization.md): an oid that is neither a visible tip nor
 // reachable from one is rejected — the allow-reachable-sha1-in-want walk,
 // scoped to what the caller may actually see. With auth off the filter is a
 // no-op and this is the plain reachability contract; with auth on it makes

@@ -1,4 +1,4 @@
-# One-command GitLab-CE integration demo (docs/19): a real GitLab whose
+# One-command GitLab-CE integration demo (docs/integration/gitaly-compat.md): a real GitLab whose
 # only Gitaly storage node is banyan. GitLab-CE (pinned to the vendored
 # protocol version, internal/gitaly/server.go ProtoVersion) keeps its web
 # UI, auth, and workhorse; every git byte lands in banyan over the gitaly
@@ -33,7 +33,7 @@ services:
       - gitlab-config:/etc/gitlab-shared:ro
     restart: unless-stopped
 
-  # The subtree-management control page (docs/20 §7): `banyand web` in the
+  # The subtree-management control page (docs/integration/gitlab-integration.md §7): `banyand web` in the
   # gitlab profile — served UNDER the GitLab URL by the nginx location
   # provision.sh installs (no host port, the GitLab domain is the only
   # door). Login is GitLab SSO (provision.sh mints the OAuth application

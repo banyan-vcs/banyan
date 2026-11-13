@@ -34,7 +34,7 @@ func observeRecon(res ReconResult) {
 	mReconTrimmed.With().Add(int64(res.Trimmed))
 }
 
-// Options configures the refs service (docs/10 §8.1 thresholds).
+// Options configures the refs service (docs/storage/ha.md §8.1 thresholds).
 type Options struct {
 	DefaultReplicas  int
 	WriteAcks        string // advisory (gateway enforces); kept for Describe
@@ -42,7 +42,7 @@ type Options struct {
 	DeadAfter        time.Duration
 	ReconInterval    time.Duration
 	ReconConcurrency int
-	// AddressingMode selects the storage addressing mode (docs/03 §6):
+	// AddressingMode selects the storage addressing mode (docs/storage/storage.md §6):
 	// "named" (default) or "hashed" — the reconciler must copy/trim packs
 	// under the same key the gateways write them.
 	AddressingMode string
@@ -74,7 +74,7 @@ type Server struct {
 	Opt    Options
 	Health *HealthTable
 	Recon  *Reconciler
-	// Policy is the cluster authorization source of truth (docs/07 §4):
+	// Policy is the cluster authorization source of truth (docs/gateway/authorization.md §4):
 	// gateways sync their snapshot from /internal/authz/policy. Nil = the
 	// cluster runs open (the pre-M5 behavior).
 	Policy *auth.StaticPolicy
@@ -141,7 +141,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 }
 
 // hAuthzPolicy serves the cluster's policy snapshot for gateways
-// (docs/07 §4): the refs role is the source of truth, RemotePolicy caches
+// (docs/gateway/authorization.md §4): the refs role is the source of truth, RemotePolicy caches
 // this briefly. Cluster-internal surface, like the meta RPC beside it.
 func (s *Server) hAuthzPolicy(w http.ResponseWriter, _ *http.Request) {
 	if s.Policy == nil {
@@ -368,7 +368,7 @@ func (s *Server) hCreateRepo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// hRenameRepo flips the registry only (docs/03 §6): storage-layer moves for
+// hRenameRepo flips the registry only (docs/storage/storage.md §6): storage-layer moves for
 // named addressing happen at the gateway BETWEEN hBeginRename and this call,
 // so by the time the name changes the bytes already answer under it. The
 // flip also lifts the fence in the same transaction.
@@ -387,7 +387,7 @@ func (s *Server) hRenameRepo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// hBeginRename installs the rename fence (write barrier phase 1, docs/03
+// hBeginRename installs the rename fence (write barrier phase 1, docs/storage/storage.md
 // §6a); hAbortRename lifts it after a failed or abandoned rename.
 func (s *Server) hBeginRename(w http.ResponseWriter, r *http.Request) {
 	req, ok := decode[struct {
@@ -448,7 +448,7 @@ func (s *Server) hGetRepo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"repo": info})
 }
 
-// hSetForcePush toggles the repo-level force-push switch (docs/04 §6a).
+// hSetForcePush toggles the repo-level force-push switch (docs/gateway/git-compat.md §6a).
 func (s *Server) hSetForcePush(w http.ResponseWriter, r *http.Request) {
 	req, ok := decode[struct {
 		Repo    string `json:"repo"`
@@ -481,7 +481,7 @@ func (s *Server) hSetDefaultBranch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// hHooks serves the receive-hook registry (docs/04 §7): a request with a
+// hHooks serves the receive-hook registry (docs/gateway/git-compat.md §7): a request with a
 // hook upserts it; without one it lists (the gateway's per-push lookup).
 func (s *Server) hHooks(w http.ResponseWriter, r *http.Request) {
 	req, ok := decode[struct {
@@ -691,7 +691,7 @@ func (s *Server) hEnsureTimeline(w http.ResponseWriter, r *http.Request) {
 }
 
 // hSetTimelineBase advances an existing timeline's fork point (explicit-rebase
-// bookkeeping, docs/02 §12 — the sync path lands here in cluster mode).
+// bookkeeping, docs/design/data-model.md §12 — the sync path lands here in cluster mode).
 func (s *Server) hSetTimelineBase(w http.ResponseWriter, r *http.Request) {
 	req, ok := decode[struct {
 		Repo   string `json:"repo"`
@@ -823,7 +823,7 @@ func (s *Server) hReconcile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, res)
 }
 
-// hSweep drives one fleet-sweep pass (docs/10 §8.7): POST with
+// hSweep drives one fleet-sweep pass (docs/storage/ha.md §8.7): POST with
 // {"min_age_sec": n, "dry_run": bool} — orphan keys/packs past the grace
 // are reclaimed; a dry run reports the same numbers without deleting.
 func (s *Server) hSweep(w http.ResponseWriter, r *http.Request) {

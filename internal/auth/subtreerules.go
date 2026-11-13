@@ -1,9 +1,9 @@
 // Runtime subtree access rules as a decorator over any auth.Service
-// (docs/07 §8): rules from the metadata plane (meta.SubtreeRuleStore)
+// (docs/gateway/authorization.md §8): rules from the metadata plane (meta.SubtreeRuleStore)
 // narrow what the inner policy allows, at directory granularity, for both
 // download and commit. The rule at the SHALLOWEST anchor covering the
 // requested subtree governs — a rule on /src also protects /src/lib, because
-// a subtree view's closure contains everything deeper (docs/17: "to hide a
+// a subtree view's closure contains everything deeper (docs/web/console.md: "to hide a
 // subpath, tighten at the shallowest anchor covering it"). The reverse is
 // impossible by design and stays a documented boundary: a rule on /src/lib
 // cannot hide /src, since fetching the shallower anchor serves the deeper

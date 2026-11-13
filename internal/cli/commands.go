@@ -12,7 +12,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Exit codes (docs/06 §5): 0 ok / 1 conflict / 2 server or usage error / 3 network.
+// Exit codes (docs/client/cli.md §5): 0 ok / 1 conflict / 2 server or usage error / 3 network.
 func cmdErr(stderr io.Writer, err error) int {
 	switch e := err.(type) {
 	case *apiError:
@@ -35,7 +35,7 @@ func usageErr(stderr io.Writer, format string, args ...any) int {
 }
 
 // parseCloneURL splits a git-style /r/... URL into server base, repo and
-// subtree path (both /tree/<p> and legacy //<p> forms, docs/04 §1).
+// subtree path (both /tree/<p> and legacy //<p> forms, docs/gateway/git-compat.md §1).
 func parseCloneURL(raw string) (base, repo, sub string, err error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -179,7 +179,7 @@ func runStatus(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// --- commit: scan → upload new blobs → server-side assembly (docs/06 §4.2) ---
+// --- commit: scan → upload new blobs → server-side assembly (docs/client/cli.md §4.2) ---
 
 func runCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	var message, name, email string
@@ -320,7 +320,7 @@ func runPull(wsRoot string, args []string, stdout, stderr io.Writer) int {
 }
 
 // pullCore materializes the current view head over the manifest tree
-// (docs/06 §4.1): server-side tree-diff ("the download equals the checkout
+// (docs/client/cli.md §4.1): server-side tree-diff ("the download equals the checkout
 // difference"), the untracked-overwrite guard, then a hard checkout of the
 // delta. Shared by pull and sync — sync always finishes with the
 // materialization of whatever head it produced.
@@ -420,7 +420,7 @@ func runLog(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
-	// The RPC filters by repo-absolute anchor path (docs/02 §10); a subtree
+	// The RPC filters by repo-absolute anchor path (docs/design/data-model.md §10); a subtree
 	// workspace defaults to its own directory's history.
 	query := ""
 	switch {

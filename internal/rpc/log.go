@@ -9,7 +9,7 @@ import (
 )
 
 // handleLog: GET /api/v1/log?repo=<r>&rev=<branch>&path=/a/b&limit=20[&from=<oid>]
-// — thin adapter over service.Log (docs/05 §6: one implementation, every
+// — thin adapter over service.Log (docs/gateway/service-api.md §6: one implementation, every
 // frontend). rev only applies when from is absent (start at a branch tip).
 func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 	repo := r.URL.Query().Get("repo")

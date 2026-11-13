@@ -19,7 +19,7 @@ import (
 // Fork, fast-export and the hooks-backup spelling. The snapshot/replicate/
 // bundle-URI/backup-sink faces stay Unimplemented on purpose: they belong
 // to praefect WAL replication, the bundle CDN and go-cloud sink
-// deployments, none of which a single banyan gitaly node fronts (docs/19
+// deployments, none of which a single banyan gitaly node fronts (docs/integration/gitaly-compat.md
 // §5-6) — upstream serves the same RPCs unconfigured-failure without them.
 
 // CreateFork seeds a new repository with every reference of the source

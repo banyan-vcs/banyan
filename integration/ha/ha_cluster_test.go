@@ -1,4 +1,4 @@
-// ha_cluster_test.go — T23-T26: the cluster deployment (docs/10) end to end
+// ha_cluster_test.go — T23-T26: the cluster deployment (docs/storage/ha.md) end to end
 // with the real git CLI as the client. The harness starts the actual role
 // servers in-process: a refs service (SQLite meta, tight health thresholds),
 // four storage nodes (storenode over LocalShardStore) and one gateway
@@ -49,7 +49,7 @@ type haCluster struct {
 	beats    map[string]context.CancelFunc // nodeID → heartbeat loop cancel
 	GW       *httptest.Server
 	cancel   context.CancelFunc
-	mode     string // storage addressing mode (docs/03 §6): "" = named
+	mode     string // storage addressing mode (docs/storage/storage.md §6): "" = named
 
 	// Per-node internal request counters (T36: gateway disk-cache effect).
 	packGets atomic.Int32 // GET /internal/pack
@@ -176,7 +176,7 @@ func (c *haCluster) startStorageNode(ctx context.Context) {
 
 // restartGateway replaces the gateway process state (fresh ObjectService,
 // cold memory) — optionally carrying the on-disk pack cache across (T36:
-// the cache is the only state a gateway is allowed to keep, docs/11 P2-1).
+// the cache is the only state a gateway is allowed to keep, docs/operations/performance.md P2-1).
 func (c *haCluster) restartGateway(cacheDir string) {
 	c.t.Helper()
 	if c.GW != nil {
@@ -467,7 +467,7 @@ func dedup(in []string) []string {
 	return out
 }
 
-// --- T36 gateway disk pack cache (docs/11 P2-1, B6) ---
+// --- T36 gateway disk pack cache (docs/operations/performance.md P2-1, B6) ---
 // The gateway is stateless except for its caches — all memory. A restarted
 // gateway's first clone re-paid every pack transfer and (post-B2) every
 // object read as per-object RPCs. With cache.pack_dir, whole packs persist
@@ -770,7 +770,7 @@ func TestHAFleetSweepOrphans(t *testing.T) {
 }
 
 // TestHAFleetSweepHashedDeletedRepo: hashed addressing keeps a deleted
-// repo's immutable storage key (docs/03 §6) — the fleet sweep is the
+// repo's immutable storage key (docs/storage/storage.md §6) — the fleet sweep is the
 // promised reclamation. After the sweep the @hashed trees are gone on
 // every node while the live repo's key stays.
 func TestHAFleetSweepHashedDeletedRepo(t *testing.T) {

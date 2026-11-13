@@ -1,4 +1,4 @@
-// auth_tokens_test.go — T79/T80/T81 (docs/07 §5-6, docs/14 M5/M2/M3):
+// auth_tokens_test.go — T79/T80/T81 (docs/gateway/authorization.md §5-6, docs/project/roadmap.md M5/M2/M3):
 //
 //	T79 token auth end to end — mint via RPC, fetch/push with git as the
 //	    credential, scope ceiling (read can never push), revocation

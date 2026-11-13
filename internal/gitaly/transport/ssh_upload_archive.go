@@ -15,7 +15,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitwire"
 )
 
-// SSHUploadArchive (docs/19) speaks git's upload-archive wire protocol —
+// SSHUploadArchive (docs/integration/gitaly-compat.md) speaks git's upload-archive wire protocol —
 // the exchange `git archive --remote` drives:
 //
 //	client → server: pkt-lines "argument <arg>"…, flush-pkt

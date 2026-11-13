@@ -48,7 +48,7 @@ func TestSubtreeRuleChain(t *testing.T) {
 		t.Fatal("unmanaged paths must stay open")
 	}
 
-	// Push is gated by the same rule (下载与提交控制, docs/07 §1).
+	// Push is gated by the same rule (下载与提交控制, docs/gateway/authorization.md §1).
 	if p.CanPush(bob, "r", "/lib", "dev") {
 		t.Fatal("unlisted user must not push into a restricted subtree")
 	}

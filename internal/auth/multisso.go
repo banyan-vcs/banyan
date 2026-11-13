@@ -1,4 +1,4 @@
-// Multi-provider token authentication (docs/07 §8d): the same posture as
+// Multi-provider token authentication (docs/gateway/authorization.md §8d): the same posture as
 // GitLabSSO — a token minted by an identity provider gates banyan's HTTP
 // face — generalised to several issuers at once. A deployment lists the
 // providers it trusts (GitLab instances, github.com or a GitHub Enterprise

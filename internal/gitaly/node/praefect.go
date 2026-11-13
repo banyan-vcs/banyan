@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// The praefect-family services, answered cluster-of-one (docs/19). These
+// The praefect-family services, answered cluster-of-one (docs/integration/gitaly-compat.md). These
 // RPCs belong to praefect's multi-node topology: routing tables, replica
 // verification, Raft-less two-phase ref transactions, partition backups.
 // banyan's deployment shape is a single node, so the cluster it describes

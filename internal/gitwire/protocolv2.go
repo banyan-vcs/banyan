@@ -1,8 +1,8 @@
-// Protocol v2 (docs/04 §9b). Normative reference: Documentation/technical/
+// Protocol v2 (docs/gateway/git-compat.md §9b). Normative reference: Documentation/technical/
 // protocol-v2.txt; behavioral baseline: upload-pack.c/serve.c. v2 only
 // defines ls-refs and fetch — receive-pack stays on v0 forever, so the
 // version=2 header is honored for upload-pack only, exactly like
-// http-backend.c. Value over v1 (docs/11 P1-5): on-demand ref advertisement
+// http-backend.c. Value over v1 (docs/operations/performance.md P1-5): on-demand ref advertisement
 // (ref-prefixes) and the sectioned fetch response; negotiation semantics are
 // the same terminal-ACK-in-same-response model the v1 path implements.
 package gitwire
@@ -78,7 +78,7 @@ func (s *Server) serveUploadPackV2(w http.ResponseWriter, r *http.Request, vr Vi
 		http.Error(w, "repository not found: "+vr.Repo, http.StatusNotFound)
 		return
 	}
-	// One identity per command request (docs/07); every v2 command path
+	// One identity per command request (docs/gateway/authorization.md); every v2 command path
 	// receives it.
 	id, ok := s.requireAuth(w, r)
 	if !ok {
@@ -303,7 +303,7 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 		_ = WriteFlush(out)
 		return
 	}
-	// Authorization gates (docs/07): repository/directory fetch
+	// Authorization gates (docs/gateway/authorization.md): repository/directory fetch
 	// permission, then want coverage against the identity's VISIBLE tips
 	// (with auth off this is the plain allow-reachable-sha1-in-want
 	// reachability contract — partial-clone lazy fetches rely on it).
@@ -319,7 +319,7 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 	}
 
 	// One batched locate for the whole have list — the ACK check never
-	// touches object bytes (docs/11 P0-1).
+	// touches object bytes (docs/operations/performance.md P0-1).
 	knownHaves := s.Objects.Known(ctx, vr.Repo, fa.haves)
 	var acks []model.OID
 	covered := map[model.OID]bool{}
@@ -380,7 +380,7 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 		_ = WriteDelim(out)
 	}
 
-	// Full-clone budget (docs/11 §6): clone-shaped requests against an
+	// Full-clone budget (docs/operations/performance.md §6): clone-shaped requests against an
 	// oversized repo die BEFORE the packfile section — an ERR pkt after the
 	// section header would be parsed as sideband framing ("bad band #N").
 	cacheable := len(fa.haves) == 0 && fa.depth == 0 && fa.filter == nil
@@ -400,10 +400,10 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 	// *%x00-ff): each chunk carries band 1 (pack data) — this framing is
 	// unconditional in v2, independent of the sideband-all capability.
 	sb := sidebandWriter{w: out}
-	// Serve ladder shared with v1 (docs/11 P2-2): stored-pack verbatim →
+	// Serve ladder shared with v1 (docs/operations/performance.md P2-2): stored-pack verbatim →
 	// clone-shaped response cache → online encoding. Thin packs (haves
 	// present) are client-specific and never cached.
-	// Clone-shaped fast path (docs/03 §5): enumeration-only probe + verbatim
+	// Clone-shaped fast path (docs/storage/storage.md §5): enumeration-only probe + verbatim
 	// stream — the closure (object bytes resident) is skipped entirely, so
 	// big repos serve in a small memory window.
 	if cacheable && len(fa.clientShallow) == 0 {
@@ -412,7 +412,7 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 			log.Printf("v2 fetch %s%s: %d wants → %s (closure skipped)", vr.Repo, vr.Sub, len(fa.wants), fast)
 			return
 		}
-		// Multi-pack closure: streaming encode (docs/03 §3) — the response
+		// Multi-pack closure: streaming encode (docs/storage/storage.md §3) — the response
 		// cache answers repeat clones without walking, the first one streams
 		// entry by entry; small repos fall back to the closure ladder.
 		if s.tryStreamingServe(ctx, sb, vr, fa.wants, fa.ofsDelta) {
@@ -421,7 +421,7 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 		}
 	}
 
-	// Deepen-shaped (docs/03 §3): shallow clone / deepen / unshallow — the
+	// Deepen-shaped (docs/storage/storage.md §3): shallow clone / deepen / unshallow — the
 	// shallow-info section is already written; the pack streams like a
 	// clone, with the same depth/graft/have pruning the ladder applies.
 	if fa.filter == nil && (fa.depth > 0 || len(fa.clientShallow) > 0) {

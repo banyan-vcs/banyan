@@ -1,6 +1,6 @@
 package streaming
 
-// T57 (docs/13): the type zoo through the multi-pack streaming rung — the
+// T57 (docs/operations/testing.md): the type zoo through the multi-pack streaming rung — the
 // correctness counterpart to T55's memory proof. Two pushes (~18 MiB of
 // incompressible blobs each, no repack) keep the closure spanning two packs
 // past the streamServeMinPackBytes cutoff, and the second commit plants the

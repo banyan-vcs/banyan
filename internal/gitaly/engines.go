@@ -1,4 +1,4 @@
-// Engine exports for non-gRPC consumers (docs/05 §6, docs/14 M2/M3): the
+// Engine exports for non-gRPC consumers (docs/gateway/service-api.md §6, docs/project/roadmap.md M2/M3): the
 // JSON RPC surface serves path diff and blame from the same engines the
 // gitaly RPCs ride — unifiedPatch is byte-pinned against `git diff` and
 // blamePorcelain against `git blame` (T63), so the wire format a client

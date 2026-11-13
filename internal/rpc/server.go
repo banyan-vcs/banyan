@@ -1,5 +1,5 @@
-// Package rpc provides the server-side RPC for the banyan CLI (docs/06,
-// docs/05): HTTPS + JSON over the protocol-agnostic service layer; read
+// Package rpc provides the server-side RPC for the banyan CLI (docs/client/cli.md,
+// docs/gateway/service-api.md): HTTPS + JSON over the protocol-agnostic service layer; read
 // responses carry an ETag (projection head OID) for immutable caching.
 // Handlers stay thin — parse, delegate to internal/service, serialize.
 package rpc
@@ -22,15 +22,15 @@ import (
 	"github.com/banyan-vcs/banyan/internal/view"
 )
 
-// Server mounts the /api/v1/* endpoints (the httpd frontend of docs/05 §1).
+// Server mounts the /api/v1/* endpoints (the httpd frontend of docs/gateway/service-api.md §1).
 type Server struct {
 	Meta    meta.MetaStore
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
-	Views   *view.Service // derived-view engine (docs/02 sec.13)
+	Views   *view.Service // derived-view engine (docs/design/data-model.md sec.13)
 	Svc     *service.Service
 	// Auth, when set, requires an authenticated identity on every /api/v1
-	// request (docs/07 §5): the JSON surface is authentication-gated; the
+	// request (docs/gateway/authorization.md §5): the JSON surface is authentication-gated; the
 	// fine-grained repo/dir/branch rules live on the git wire — the web
 	// service enforces page-level visibility through it.
 	Auth auth.Service
@@ -49,13 +49,13 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/objects", s.authn(s.handleObjects))
 	mux.HandleFunc("/api/v1/objects/content", s.authn(s.handleObjectsContent))
 	mux.HandleFunc("/api/v1/timelines", s.authn(s.handleTimelines))
-	mux.HandleFunc("/api/v1/subtrees", s.authn(s.handleSubtrees)) // subtree listing (docs/07 §8)
+	mux.HandleFunc("/api/v1/subtrees", s.authn(s.handleSubtrees)) // subtree listing (docs/gateway/authorization.md §8)
 	mux.HandleFunc("/api/v1/log", s.authn(s.handleLog))
 	mux.HandleFunc("/api/v1/tree", s.authn(s.handleTree)) // structured tree listing (web code browser)
 	mux.HandleFunc("/api/v1/repack", s.authn(s.handleRepack))
 	mux.HandleFunc("/api/v1/fetch-trees", s.authn(s.handleFetchTrees))
 	mux.HandleFunc("/api/v1/commit", s.authn(s.handleCommit))
-	mux.HandleFunc("/api/v1/sync", s.authn(s.handleSync)) // subtree→root alignment (docs/02 §12)
+	mux.HandleFunc("/api/v1/sync", s.authn(s.handleSync)) // subtree→root alignment (docs/design/data-model.md §12)
 	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
 	mux.HandleFunc("/api/v1/imports", s.authn(s.handleImports)) // server-side repo import (docs/web)
@@ -64,10 +64,10 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/meta/backup", s.authn(s.handleMetaBackup))
 	mux.HandleFunc("/api/v1/resolve", s.authn(s.handleResolve))
 	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
-	mux.HandleFunc("/api/v1/auth/tokens", s.authn(s.handleTokens))  // PAT mint/list (docs/07 §6)
+	mux.HandleFunc("/api/v1/auth/tokens", s.authn(s.handleTokens))  // PAT mint/list (docs/gateway/authorization.md §6)
 	mux.HandleFunc("/api/v1/auth/tokens/", s.authn(s.handleTokens)) // DELETE /<hash> revoke
-	mux.HandleFunc("/api/v1/diff", s.authn(s.handleDiff))           // path diff (docs/14 M2)
-	mux.HandleFunc("/api/v1/blame", s.authn(s.handleBlame))         // recursive blame (docs/14 M3)
+	mux.HandleFunc("/api/v1/diff", s.authn(s.handleDiff))           // path diff (docs/project/roadmap.md M2)
+	mux.HandleFunc("/api/v1/blame", s.authn(s.handleBlame))         // recursive blame (docs/project/roadmap.md M3)
 }
 
 // authn wraps a handler with the authentication requirement (no-op without
@@ -83,7 +83,7 @@ func (s *Server) authn(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// handleLogin verifies credentials for the web service (docs/07 §5): the
+// handleLogin verifies credentials for the web service (docs/gateway/authorization.md §5): the
 // single-source check against the wired policy — the session layer lives in
 // the web tier, the password table never leaves the server.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +114,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// --- error envelope (docs/05 §3.2): code → HTTP status here, CLI exit code client-side ---
+// --- error envelope (docs/gateway/service-api.md §3.2): code → HTTP status here, CLI exit code client-side ---
 
 type errBody struct {
 	Code    string `json:"code"`
@@ -154,7 +154,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-// --- POST /api/v1/objects: batch per-object locate (lazy backfill, docs/04 §4) ---
+// --- POST /api/v1/objects: batch per-object locate (lazy backfill, docs/gateway/git-compat.md §4) ---
 
 type objectsRequest struct {
 	Repo string      `json:"repo"`
@@ -272,7 +272,7 @@ func (s *Server) handleTimelines(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- GET /api/v1/subtrees: the repo's directory timelines as a management
-// listing (docs/07 §8, docs/20) — /.woven internals and aux refs filtered,
+// listing (docs/gateway/authorization.md §8, docs/integration/gitlab-integration.md) — /.woven internals and aux refs filtered,
 // branch heads decorated with their last commit, projected marks the
 // refs/banyan/tree/<dir> projection set. ---
 
@@ -299,7 +299,7 @@ func (s *Server) handleSubtrees(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "defaultBranch": branch, "subtrees": subs})
 }
 
-// --- POST /api/v1/repack: merge a repo's pack fragments (docs/03 §5, docs/09 §3.2) ---
+// --- POST /api/v1/repack: merge a repo's pack fragments (docs/storage/storage.md §5, docs/storage/indexing-packing.md §3.2) ---
 
 type repackRequest struct {
 	Repo      string `json:"repo"`
@@ -322,7 +322,7 @@ func (s *Server) handleRepack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// --- POST /api/v1/fetch-trees: thin-client materialization (docs/06 §4.1) ---
+// --- POST /api/v1/fetch-trees: thin-client materialization (docs/client/cli.md §4.1) ---
 
 func (s *Server) handleFetchTrees(w http.ResponseWriter, r *http.Request) {
 	var req service.FetchRequest
@@ -338,7 +338,7 @@ func (s *Server) handleFetchTrees(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", "\""+string(res.Head)+"\"")
 	}
 	// Binary framing on request ("format":"bin") — the thin CLI's dominant
-	// transfer drops JSON's base64 +33% (docs/11 P1-2). JSON stays default.
+	// transfer drops JSON's base64 +33% (docs/operations/performance.md P1-2). JSON stays default.
 	if req.Format == "bin" {
 		w.Header().Set("Content-Type", "application/x-banyan-fetch-trees")
 		w.WriteHeader(http.StatusOK)
@@ -350,7 +350,7 @@ func (s *Server) handleFetchTrees(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// --- POST /api/v1/commit: server-side changeset assembly (docs/06 §4.2) ---
+// --- POST /api/v1/commit: server-side changeset assembly (docs/client/cli.md §4.2) ---
 
 func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	var req service.CommitRequest
@@ -376,10 +376,10 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// --- POST /api/v1/sync: explicit subtree→root alignment (docs/02 §12) ---
+// --- POST /api/v1/sync: explicit subtree→root alignment (docs/design/data-model.md §12) ---
 
 // handleSync replays a subtree timeline's local-only commits onto the root's
-// current projection (docs/06 §3.9). The same push rule the commit endpoint
+// current projection (docs/client/cli.md §3.9). The same push rule the commit endpoint
 // enforces: sync rewrites the timeline head.
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	var req service.SyncRequest
@@ -403,7 +403,7 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// --- GET/POST /api/v1/refs: ref listing and CAS (docs/05 §3.3) ---
+// --- GET/POST /api/v1/refs: ref listing and CAS (docs/gateway/service-api.md §3.3) ---
 
 func (s *Server) handleRefs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -442,7 +442,7 @@ func (s *Server) handleRefs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
-		// Repository creation for the management surface (docs/07 sec.5, the
+		// Repository creation for the management surface (docs/gateway/authorization.md sec.5, the
 		// web tier): the same registry the git-surface auto-create uses.
 		var req struct {
 			Name string `json:"name"`
@@ -455,7 +455,7 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// A metadata-plane write: scoped credentials need write rank
-		// (docs/07 §8b) — unscoped identities keep the authenticated gate;
+		// (docs/gateway/authorization.md §8b) — unscoped identities keep the authenticated gate;
 		// the not-yet-existing repo is unknown to per-repo policy by
 		// construction, and the console authorizes creation on its side.
 		if !s.requireWriteRank(w, r) {
@@ -476,7 +476,7 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// --- GET/PUT /api/v1/repos/<repo>/placement: per-repo replica target (docs/10 §6) ---
+// --- GET/PUT /api/v1/repos/<repo>/placement: per-repo replica target (docs/storage/ha.md §6) ---
 
 func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")
@@ -485,13 +485,13 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access)"}})
 		return
 	}
-	// Repo management is admin territory (docs/07 §5); size stays a plain
+	// Repo management is admin territory (docs/gateway/authorization.md §5); size stays a plain
 	// repo stat for any authenticated member.
 	if parts[1] != "size" && !s.requireAdmin(w, r, parts[0]) {
 		return
 	}
 	if parts[1] == "hooks" {
-		// Receive-hook registry (docs/04 §7): registrations live in the
+		// Receive-hook registry (docs/gateway/git-compat.md §7): registrations live in the
 		// metadata plane so every gateway evaluates the same hooks. Same
 		// authentication gate as repo administration.
 		repo := parts[0]
@@ -530,7 +530,7 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if parts[1] == "subtree-access" {
-		// Runtime directory access rules (docs/07 §8): fetch AND push of a
+		// Runtime directory access rules (docs/gateway/authorization.md §8): fetch AND push of a
 		// subtree anchor (and everything deeper) restricted to an allowlist.
 		// Same admin gate as the other management rows; deployments whose
 		// metadata plane carries no rule store answer 404 (the token-layer
@@ -583,7 +583,7 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if parts[1] == "size" {
-		// Repo-scale statistics (docs/11 §6): total pack bytes + pack count —
+		// Repo-scale statistics (docs/operations/performance.md §6): total pack bytes + pack count —
 		// the number the full-clone budget enforces.
 		if r.Method != http.MethodGet {
 			writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET"}})
@@ -599,9 +599,9 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	}
 	repo := parts[0]
 	if parts[1] == "rename" {
-		// Repository rename (docs/03 §6): hashed addressing flips the
+		// Repository rename (docs/storage/storage.md §6): hashed addressing flips the
 		// registry alone; named addressing moves every storage location
-		// first. Same authentication gate as repo creation (docs/07 §5 —
+		// first. Same authentication gate as repo creation (docs/gateway/authorization.md §5 —
 		// fine-grained RPC authz is the listed follow-up).
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "POST"}})
@@ -625,7 +625,7 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if parts[1] == "force-push" {
-		// Repo-level force-push switch (docs/04 §6a): the subtree rollback
+		// Repo-level force-push switch (docs/gateway/git-compat.md §6a): the subtree rollback
 		// guard is default-on; enabling this switch is an explicit
 		// administrative opt-in to history-rewriting subtree pushes. Same
 		// authentication gate as repo creation.
@@ -717,7 +717,7 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 
 // handleMetaBackup: POST /api/v1/meta/backup {"path": "..."} — online
 // snapshot of the SQLite metadata plane (VACUUM INTO: readers and the
-// single writer keep running; docs/10 §8.4). Cluster backends answer 409:
+// single writer keep running; docs/storage/ha.md §8.4). Cluster backends answer 409:
 // their backups belong to the database ecosystem's own tooling.
 func (s *Server) handleMetaBackup(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r, "") {

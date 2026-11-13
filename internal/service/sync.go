@@ -1,12 +1,12 @@
-// sync.go — the explicit subtree→root alignment (docs/02 §12: true
+// sync.go — the explicit subtree→root alignment (docs/design/data-model.md §12: true
 // divergence — both the subtree timeline and the root projection advanced —
 // keeps the local head on read and "waits for explicit sync"). This IS that
 // sync: replay the subtree's local-only commits onto the root's current
 // projection tip with the same per-commit three-way replay the convergence
-// train uses (docs/15 §2.2), then CAS the timeline head. Thin clients hold
+// train uses (docs/design/workflow.md §2.2), then CAS the timeline head. Thin clients hold
 // no history to rebase locally, so the server does it; the rebased chain is
 // exactly the "cross-view rewrite of the projection plus newer content"
-// shape the receive-pack guard already accepts (docs/02 §13 third form).
+// shape the receive-pack guard already accepts (docs/design/data-model.md §13 third form).
 package service
 
 import (
@@ -66,7 +66,7 @@ func (s *Service) SyncSubtree(ctx context.Context, req SyncRequest) (*SyncResult
 		return nil, err
 	}
 	if sub.IsRoot() {
-		return nil, invalid("sync: sub required — root timelines land verbatim and never need alignment (docs/02 §13)")
+		return nil, invalid("sync: sub required — root timelines land verbatim and never need alignment (docs/design/data-model.md §13)")
 	}
 	if _, err = s.Meta.GetRepo(ctx, req.Repo); err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ func (s *Service) syncOnce(ctx context.Context, repo string, sub model.AnchorPat
 	if projTip.IsZero() || st.Head.IsZero() {
 		return &SyncResult{Status: "uptodate", Head: st.Head}, false, nil
 	}
-	// Descendant rule (docs/02 §12): local ahead (contains the projection)
+	// Descendant rule (docs/design/data-model.md §12): local ahead (contains the projection)
 	// or purely behind (projection contains the local) — both are already
 	// consistent; only true divergence needs the replay.
 	if s.Views.Descends(repo, st.Head, projTip) || s.Views.Descends(repo, projTip, st.Head) {
@@ -132,7 +132,7 @@ func (s *Service) syncOnce(ctx context.Context, repo string, sub model.AnchorPat
 	}
 
 	// One replay = one synth batch: synthesized trees/commits persist as a
-	// single pack (docs/11 P0-2).
+	// single pack (docs/operations/performance.md P0-2).
 	s.Objects.BeginSynthBatch(repo)
 	defer s.Objects.EndSynthBatch(repo)
 

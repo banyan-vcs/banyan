@@ -1,4 +1,4 @@
-// T66 — rebase series, patch application and submodule updates (docs/19):
+// T66 — rebase series, patch application and submodule updates (docs/integration/gitaly-compat.md):
 // git's own rebase and format-patch/am are the oracle — the rebased tree
 // byte-equals a local `git rebase`, the applied patch series byte-equals a
 // local `git am`, and submodule moves verify through ls-tree.

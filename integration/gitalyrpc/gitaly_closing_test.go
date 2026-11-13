@@ -1,4 +1,4 @@
-// T76 — the closing pair (docs/19). CheckBlobsGenerated answers go-enry's
+// T76 — the closing pair (docs/integration/gitaly-compat.md). CheckBlobsGenerated answers go-enry's
 // generated-file heuristic (package-lock.json et al. versus hand-written
 // sources); SSHUploadArchive speaks git's upload-archive wire protocol —
 // the oracle is the band-1 payload reassembled from the stream and

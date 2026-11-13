@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Object pools (docs/19). Upstream pools dedup fork objects through git's
+// Object pools (docs/integration/gitaly-compat.md). Upstream pools dedup fork objects through git's
 // alternates mechanism: the member repository reads through to the pool's
 // object directory. banyan's packs are per-repository, so the honest
 // equivalent is materialization — linking copies any pool object the member

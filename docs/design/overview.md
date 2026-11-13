@@ -1,4 +1,4 @@
-# 00 · 总览：banyan 是什么
+# 总览：banyan 是什么
 
 ## 初衷：为什么做 banyan
 
@@ -21,7 +21,7 @@
 
 ## 远景
 
-让代码存储成为像数据库一样**独立的基础设施层**：任何平台（GitLab / Gitea / 自建）、任何客户端（git CLI / IDE / CI / AI Agent）、任何规模（个人项目到企业 monorepo），都以标准协议访问同一个存储层。banyan 管"代码住在哪里、怎么高效取用"；协作流程归平台，组织与权限归企业——目录时间线把两者的边界对齐在同一粒度上。（定位展开见 [01-big-picture.md](01-big-picture.md)。）
+让代码存储成为像数据库一样**独立的基础设施层**：任何平台（GitLab / Gitea / 自建）、任何客户端（git CLI / IDE / CI / AI Agent）、任何规模（个人项目到企业 monorepo），都以标准协议访问同一个存储层。banyan 管"代码住在哪里、怎么高效取用"；协作流程归平台，组织与权限归企业——目录时间线把两者的边界对齐在同一粒度上。（定位展开见 [big-picture.md](big-picture.md)。）
 
 ## 一句话
 
@@ -45,10 +45,10 @@ git wire 协议语义，服务端内部自由重构。
 
 ## 总体架构
 
-![banyan 总体架构](architecture.png)
+![banyan 总体架构](../assets/architecture.png)
 
-（矢量源文件 [architecture.svg](architecture.svg)，改图后用
-`rsvg-convert -w 2160 -o architecture.png architecture.svg` 重导出。）
+（矢量源文件 [architecture.svg](../assets/architecture.svg)，改图后用
+`rsvg-convert -w 2160 -o docs/assets/architecture.png docs/assets/architecture.svg` 重导出。）
 
 五层自上而下，读写计算集中在服务端：
 
@@ -56,8 +56,8 @@ git wire 协议语义，服务端内部自由重构。
    子树即仓库）、banyan CLI 薄工作区（无 .git，历史在服务端）、Web 管理面；
 2. **接入层**——gitwire（git 协议服务核心：有状态 v0 协商 / v2 命令面 /
    thin pack / 服务阶梯 / 子树投影 ref）与 rpc `/api/v1` 薄层（三前端之一
-   是 Gitaly 兼容层——GitLab 直连存储节点，[19](19-gitaly-compat.md)/
-   [20](20-gitlab-integration.md)）；
+   是 Gitaly 兼容层——GitLab 直连存储节点，[19](../integration/gitaly-compat.md)/
+   [20](../integration/gitlab-integration.md)）；
    两类端点都只做协议编解码，无业务逻辑；
 3. **授权切面**——`auth.Service` 贯穿所有端点：Basic / SSH 公钥同源解析
    身份，VisibleRefs / CanFetch / CanPush 三粒度决策（nil = 关闭；
@@ -71,9 +71,9 @@ git wire 协议语义，服务端内部自由重构。
 
 部署形态二选一，同一套角色代码（`banyand -role`）：**all-in-one**（全部
 同进程，SQLite + 本地分片——开发/demo）与**集群**（无状态网关 ×N + refs +
-存储 ×N——横向扩展，docs/10）。
+存储 ×N——横向扩展，docs/storage/ha.md）。
 
-进程姿态（docs/14 生产主轴）：生产缺省**安全**——客户端面角色（all-in-one/
+进程姿态（docs/project/roadmap.md 生产主轴）：生产缺省**安全**——客户端面角色（all-in-one/
 gateway）无认证拒启、gitaly 监听无 token 拒启，`dev: true` 是显式开发出路；
 SIGINT/SIGTERM 优雅 drain（在途传输跑完）；每个角色暴露 `/metrics`
 （Prometheus 文本，git 流量/时延/inflight、ingest、CAS 冲突、副本回退、
@@ -85,13 +85,13 @@ reconciler/sweep）。
 
 | 段 | 文档 | 一句话 |
 |---|---|---|
-| **总** | [00-overview](00-overview.md) · [01-big-picture](01-big-picture.md) | banyan 是什么；站在哪里（通用代码存储层 + 平台集成拓扑） |
-| **核心设计**（自底向上） | [02-data-model](02-data-model.md) · [03-storage](03-storage.md) · [04-git-compat](04-git-compat.md) · [05-service-api](05-service-api.md) · [06-cli](06-cli.md) | 目录锚定时间线 → 分片 pack 存储 → git 兼容层（HTTP+SSH）→ 服务层与前端 → 薄客户端 |
-| **横切能力** | [07-authorization](07-authorization.md) · [08-derived-data](08-derived-data.md) · [09-indexing-packing](09-indexing-packing.md) · [15-workflow](15-workflow.md) · [17-console](17-console.md) | 授权与个人分支可见性（含安全默认）；派生数据；索引与打包；目录级高并发工作流（M4）；产品侧控制台（banyans） |
-| **运行与演进** | [10-ha](10-ha.md) · [11-performance](11-performance.md) · [12-docker-demo](12-docker-demo.md) · [13-testing](13-testing.md) · [14-roadmap](14-roadmap.md) · [19-gitaly-compat](19-gitaly-compat.md) · [20-gitlab-integration](20-gitlab-integration.md) | 高可用集群；性能与基准门（多轮实测与劣化归因并入 §3a）；demo 走查；测试矩阵；里程碑与生产主轴；Gitaly 协议兼容层（研究稿并入 §0）；GitLab 集成操作手册（接入/验证/排查） |
+| **总** | [overview](overview.md) · [big-picture](big-picture.md) | banyan 是什么；站在哪里（通用代码存储层 + 平台集成拓扑） |
+| **核心设计**（自底向上） | [data-model](data-model.md) · [storage](../storage/storage.md) · [git-compat](../gateway/git-compat.md) · [service-api](../gateway/service-api.md) · [cli](../client/cli.md) | 目录锚定时间线 → 分片 pack 存储 → git 兼容层（HTTP+SSH）→ 服务层与前端 → 薄客户端 |
+| **横切能力** | [authorization](../gateway/authorization.md) · [derived-data](derived-data.md) · [indexing-packing](../storage/indexing-packing.md) · [workflow](workflow.md) · [console](../web/console.md) | 授权与个人分支可见性（含安全默认）；派生数据；索引与打包；目录级高并发工作流（M4）；产品侧控制台（banyans） |
+| **运行与演进** | [ha](../storage/ha.md) · [performance](../operations/performance.md) · [docker-demo](../operations/docker-demo.md) · [testing](../operations/testing.md) · [roadmap](../project/roadmap.md) · [gitaly-compat](../integration/gitaly-compat.md) · [gitlab-integration](../integration/gitlab-integration.md) | 高可用集群；性能与基准门（多轮实测与劣化归因并入 §3a）；demo 走查；测试矩阵；里程碑与生产主轴；Gitaly 协议兼容层（研究稿并入 §0）；GitLab 集成操作手册（接入/验证/排查） |
 
 编号有洞（16/18）= 已合并：16 并入 11 §3a、18 并入 19 §0——编号稳定
-优先于连续性（docs/19 被 50+ 文件引用），外链不因合并失效。
+优先于连续性（docs/integration/gitaly-compat.md 被 50+ 文件引用），外链不因合并失效。
 
 ## 基座选型：go-git
 
@@ -102,7 +102,7 @@ reconciler/sweep）。
 | packfile/idx decode/encode | ✅ | 存储层与 wire 层的编解码底座 |
 | 对象模型（blob/tree/commit/tag，SHA-256） | ✅ | model 层的 git 投影直接复用 |
 | 协议 v0/v1 客户端 + `transport/server` 服务端 | ✅ | wire 层参考/复用其协商代码 |
-| protocol v2 | ✅（2026-10-25，docs/04 §9b/T30） | ls-refs（ref-prefix/peel/symrefs/unborn）+ fetch（段式响应、sideband pack 帧、shallow/filter/ofs-delta）；receive-pack 按语义恒 v0（git 本身如此） |
+| protocol v2 | ✅（2026-10-25，docs/gateway/git-compat.md §9b/T30） | ls-refs（ref-prefix/peel/symrefs/unborn）+ fetch（段式响应、sideband pack 帧、shallow/filter/ofs-delta）；receive-pack 按语义恒 v0（git 本身如此） |
 | 服务端 filter（"Not offered when serving"） | ❌ | **自研**（子目录 clone 的关键） |
 | 客户端 `--filter` 懒回填缺失对象 | ❌（可发 filter 请求、记录 promisor 状态，不能按需取回） | `banyan` CLI 自研逐对象批量 RPC 补齐 |
 | multi-pack-index / cruft packs | ❌ | 分布式 idx 布局自行定义 |
@@ -125,4 +125,4 @@ reconciler/sweep）。
 
 ## 阅读顺序
 
-先读 [02-data-model.md](02-data-model.md)（理解模型分歧点），再读 [03-storage.md](03-storage.md) 与 [04-git-compat.md](04-git-compat.md)（两个承诺：分布式与兼容性），最后 [04](08-derived-data.md)、[05](06-cli.md)、[06](14-roadmap.md)；定位与平台集成看 [01-big-picture.md](01-big-picture.md)。
+先读 [data-model.md](data-model.md)（理解模型分歧点），再读 [storage.md](../storage/storage.md) 与 [git-compat.md](../gateway/git-compat.md)（两个承诺：分布式与兼容性），最后 [04](derived-data.md)、[05](../client/cli.md)、[06](../project/roadmap.md)；定位与平台集成看 [big-picture.md](big-picture.md)。

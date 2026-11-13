@@ -14,7 +14,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Thin pack writer (docs/11 P2-6, B8): a have-subtracted fetch packs its
+// Thin pack writer (docs/operations/performance.md P2-6, B8): a have-subtracted fetch packs its
 // objects as REF_DELTA against bases the CLIENT provably holds but that are
 // NOT in the pack — git's thin pack; the client's index-pack --fix-thin
 // resolves the bases locally. go-git's encoder cannot reference absent
@@ -92,7 +92,7 @@ const (
 )
 
 // StreamEncodePack writes a delta-free pack of exactly count objects pulled
-// from next in order (docs/03 §3, the clone-shaped streaming serve): a
+// from next in order (docs/storage/storage.md §3, the clone-shaped streaming serve): a
 // multi-pack closure where no stored pack matches exactly. The writer hashes
 // and compresses as it goes, so nothing beyond the current object is ever
 // resident — unlike EncodePack, which needs every object's bytes at once.

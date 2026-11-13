@@ -1,4 +1,4 @@
-# 10 · 高可用与集群部署
+# 高可用与集群部署
 
 > **实施状态（2026-10-24 HA-1 核心；2026-10-27 HA-2 首切片）**：三角色
 > 拆分 / 散布多副本写（W=quorum）/ refs 内部 RPC / 健康状态机 /
@@ -98,7 +98,7 @@ pack cache 短路；整包直传语义保持。
   的孤儿（无害）；
 - **后端双选**：
   - **MySQL/PG（集群默认，2026-10-27 已落地；2026-11-05 起生产缺省即
-    postgres，mysql 并列支持，缺 DSN 报错自带示例——docs/07 §0）**——前序判断走 DB 事务，HA 由数据库体系承担
+    postgres，mysql 并列支持，缺 DSN 报错自带示例——docs/gateway/authorization.md §0）**——前序判断走 DB 事务，HA 由数据库体系承担
     （企业现成 DBHA / 云 RDS 多 AZ）；
   - **内嵌 raft 组（自包含场景）**——不想引入外部 DB 时，ref 状态本身是
     小状态机（每 push 1-2 条命令），3 成员 raft 组即可（复用 raft 库，
@@ -237,7 +237,7 @@ reconciler 的副本修复目前经 refs 进程转发（读源 → 逐目标写�
 ### 8.7 fleet GC：孤儿字节清扫（2026-11-04，一致性评审 D 项）
 
 reconciler 只收敛**注册表认领的**字节；没有行背书的字节——注册失败的
-落地、trim 删失败残留、被删仓库的不可变键（hashed，docs/03 §6 "until
+落地、trim 删失败残留、被删仓库的不可变键（hashed，docs/storage/storage.md §6 "until
 fleet GC" 的承诺）、rename 旧名目录（named）、崩溃落地的 `.put-*` 残
 片——此前无人回收。`Reconciler.SweepOnce` 补上这条清扫通道（驱动端点
 `POST /internal/sweep {"min_age_sec":n,"dry_run":b}`，逐节点两阶段，
@@ -303,7 +303,7 @@ health:                     # 节点状态机阈值（§8.1）
 | 一体化部署 | refs 进程内 SQLite + storage 单节点；无特例路径 |
 | repack（register-first） | 网关编排：读各持有节点包 → 合并包随机写 R 节点 → ref 事务 DropPack + 旧节点清理命令 |
 
-## 11. 测试计划（docs/13 约定）
+## 11. 测试计划（docs/operations/testing.md 约定）
 
 | # | 用例 | 防回归点 |
 |---|---|---|

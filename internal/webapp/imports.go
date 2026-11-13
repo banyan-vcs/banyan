@@ -47,7 +47,7 @@ func (s *Server) sourceAuthorization(sess Session, rawURL, mode, token string) (
 		if token == "" {
 			return "", fmt.Errorf("token mode requires a token")
 		}
-		// banyan's own PATs carry the console convention (docs/17 §4): the
+		// banyan's own PATs carry the console convention (docs/web/console.md §4): the
 		// Basic username must be the token's owner — the importing session's
 		// user; a token minted by anyone else simply fails to authenticate.
 		if strings.HasPrefix(token, "banyan_") {

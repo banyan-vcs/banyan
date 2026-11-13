@@ -1,4 +1,4 @@
-# 19 · Gitaly 协议兼容层（实现）
+# Gitaly 协议兼容层（实现）
 
 > 目标：以 gitaly 的 gRPC protocol 为契约实现全部接口，使本进程可**替代**
 > gitaly 节点接入 GitLab（Rails/workhorse 只改 gitaly.yml 指向）。
@@ -42,7 +42,7 @@
 - 依赖：`google.golang.org/grpc v1.85.0`、`protobuf v1.36.12`（首批外部
   gRPC 依赖）。
 - 生命周期：SIGTERM 时 gRPC 面 GracefulStop（宽限后降级 Stop），在途
-  RPC 流跑完——与全进程 drain 同一条终止上下文（docs/14 生产主轴）。
+  RPC 流跑完——与全进程 drain 同一条终止上下文（docs/project/roadmap.md 生产主轴）。
 
 ## 2. 寻址：relative_path → banyan 仓库名
 
@@ -66,7 +66,7 @@ rename 永不搬数据。
   16.x 起每次调用现签 `v2.<HMAC-SHA256(secret, issued_at)>.<unix秒>`，
   ±30s 窗口（上游 auth/token.go）；以及裸 token 恒时比较（旧客户端与
   banyan 自家 Dial）。与上游一致：**token 之后全信**，细粒度授权在
-  前端（Rails/console），不走 banyan auth 面（docs/07）。
+  前端（Rails/console），不走 banyan auth 面（docs/gateway/authorization.md）。
 - ServerSignature：进程内 ed25519（重启即换钥，Rails 会重取）。
 - ServerInfo 上报：`server_version` = vendored 协议版本（19.5.2，可
   `reported_version` 覆盖）；`git_version` = 纯 Go 协议面的特性基线
@@ -152,7 +152,7 @@ TransportCredentials 嗅探兼容普通 gRPC 客户端（listenmux 同构）。 
 ### SSHService 3/3 ✅
 SSHReceivePack ✅（bidi：stdin 泵入会话、stdout 分块流回、exit-status
 末条；复用 gitwire.ServeSSHSession——从 serveGitExec 抽出的 io 流会话核
-心，docs/04 §7b 的无守护进程形态） · **SSHUploadPackWithSidechannel ✅**
+心，docs/gateway/git-compat.md §7b 的无守护进程形态） · **SSHUploadPackWithSidechannel ✅**
 （交互式 upload 会话整体跑在 sidechannel 上——广告/协商/包字节） ·
 **SSHUploadArchive ✅**（git upload-archive wire 协议：argument pkt-line
 流→ACK+flush→sideband 1 归档字节/3 错误→终 flush；载荷与 `git archive`
@@ -201,7 +201,7 @@ already-at / 非子模块路径=InvalidArgument+PathError detail）
 （基=该提交首父）；变空丢弃/原本空保留（--empty=drop）；作者与消息
 保留、committer=操作者。**根分支非快进 CAS 触发 ResetWoven**（casRef
 内置：rebase 换链/落在广告孪生上的提交使织入 prevWoven 追加锚失效——
-复用 force-push 的视图重建语义，docs/04 §6a）。
+复用 force-push 的视图重建语义，docs/gateway/git-compat.md §6a）。
 
 **合并引擎**：internal/merge 树条目 3-way + 内容 diff3（git merge-file
 oracle 既测）经合成对象层驱动；applyMerge 单批（BeginSynthBatch→
@@ -250,14 +250,14 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
 ## 6. 已知语义差异（诚实清单）
 
 - UpdateReferences 的 Old OID 不做强 CAS（banyan ref 面写者串行化；
-  语义=最后写赢，见 docs/04 §6a 的 rollback guard）。
+  语义=最后写赢，见 docs/gateway/git-compat.md §6a 的 rollback guard）。
 - DiskStatistics 字节数暂为 0（卷探测接运维面后补）。
 - `git_version` 为常量声明（纯 Go 实现无 git 二进制可询）。
 - CountCommits 的 path 过滤未实现（history simplification 需树 diff，
   后续接 view 引擎；当前按全历史计数 + 时间窗）。
 - **hooks 是空操作**：OperationService 的 user 系 RPC 不执行 pre/post
   receive hooks（`PreReceiveError` 恒空）——banyan 的钩子面在网关
-  （docs/04 §7），gitaly 面继承上游"token 后全信"模型，授权与钩子
+  （docs/gateway/git-compat.md §7），gitaly 面继承上游"token 后全信"模型，授权与钩子
   归前端。
 - UserCommitFiles 的 `start_repository`（跨仓库 fork 编辑）不支持
   （InvalidArgument）；同仓 `start_branch_name` 完整支持（含隐式建支）。
@@ -269,13 +269,13 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
 - UserUpdateBranch 的 newrev/oldrev 非全 hex 时按上游 Internal 报错。
 - **合并提交的线性化孪生（双视图）**：UserMergeBranch 落地的两父合并
   提交在广告侧被织入引擎线性化为树全同的孪生提交（根视图线性模型，
-  docs/02 §13）。BranchUpdate 答原始合并 OID（FindCommit 可读、MR
+  docs/design/data-model.md §13）。BranchUpdate 答原始合并 OID（FindCommit 可读、MR
   merge_commit_sha 链接有效）；分支 tip 读取显示孪生（fetch 主分支
   看到线性历史）。**按合并 OID 的协议级 fetch** 不可用（孪生不可达
   该 OID）——GetBlob/FindCommit 等 RPC 直读不受影响。UserMergeToRef
   目标 ref 原样广告（aux ref 不织入），两父形态对 git 完整可见。
 - 合并/cherry-pick/revert 的冲突语义为 internal/merge 的诚实子集
-  （docs/15 §5 git_deviations：相邻行触碰融合等三形态与 git 有系统性
+  （docs/design/workflow.md §5 git_deviations：相邻行触碰融合等三形态与 git 有系统性
   偏差；重命名不检测）。T65 用 merge-tree/cherry-pick/revert 对拍覆盖
   干净与非重叠冲突形态。
 - **rebase 的 patch 等价剔除为近似**：上游 rev-list --cherry-pick 用
@@ -319,7 +319,7 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
 - **bundle 面**：v2 bundle（v3 capabilities/filters 显式拒绝）；FetchBundle
   收流为全内存形态（GB 级 bundle 的流式化留后）；CreateBundle 的对象集=
   广告视图闭包（织入 OID 原样——克隆侧逐字节可用，T68 实证）。
-- **custom hooks**：可执行钩子面=banyan HTTP 回调注册表（docs/04 §7），
+- **custom hooks**：可执行钩子面=banyan HTTP 回调注册表（docs/gateway/git-compat.md §7），
   文件树钩子不执行；tarball 仅经 RepoBlobStore 往返保备份移植。
 - **远端面**：FetchRemote/CreateRepositoryFromURL 仅 smart-HTTP（go-git
   transport，模块既有依赖）；ssh 远端（ssh_key/known_hosts）Unimplemented。
@@ -344,7 +344,7 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
   literal/regex redaction→`***REMOVED***`（git-filter-repo
   --replace-text 子集），逐提交重编码（树重写+父映射+tag 对象 object
   行改写），全部 ref 落新链。**disjoint 广告历史**：ref 重建走删时间线
-  +重建+ResetWoven（织入视图从新源链重织，docs/04 §6a 的 force-push
+  +重建+ResetWoven（织入视图从新源链重织，docs/gateway/git-compat.md §6a 的 force-push
   视图重建），旧提交不再可达——T71 clone 断言 `rev-list --all` 只含
   新链。旧对象留在存储（上游同语义：GC 另行）。ApplyBfgObjectMapStream
   按 old→new 映射删内部 ref（environments/keep-around/merge-requests/
@@ -373,7 +373,7 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
   的诚实等价物——成员从空仓变可解析池对象，T74 行为断言）；物理去重
   不做。池元数据 4 RPC 与 WalkRepos 走同一注册表（pool_disk_path 记
   gitaly 原始路径）。
-- **HookService 7**：桥接 docs/04 §7 的 HTTP 回调注册表（新导出
+- **HookService 7**：桥接 docs/gateway/git-compat.md §7 的 HTTP 回调注册表（新导出
   gitwire.FireRepoHooks）。pre-receive/update **fail-closed**：回调
   拒绝=exit 1+首行错误上 stderr（T75 httptest 对拍）；post-receive/
   ReceiveReportHook best-effort 投递；ReferenceTransactionHook 恒 0
@@ -533,7 +533,7 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
 ## 8. GitLab-CE 活体实测（2026-11-07，T83）
 
 > 接入操作手册（怎么接、怎么验、坏了怎么查）见
-> [docs/20-gitlab-integration.md](20-gitlab-integration.md)；本节是验收
+> [docs/integration/gitlab-integration.md](gitlab-integration.md)；本节是验收
 > 记录与实现侧账本。
 
 **一键演示**（`demo/gitlab/`）：`docker compose up -d` 拉起真 GitLab-CE
@@ -629,7 +629,7 @@ verdict 的 `git_config_options` 携带 `receive.maxInputSize=N`（GitLab
 复位后小包通过。③ 计数对泄漏修复：本地钩子 decline 路径不再 INCR
 （/pre_receive 只在所有门全过后触发；上游同序）。
 
-**子树投影 ref（T84，docs/20 §7）**：gitaly 面的广告桥接到内建
+**子树投影 ref（T84，docs/integration/gitlab-integration.md §7）**：gitaly 面的广告桥接到内建
 gitwire（SmartHTTP SSH 同源），子树投影 `refs/banyan/tree/<dir>` 因此
 对 GitLab 客户端原样可见——ls-remote/fetch/推回全走 GitLab URL 与
 凭证（活体验收）；gitaly 的 listRefs 与 gitwire 广告保持同集（T60

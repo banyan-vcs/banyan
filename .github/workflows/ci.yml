@@ -1,4 +1,4 @@
-# Pre-merge CI (docs/13): the exact local gate — build, vet, the full test
+# Pre-merge CI (docs/operations/testing.md): the exact local gate — build, vet, the full test
 # suite (integration needs git on PATH; ubuntu runners have it) — plus what
 # a merge target deserves and a laptop can't always provide: the metadata
 # conformance and rename-fence batteries against real mysql:8 / postgres:16

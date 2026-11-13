@@ -10,7 +10,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// weaveScopedAppend builds a subtree view (docs/02 §13): the
+// weaveScopedAppend builds a subtree view (docs/design/data-model.md §13): the
 // identity-preserving combined chain (projection of the root-local history
 // into X plus X's own locals, per the descendant rule) stays the PREFIX
 // verbatim — existing clones keep a fast-forward path — and three families of
@@ -93,7 +93,7 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 	s.mu.Unlock()
 
 	entries := map[model.OID]*weaveEntry{}
-	// Provenance-embedded sources (docs/02 §13, same rule as the root weave):
+	// Provenance-embedded sources (docs/design/data-model.md §13, same rule as the root weave):
 	// every visited chain records which source commits it already folds
 	// (banyan-woven-from — scoped graft outputs ride their own timeline's
 	// locals after adoption, and root-side folds ride the projections). The
@@ -138,7 +138,7 @@ func (s *Service) weaveScopedAppend(ctx context.Context, repo, branch string, sc
 		}
 		return stop
 	}
-	// Rewrite-space append anchor (docs/02 sec.13): the persisted scoped
+	// Rewrite-space append anchor (docs/design/data-model.md sec.13): the persisted scoped
 	// woven tip anchors the fold OUTPUT (prefix-stable, arrival order). A
 	// stale anchor — the prefix outgrew it (own-scope push) — forces a full
 	// append rebuild, and per-source markers are ignored for that rebuild

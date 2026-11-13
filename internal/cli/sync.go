@@ -1,5 +1,5 @@
 // sync.go — banyan sync: explicit subtree→root alignment for thin subtree
-// workspaces (docs/06 §3.9, docs/02 §12). True divergence — both the subtree
+// workspaces (docs/client/cli.md §3.9, docs/design/data-model.md §12). True divergence — both the subtree
 // timeline and the root projection advanced — keeps the local head on read
 // and waits for exactly this command: the server replays the local-only
 // commits onto the root's current projection (the thin client holds no

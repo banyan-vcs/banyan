@@ -9,7 +9,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// ShardBackend abstracts where pack bytes physically live (docs/10 §2-3):
+// ShardBackend abstracts where pack bytes physically live (docs/storage/ha.md §2-3):
 //
 //   - all-in-one: this process's local disk (LocalBackend);
 //   - gateway (cluster): the scattered storage fleet (ScatteredStore) —
@@ -26,11 +26,11 @@ type ShardBackend interface {
 	// bytes, so no copy of the pack ever sits in memory. size feeds
 	// Content-Length on the wire.
 	PutPackStream(ctx context.Context, repo string, packOID model.OID, size int64, open func() (io.ReadCloser, error), idxBytes []byte) ([]string, error)
-	// GetPack reads one pack, trying the given holders in order (docs/10 §3:
+	// GetPack reads one pack, trying the given holders in order (docs/storage/ha.md §3:
 	// any holder may serve — the OID trailer checksum proves integrity).
 	GetPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, error)
 	// OpenPack streams one whole pack without buffering it (exact-pack
-	// verbatim serve, docs/03 §5): node disk → network → consumer in a small
+	// verbatim serve, docs/storage/storage.md §5): node disk → network → consumer in a small
 	// window. The caller owns closing the reader; size is the byte length
 	// when known (-1 otherwise).
 	OpenPack(ctx context.Context, repo string, packOID model.OID, holders []string) (io.ReadCloser, int64, error)
@@ -39,13 +39,13 @@ type ShardBackend interface {
 	// decode-and-cache ladder.
 	PackSize(ctx context.Context, repo string, packOID model.OID, holders []string) (int64, error)
 	// CheapPack reports whole-pack bytes available WITHOUT a network round
-	// trip — a gateway disk-cache hit (docs/11 P2-1). Object reads prefer
+	// trip — a gateway disk-cache hit (docs/operations/performance.md P2-1). Object reads prefer
 	// this path: one decode memoizes the whole pack in memory, so a
 	// restarted gateway's first clone stops paying per-object RPCs for
 	// every pack it already holds on disk. (nil, false) keeps the
 	// single-object path.
 	CheapPack(ctx context.Context, repo string, packOID model.OID, holders []string) ([]byte, bool)
-	// GetObject extracts one object from a pack (docs/11 P1-1): the holder
+	// GetObject extracts one object from a pack (docs/operations/performance.md P1-1): the holder
 	// resolves it via its local idx without transferring or decoding the
 	// whole pack — the wire carries one object, not megabytes. Errors fall
 	// back to the whole-pack path at the caller.
@@ -62,7 +62,7 @@ type ShardBackend interface {
 	// cleanup / replica trim). Missing files are tolerated.
 	DeletePack(ctx context.Context, repo string, packOID model.OID, holders []string)
 	// RenameRepo moves every pack between two storage keys (named
-	// addressing only — hashed keys are immutable, docs/03 §6). Idempotent:
+	// addressing only — hashed keys are immutable, docs/storage/storage.md §6). Idempotent:
 	// a holder without the source answers OK. The registry flip happens at
 	// the caller AFTER this succeeds.
 	RenameRepo(ctx context.Context, from, to string) error

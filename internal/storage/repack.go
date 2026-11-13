@@ -12,7 +12,7 @@ import (
 )
 
 // Repack merges pack fragments under git's geometric packing strategy
-// (docs/03 §5, docs/09 §3.2 — `git repack --geometric=2`): packs sorted by
+// (docs/storage/storage.md §5, docs/storage/indexing-packing.md §3.2 — `git repack --geometric=2`): packs sorted by
 // object count must form a geometric sequence (each ≥ factor × its
 // predecessor); the smallest run that violates it merges into one pack.
 // Large packs are NEVER touched — merge cost stays proportional to the
@@ -304,7 +304,7 @@ func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []meta.
 		s.mu.Unlock()
 	}
 	// Every merged-away pack invalidates cached placements: locations only
-	// ever change at repack (docs/11 P0-1). Other gateways' caches self-heal
+	// ever change at repack (docs/operations/performance.md P0-1). Other gateways' caches self-heal
 	// through Raw's stale-placement retry.
 	s.locInvalidate(repo)
 	return res, nil

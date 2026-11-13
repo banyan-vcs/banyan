@@ -12,7 +12,7 @@ import (
 )
 
 // countingMeta wraps a MetaStore and counts LocateObjects round trips (the
-// cluster-mode refs RPC, docs/11 B1).
+// cluster-mode refs RPC, docs/operations/performance.md B1).
 type countingMeta struct {
 	meta.MetaStore
 	locates int
@@ -41,7 +41,7 @@ type testBuffer struct{ data []byte }
 func (b *testBuffer) Write(p []byte) (int, error) { b.data = append(b.data, p...); return len(p), nil }
 func (b *testBuffer) Bytes() []byte               { return b.data }
 
-// TestLocationCacheHitsAndInvalidation pins docs/11 P0-1 (B1):
+// TestLocationCacheHitsAndInvalidation pins docs/operations/performance.md P0-1 (B1):
 //   - repeated reads of the same object stop re-locating (LRU);
 //   - Prefetch batch-locates many oids in ONE Meta round trip;
 //   - Known answers existence for a whole have list without object bytes;
@@ -109,7 +109,7 @@ func TestLocationCacheHitsAndInvalidation(t *testing.T) {
 	assert.Equal(t, "gamma", string(data))
 }
 
-// TestSynthBatchPacksOnce pins docs/11 P0-2 (B3): inside a batch, N
+// TestSynthBatchPacksOnce pins docs/operations/performance.md P0-2 (B3): inside a batch, N
 // synthetics persist as ONE pack; the pre-CAS flush (FlushSynthBatch)
 // persists mid-batch without changing depth; the same objects are all
 // readable afterwards.

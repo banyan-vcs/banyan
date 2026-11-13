@@ -1,5 +1,5 @@
 // fullclone_test.go — T48: repo-scale statistics + the full-clone budget
-// (docs/11 §6). The gateway tracks per-repo pack bytes (primed at ingest,
+// (docs/operations/performance.md §6). The gateway tracks per-repo pack bytes (primed at ingest,
 // /api/v1/repos/<repo>/size) and refuses clone-shaped fetches at or above
 // the threshold — while shallow clones, incremental fetches and lazy
 // single-object fetches (partial-clone shape) pass untouched.

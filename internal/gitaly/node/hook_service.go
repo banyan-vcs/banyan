@@ -12,10 +12,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// HookService (docs/19). Upstream's hook RPCs are the loop gitaly-hooks
+// HookService (docs/integration/gitaly-compat.md). Upstream's hook RPCs are the loop gitaly-hooks
 // closes: git spawns hook binaries inside a push, they call back into
 // gitaly, gitaly reaches Rails. banyan has no git processes — its hook
-// plane has always been the HTTP callback registry (docs/04 §7). These
+// plane has always been the HTTP callback registry (docs/gateway/git-compat.md §7). These
 // RPCs bridge the gitaly contract onto that registry: pre-receive and
 // update evaluate fail-closed (a declined callback answers exit status 1
 // with the callback's message on stderr), post-receive and the reporting

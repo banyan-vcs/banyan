@@ -25,10 +25,10 @@ func (id Identity) Format() string {
 		id.Name, id.Email, id.When.Unix(), sign, offset/3600, (offset%3600)/60)
 }
 
-// RootAnchor is the root anchor; the root timeline is semantically a git branch (docs/02 §2).
+// RootAnchor is the root anchor; the root timeline is semantically a git branch (docs/design/data-model.md §2).
 const RootAnchor AnchorPath = "/"
 
-// AnchoredCommit is banyan's commit record (docs/02 §2):
+// AnchoredCommit is banyan's commit record (docs/design/data-model.md §2):
 // tree_oid is the tree at anchor_path — any tree, not just the repo root.
 //
 // Encoding rules (git compatibility guaranteed):
@@ -44,7 +44,7 @@ type AnchoredCommit struct {
 	Message       string
 	Synthetic     bool // produced by the assembly algorithm (carries a banyan-synthetic trailer)
 	ProjectedFrom OID  // non-zero marks this as a projection commit split from the root timeline
-	WovenFrom     OID  // non-zero marks this as a weave fold of the source commit (source space, docs/02 §13)
+	WovenFrom     OID  // non-zero marks this as a weave fold of the source commit (source space, docs/design/data-model.md §13)
 }
 
 // Encode renders the git-compatible commit object body.

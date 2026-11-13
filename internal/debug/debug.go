@@ -3,7 +3,7 @@
 // dedicated listener. It is deliberately OFF the public git/API port and
 // off by default — profiles and serve counters describe repository
 // contents and work patterns, so exposure is a deployment decision
-// (config debug.pprof_addr, docs/05 §6).
+// (config debug.pprof_addr, docs/gateway/service-api.md §6).
 package debug
 
 import (

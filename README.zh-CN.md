@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/avatar.png" width="120" alt="banyan" /></p>
+<p align="center"><img src="docs/assets/avatar.png" width="120" alt="banyan" /></p>
 
 # Banyan（榕树）
 
@@ -32,7 +32,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 ## 架构
 
 <p align="center">
-  <img src="docs/architecture-simple.zh.svg" width="800" alt="banyan 简化架构：git、GitLab 与薄 CLI 客户端接入无状态网关；refs 服务为唯一串行点，旁边是散布 pack 存储；目录时间线读时织入根仓库" />
+  <img src="docs/assets/architecture-simple.zh.svg" width="800" alt="banyan 简化架构：git、GitLab 与薄 CLI 客户端接入无状态网关；refs 服务为唯一串行点，旁边是散布 pack 存储；目录时间线读时织入根仓库" />
 </p>
 
 支撑整个设计的四个关键动作：
@@ -49,7 +49,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 ## 设计目标
 
 1. **完全兼容 git 命令行**：标准 `git clone / fetch / push` 直接可用（Smart HTTP
-   v1 + v2——fetch 侧命令面 ls-refs/fetch 已落地，docs/04 §9b）。
+   v1 + v2——fetch 侧命令面 ls-refs/fetch 已落地，docs/gateway/git-compat.md §9b）。
 2. **任意子目录可 clone 为独立仓库**：不是 partial clone 的"稀疏检出"，而是每个
    目录拥有自己的 commit timeline，`/r/{repo}/tree/{subdir}` 即一个语义完整、
    带完整投影历史的仓库。
@@ -63,20 +63,20 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 ## 当前能力
 
 以下全部已落地，由 **106 个顶层集成测试函数**以真实 git CLI 钉住
-（[docs/13](docs/13-testing.md)）；GitLab 模式各条另经真 GitLab-CE 活体验证
-（[docs/19](docs/19-gitaly-compat.md) §8、[docs/20](docs/20-gitlab-integration.md)）。
+（[docs/operations/testing.md](docs/operations/testing.md)）；GitLab 模式各条另经真 GitLab-CE 活体验证
+（[docs/integration/gitaly-compat.md](docs/integration/gitaly-compat.md) §8、[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md)）。
 
 **git 协议面**——普通 git 客户端能做什么：
 
 | 能力 | 说明 |
 |---|---|
-| 根/子树 `clone / fetch / push` | Smart HTTP v1 + v2（[docs/04](docs/04-git-compat.md)） |
+| 根/子树 `clone / fetch / push` | Smart HTTP v1 + v2（[docs/gateway/git-compat.md](docs/gateway/git-compat.md)） |
 | git-over-SSH | `ssh://` + 公钥认证，v0 有状态协商 + v2；同一服务核心、同一授权 |
 | partial clone | `--filter=blob:none` / `tree:0`，按 OID 惰性取回 |
 | 浅克隆 | depth / deepen / unshallow |
 | tags 与任意 `refs/<ns>` 命名空间 | 原样存储与广告 |
 | push options | `-o` 选项段协商与解析 |
-| 高效传输 | serve 路径 delta 包；增量 fetch 真 thin pack——字节 0.87× git（[docs/11](docs/11-performance.md) §3）；have 减除 |
+| 高效传输 | serve 路径 delta 包；增量 fetch 真 thin pack——字节 0.87× git（[docs/operations/performance.md](docs/operations/performance.md) §3）；have 减除 |
 
 **目录锚定存储**——数据模型本身：
 
@@ -84,35 +84,35 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 |---|---|
 | 任意子目录即仓库 | `/r/{repo}/tree/{subdir}`，完整投影历史——`log / show / fsck` 全可用 |
 | 目录时间线 | 一次 push 只 CAS 一条时间线——零跨目录锁；根视图读时织入（v5） |
-| 目录级工作流（M4） | 同目录队列 + 服务端收敛：突发零拒绝、冲突按票隔离；`banyan snapshot` 工作区快照（逐字节时间机、离线）与 `banyan stack` 路径分片变更队列（排队+择机落台）、`banyan sync` 子树→根显式重放（服务端重放收口真分叉竞态）（[docs/15](docs/15-workflow.md)、[docs/06](docs/06-cli.md) §3.7-3.9） |
+| 目录级工作流（M4） | 同目录队列 + 服务端收敛：突发零拒绝、冲突按票隔离；`banyan snapshot` 工作区快照（逐字节时间机、离线）与 `banyan stack` 路径分片变更队列（排队+择机落台）、`banyan sync` 子树→根显式重放（服务端重放收口真分叉竞态）（[docs/design/workflow.md](docs/design/workflow.md)、[docs/client/cli.md](docs/client/cli.md) §3.7-3.9） |
 | 个人分支命名空间 | `refs/heads/<user>/*` 仅本人可见——monorepo 分支过多解法 |
 | repack | 碎片合并 + delta 编码 |
-| 有界内存服务 | 精确命中 verbatim 直传、类型化枚举 + 逐对象窗口编码，任意仓规模（[docs/03](docs/03-storage.md) §3） |
+| 有界内存服务 | 精确命中 verbatim 直传、类型化枚举 + 逐对象窗口编码，任意仓规模（[docs/storage/storage.md](docs/storage/storage.md) §3） |
 
 **平台集成**——GitLab 直接替换：
 
 | 能力 | 说明 |
 |---|---|
-| gitaly gRPC 前端 | 协议 v19.5.2，**163/163 RPC**——Operation/Ref/Commit/Diff/Blob 全服务、praefect（cluster-of-one）、备份、bundle、历史重写、sidechannel 传输（[docs/19](docs/19-gitaly-compat.md)） |
-| GitLab-CE 跑在 banyan 存储上 | 建项目、HTTP **与** SSH 推拉、Web 浏览、MR 合并、wiki、归档——全部经真 GitLab-CE 19.5 活体验证（[docs/20](docs/20-gitlab-integration.md)） |
+| gitaly gRPC 前端 | 协议 v19.5.2，**163/163 RPC**——Operation/Ref/Commit/Diff/Blob 全服务、praefect（cluster-of-one）、备份、bundle、历史重写、sidechannel 传输（[docs/integration/gitaly-compat.md](docs/integration/gitaly-compat.md)） |
+| GitLab-CE 跑在 banyan 存储上 | 建项目、HTTP **与** SSH 推拉、Web 浏览、MR 合并、wiki、归档——全部经真 GitLab-CE 19.5 活体验证（[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md)） |
 | 推送策略门 | 保护分支等 ref 级策略经 `/internal/allowed` 强制，Rails 拒绝原话透传到 git 客户端 |
 | 平台回调 | post-receive 适配器：活动事件、pipeline、缓存过期、MR-from-push（`-o merge_request.create` 活体实证） |
 | 子树投影 ref | `refs/banyan/tree/<dir>`——一个 GitLab URL、一套凭证取推任意子树；推送向上装配回根视图 |
-| 子树管理控制面 | GitLab 域名下 `/-/banyan/`（nginx 子页面，复用 banyan web）：子树清单/活动/克隆配方 + **运行时访问规则**——GitLab SSO 登录（[docs/20](docs/20-gitlab-integration.md) §7b） |
+| 子树管理控制面 | GitLab 域名下 `/-/banyan/`（nginx 子页面，复用 banyan web）：子树清单/活动/克隆配方 + **运行时访问规则**——GitLab SSO 登录（[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b） |
 | 推送大小上限 | GitLab Maximum push size 设置经 `receive.maxInputSize` 强制 |
 
 **生产与运维**：
 
 | 能力 | 说明 |
 |---|---|
-| HA 集群 | 网关 + refs 服务 + 散布多副本 pack：节点故障恢复、仓库级动态副本（[docs/10](docs/10-ha.md)；当前本地盘集群，MySQL/raft refs → HA-2） |
-| 授权 | 仓库/目录/分支粒度的下载与提交控制（[docs/07](docs/07-authorization.md)；demo 策略，opt-in） |
+| HA 集群 | 网关 + refs 服务 + 散布多副本 pack：节点故障恢复、仓库级动态副本（[docs/storage/ha.md](docs/storage/ha.md)；当前本地盘集群，MySQL/raft refs → HA-2） |
+| 授权 | 仓库/目录/分支粒度的下载与提交控制（[docs/gateway/authorization.md](docs/gateway/authorization.md)；demo 策略，opt-in） |
 | PAT | sha256 落库、明文只现一次、过期/吊销读取时判定；scope 是上限不是旁路——TokenPolicy 装饰任意策略，RPC 授权同缝 |
-| 生产姿态 | 安全默认启动、元数据默认进数据库、优雅 drain、每角色 `/metrics`（P0，[docs/14](docs/14-roadmap.md)） |
+| 生产姿态 | 安全默认启动、元数据默认进数据库、优雅 drain、每角色 `/metrics`（P0，[docs/project/roadmap.md](docs/project/roadmap.md)） |
 | 服务端 diff 与 blame | 路径 diff、blame RPC 与 `git diff` / `git blame` 逐字节一致 |
-| 存储寻址 | named 可读 / hashed 不透明，rename 零存储动作（[docs/03](docs/03-storage.md) §6） |
+| 存储寻址 | named 可读 / hashed 不透明，rename 零存储动作（[docs/storage/storage.md](docs/storage/storage.md) §6） |
 | 服务层 + JSON API | `/api/v1/*` 统一错误信封；SQLite / MySQL / Postgres 元数据 + YAML 配置 |
-| 客户端与界面 | 薄工作区 CLI（`banyan`）、React Web 控制台（代码浏览、历史/diff/blame、分支、token、子树管理）、产品控制台（`banyand console` 子命令）子树作用域角色（[docs/17](docs/17-console.md)；控制台 SSH/web → M6.3/M6.4） |
+| 客户端与界面 | 薄工作区 CLI（`banyan`）、React Web 控制台（代码浏览、历史/diff/blame、分支、token、子树管理）、产品控制台（`banyand console` 子命令）子树作用域角色（[docs/web/console.md](docs/web/console.md)；控制台 SSH/web → M6.3/M6.4） |
 | 运维面 | pprof 全家、运行时快照、服务路径计数器 |
 
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证；gitaly 前端经
@@ -132,9 +132,9 @@ internal/view/      读时视图引擎（v5 织入、子树视图）
 internal/gitwire/   git wire 协议（smart HTTP v1 / upload-pack / receive-pack）
 internal/gitaly/   gitaly gRPC 前端壳（鉴权/生命周期）+ 按协议服务家族的子包
                     （repository/commit/ref/object/operations/transport/backup/
-                    node + kit 共享层），GitLab 直接替换，docs/19
+                    node + kit 共享层），GitLab 直接替换，docs/integration/gitaly-compat.md
 internal/gitalypb/ vendored gitaly 协议（v19.5.2，生成代码）
-internal/service/   协议无关服务层（三前端共核心，docs/05）
+internal/service/   协议无关服务层（三前端共核心，docs/gateway/service-api.md）
 internal/rpc/       httpd JSON 前端（/api/v1）
 internal/cli/       薄工作区客户端实现
 internal/config/    三层配置（默认 < YAML < 显式标志）
@@ -146,7 +146,7 @@ internal/config/    三层配置（默认 < YAML < 显式标志）
 
 ```bash
 docker compose up -d          # 构建并启动；数据持久化在 banyan-data 卷
-                              # demo 默认开启授权（docs/07）：
+                              # demo 默认开启授权（docs/gateway/authorization.md）：
                               #   Web 界面 http://localhost:8101（alice / bob / admin，密码 demo）
                               #   git      http://alice:demo@localhost:8100/r/demo.git
                               #   git ssh  ssh://alice@localhost:8102/r/demo.git（demo/ssh/ 密钥）
@@ -156,7 +156,7 @@ docker compose up -d          # 构建并启动；数据持久化在 banyan-data
 git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
 
-# git-over-SSH 同样可用（一次性 demo 密钥在 demo/ssh/，docs/12 §3b）
+# git-over-SSH 同样可用（一次性 demo 密钥在 demo/ssh/，docs/operations/docker-demo.md §3b）
 git clone ssh://alice@localhost:8102/r/demo.git \
   -c core.sshCommand="ssh -i demo/ssh/alice -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
@@ -175,7 +175,7 @@ docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
 ### GitLab-CE 跑在 banyan 存储上
 
 一台真 GitLab，唯一的 gitaly 存储节点换成 banyan——建项目、HTTP push、
-Web 界面浏览全部由 banyan 的 gitaly gRPC 前端服务（docs/19，兼容层的
+Web 界面浏览全部由 banyan 的 gitaly gRPC 前端服务（docs/integration/gitaly-compat.md，兼容层的
 活体验收）：
 
 ```bash
@@ -186,11 +186,11 @@ demo/gitlab/provision.sh                                  # 种子、推送、�
 ```
 
 接入已有 GitLab-CE（配置、验证清单、故障排查）见
-[docs/20](docs/20-gitlab-integration.md)。
+[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md)。
 
 ### HA 集群 demo
 
-一条命令启动拆分部署（docs/10）：refs 服务 + 4 个存储节点 + 无状态网关——
+一条命令启动拆分部署（docs/storage/ha.md）：refs 服务 + 4 个存储节点 + 无状态网关——
 pack 散布在存储节点上各 3 副本；杀掉一个存储节点，读写继续，reconciler
 自动恢复副本目标。
 
@@ -236,10 +236,10 @@ go run ../cmd/banyan log           # 远端历史，零下载
 
 ## 非目标（当前阶段）
 
-- push 恒走 v0（git 本身从未为 receive-pack 定义 v2）；fetch 侧原生 v2（ls-refs + fetch 命令面，docs/04 §9b）。
+- push 恒走 v0（git 本身从未为 receive-pack 定义 v2）；fetch 侧原生 v2（ls-refs + fetch 命令面，docs/gateway/git-compat.md §9b）。
 - 不做 DevOps 平台能力（MR/CI/权限界面）——banyan 是**存储层**，协作留在已有
-  平台（docs/01）。
-- 不做 praefect 复制协议；多副本走 banyan 自身分片路线（docs/03）。
+  平台（docs/design/big-picture.md）。
+- 不做 praefect 复制协议；多副本走 banyan 自身分片路线（docs/storage/storage.md）。
 
 ## 文档索引
 
@@ -250,46 +250,46 @@ go run ../cmd/banyan log           # 远端历史，零下载
 
 | 文档 | 内容 |
 |---|---|
-| [docs/00-overview.md](docs/00-overview.md) | 愿景、设计原则、总体架构图 |
-| [docs/01-big-picture.md](docs/01-big-picture.md) | 定位：通用代码存储层 + 平台集成拓扑 |
+| [docs/design/overview.md](docs/design/overview.md) | 愿景、设计原则、总体架构图 |
+| [docs/design/big-picture.md](docs/design/big-picture.md) | 定位：通用代码存储层 + 平台集成拓扑 |
 
 **核心设计——按层自底向上（模型 → 存储 → 协议 → 服务 → 客户端）**：
 
 | 文档 | 内容 |
 |---|---|
-| [docs/02-data-model.md](docs/02-data-model.md) | **核心**：目录锚定时间线模型、组装算法、git 投影 |
-| [docs/03-storage.md](docs/03-storage.md) | 分布式 pack 存储：分片 CAS、双 idx 体系、repack |
-| [docs/04-git-compat.md](docs/04-git-compat.md) | git 兼容层：Smart HTTP、SSH 传输、虚拟子树仓库 |
-| [docs/05-service-api.md](docs/05-service-api.md) | 服务层抽象 + httpd/Gitaly 前端与 API 契约 |
-| [docs/06-cli.md](docs/06-cli.md) | 薄客户端 CLI 命令设计 |
+| [docs/design/data-model.md](docs/design/data-model.md) | **核心**：目录锚定时间线模型、组装算法、git 投影 |
+| [docs/storage/storage.md](docs/storage/storage.md) | 分布式 pack 存储：分片 CAS、双 idx 体系、repack |
+| [docs/gateway/git-compat.md](docs/gateway/git-compat.md) | git 兼容层：Smart HTTP、SSH 传输、虚拟子树仓库 |
+| [docs/gateway/service-api.md](docs/gateway/service-api.md) | 服务层抽象 + httpd/Gitaly 前端与 API 契约 |
+| [docs/client/cli.md](docs/client/cli.md) | 薄客户端 CLI 命令设计 |
 
 **横切能力**：
 
 | 文档 | 内容 |
 |---|---|
-| [docs/07-authorization.md](docs/07-authorization.md) | 授权模型（含安全默认启动）、个人分支可见性、Web 演示 |
-| [docs/08-derived-data.md](docs/08-derived-data.md) | 派生数据：commit-graph、路径历史、blame |
-| [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | 索引（代数）与打包（have 减除/delta/repack）设计 |
-| [docs/15-workflow.md](docs/15-workflow.md) | M4 设计：同目录提交队列 + 分歧收敛（merge train） |
-| [docs/17-console.md](docs/17-console.md) | 产品侧控制台（`banyand console` 子命令）：组/项目路由、PAT 认证、成员角色 |
+| [docs/gateway/authorization.md](docs/gateway/authorization.md) | 授权模型（含安全默认启动）、个人分支可见性、Web 演示 |
+| [docs/design/derived-data.md](docs/design/derived-data.md) | 派生数据：commit-graph、路径历史、blame |
+| [docs/storage/indexing-packing.md](docs/storage/indexing-packing.md) | 索引（代数）与打包（have 减除/delta/repack）设计 |
+| [docs/design/workflow.md](docs/design/workflow.md) | M4 设计：同目录提交队列 + 分歧收敛（merge train） |
+| [docs/web/console.md](docs/web/console.md) | 产品侧控制台（`banyand console` 子命令）：组/项目路由、PAT 认证、成员角色 |
 
 **运行与演进**：
 
 | 文档 | 内容 |
 |---|---|
-| [docs/10-ha.md](docs/10-ha.md) | 高可用：一体化 vs 网关 + 集群、仓库级副本 |
-| [docs/11-performance.md](docs/11-performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门、实测报告（§3a） |
-| [docs/12-docker-demo.md](docs/12-docker-demo.md) | Docker demo 走查：授权、SSH、Web、集群栈指引 |
-| [docs/13-testing.md](docs/13-testing.md) | 集成测试矩阵 |
-| [docs/14-roadmap.md](docs/14-roadmap.md) | 里程碑与生产主轴 |
-| [docs/19-gitaly-compat.md](docs/19-gitaly-compat.md) | Gitaly gRPC 兼容层：覆盖矩阵（163 RPC）与设计账本 |
-| [docs/20-gitlab-integration.md](docs/20-gitlab-integration.md) | GitLab 集成指南：接入步骤、验证清单、故障排查 |
+| [docs/storage/ha.md](docs/storage/ha.md) | 高可用：一体化 vs 网关 + 集群、仓库级副本 |
+| [docs/operations/performance.md](docs/operations/performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门、实测报告（§3a） |
+| [docs/operations/docker-demo.md](docs/operations/docker-demo.md) | Docker demo 走查：授权、SSH、Web、集群栈指引 |
+| [docs/operations/testing.md](docs/operations/testing.md) | 集成测试矩阵 |
+| [docs/project/roadmap.md](docs/project/roadmap.md) | 里程碑与生产主轴 |
+| [docs/integration/gitaly-compat.md](docs/integration/gitaly-compat.md) | Gitaly gRPC 兼容层：覆盖矩阵（163 RPC）与设计账本 |
+| [docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) | GitLab 集成指南：接入步骤、验证清单、故障排查 |
 
 ## 开发与提交约定
 
 - **按层拆分提交**（自底向上）：`docs → model → storage → gitwire → service →
   cli`，每个代码提交**独立可构建、测试通过**；
-- **新能力必配集成用例**并登记 [docs/13](docs/13-testing.md)；断言用 testify
+- **新能力必配集成用例**并登记 [docs/operations/testing.md](docs/operations/testing.md)；断言用 testify
   （require=场景门，assert=独立检查组）；
 - **git 是行为基准**（git 源码为唯一 oracle）；go-git 只是编解码库，边界收敛在
   `internal/storage/packfile.go`。

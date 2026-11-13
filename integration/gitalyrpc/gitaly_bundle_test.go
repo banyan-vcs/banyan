@@ -1,4 +1,4 @@
-// T68 — bundle surface (docs/19 slice 9). Git is the oracle on both
+// T68 — bundle surface (docs/integration/gitaly-compat.md slice 9). Git is the oracle on both
 // directions: banyan-created bundles must pass `git bundle verify` and
 // clone bit-identically, and git-created bundles must seed a banyan
 // repository that clones back with matching refs and content.

@@ -1,4 +1,4 @@
-# 04 · git 兼容层（gitwire）
+# git 兼容层（gitwire）
 
 兼容性承诺：**标准 git CLI 的 clone / fetch / push 对根仓库与虚拟子树仓库都直接可用**。传输取 Smart HTTP v1（go-git 同款；标准 git 客户端自动协商回退）与 **SSH 传输**（§7b，`ssh://` 直连 + 公钥认证）；fetch 侧 protocol v2 已落地（§9b，HTTP 头与 SSH env 双入口）。
 
@@ -33,8 +33,8 @@ POST {base}/r/{repo}/git-receive-pack                       # push 数据
 | `delete-refs` | push | 允许 ref 删除命令（实测必需：未广告时 git 静默丢弃删除） |
 | `shallow` | fetch | deepen N / 加深 / unshallow（§3a；deepen-since/not 未实现不广告） |
 | `filter` | fetch | **已广告已接线**（§4）：`blob:none` / `tree:0`；不支持的 spec 以 ERR 拒绝（对照 upload-pack.c） |
-| `ofs-delta` | fetch | serve 路径 delta 包（docs/11 P1-4）：过阈值后在线 delta 化，OFS_DELTA 优先（客户端未接受时 REF_DELTA）；push 侧 go-git 解码器本就接受两种 |
-| `thin-pack` | fetch | 增量 fetch 对客户端 haves 出 REF_DELTA（docs/11 P2-6）：基对象限于排除集（客户端可证持有），客户端 index-pack --fix-thin / unpack-objects 本地解析 |
+| `ofs-delta` | fetch | serve 路径 delta 包（docs/operations/performance.md P1-4）：过阈值后在线 delta 化，OFS_DELTA 优先（客户端未接受时 REF_DELTA）；push 侧 go-git 解码器本就接受两种 |
+| `thin-pack` | fetch | 增量 fetch 对客户端 haves 出 REF_DELTA（docs/operations/performance.md P2-6）：基对象限于排除集（客户端可证持有），客户端 index-pack --fix-thin / unpack-objects 本地解析 |
 | `allow-reachable-sha1-in-want` | fetch | 非广告 want（partial clone 惰性取回按 OID 点名 blob/tree）须从广告 tips 可达——`haveClosure` 全闭包走查即为该契约的校验实现 |
 | `no-thin` | push | 拒绝 thin pack（存储侧 pack 必须自包含；M3 可放开） |
 | `push-options` | push | `-o` 选项段（命令表 flush 后、pack 前，pkt-line+flush 结束）：GitLab 适配器以 `push_options` 键上报 post_receive（MR-from-push 等）；纯 banyan 部署解析后暂存 `vr.PushOptions` |
@@ -153,7 +153,7 @@ banyan 内部命名空间（仅 rpc 暴露，不上 wire）：
 由此，"fetch 后 `reset --hard` 旧提交（或重写历史丢他人提交）再 force
 push"以 old=curTip 的形态到达：§6 的内容守卫（sameXView/投影包含）全部
 通过，CAS 会**静默回滚目录时间线**——他人已落地内容从视图消失（回魂）。
-收敛模式下更隐蔽：fast path 把它当连续 push，列车（docs/15）从未参与，
+收敛模式下更隐蔽：fast path 把它当连续 push，列车（docs/design/workflow.md）从未参与，
 因为客户端真实基底已从 wire 上消失。
 
 守卫（receivepack.go，adoptSubtreePush 内 CAS 前）：**new 链必须前向承载
@@ -173,7 +173,7 @@ rewind the timeline`。语义上等价于 git 服务端 `receive.denyNonFastForw
 T43 钉住（四种回滚形态拒绝 + 拒后 rebase 恢复路线 + 根视图单调性）。
 
 **仓库级开关（opt-in 受控回滚，T44）**：`PUT /api/v1/repos/<repo>/force-push
-{"enabled":true}`（docs/05 §3.1；运行时生效）。开启后回滚形态的子树 push
+{"enabled":true}`（docs/gateway/service-api.md §3.1；运行时生效）。开启后回滚形态的子树 push
 落地为**显式管理性重写**：目录时间线 head 指向回滚链，且 **`/.woven` 织入
 家族整体重置**（ResetWoven）——织入是时间线 tips 的确定性纯函数（合成提交
 复用源 author/committer，无时钟输入），下次物化各作用域从零重织：
@@ -183,7 +183,7 @@ T43 钉住（四种回滚形态拒绝 + 拒后 rebase 恢复路线 + 根视图�
 - **时间线边界 = 回滚边界**：本目录时间线回滚，不波及下层独立时间线
   （lib 回滚后 lib/nested 的内容照常织入保留）；
 - 未受影响的时间线重织幂等（OID 不变）；**已被客户端果纳进根局部脊柱
-  的源经 `banyan-woven-from` 溯源识别跳过**（docs/02 §13）——重建从脊柱
+  的源经 `banyan-woven-from` 溯源识别跳过**（docs/design/data-model.md §13）——重建从脊柱
   恢复各源折叠进度，subject 恰一次、被果纳部分 tip 字节稳定（T78 ②/T88）；
 - 回滚后正常协作即刻恢复（回滚链即新基底）。
 
@@ -232,7 +232,7 @@ payload 契约。
 
 `ssh://user@host:port/r/<repo>.git[/tree/<sub>]` 直连（x/crypto/ssh），
 与 Smart HTTP 共用同一套服务核心（finishFetch / finishPush / serveV2Command）
-与授权决策（docs/07 §7）。会话形态对照 `connect.c` / `serve.c`：
+与授权决策（docs/gateway/authorization.md §7）。会话形态对照 `connect.c` / `serve.c`：
 
 ```
 连接 → 公钥认证（IdentifyKey → auth.Identity；无策略 = 拒绝）
@@ -263,8 +263,8 @@ v2 会话对照 `protocol_v2_serve_loop`：一次能力广告，随后命令循�
 | ~~无 protocol v2~~ | **已实现**（§9b）：ls-refs（ref-prefix/peel/symrefs/unborn）+ fetch（acknowledgments/shallow-info/packfile 段、sideband 帧封装、delta+filter 同 v1）；receive-pack 恒 v0（git 语义本身如此） | T30 钉住（真实 git + GIT_TRACE_PACKET 证明 v2 生效） |
 | ~~v1 have 协商~~ | 已实现（终态 ACK 语义：有公共提交时 ACK 即终态、同响应内送包） | 组合测试实测过期客户端 pull 正常 |
 | push `no-thin` | 客户端 push 略增流量 | 服务端存储简单性优先 |
-| ~~serve 路径零 delta~~ | **已实现**（docs/11 P1-4）：原始负载过 64KiB 阈值后在线 delta 化（OFS_DELTA 优先/REF_DELTA 兜底），相似对象 2–5× 字节差 | T20 + storage 单测钉住 |
-| ~~增量 fetch 无真 thin pack~~ | **已实现**（docs/11 P2-6）：同路径基选择 + 自研 thin pack 写出器；实测增量 fetch 字节 0.87× git（docs/11 §3） | T37 钉住 |
+| ~~serve 路径零 delta~~ | **已实现**（docs/operations/performance.md P1-4）：原始负载过 64KiB 阈值后在线 delta 化（OFS_DELTA 优先/REF_DELTA 兜底），相似对象 2–5× 字节差 | T20 + storage 单测钉住 |
+| ~~增量 fetch 无真 thin pack~~ | **已实现**（docs/operations/performance.md P2-6）：同路径基选择 + 自研 thin pack 写出器；实测增量 fetch 字节 0.87× git（docs/operations/performance.md §3） | T37 钉住 |
 | ~~服务端 filter 未广告~~ | **已实现**（§4）：`blob:none`/`tree:0` + `allow-reachable-sha1-in-want` 惰性取回 | T14 钉住（partial clone 全链路） |
 | ~~浅克隆（deepen）~~ | **已实现**（§3a：deepen N / 加深 / unshallow / 客户端边界上报裁剪，对照 git 2.50 http-backend 参考流字节级实现） | T15/T16 钉住 |
 | `deepen-since` / `deepen-not` | 未广告未实现（`--shallow-since`/`--shallow-exclude`） | 需要时按 §3a 同框架扩展 |
@@ -327,7 +327,7 @@ v2 会话对照 `protocol_v2_serve_loop`：一次能力广告，随后命令循�
 
 | # | 偏离 | 影响 | 建议优先级 |
 |---|---|---|---|
-| 1 | ~~无 have 减除~~ **已关闭（2026-10-18，docs/09 §3.1）**：haves 已知提交可达集排除；浅客户端按 shallow 边界止步 + 穿过排除提交遍历（T15/T16/T19 钉住）；代价 = have 侧一次遍历，位图终解 | — | ✅ |
+| 1 | ~~无 have 减除~~ **已关闭（2026-10-18，docs/storage/indexing-packing.md §3.1）**：haves 已知提交可达集排除；浅客户端按 shallow 边界止步 + 穿过排除提交遍历（T15/T16/T19 钉住）；代价 = have 侧一次遍历，位图终解 | — | ✅ |
 | 2 | 响应无 side-band（裸 pack） | 客户端无进度显示；大 clone 体验差 | M2/M3（广告 side-band-64k + 通道 2 进度） |
 | 3 | **tags 不支持**：`refs/tags/*` 收 `ng unsupported ref namespace` | `git push --tags` / tag clone 失败（干净拒绝，非静默） | ✅ 已关闭（2026-10-18，T20：refs/tags/* + 任意 refs/<ns>/<name>，tag 对象入包/闭包剥离/浅克隆） |
 | 4 | EncodePack 无 delta；push `no-thin` | 双向带宽 | M3 repack 职责（`pack-objects.c` delta 算法） |

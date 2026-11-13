@@ -1,4 +1,4 @@
-// T85 — the post-receive → GitLab internal API adapter (docs/20 §2): a
+// T85 — the post-receive → GitLab internal API adapter (docs/integration/gitlab-integration.md §2): a
 // push that carries a platform identity (workhorse sets GlId/GlRepository
 // on the gRPC request; the gitaly bridge threads them to the receive path
 // as the X-Banyan-Gitlab-* headers below) must notify Rails' /pre_receive

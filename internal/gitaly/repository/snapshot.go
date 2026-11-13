@@ -21,7 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Snapshots, replication and the bundle-URI generator (docs/19).
+// Snapshots, replication and the bundle-URI generator (docs/integration/gitaly-compat.md).
 //
 // GetSnapshot answers a bare-repository TAR — HEAD, packed-refs and a
 // pack + idx pair — the same layout git itself works with, so the snapshot

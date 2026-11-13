@@ -1,4 +1,4 @@
-# 14 · 路线图
+# 路线图
 
 ## 生产可用主轴（2026-11-05 修订）
 
@@ -49,8 +49,8 @@
 - [x] push 自动建仓（demo 便利；M2 收紧为 ACL）
 - [x] 目录锚点 push 的向上组装（AssembleRoot 已接线：子树 push → synthetic commit 入根时间线，三层可见性实测 522/1019/4044）
 - [x] `banyan clone` / `banyan fetch-objects`（CLI 侧；服务端 /api/v1/objects RPC 已就绪）
-- [x] have 减除（2026-10-18 关闭 docs/04 §10 偏离 #1，见 M3/T19；此条为 M1 遗留记录）
-- [x] **薄工作区 CLI 首批命令**（2026-10-23，超越原 M1 设定）：clone（最小化下载，无 .git/无历史闭包）/ status（离线）/ commit（服务端 changeset 组装，docs/06 §4.2）/ pull（服务端 tree-diff 增量）/ log / cat / fetch-objects / branch/tag / repo ls；T22/T22b 以真 git 客户端交叉验证
+- [x] have 减除（2026-10-18 关闭 docs/gateway/git-compat.md §10 偏离 #1，见 M3/T19；此条为 M1 遗留记录）
+- [x] **薄工作区 CLI 首批命令**（2026-10-23，超越原 M1 设定）：clone（最小化下载，无 .git/无历史闭包）/ status（离线）/ commit（服务端 changeset 组装，docs/client/cli.md §4.2）/ pull（服务端 tree-diff 增量）/ log / cat / fetch-objects / branch/tag / repo ls；T22/T22b 以真 git 客户端交叉验证
 
 **已验证的端到端链路**（样本：go-git 仓库，4043 提交 / 28649 对象 / 11MiB pack）：
 
@@ -66,14 +66,14 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 
 ## M2 · 分布式与元数据落地
 
-- [x] MetaStore 持久化（SQLite：接口四角色分权 docs/03 §2.1、双后端一致性测试、重启持久化 T17；MySQL/PG 为生产接替路径）
-- [ ] ShardStore 远端实现（HTTP 节点间协议）+ rendezvous 放置 + R 副本（→ 由 HA-1 吸收，见 [10-ha.md](10-ha.md)）
+- [x] MetaStore 持久化（SQLite：接口四角色分权 docs/storage/storage.md §2.1、双后端一致性测试、重启持久化 T17；MySQL/PG 为生产接替路径）
+- [ ] ShardStore 远端实现（HTTP 节点间协议）+ rendezvous 放置 + R 副本（→ 由 HA-1 吸收，见 [ha.md](../storage/ha.md)）
 - [ ] commit-graph + merge-base（generation number）
 - [x] log RPC（/api/v1/log，路径过滤 + hash 一致视图）
-- [x] 服务层抽取（internal/service，2026-10-23：rpc 全量薄化为适配层、fetch-trees/commit/refs/objects 扩展/resolve/repos 落地、log 下沉共享实现；gitwire 发布路径迁移至 CommitService 留待 Gitaly 前端，docs/05 §6）
+- [x] 服务层抽取（internal/service，2026-10-23：rpc 全量薄化为适配层、fetch-trees/commit/refs/objects 扩展/resolve/repos 落地、log 下沉共享实现；gitwire 发布路径迁移至 CommitService 留待 Gitaly 前端，docs/gateway/service-api.md §6）
 - [x] 路径历史 / diff RPC（2026-11-06：路径历史=log RPC 既有 path 过滤；diff RPC
       字节对 git diff，引擎与 gitaly 前端同源，T81）
-- [x] 全局对象索引批量定位 + pack cache（内存层 M1 已落地；CommitGraph/TreeMemo 派生索引见 docs/03 §1.3）
+- [x] 全局对象索引批量定位 + pack cache（内存层 M1 已落地；CommitGraph/TreeMemo 派生索引见 docs/storage/storage.md §1.3）
 
 ## M3 · 派生数据与下载优化
 
@@ -81,13 +81,13 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
       blame——boundary/previous 头、同源行分组规则一并钉死，T81）
 - [ ] 可达性位图（upload-pack 闭包加速）
 - [ ] 服务端 filter 完整规格（blob:none / tree:0 / sparse:oid / subtree:<path>）
-- [x] 热路径整 pack 直传（已提前实现，docs/03 §1.3：闭包=整 pack 时字节直传，serve 2.77s→24ms）
+- [x] 热路径整 pack 直传（已提前实现，docs/storage/storage.md §1.3：闭包=整 pack 时字节直传，serve 2.77s→24ms）
 - [x] repack（碎片合并 + delta 化，2026-10-18：合并 pack 注册先行→旧分片元数据/文件/缓存清理；sqlite 对象行 UPSERT 重指向；rpc /api/v1/repack + Repacker 阈值触发；T21/T21b 钉住——对象保全、字节收缩、重启存活）
-- [x] 浅克隆支持（2026-10-18 提前实现，docs/04 §3a：deepen N / 加深 / unshallow / 客户端边界裁剪，对照 http-backend 参考流，T15/T16 钉住）
+- [x] 浅克隆支持（2026-10-18 提前实现，docs/gateway/git-compat.md §3a：deepen N / 加深 / unshallow / 客户端边界裁剪，对照 http-backend 参考流，T15/T16 钉住）
 
 ## M4 · 高并发工作流
 
-设计 v2 定稿见 [15-workflow.md](15-workflow.md)（2026-10-25：网关本地
+设计 v2 定稿见 [workflow.md](../design/workflow.md)（2026-10-25：网关本地
 批队列 + 一次 CAS 批追加 + 收敛 merge train + OCC 环；refs 零改动）。
 
 - [x] M4.1 重放原语（internal/merge 纯 Go 三方合并，git merge-file oracle；2026-10-25）；treeKnown 索引仍未做
@@ -107,7 +107,7 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
 | go-git 协议边界 bug | wire 兼容性 | 协议层薄封装，可换自研解析（pkt-line 解析工作量可控） |
 | subtree split 历史膨胀 | 大仓库虚拟 clone 变慢 | split 缓存 + 深度截断 + 懒 split（按需展开历史窗口） |
 
-## HA · 高可用与集群部署（[10-ha.md](10-ha.md)；HA-1 核心已实施 2026-10-24）
+## HA · 高可用与集群部署（[ha.md](../storage/ha.md)；HA-1 核心已实施 2026-10-24）
 
 - [x] **HA-1 核心**（T23-T26 全绿）：三角色拆分（`banyand -role all-in-one|gateway|refs|storage`，
       同一二进制）+ pack 散布随机多副本写（W=quorum 确认）+ refs 服务
@@ -120,56 +120,56 @@ git push → 根仓库 clone（4043 提交，HEAD 逐字节一致，755 文件�
       备份与恢复工具
 - [ ] HA-3：机架/可用区感知放置、跨集群异步复制（容灾）、S3 类对象存储后端
 
-v1 实施偏差（docs/10 §0 记录）：refs 后端仅 SQLite（重启 RPO=0 已钉住，T26）；
+v1 实施偏差（docs/storage/ha.md §0 记录）：refs 后端仅 SQLite（重启 RPO=0 已钉住，T26）；
 CommitPush 单事务未做（保持 PutPack+CASHead 两步，崩溃窗口=无害孤儿 pack）。
 
-## perf · 性能优化（规划 2026-10-24，[11-performance.md](11-performance.md)；perf-1/perf-2 主体已落地 2026-10-25）
+## perf · 性能优化（规划 2026-10-24，[performance.md](../operations/performance.md)；perf-1/perf-2 主体已落地 2026-10-25）
 
 - [x] perf-1（P0）：定位批量+LRU 缓存（含 repack 失效与跨网关陈旧重试）+
       织入物化批量化（pre-CAS flush 保登记即事实）——集群读/写主路径（T31）
 - [x] perf-2（P1）主体：idx 单对象解压（/internal/object，修 idx 配对错位
       + 补 crc）、fetch-trees 二进制帧（T33）、性能 SLO 基准门
       （`banyand bench`：git http-backend 对等基线 + 三口径 + 20% 红线，
-      实测数字 docs/11 §3）、**增量 fetch 字节效率**（serve 路径 delta 化 +
+      实测数字 docs/operations/performance.md §3）、**增量 fetch 字节效率**（serve 路径 delta 化 +
       filter/allow-reachable 广告，T14/T29）、**protocol v2**（ls-refs/fetch
       命令面，T30；push 按语义恒 v0）
 - [x] perf-3（P2）主体（2026-10-25）：网关磁盘 pack cache（cache.pack_dir +
       读放大翻转，T36）、闭包响应包缓存（T35）、push 后预热织入（T34）、
       **真 thin pack**（自研 diff-delta + thin 写出器 + 同路径基选择，T37；
-      bench 增量 fetch 1.66x → **0.87x** 反超 git，docs/11 §3）
+      bench 增量 fetch 1.66x → **0.87x** 反超 git，docs/operations/performance.md §3）
 - [ ] 残余：写路径扇出下沉（P2-4，归 HA-2）、同目录写队列（P2-5，归 M4）
 - 同目录写队列（P2-5）并入 M4（参照 tekeburak land worker 投机流水线）
 
 ## M5 · 平台集成（企业代码托管兼容）
 
-详见 [01-big-picture.md](01-big-picture.md)：协议层已就绪（L1），镜像拓扑靠
+详见 [big-picture.md](../design/big-picture.md)：协议层已就绪（L1），镜像拓扑靠
 GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
 
 - [x] tags 与任意 refs/<ns> 命名空间（2026-10-18：辅助 ref 全名存储/原样广告/tag 对象入包闭包剥离；T20 钉住——annotated/lightweight/删除/自定义命名空间/浅克隆 tag）
-- [x] 授权抽象 + demo 策略 + 个人分支可见性（2026-10-25，docs/07：仓库/目录/分支 × 下载/提交
+- [x] 授权抽象 + demo 策略 + 个人分支可见性（2026-10-25，docs/gateway/authorization.md：仓库/目录/分支 × 下载/提交
       三粒度门禁全部上 wire（v1+v2）；refs/heads/<user>/* 个人分支仅本人（+admin）可见——
       monorepo 分支过多解法；gateway 经 refs 策略快照走同一抽象；TS Web 管理面 + 文件浏览；
       T38/T38b。认证为 demo 级 Basic，token 认证仍待建）
-- [x] git-over-SSH 传输（2026-10-25，docs/04 §7b：`ssh://` 直连 + 公钥认证（IdentifyKey
-      身份缝，docs/07 §7）+ v0 有状态协商/v2 命令会话/receive-pack；同一授权矩阵；T39）
-- [x] 存储寻址双模式 + rename（2026-10-25，docs/03 §6：named 可读目录 vs hashed
+- [x] git-over-SSH 传输（2026-10-25，docs/gateway/git-compat.md §7b：`ssh://` 直连 + 公钥认证（IdentifyKey
+      身份缝，docs/gateway/authorization.md §7）+ v0 有状态协商/v2 命令会话/receive-pack；同一授权矩阵；T39）
+- [x] 存储寻址双模式 + rename（2026-10-25，docs/storage/storage.md §6：named 可读目录 vs hashed
       @hashed 不透明键——映射在网关解析、rename 零存储动作；不变 storage_id；
       T40。reconciler 自动补齐 named 改名残留归 HA-2）
-- [x] token 认证 + RPC 层细粒度授权（2026-11-06，docs/07 §8/§8b）：元数据面 PAT
+- [x] token 认证 + RPC 层细粒度授权（2026-11-06，docs/gateway/authorization.md §8/§8b）：元数据面 PAT
       （sha256 落库四后端矩阵、明文只现一次、过期/吊销读取时判定）；scope
       read<write<admin 是上限不是旁路——TokenPolicy 装饰任何 Service（static/upstream），
       wire 层零改动；RPC 管理端点走 auth.AdminChecker 可选扩展缝、内容写与 wire 同一条
       CanPush；自动建仓收紧此前已内建（wire 与 RPC 建仓同门）。T79/T80。CI job
-      token=按用户铸造的 PAT（属主必须匹配，docs/17 §4 约定）
+      token=按用户铸造的 PAT（属主必须匹配，docs/web/console.md §4 约定）
 - [x] Gitaly gRPC 兼容前端 P1（163/163 RPC 全落地后，2026-11-07 以
       **真 GitLab-CE 活体验收**收官：`demo/gitlab` 一键栈 + provision
       走查 + T83 opt-in e2e；活体揪出六处模拟器测不出的协议缝并修齐
       ——v2 HMAC bearer/默认支全限定名/ListRefs 前缀语义/tree path "."/
-      FindTag 结构化错/archive LFS 门（docs/19 §8）。开放缺口登记：
+      FindTag 结构化错/archive LFS 门（docs/integration/gitaly-compat.md §8）。开放缺口登记：
       post-receive→Rails internal API 回调链）
 - [x] 子树投影 ref（2026-11-07，T84：默认分支顶层目录以
       `refs/banyan/tree/<dir>` 投影进父项目 ref 空间——GitLab 等整仓
-      前端用一条 URL/一套凭证取推子树，推送向上装配；docs/20 §7，
+      前端用一条 URL/一套凭证取推子树，推送向上装配；docs/integration/gitlab-integration.md §7，
       经 GitLab URL 活体验收）
 - [x] post-receive → GitLab internal API 适配（2026-11-07，T85：接收路径
       以 gitlab-shell 同形契约——JWT（HS256/iss=gitlab-shell）签名的

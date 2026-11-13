@@ -1,4 +1,4 @@
-// workflow_test.go — T41/T42: the M4 directory-level workflow (docs/15)
+// workflow_test.go — T41/T42: the M4 directory-level workflow (docs/design/workflow.md)
 // with the real git CLI. T41 pins the per-timeline queue under a same-
 // directory burst: every push lands, zero rejections. T42 pins convergence:
 // divergent chains replay server-side (pure-Go merge-ort subset) — disjoint
@@ -26,7 +26,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// newConvergeServer is newServer with M4 convergence enabled (docs/15).
+// newConvergeServer is newServer with M4 convergence enabled (docs/design/workflow.md).
 func newConvergeServer(t *testing.T) *support.Server {
 	t.Helper()
 	ms := meta.NewMemoryMetaStore()

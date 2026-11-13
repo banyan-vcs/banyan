@@ -35,7 +35,7 @@ func (d *DB) Resolve(ctx context.Context, group, project, sub string) (Location,
 // chainIDs returns the inheritance chain for a location, shallowest first:
 // the group, the project, then every registered subproject whose path is a
 // prefix of Sub (most specific last). Unregistered intermediate segments
-// contribute nothing (docs/17 §3).
+// contribute nothing (docs/web/console.md §3).
 func (d *DB) chainIDs(ctx context.Context, loc Location) ([]int64, error) {
 	ids := []int64{loc.Group.ID, loc.Project.ID}
 	if loc.Sub == "" {
@@ -71,7 +71,7 @@ func (d *DB) chainIDs(ctx context.Context, loc Location) ([]int64, error) {
 }
 
 // EffectiveRole aggregates the user's direct memberships along the chain
-// (additive max — docs/17 §4). Instance admins outrank everything; userID 0
+// (additive max — docs/web/console.md §4). Instance admins outrank everything; userID 0
 // (anonymous) has no role.
 func (d *DB) EffectiveRole(ctx context.Context, u User, loc Location) (Role, error) {
 	if u.Admin {
@@ -115,7 +115,7 @@ func (d *DB) CanFetch(ctx context.Context, u User, loc Location) (bool, error) {
 
 // CanPush decides coarse push access: Developer at the requested anchor.
 // (Protected-branch and personal-branch precision lives in the gateway's
-// snapshot enforcement, docs/17 §5.)
+// snapshot enforcement, docs/web/console.md §5.)
 func (d *DB) CanPush(ctx context.Context, u User, loc Location) (bool, error) {
 	if u.ID == 0 {
 		return false, nil
@@ -195,7 +195,7 @@ func (d *DB) Anchors(ctx context.Context, project Node) ([]Anchor, error) {
 }
 
 // BuildSnapshot renders the whole policy surface as the gateway-side
-// snapshot v2 (docs/17 §5): usernames for personal-branch ownership, admins,
+// snapshot v2 (docs/web/console.md §5): usernames for personal-branch ownership, admins,
 // and per-repo anchors with direct memberships. The gateway re-derives
 // effective roles with the same max-over-prefix-chain formula.
 func (d *DB) BuildSnapshot(ctx context.Context) (auth.UpstreamSnapshot, error) {
@@ -211,7 +211,7 @@ func (d *DB) BuildSnapshot(ctx context.Context) (auth.UpstreamSnapshot, error) {
 		}
 	}
 	// The console's service principal ("console") signs the operational
-	// passthroughs (repack/rename/placement, docs/17 §5) after authorizing
+	// passthroughs (repack/rename/placement, docs/web/console.md §5) after authorizing
 	// the acting admin on its own side — the gateway's AdminChecker admits
 	// it as the management plane itself.
 	snap.Admins = append(snap.Admins, "console")

@@ -40,7 +40,7 @@ func TestSubtreeCloneUnifiedDAG(t *testing.T) {
 	assert.Equal(t, "base\n", support.ReadFile(t, filepath.Join(sub, "SHARED.txt")), "子树工作树内容")
 	_, err := os.Stat(filepath.Join(sub, "README.md"))
 	require.Error(t, err, "子树工作树不应包含父级文件 README.md")
-	// v4 timeline-first (docs/02 §12): subtree history = this path's timeline (projection
+	// v4 timeline-first (docs/design/data-model.md §12): subtree history = this path's timeline (projection
 	// chain, SHA differs from the root side — allowed); content matches the root (blob equality).
 	assert.NotEmpty(t, support.BlobOf(t, sub, "SHARED.txt"))
 	assert.Equal(t, support.BlobOf(t, src, "lib/nested/SHARED.txt"), support.BlobOf(t, sub, "SHARED.txt"), "子树与源 blob 不一致")

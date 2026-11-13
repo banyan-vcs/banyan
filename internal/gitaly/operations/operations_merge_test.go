@@ -20,7 +20,7 @@ import (
 )
 
 // TestGitalyMergeSurface covers the five user-facing merge RPCs over
-// divergent branch fixtures (docs/19): clean merges verify commit shape,
+// divergent branch fixtures (docs/integration/gitaly-compat.md): clean merges verify commit shape,
 // conflicts verify the structured error details Rails parses.
 func TestGitalyMergeSurface(t *testing.T) {
 	srv, objects, svc, addr := startServer(t)

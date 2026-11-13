@@ -1,5 +1,5 @@
 // gzbody_test.go — T82: gzip rpc POST bodies (the flake's server half,
-// docs/13): git compresses protocol v2 negotiation rounds — round 2
+// docs/operations/testing.md): git compresses protocol v2 negotiation rounds — round 2
 // re-sends the whole have list and arrives with Content-Encoding: gzip
 // even under 1 KiB. Before the fix the body was read raw, the pkt-line
 // parse hit binary noise, and the response came back empty ("expected

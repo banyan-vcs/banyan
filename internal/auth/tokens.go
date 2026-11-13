@@ -1,5 +1,5 @@
-// Token authentication as a decorator over any auth.Service (docs/07 §6,
-// docs/14 M5): personal access tokens live in the metadata plane (storage.
+// Token authentication as a decorator over any auth.Service (docs/gateway/authorization.md §6,
+// docs/project/roadmap.md M5): personal access tokens live in the metadata plane (storage.
 // meta.TokenRegistry — all-in-one and refs-serving deployments own it), the
 // wrapped policy keeps providing passwords, SSH keys, visibility and branch
 // rules. This is the extensibility seam in action: the wire layers still
@@ -38,7 +38,7 @@ type AdminChecker interface {
 // `banyan_`-prefixed token resolves against the registry (expiry and
 // revocation enforced at read time); anything else delegates to Inner.
 // A non-empty username must match the token owner — the console convention
-// (docs/17 §4); CI jobs mint their own per-user token.
+// (docs/web/console.md §4); CI jobs mint their own per-user token.
 
 type TokenPolicy struct {
 	Inner  Service

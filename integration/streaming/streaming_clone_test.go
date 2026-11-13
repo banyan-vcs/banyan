@@ -1,7 +1,7 @@
 package streaming
 
-// T55 (docs/13): the multi-pack clone-shaped streaming rung — the "way in
-// is the way out" fix for streamed imports (docs/03 §3). A 72 MiB
+// T55 (docs/operations/testing.md): the multi-pack clone-shaped streaming rung — the "way in
+// is the way out" fix for streamed imports (docs/storage/storage.md §3). A 72 MiB
 // incompressible repo fragmented across three packs (three pushes, no
 // repack) clones COMPLETE under a 64 MiB soft heap limit: the closure maps
 // alone would exceed the limit, so completion is itself the proof that

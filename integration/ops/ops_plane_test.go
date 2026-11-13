@@ -1,6 +1,6 @@
 package ops
 
-// T54 (docs/13): the ops plane observes real git traffic end to end — the
+// T54 (docs/operations/testing.md): the ops plane observes real git traffic end to end — the
 // expvar serve-path counters (which rung served each fetch, pushes applied)
 // move as real clients push/clone/repack/clone, and the pprof family
 // answers on the same plane. Package-level counters are process-wide;

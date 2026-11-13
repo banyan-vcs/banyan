@@ -1,5 +1,5 @@
 // snapshot.go — banyan snapshot: checkpoint/restore of the whole thin
-// workspace (docs/06). Purely local and offline — the dirty set's bytes are
+// workspace (docs/client/cli.md). Purely local and offline — the dirty set's bytes are
 // copied verbatim under .banyan/snapshots/<name>/files/, clean files restore
 // from the content-addressed cache (server backfill only when the cache was
 // pruned). This is a time machine, not stash-apply: restoring does not merge

@@ -1,6 +1,6 @@
 package streaming
 
-// T58 (docs/13): the deepen-shaped streaming rung (docs/03 §3) — unshallow
+// T58 (docs/operations/testing.md): the deepen-shaped streaming rung (docs/storage/storage.md §3) — unshallow
 // of a large multi-pack repository. The ladder's closure materializes every
 // object body of the deepened history; the rung carries the same
 // depth/graft/have pruning typed and streams entry by entry. 54 MiB across

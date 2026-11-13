@@ -49,7 +49,7 @@ func gitRun(s serverIface, dir string, args ...string) (ms int64, bytesOut, byte
 
 // Run executes the full comparison for one profile and returns the report.
 //
-// Temperature lanes (docs/11 §3, the scion method's honest reporting):
+// Temperature lanes (docs/operations/performance.md §3, the scion method's honest reporting):
 //   - cold:  fresh banyan process, first client request after the seed push
 //     (weave/views/locations all cold) — a restarted deployment's first hit;
 //   - warm:  same server, subsequent identical operations (medians of the
@@ -421,7 +421,7 @@ func (r *Report) WriteCSV(path string) error {
 	return os.WriteFile(path, []byte(r.RenderCSV()), 0o644)
 }
 
-// regressionLimit is the red line (docs/11 §3): any row regressing beyond
+// regressionLimit is the red line (docs/operations/performance.md §3): any row regressing beyond
 // this factor against the saved baseline fails the gate.
 const regressionLimit = 1.2
 

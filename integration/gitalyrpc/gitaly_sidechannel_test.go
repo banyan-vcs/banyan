@@ -1,4 +1,4 @@
-// T62 — sidechannel transport e2e (docs/19 §5 slice 3): the multiplexed
+// T62 — sidechannel transport e2e (docs/integration/gitaly-compat.md §5 slice 3): the multiplexed
 // connection gitaly/workhorse actually use — TCP conn opens with the
 // "backchannel" magic, yamux session follows, gRPC rides stream 1, and bulk
 // fetch traffic returns over server-initiated sidechannel streams. The test

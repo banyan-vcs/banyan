@@ -1,4 +1,4 @@
-// cli_stack_test.go — T92: banyan stack, the local changeset queue (docs/06
+// cli_stack_test.go — T92: banyan stack, the local changeset queue (docs/client/cli.md
 // §3.8). Path-scoped push captures dirty paths (bytes in the stack blob
 // store) and reverts them locally; commit lands entries oldest-first through
 // the ordinary changeset RPC — cross-verified by a real git clone — and a

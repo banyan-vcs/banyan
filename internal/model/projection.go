@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-// git projection (download read path) — docs/02 §5.
+// git projection (download read path) — docs/design/data-model.md §5.
 //
 //   - Root projection: an anchor="/" commit is a git commit as-is (zero translation);
 //   - Subtree projection: DAG-version subtree split — full-parent traversal, preserving branch commits and
@@ -42,7 +42,7 @@ func SubtreeAt(lookup ObjectLookup, root OID, path AnchorPath) OID {
 }
 
 // SubtreeSplit projects a root-timeline commit into a projected commit
-// "rooted at the path subtree" (docs/02 §5.2). Deterministic: same input, same output.
+// "rooted at the path subtree" (docs/design/data-model.md §5.2). Deterministic: same input, same output.
 func SubtreeSplit(lookup ObjectLookup, algo HashAlgo, rootCommitOID OID, path AnchorPath) (*AnchoredCommit, error) {
 	c, err := lookup.Commit(rootCommitOID)
 	if err != nil {
@@ -60,7 +60,7 @@ func SubtreeSplit(lookup ObjectLookup, algo HashAlgo, rootCommitOID OID, path An
 		Committer:     c.Committer,
 		Message:       c.Message,
 		ProjectedFrom: rootCommitOID,
-		// Weave provenance rides the projection (docs/02 §13): a root-local
+		// Weave provenance rides the projection (docs/design/data-model.md §13): a root-local
 		// spine commit that is itself a fold of a subtree source stays
 		// recognizable as such inside scoped views, so their folds can skip
 		// the already-embedded source instead of duplicating its subject.
@@ -86,7 +86,7 @@ type SplitResult struct {
 	Head OID
 }
 
-// SplitHistory performs a DAG-version subtree split along the root timeline (docs/02 §5.2).
+// SplitHistory performs a DAG-version subtree split along the root timeline (docs/design/data-model.md §5.2).
 //
 // Algorithm (old→new, guaranteeing acyclic OID finalization):
 //  1. Full-parent DFS collects reachable commits; post-order is topological order (old→new);
@@ -182,7 +182,7 @@ func SplitHistory(lookup ObjectLookup, algo HashAlgo, head OID, path AnchorPath)
 		if !changed[oid] {
 			continue
 		}
-		// Identity mapping (docs/02 §12): the X projection of this path's adoption merge
+		// Identity mapping (docs/design/data-model.md §12): the X projection of this path's adoption merge
 		// M=[rootPrev, C] (C scoped to X, tree equivalence) = C itself — zero new commits,
 		// zero duplication; the pusher's change keeps its own SHA after flowing back through the root.
 		// C's parent chain stays its original timeline anchor, unrewritten.

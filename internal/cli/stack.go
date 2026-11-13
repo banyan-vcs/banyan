@@ -1,4 +1,4 @@
-// stack.go — banyan stack: a local queue of path-scoped changesets (docs/06).
+// stack.go — banyan stack: a local queue of path-scoped changesets (docs/client/cli.md).
 // push captures the selected dirty paths as one entry (bytes land in the
 // content-addressed .banyan/stack-blobs/, independent of the prunable cache)
 // and reverts them locally; commit replays entries oldest-first through the

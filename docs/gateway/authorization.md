@@ -1,11 +1,11 @@
-# 07 · 授权设计与个人分支可见性（M5 切片）
+# 授权设计与个人分支可见性（M5 切片）
 
 > 2026-10-25 落地。定位：**抽象层 + demo 策略 + 集群控制层 + Web 演示**。
 > 能力广告诚实：认证是 demo 级 HTTP Basic（静态用户表），策略是静态
 > 规则表——生产形态（token introspection / SSO / 数据库策略）在同一个
 > `auth.Service` 缝隙替换，wire 层零改动。
 
-## 0. 启动姿态：安全默认（2026-11-05，docs/14 生产主轴 P0）
+## 0. 启动姿态：安全默认（2026-11-05，docs/project/roadmap.md 生产主轴 P0）
 
 **生产缺省下，无认证的进程拒绝启动**——部署错误不该等第一个请求到达
 才暴露：
@@ -14,7 +14,7 @@
   `auth.upstream` 又无 `auth.users`** 时启动即报错，错误信息直接给出
   出路：`set dev: true for an unauthenticated local deployment`；
 - `gitaly.listen` 配置了而 `gitaly.token` 为空：同样拒启（gRPC 面同权
-  严肃，docs/19 §3）；
+  严肃，docs/integration/gitaly-compat.md §3）；
 - `dev: true`（YAML）或 `-dev`（旗标）= **显式开发模式**：免认证本地
   跑，`-help` usage 与配置 Describe 均标注。demo 栈即此形态（单体
   compose 挂 auth-demo.yaml 走正路；集群 demo 网关走 `-dev`）；
@@ -100,7 +100,7 @@ HttpOnly cookie）→ 仓库列表/建仓 → 仓库页**分支列表 = 登录�
 过滤广告）。所有请求携带会话用户凭证 → 服务端规则与 git 客户端
 完全一致。`docker compose up -d`：Web 8101 / git 8100（compose 内
 挂载 demo/auth-demo.yaml：alice/bob/admin，密码 demo）。
-端到端走查手册（命令即脚本）见 [12-docker-demo.md](12-docker-demo.md)。
+端到端走查手册（命令即脚本）见 [docker-demo.md](../operations/docker-demo.md)。
 
 测试：T38（wire 全矩阵，真实 git 客户端 v0+v2）+ TestAuthorizationRPC
 （认证门/login/建仓）；Web 端到端为实测验证（见提交记录）。
@@ -112,16 +112,16 @@ HttpOnly cookie）→ 仓库列表/建仓 → 仓库页**分支列表 = 登录�
 此后**走完全相同的四决策**：广告过滤、CanFetch、CanPush 对 ssh:// 会话
 与 HTTP 会话逐字节同义。demo 策略 `auth.keys` 按用户配置公钥行；集群
 网关经 refs 策略快照解析（快照携带 keys，fail-closed 语义不变）。传输
-细节（会话形态/协商轮次）见 docs/04 §7b，T39 钉住。边界：SSH 传输要求
+细节（会话形态/协商轮次）见 docs/gateway/git-compat.md §7b，T39 钉住。边界：SSH 传输要求
 auth 必须开启（无钥匙表可认证任何人——拒绝启动而非裸监听）。
 
-## 8. Token 认证与可扩展性缝（2026-11-06，docs/14 M5）
+## 8. Token 认证与可扩展性缝（2026-11-06，docs/project/roadmap.md M5）
 
 **PAT（personal access token）**：`banyan_` 前缀随机明文（crypto/rand，
 32B base64url），落库只存 sha256（`storage.TokenRegistry`——元数据面的
 一张 `tokens` 表，四后端 conformance 同矩阵）。明文只在铸造应答里出现
 一次。HTTP Basic(user, token) 即 git 客户端唯一需要的形态；非空用户名
-必须匹配 token 属主（与 console 约定一致，docs/17 §4）。过期与吊销在
+必须匹配 token 属主（与 console 约定一致，docs/web/console.md §4）。过期与吊销在
 **读取时**判定——吊销即刻生效，无缓存窗口。
 
 **scope 是上限不是旁路**：`Identity.Scope`（read < write < admin）由
@@ -135,7 +135,7 @@ gw.Auth, api.Auth = svc, svc      // wire 层只见 auth.Service，零改动
 ```
 
 装配（cmd/banyand）：all-in-one 在持有元数据时自动包裹 static 策略；
-upstream console 形态不包裹（console 自有 PAT 体系，网关验签名，docs/17）；
+upstream console 形态不包裹（console 自有 PAT 体系，网关验签名，docs/web/console.md）；
 纯网关角色无本地元数据，无 token 面（TokenRegistry 是可选接口，
 远端 meta 不实现也不破坏编译）。
 
@@ -163,14 +163,14 @@ fetch-trees/resolve）维持认证门。测试：T79（token E2E：read 可取�
 （RPC 分级：开发者 403 / 管理员 200 / admin token 管理 / read token
 不能建仓不能动 ref）。
 
-## 8c. 运行时子树访问规则 + GitLab SSO（2026-11-08，docs/20 子树管理控制面）
+## 8c. 运行时子树访问规则 + GitLab SSO（2026-11-08，docs/integration/gitlab-integration.md 子树管理控制面）
 
 **运行时规则**：`auth.subtree_access`（§2 的 YAML 种子）只在启动时读；
 运行态规则住在元数据面——`storage.SubtreeRuleStore`（可选接口，
 TokenRegistry 先例：memory + SQL 四后端同 conformance，表
 `subtree_rules(repo, path, users)`，随 rename/delete 同事务迁移清理）。
 `SubtreeRulePolicy` 装饰任意策略：**最浅覆盖规则管辖**（`/src` 的规则
-同时管住 `/src/lib`——子树视图闭包向下包含，docs/17"在浅锚收紧"）；
+同时管住 `/src/lib`——子树视图闭包向下包含，docs/web/console.md"在浅锚收紧"）；
 **fetch 与 push 同门**；无覆盖规则的路径完全委托内层（从未管理规则的
 部署逐字节不变）；规则面不可达=拒绝（fail-closed，与 /allowed 门同姿
 态）；内层管理员恒过（管理员管理规则，锁死自己即锁死管理面）。反向

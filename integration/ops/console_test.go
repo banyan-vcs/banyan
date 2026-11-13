@@ -1,4 +1,4 @@
-// console_test.go (T50, docs/17): the product control plane end to end with
+// console_test.go (T50, docs/web/console.md): the product control plane end to end with
 // real git clients — logical {group}/{project}[/path] routing, PAT
 // authentication, additive inheritance (a subtree-only grant works at the
 // anchor), protected-branch deep enforcement on the gateway, public
@@ -309,7 +309,7 @@ func TestConsoleMemoryChain(t *testing.T) {
 	// bootstrap + the pushed chain). Repack it away — through the console's
 	// management passthrough with its repo remap, so that path is exercised
 	// too — so the measured clone serves via the verbatim ExactPackHit
-	// stream, not the (separately budgeted, docs/03 §3.1) online encoder.
+	// stream, not the (separately budgeted, docs/storage/storage.md §3.1) online encoder.
 	code, out = s.call(t, "POST", "/api/v1/repack", s.tokens["root"], map[string]any{"repo": "big/repo"})
 	require.Equal(t, 200, code, "%v", out)
 

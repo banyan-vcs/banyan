@@ -25,7 +25,7 @@ func repoRef(name string) *gitalypb.Repository {
 }
 
 // TestGitalyOperationsAndLFS covers the OperationService ref slice, the
-// web-edit UserCommitFiles stream and the LFS-pointer trio (docs/19).
+// web-edit UserCommitFiles stream and the LFS-pointer trio (docs/integration/gitaly-compat.md).
 func TestGitalyOperationsAndLFS(t *testing.T) {
 	srv, _, objects, svc, addr := startServer(t)
 	ctx := context.Background()

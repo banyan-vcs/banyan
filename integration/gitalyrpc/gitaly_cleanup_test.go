@@ -1,4 +1,4 @@
-// T71 — history rewrite (docs/19). RewriteHistory strips blobs and redacts
+// T71 — history rewrite (docs/integration/gitaly-compat.md). RewriteHistory strips blobs and redacts
 // literals across every reachable commit, then re-points all refs onto the
 // rewritten chain; ApplyBfgObjectMapStream applies an old→new map by
 // dropping internal refs anchored at rewritten commits. The oracle is git

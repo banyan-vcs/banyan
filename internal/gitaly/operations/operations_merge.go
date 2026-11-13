@@ -17,7 +17,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// User-facing merge surface (docs/19): UserMergeBranch, UserMergeToRef,
+// User-facing merge surface (docs/integration/gitaly-compat.md): UserMergeBranch, UserMergeToRef,
 // UserSquash, UserCherryPick and UserRevert ride one 3-way engine —
 // internal/merge (tree-entry merge + content diff3, git merge-file oracle
 // tested) over the synthetic-object layer, with commits assembled through

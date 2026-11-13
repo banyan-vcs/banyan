@@ -60,7 +60,7 @@ func (cs *commitService) CountDivergingCommits(ctx context.Context, req *gitalyp
 // ---- CommitLanguages ----
 
 // languageByExtension maps common extensions to linguist names (a curated
-// subset; docs/19 §6 registers the approximation against the full library).
+// subset; docs/integration/gitaly-compat.md §6 registers the approximation against the full library).
 var languageByExtension = map[string]string{
 	".go": "Go", ".rs": "Rust", ".py": "Python", ".rb": "Ruby", ".js": "JavaScript",
 	".ts": "TypeScript", ".jsx": "JavaScript", ".tsx": "TypeScript", ".java": "Java",

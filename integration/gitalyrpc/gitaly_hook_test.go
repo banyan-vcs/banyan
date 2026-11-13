@@ -1,5 +1,5 @@
 // T75 — the gitaly hook contract over banyan's callback registry
-// (docs/19). PreReceiveHook and UpdateHook evaluate fail-closed: a
+// (docs/integration/gitaly-compat.md). PreReceiveHook and UpdateHook evaluate fail-closed: a
 // declined (non-2xx) callback answers exit status 1 with the callback's
 // message on stderr; PostReceiveHook and ReceiveReportHook are best-effort
 // deliveries; the transaction hook acknowledges; the sidechannel pair

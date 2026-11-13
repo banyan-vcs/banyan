@@ -3,7 +3,7 @@
 # 严格模式：未知键直接报错（防拼写错误/过期配置静默失效）。
 # 注意：相对路径（root/db）按 banyand 进程工作目录解析，建议部署时用绝对路径。
 
-# 部署角色（docs/10 §2）：
+# 部署角色（docs/storage/ha.md §2）：
 #   all-in-one（默认）单进程跑全部能力——零额外配置
 #   gateway          无状态前端（需 refs_addr）：git smart HTTP + JSON API
 #   refs             前序判断点：元数据服务 + 节点健康表 + reconciler
@@ -16,12 +16,12 @@ listen: ":8080"
 # 本地分片存储根目录（pack + idx 落盘位置；storage/all-in-one 使用）
 root: "./data"
 
-# 元数据后端（docs/03 §2）。缺省随姿态（docs/07 §0）：
+# 元数据后端（docs/storage/storage.md §2）。缺省随姿态（docs/gateway/authorization.md §0）：
 #   生产（非 dev）且角色持有元数据（all-in-one/refs）→ postgres；
 #   dev → mem（内存态，重启即失）。
 # 可选：postgres（生产默认）| mysql | sqlite（单机持久化）| mem（仅 dev——
 #   生产对 mem 拒启）。
-# 集群 refs 角色必须用持久化后端（refs 重启状态零丢失，docs/10 §8/T26）。
+# 集群 refs 角色必须用持久化后端（refs 重启状态零丢失，docs/storage/ha.md §8/T26）。
 meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgres
 
 # sqlite：数据库文件路径（默认 <root>/banyan.db）
@@ -36,7 +36,7 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 # 启动时创建的仓库名（可选）
 # init_repo: "demo"
 
-# --- 以下为集群角色键（docs/10 §2/§8；all-in-one 忽略） ---
+# --- 以下为集群角色键（docs/storage/ha.md §2/§8；all-in-one 忽略） ---
 
 # refs 服务地址（gateway/storage 角色必填）
 # refs_addr: "refs:8102"
@@ -48,21 +48,21 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 # 集群默认副本数（可按仓库覆盖：PUT /api/v1/repos/<repo>/placement）
 # default_replicas: 3
 
-# 写确认：quorum（默认）| all | one（R=2 时的可用性旋钮，docs/10 §7）
+# 写确认：quorum（默认）| all | one（R=2 时的可用性旋钮，docs/storage/ha.md §7）
 # write_acks: "quorum"
 
-# 节点健康状态机阈值（docs/10 §8.1：suspect 只摘放置，dead 触发补副本）
+# 节点健康状态机阈值（docs/storage/ha.md §8.1：suspect 只摘放置，dead 触发补副本）
 # health_suspect_sec: 30
 # health_dead_sec: 600
 
-# reconciler 轮询间隔与并行复制数（docs/10 §8.3）
+# reconciler 轮询间隔与并行复制数（docs/storage/ha.md §8.3）
 # recon_interval_sec: 15
 # recon_concurrency: 4
 
 # storage 角色心跳间隔
 # heartbeat_sec: 3
 
-# --- 网关磁盘 pack 缓存（docs/11 P2-1；仅 gateway 角色生效） ---
+# --- 网关磁盘 pack 缓存（docs/operations/performance.md P2-1；仅 gateway 角色生效） ---
 
 # 开启后，网关从存储节点拉取的整包会落盘缓存：网关重启后的首个克隆
 # 直接命中本地盘，不再跨节点重传（内容寻址，LRU 按总字节淘汰）
@@ -76,7 +76,7 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 #   无认证 git 流量 + push 自动建仓 + gitaly 前端免 token。生产部署删掉此键并配好 auth 段。
 #dev: true
 
-# --- 授权（docs/07；缺省=关闭） ---
+# --- 授权（docs/gateway/authorization.md；缺省=关闭） ---
 
 # 一体化 demo 的静态策略：HTTP Basic 用户表 + 管理员 + 保护分支 + 目录访问
 #auth:
@@ -92,14 +92,14 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 # gateway 角色：决策走 refs 服务同步的策略快照（集群模式的策略源）
 #  remote: true
 
-# console 前置模式（docs/17）：`banyand console` 产品端认证并以签名身份头背书
+# console 前置模式（docs/web/console.md）：`banyand console` 产品端认证并以签名身份头背书
 # （X-Banyan-Identity），规则以快照 v2 同步——用户表与凭据不下放本进程。
 # 与 remote/users 互斥。
 #auth:
 #  upstream: "http://banyand-console:8081"
 #  upstream_secret: "change-me"
 
-# 多 OAuth provider 模式（docs/07 §8d）：GitHub / gitlab.com / 私有 GitLab 的
+# 多 OAuth provider 模式（docs/gateway/authorization.md §8d）：GitHub / gitlab.com / 私有 GitLab 的
 # token（OAuth 会话或 PAT）直接认证本服务的 HTTP 面；单 GitLab 实例也可以用
 # 旧的 gitlab_sso: <url> 简写（等价于 id: gitlab 的一项）。与 remote/users/upstream 互斥。
 #auth:
@@ -115,7 +115,7 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 #      admins: [ops]               # 该 provider 侧的管理员名单（GitHub 无 is_admin，靠名单）
 #  admins: [platform-admin]        # 全部署管理员（各 provider 共享）
 
-# --- 存储寻址模式（docs/03 §6；缺省 named） ---
+# --- 存储寻址模式（docs/storage/storage.md §6；缺省 named） ---
 # named:  磁盘目录=仓库名（可读）；rename/迁移需在所有持有节点上移动数据
 # hashed: 磁盘目录=@hashed/<xx>/<yy>/<sha256(storage_id)>（不可读）；rename 仅
 #         改注册表零存储动作——名字→键映射在网关（经 refs 元数据）解析。
@@ -123,28 +123,28 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 #storage:
 #  mode: hashed
 
-# --- M4 工作流（docs/15；缺省 auto） ---
+# --- M4 工作流（docs/design/workflow.md；缺省 auto） ---
 # auto:   同目录 push 排队串行化，分歧链服务端收敛（纯 Go merge-ort 子集），
 #         冲突=拒绝该票且隔离；并发突发零拒绝零重试
 # reject: M4 前语义——非 FF 拒绝，客户端 pull --rebase
 #workflow:
 #  convergence: auto
 
-# --- Gitaly 协议前端（docs/19，接入手册 docs/20；缺省关闭，仅 all-in-one/gateway 角色生效） ---
+# --- Gitaly 协议前端（docs/integration/gitaly-compat.md，接入手册 docs/integration/gitlab-integration.md；缺省关闭，仅 all-in-one/gateway 角色生效） ---
 # 开启后本进程以 gitaly gRPC 协议（v19.5.2）对外服务：GitLab Rails/workhorse
 # 可把 gitaly 节点直接替换为本进程（storage_name 须与 GitLab 侧存储配置一致，
 # relative_path 原样作为 banyan 仓库名，@hashed 寻址零转换）。子树以投影 ref
-# refs/banyan/tree/<dir> 经 GitLab URL 直取直推（T84，docs/20 §7）。
+# refs/banyan/tree/<dir> 经 GitLab URL 直取直推（T84，docs/integration/gitlab-integration.md §7）。
 #gitaly:
 #  listen: "unix:/var/lib/banyan/gitaly.socket"   # 或 "0.0.0.0:9999"
 #  token: "change-me"                             # Bearer 鉴权；空=不鉴权（仅开发）
 #  storage_name: "default"                        # 对外宣称的虚拟存储名
 #  reported_version: "19.5.2"                     # ServerInfo 上报的版本（缺省=协议版本）
-#  gitlab:                                        # post-receive 适配器（docs/20 §2）：
+#  gitlab:                                        # post-receive 适配器（docs/integration/gitlab-integration.md §2）：
 #    url: "http://gitlab.internal:8180"           #   经 GitLab 的 push 触发平台侧处理
 #    secret_path: "/etc/gitlab/gitlab_shell_secret" # （事件/pipeline/MR/缓存失效）
 
-# --- 运维面（docs/05 §5a；缺省整层关闭） ---
+# --- 运维面（docs/gateway/service-api.md §5a；缺省整层关闭） ---
 # 独立辅助监听（四个角色通用），不搭公开 git/API 端口：
 #   /debug/pprof/*   pprof 全家（heap/allocs/goroutine/block/mutex/trace/…）
 #   /debug/stats     运行时快照（GOMEMLIMIT 读数、MemStats 精要）

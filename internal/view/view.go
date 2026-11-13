@@ -1,4 +1,4 @@
-// Package view derives git-visible views from timeline state (docs/02 §13,
+// Package view derives git-visible views from timeline state (docs/design/data-model.md §13,
 // design v5 assembly-on-read). The ONLY stored mutable state is per-timeline
 // heads (root-local plus one per directory); every git view is a pure, cached
 // function of those heads:
@@ -53,7 +53,7 @@ func New(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlg
 
 // wovenAnchor is the internal timeline family persisting each branch's
 // woven root-view tip: the append anchor that makes the weave arrival-ordered
-// and prefix-stable across recomputation and restarts (docs/02 §13).
+// and prefix-stable across recomputation and restarts (docs/design/data-model.md §13).
 const wovenAnchor = model.AnchorPath("/.woven")
 
 // wovenAnchorFor is the persisted append anchor of one scoped view's weave.
@@ -66,13 +66,13 @@ func wovenAnchorFor(scope model.AnchorPath) model.AnchorPath {
 // (original client OIDs). Exclusion by the rewrite-space /.woven ancestry
 // cannot see graft sources — their originals never enter it, only their
 // rewrites do — so every materialization would re-fold them (duplicate
-// subjects, churning tips). Markers close that gap (docs/02 §13).
+// subjects, churning tips). Markers close that gap (docs/design/data-model.md §13).
 func srcMarker(view, src model.AnchorPath) model.AnchorPath {
 	return model.AnchorPath(string(wovenAnchor) + string(view) + "@" + string(src))
 }
 
 // IsWovenFamily reports whether an anchor belongs to the internal /.woven
-// family. Exported for the service layer's subtree listing (docs/07 §8):
+// family. Exported for the service layer's subtree listing (docs/gateway/authorization.md §8):
 // those timelines are materialization bookkeeping, not user-visible history.
 func IsWovenFamily(a model.AnchorPath) bool {
 	return strings.HasPrefix(string(a), string(wovenAnchor))
@@ -96,14 +96,14 @@ type rootKey struct {
 
 // SubtreeHead returns the subtree view head and the root-local head.
 // Plain scopes (no descendant timeline activity) use the identity-preserving
-// projection + descendant rule (docs/02 §12). When any timeline exists at an
+// projection + descendant rule (docs/design/data-model.md §12). When any timeline exists at an
 // anchor strictly BELOW this scope, the view must weave those descendant
-// changes in (docs/02 §13) — the same linear weave as the root view, scoped
+// changes in (docs/design/data-model.md §13) — the same linear weave as the root view, scoped
 // to X: root-local projections and X's own locals fold as full X-scoped
 // trees, descendant locals graft at their relative paths.
 func (s *Service) SubtreeHead(ctx context.Context, repo string, sub model.AnchorPath, branch string) (head, rootLocal model.OID, err error) {
 	// One weave materialization = one synth batch: every synthetic the
-	// projection + fold produce persists as a single pack (docs/11 P0-2);
+	// projection + fold produce persists as a single pack (docs/operations/performance.md P0-2);
 	// the pre-CAS flush keeps "registration is the fact" intact.
 	s.Objects.BeginSynthBatch(repo)
 	defer s.Objects.EndSynthBatch(repo)
@@ -187,7 +187,7 @@ func (s *Service) subtreeTip(repo string, sub model.AnchorPath, branch string, r
 // outright. Pruning uses EXACT generations only — tainted (lower-bound)
 // values are ignored so an understated gen can never prune a true ancestor.
 // The walk warms the generation memo over the visited ancestry, so repeated
-// materializations reuse it (docs/09 §2).
+// materializations reuse it (docs/storage/indexing-packing.md §2).
 func (s *Service) descends(repo string, from, target model.OID) bool {
 	if from.IsZero() || target.IsZero() || from == target {
 		return from == target
@@ -226,7 +226,7 @@ func (s *Service) descends(repo string, from, target model.OID) bool {
 	return false
 }
 
-// --- root view: linear weave (docs/02 §13) ---
+// --- root view: linear weave (docs/design/data-model.md §13) ---
 
 type weaveEntry struct {
 	kind  int
@@ -262,7 +262,7 @@ func (h *entryHeap) Pop() any {
 	return e
 }
 
-// RootTip materializes the root view head: weave over scope "" (docs/02 §13).
+// RootTip materializes the root view head: weave over scope "" (docs/design/data-model.md §13).
 func (s *Service) RootTip(ctx context.Context, repo, branch string) (model.OID, error) {
 	s.Objects.BeginSynthBatch(repo)
 	defer s.Objects.EndSynthBatch(repo)
@@ -333,7 +333,7 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 		kindGraft = 1
 	)
 	entries := map[model.OID]*weaveEntry{}
-	// Provenance-embedded sources (docs/02 §13): every visited input commit
+	// Provenance-embedded sources (docs/design/data-model.md §13): every visited input commit
 	// records which source commit it folds (banyan-woven-from). After
 	// ResetWoven the per-source markers are gone, but the root-local spine
 	// carries the weave's own outputs — clients commit on woven tips — so
@@ -442,7 +442,7 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 		reachable(ss.head, stop, func(oid model.OID) { addEntry(oid, kind, rel) })
 	}
 
-	// Rewrite-space append anchor (docs/02 §13): the persisted woven tip.
+	// Rewrite-space append anchor (docs/design/data-model.md §13): the persisted woven tip.
 	// Already-folded sources are excluded by their per-source markers above
 	// (source space); prevWoven only anchors the fold OUTPUT so appends stay
 	// prefix-stable (arrival order, immune to commit-timestamp ties).
@@ -570,8 +570,8 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 
 	if !last.IsZero() && last != prevWoven {
 		// Durability before visibility: the woven tip's synthetics must be
-		// registered before the head CAS commits them (docs/10 registration
-		// is the fact; docs/11 P0-2 batching flush point). A failed flush
+		// registered before the head CAS commits them (docs/storage/ha.md registration
+		// is the fact; docs/operations/performance.md P0-2 batching flush point). A failed flush
 		// defers the anchor rather than failing the read: weave synthetics
 		// are deterministically re-derived, so the next materialization
 		// retries both — advancing a persistent anchor past unpersisted
@@ -596,7 +596,7 @@ func (s *Service) weave(ctx context.Context, repo, branch string, scope model.An
 	return last, nil
 }
 
-// ResetWoven deletes the whole /.woven family for one branch (docs/04 §6a
+// ResetWoven deletes the whole /.woven family for one branch (docs/gateway/git-compat.md §6a
 // force-push rollback). After a timeline is force-moved backward, the
 // persisted anchors and per-source markers no longer describe the new
 // source chains — and the anti-regress skips they feed (prevWoven prefix,
@@ -712,7 +712,7 @@ func mergeStop(stop map[model.OID]bool, extra map[model.OID]bool) {
 // this tree. Cross-view rewrites of one change carry identical trees, so a
 // graft whose tree is known carries nothing new to this view. The reverse
 // tree→commits index turns the full-history scan into a candidate lookup +
-// generation-pruned ancestry checks (docs/09 §2); warming via Generation
+// generation-pruned ancestry checks (docs/storage/indexing-packing.md §2); warming via Generation
 // backfills the index over from's whole ancestry first, so no candidate in
 // that ancestry can be missed. Exported for the receive-pack staleness guard.
 func (s *Service) TreeKnown(repo string, from, tree model.OID) bool {

@@ -1,4 +1,4 @@
-// T72 — server-side backups (docs/19). BackupRepository writes a bundle, a
+// T72 — server-side backups (docs/integration/gitaly-compat.md). BackupRepository writes a bundle, a
 // refs file and the custom-hooks tarball into the sink (upstream's key
 // layout on a local directory); RestoreRepository rebuilds a removed repo
 // from those bytes — the oracle is a git clone of the restored repo

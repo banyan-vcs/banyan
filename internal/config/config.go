@@ -3,7 +3,7 @@
 // Strict YAML decoding (unknown keys are errors) plus cross-field validation
 // keep the effective configuration consistent and observable.
 //
-// Roles (docs/10 §2): all-in-one (default) runs everything in one process;
+// Roles (docs/storage/ha.md §2): all-in-one (default) runs everything in one process;
 // cluster deployments split into gateway / refs / storage processes.
 package config
 
@@ -52,28 +52,28 @@ type Config struct {
 	Auth struct {
 		// Remote selects cluster mode on the gateway role: decisions run
 		// against the policy snapshot synced from the refs service
-		// (docs/07 §4).
+		// (docs/gateway/authorization.md §4).
 		Remote bool
-		// Upstream selects console-fronted mode (docs/17): the banyans
+		// Upstream selects console-fronted mode (docs/web/console.md): the banyans
 		// control plane authenticates clients and vouches for them via the
 		// signed identity header; rules arrive as policy snapshot v2. The
 		// user table and credentials never reach this process.
 		Upstream       string `yaml:"upstream"`        // console base URL
 		UpstreamSecret string `yaml:"upstream_secret"` // shared HMAC key
-		// GitLabSSO selects GitLab token authentication (docs/20): the base
+		// GitLabSSO selects GitLab token authentication (docs/integration/gitlab-integration.md): the base
 		// URL of the GitLab instance whose OAuth2/PAT tokens gate this
 		// server's HTTP face — identity and instance-admin status come from
 		// GET <url>/api/v4/user (fail-closed). Mutually exclusive with the
 		// user table and the console.
 		GitLabSSO string `yaml:"gitlab_sso"`
-		// OAuth lists several trusted token issuers at once (docs/07 §8d):
+		// OAuth lists several trusted token issuers at once (docs/gateway/authorization.md §8d):
 		// GitLab instances, github.com or a GitHub Enterprise host. A
 		// presented token is validated against the providers in order —
 		// the multi-provider generalisation of gitlab_sso, which folds
 		// into this list as {id: gitlab}. Mutually exclusive with the user
 		// table, the console and remote mode.
 		OAuth []OAuthProvider `yaml:"oauth"`
-		// Users enables the demo authorization policy (docs/07): HTTP Basic
+		// Users enables the demo authorization policy (docs/gateway/authorization.md): HTTP Basic
 		// against this static table; absent = authorization off.
 		Users  map[string]string `yaml:"users"`
 		Admins []string          `yaml:"admins"`
@@ -83,18 +83,18 @@ type Config struct {
 		// users (directory granularity).
 		SubtreeAccess map[string][]string `yaml:"subtree_access"`
 		// Keys are per-user SSH authorized keys (authorized_keys-style lines)
-		// for the git-over-SSH transport (docs/07 §7).
+		// for the git-over-SSH transport (docs/gateway/authorization.md §7).
 		Keys map[string][]string `yaml:"keys"`
 	} `yaml:"auth"`
 
-	// SSH configures the git-over-SSH transport (docs/04 §7b): absent listen
+	// SSH configures the git-over-SSH transport (docs/gateway/git-compat.md §7b): absent listen
 	// keeps the transport off.
 	SSH struct {
 		Listen  string `yaml:"listen"`   // e.g. "0.0.0.0:8022"
 		HostKey string `yaml:"host_key"` // PEM private key; default: <root>/ssh_host_ed25519_key (generated on first boot)
 	} `yaml:"ssh"`
 
-	// Storage configures storage addressing (docs/03 §6).
+	// Storage configures storage addressing (docs/storage/storage.md §6).
 	Storage struct {
 		// Mode selects how a repo name maps onto storage: "named" (default,
 		// readable directories; renames move data) or "hashed" (opaque
@@ -104,7 +104,7 @@ type Config struct {
 	} `yaml:"storage"`
 
 	// Workflow configures the M4 directory-level collaboration semantics
-	// (docs/15).
+	// (docs/design/workflow.md).
 	Workflow struct {
 		// Convergence: "auto" (default — divergent same-directory pushes
 		// converge server-side, pure-Go merge-ort subset; conflicts reject
@@ -113,7 +113,7 @@ type Config struct {
 		Convergence string `yaml:"convergence"`
 	} `yaml:"workflow"`
 
-	// Gitaly configures the gitaly-protocol gRPC frontend (docs/19): a
+	// Gitaly configures the gitaly-protocol gRPC frontend (docs/integration/gitaly-compat.md): a
 	// GitLab Rails/workhorse stack pointed at this node instead of a stock
 	// gitaly. Absent listen keeps the frontend off; the token is the shared
 	// bearer credential frontends authenticate with.
@@ -124,7 +124,7 @@ type Config struct {
 		ReportedVersion string `yaml:"reported_version"` // ServerInfo server_version; default the vendored protocol (19.5.2)
 		// GitLab roots the post-receive adapter: pushes carrying a platform
 		// identity notify Rails' internal API (events/pipelines/cache expiry,
-		// docs/20 §2). Absent url keeps the adapter off.
+		// docs/integration/gitlab-integration.md §2). Absent url keeps the adapter off.
 		GitLab struct {
 			URL        string `yaml:"url"`         // GitLab base URL (Rails behind nginx) as reachable from banyan
 			SecretPath string `yaml:"secret_path"` // GitLab's gitlab_shell_secret file (shared trust)
@@ -138,13 +138,13 @@ type Config struct {
 	Dev bool `yaml:"dev"`
 
 	Cache struct {
-		// PackDir enables the gateway's on-disk pack cache (docs/11 P2-1):
+		// PackDir enables the gateway's on-disk pack cache (docs/operations/performance.md P2-1):
 		// packs fetched from storage nodes persist across gateway restarts.
 		PackDir   string `yaml:"pack_dir"`
 		PackMaxMB int    `yaml:"pack_max_mb"` // default 1024
 	} `yaml:"cache"`
 
-	// Debug configures the ops plane (docs/05 §6): an auxiliary listener
+	// Debug configures the ops plane (docs/gateway/service-api.md §6): an auxiliary listener
 	// with the pprof family, a runtime snapshot (/debug/stats) and the
 	// expvar serve-path counters (/debug/vars). Absent pprof_addr keeps
 	// the whole plane off — it must never ride the public git/API port.
@@ -154,12 +154,12 @@ type Config struct {
 		BlockProfileRateNs   int    `yaml:"block_profile_rate_ns"`  // runtime.SetBlockProfileRate (ns); 0 = off — rates below ~10µs cost real throughput
 	} `yaml:"debug"`
 
-	// FullCloneMaxBytes is the repo-scale budget for full clones (docs/11
+	// FullCloneMaxBytes is the repo-scale budget for full clones (docs/operations/performance.md
 	// §6): at or above it the gateway rejects clone-shaped fetches and
 	// points the client at partial/shallow clones. Default 100 GiB;
 	// -1 disables. Repo size is served at /api/v1/repos/<repo>/size.
 	//
-	// Receive hooks (docs/04 §7) need no config here: registrations live in
+	// Receive hooks (docs/gateway/git-compat.md §7) need no config here: registrations live in
 	// the metadata plane via /api/v1/repos/<repo>/hooks.
 	FullCloneMaxBytes int64 `yaml:"full_clone_max_bytes"`
 }
@@ -196,13 +196,13 @@ func Load(args []string) (*Config, error) {
 	initRepo := fs.String("init-repo", defaults.InitRepo, "repo name to create at startup (optional)")
 	metaBackend := fs.String("meta", defaults.MetaBackend, `metadata backend: postgres (production default for all-in-one/refs) | mysql | sqlite (file) | mem (dev default; -dev)`)
 	dbPath := fs.String("db", defaults.DBPath, "sqlite database path for -meta sqlite (default <root>/banyan.db)")
-	role := fs.String("role", defaults.Role, `deployment role: all-in-one (default) | gateway | refs | storage (docs/10)`)
+	role := fs.String("role", defaults.Role, `deployment role: all-in-one (default) | gateway | refs | storage (docs/storage/ha.md)`)
 	nodeID := fs.String("node-id", defaults.NodeID, "storage role: cluster node identity")
 	advertise := fs.String("advertise", defaults.Advertise, "storage role: address other roles dial (host:port; default 127.0.0.1:<listen port>)")
 	refsAddr := fs.String("refs-addr", defaults.RefsAddr, "refs service address (gateway/storage roles)")
 	defaultR := fs.Int("default-replicas", defaults.DefaultR, "cluster default replica target per repo")
 	writeAcks := fs.String("write-acks", defaults.WriteAcks, `write acknowledgements: quorum (default) | all | one`)
-	suspect := fs.Int("health-suspect-sec", defaults.SuspectSec, "node suspect threshold in seconds (docs/10 §8.1)")
+	suspect := fs.Int("health-suspect-sec", defaults.SuspectSec, "node suspect threshold in seconds (docs/storage/ha.md §8.1)")
 	dead := fs.Int("health-dead-sec", defaults.DeadSec, "node dead threshold in seconds")
 	reconSec := fs.Int("recon-interval-sec", defaults.ReconSec, "reconciler interval in seconds")
 	reconCur := fs.Int("recon-concurrency", defaults.ReconCurrency, "reconciler parallel pack copies")

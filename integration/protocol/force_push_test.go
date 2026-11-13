@@ -138,7 +138,7 @@ func TestForcePushRevivalRecovery(t *testing.T) {
 	support.FsckClean(t, fresh)
 }
 
-// Root-view force push (docs/04 §6b): the root repo is the verbatim-chain
+// Root-view force push (docs/gateway/git-compat.md §6b): the root repo is the verbatim-chain
 // compatibility layer, so the push itself stays git-native — no rollback
 // guard refuses it. But the woven view cannot rewind either: materialized
 // content is monotonic across the /.woven fold (a rewound root-local chain

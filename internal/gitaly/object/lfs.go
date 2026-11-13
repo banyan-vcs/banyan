@@ -12,7 +12,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// LFS pointers (docs/19). A pointer is a tiny text blob naming the LFS spec
+// LFS pointers (docs/integration/gitaly-compat.md). A pointer is a tiny text blob naming the LFS spec
 // with oid/size lines carrying the big object's identity. Upstream gates
 // candidates at 200 bytes before parsing and silently drops non-pointer
 // objects (internal/git/lfs.go + service/blob/lfs_pointers.go, v19.5.2).

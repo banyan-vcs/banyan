@@ -1,6 +1,6 @@
 package meta
 
-// The SQL MetaStore, shared by every backend dialect (docs/03 §2, HA-2):
+// The SQL MetaStore, shared by every backend dialect (docs/storage/storage.md §2, HA-2):
 // SQLite for the single-binary default, MySQL and PostgreSQL for cluster
 // deployments where the metadata plane's HA is the database ecosystem's to
 // provide (v0.3 design: consensus stays in the control plane's store, packs
@@ -396,7 +396,7 @@ func ddlPostgres() []string {
 	}
 }
 
-// SQLMetaStore persists all MetaStore state in one SQL database (docs/03
+// SQLMetaStore persists all MetaStore state in one SQL database (docs/storage/storage.md
 // §2.3). Immutable tables (packs, objects) insert-ignore — first writer
 // wins; the head CAS runs on a dedicated connection inside a write
 // transaction, the linearization point for ref updates.
@@ -536,7 +536,7 @@ func (s *SQLMetaStore) ddl() []string {
 	return append(base, s.tokensDDL(), s.subtreeRulesDDL())
 }
 
-// subtreeRulesDDL is the runtime directory-access-rule table (docs/07 §8)
+// subtreeRulesDDL is the runtime directory-access-rule table (docs/gateway/authorization.md §8)
 // in this backend's dialect — column names avoid MySQL reserved words.
 func (s *SQLMetaStore) subtreeRulesDDL() string {
 	switch s.d.name {
@@ -564,7 +564,7 @@ func (s *SQLMetaStore) subtreeRulesDDL() string {
 	}
 }
 
-// tokensDDL is the personal-access-token table (docs/07 §6) in this
+// tokensDDL is the personal-access-token table (docs/gateway/authorization.md §6) in this
 // backend's dialect — column names avoid MySQL reserved words.
 func (s *SQLMetaStore) tokensDDL() string {
 	switch s.d.name {
@@ -654,7 +654,7 @@ func (s *SQLMetaStore) CreateRepo(ctx context.Context, repo string, algo model.H
 	if err := s.fenceReject(ctx, repo); err != nil {
 		return err
 	}
-	// Rename tombstone (docs/03 §6b): a name retired by a rename must not
+	// Rename tombstone (docs/storage/storage.md §6b): a name retired by a rename must not
 	// be resurrected — a late push or auto-create under the dead name would
 	// ack into a fresh, disconnected repository (confirmed-but-invisible).
 	var dst string
@@ -675,7 +675,7 @@ func (s *SQLMetaStore) CreateRepo(ctx context.Context, repo string, algo model.H
 	return err
 }
 
-// BeginRename installs the fence row (docs/03 §6b): fail-fast checks —
+// BeginRename installs the fence row (docs/storage/storage.md §6b): fail-fast checks —
 // source exists, target free, no overlapping fence — run here so a doomed
 // rename never blocks the repo.
 func (s *SQLMetaStore) BeginRename(ctx context.Context, from, to string) error {
@@ -950,7 +950,7 @@ func (s *SQLMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	return out, rows.Err()
 }
 
-// RenameRepo moves every repo-keyed row in one transaction (docs/03 §6).
+// RenameRepo moves every repo-keyed row in one transaction (docs/storage/storage.md §6).
 // The storage_id column rides along untouched — hashed addressing keys stay
 // stable across renames by construction.
 func (s *SQLMetaStore) RenameRepo(ctx context.Context, from, to string) error {
@@ -1233,7 +1233,7 @@ func (s *SQLMetaStore) DropPack(ctx context.Context, repo string, packOID model.
 	return done()
 }
 
-// SetPackNodes atomically replaces the holder set (reconciler swap, docs/10 §8.3).
+// SetPackNodes atomically replaces the holder set (reconciler swap, docs/storage/ha.md §8.3).
 func (s *SQLMetaStore) SetPackNodes(ctx context.Context, repo string, packOID model.OID, nodes []string) error {
 	var one string
 	err := s.db.QueryRowContext(ctx, s.q(
@@ -1464,7 +1464,7 @@ func (s *SQLMetaStore) EnsureTimeline(ctx context.Context, tl model.Timeline, he
 }
 
 // SetTimelineBase advances an existing timeline's fork point (explicit-rebase
-// bookkeeping, docs/02 §12). RowsAffected distinguishes the unknown-timeline
+// bookkeeping, docs/design/data-model.md §12). RowsAffected distinguishes the unknown-timeline
 // rejection across all three dialects.
 func (s *SQLMetaStore) SetTimelineBase(ctx context.Context, tl model.Timeline, base model.OID) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1531,7 +1531,7 @@ func (s *SQLMetaStore) ListAllTimelines(ctx context.Context, repo string) ([]mod
 // Backup writes a consistent snapshot of a SQLite metadata database to path
 // (VACUUM INTO — online, readers and the writer keep running). MySQL and
 // PostgreSQL deployments take their backups with the database ecosystem's
-// own tooling — that HA is theirs to provide (docs/10).
+// own tooling — that HA is theirs to provide (docs/storage/ha.md).
 func (s *SQLMetaStore) Backup(path string) error {
 	if s.d.name != "sqlite" {
 		return fmt.Errorf("meta backup: backend %s — use the database's own backup tooling", s.d.name)

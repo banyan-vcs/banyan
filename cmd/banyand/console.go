@@ -1,4 +1,4 @@
-// console.go — `banyand console`: the product-side control plane (docs/17),
+// console.go — `banyand console`: the product-side control plane (docs/web/console.md),
 // formerly the standalone banyans binary. It owns users, tokens, the logical
 // repository tree ({group}/{project}[/path]) and the member/permission model
 // in its own database, fronts all git and management traffic, and hands the

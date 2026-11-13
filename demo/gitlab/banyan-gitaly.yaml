@@ -1,16 +1,16 @@
-# banyan as a Gitaly storage node for GitLab-CE (docs/19): metadata-plane
+# banyan as a Gitaly storage node for GitLab-CE (docs/integration/gitaly-compat.md): metadata-plane
 # SQLite + local shards, and the gitaly gRPC frontend that Rails/workhorse
 # point at (the token and storage_name below must match gitlab.rb's
 # git_data_dirs entry). Authorization stays in the front end — token
-# 之后全信 is the gitaly trust model (docs/19 §3).
+# 之后全信 is the gitaly trust model (docs/integration/gitaly-compat.md §3).
 listen: "0.0.0.0:8080"
 root: "/var/lib/banyan"
 meta: sqlite
 
-# GitLab SSO gates banyan's own HTTP face (docs/07 §8c): GitLab-issued
+# GitLab SSO gates banyan's own HTTP face (docs/gateway/authorization.md §8c): GitLab-issued
 # tokens (OAuth2 / PAT) authenticate — identity and instance-admin status
 # come from GET /api/v4/user (fail-closed). Runtime subtree access rules
-# (docs/07 §8c) load on top automatically.
+# (docs/gateway/authorization.md §8c) load on top automatically.
 auth:
   gitlab_sso: "http://banyan-gitlab-ce:8180"
 

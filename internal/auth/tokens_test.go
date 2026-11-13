@@ -52,7 +52,7 @@ func TestTokenPolicyIdentify(t *testing.T) {
 	}
 	// The CI-job shape (any username, token as password) is rejected like
 	// the console rejects it: a non-empty username must match the owner
-	// (docs/17 §4) — CI jobs mint their own per-user token.
+	// (docs/web/console.md §4) — CI jobs mint their own per-user token.
 	if id := p.Identify(tokenRequest(t, "oauth2", read)); !id.Anonymous() {
 		t.Fatalf("ci shape = %+v, want anonymous (owner mismatch)", id)
 	}

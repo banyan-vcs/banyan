@@ -1,4 +1,4 @@
-// Runtime subtree access rules in the metadata plane (docs/07 §8): per-repo
+// Runtime subtree access rules in the metadata plane (docs/gateway/authorization.md §8): per-repo
 // per-directory allowlists managed through the management API, unlike the
 // YAML auth.subtree_access seed which is boot-time only. SubtreeRuleStore is
 // deliberately NOT part of the MetaStore composite (the TokenRegistry

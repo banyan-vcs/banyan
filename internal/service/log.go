@@ -7,10 +7,10 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Log is the server-side history query (docs/02 §10): post-order DFS over
+// Log is the server-side history query (docs/design/data-model.md §10): post-order DFS over
 // the unified DAG — hashes match the git view exactly; path filtering is
 // query semantics only ("problem queries are RPCs"). Moved here from
-// the rpc handler (docs/05 §6) so every frontend shares one implementation.
+// the rpc handler (docs/gateway/service-api.md §6) so every frontend shares one implementation.
 type LogEntry struct {
 	OID     string `json:"oid"`
 	Subject string `json:"subject"`
@@ -63,7 +63,7 @@ func (s *Service) Log(ctx context.Context, repo, rev string, from model.OID, pat
 	subMemo := map[model.OID]model.OID{}
 	// xview normalizes any commit's tree to the X view: a whole-repo tree maps
 	// to its subtree at path; a tree lacking path's first segment is itself
-	// the X-view root tree (subtree-side commit / view tip) — docs/02 §10.
+	// the X-view root tree (subtree-side commit / view tip) — docs/design/data-model.md §10.
 	xview := func(tree model.OID) model.OID {
 		if v, ok := subMemo[tree]; ok {
 			return v

@@ -1,5 +1,5 @@
 // hooks_test.go — T47: receive hooks as a metadata-plane registry with
-// HTTP-callback evaluation (docs/04 §7): registrations go through
+// HTTP-callback evaluation (docs/gateway/git-compat.md §7): registrations go through
 // /api/v1/repos/<repo>/hooks (every gateway sees the same hooks — no
 // gateway-local files); the serving gateway POSTs one JSON payload per
 // matching hook (most specific directory first) and 2xx allows, anything

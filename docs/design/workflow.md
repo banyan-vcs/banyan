@@ -1,9 +1,9 @@
-# 15 · 目录级高并发协作（M4 设计，v2 定稿）
+# 目录级高并发协作（M4 设计，v2 定稿）
 
 > 2026-10-25 v2，取代同日初稿（refs 票据方案——经 §1 论证弃用）。
 > 本稿基于代码实证：守卫语义（adoptSubtreePush/sameXView）、时间线
 > CAS 路径、提交合成机械（service.CreateCommit / model.ReplaceSubtree）、
-> T18 恢复路径。动机不变：docs/00 问题链最后一环——Agent 分钟级并发。
+> T18 恢复路径。动机不变：docs/design/overview.md 问题链最后一环——Agent 分钟级并发。
 > 客户端零协议改动。
 
 ## 0. 问题的精确形态（代码实证）
@@ -30,7 +30,7 @@
 | D 异步 change-request 状态机（tekeburak land worker 形态） | push 入库为 CR，后台 land，客户端查询状态 | 需持久状态机+新查询协议 | 好 | — | 最高（可投机流水线） | 高（协议扩展） | **v2 演进**：同步语义先行，D 在其上加流水线 |
 | E 客户端引导重试（现状） | 拒绝+客户端 rebase | 已验证 | — | — | 差（每失败一往返） | 0 | 基线 |
 
-选型判据：网关无状态承诺（docs/10 §2）、git 协议零改动、崩溃安全=CAS
+选型判据：网关无状态承诺（docs/storage/ha.md §2）、git 协议零改动、崩溃安全=CAS
 兜底、无竞争路径零开销、refs **零改动**。→ **B**。
 
 ## 2. 方案 B 设计
@@ -74,7 +74,7 @@ CAS 失败（他网关先落地）→ 取新 tip 重放（**服务端**重试，
   消失——**advisory**，不构成正确性依赖；
 - refs 重启：CAS 语义不变，兜底如故；
 - 合成对象先注册后 CAS：崩溃窗口=无害孤儿（与 push 两步语义一致，
-  docs/10 v1 偏差同款）。
+  docs/storage/ha.md v1 偏差同款）。
 
 ### 2.5 性能模型（量化）
 
@@ -105,7 +105,7 @@ bench 场景 **agent-burst**：8/32/128 并发同目录，单网关与多网关�
 > git 客户端对顺序性非 FF push 在发送前就自行拒绝（"fetch first"），
 > 到不了服务端——收敛的真实作用面是**并发竞争窗口**（广告已取、他人
 > 落地在即），T41 的 8 并发突发正是该形态；顺序分歧语义用 rawPush 直
-> 钉 wire。**fast path 回滚守卫**（T43，docs/04 §6a）：force push 的
+> 钉 wire。**fast path 回滚守卫**（T43，docs/gateway/git-compat.md §6a）：force push 的
 > old 恒=广告值，回滚/重写形态会被 fast path 误判为连续 push 绕过列车
 > ——new 链内容前向校验（Descends/sameXView/TreeKnown 三形态）封死，
 > rawPush 伪造 old 形态则由收敛重放天然免疫（三方 base=客户端基底，
@@ -121,14 +121,14 @@ M4.3  收敛 merge train（路径级合并 + 冲突隔离 + OCC 环；默认开�
 M4.4  指标 + agent-burst 场景 + SLO 门
 ```
 
-## 4. 测试计划（docs/13 约定）
+## 4. 测试计划（docs/operations/testing.md 约定）
 
 | # | 用例 | 防回归点 |
 |---|---|---|
 | T41 | 8 客户端并发同目录：全部落地、FIFO 有序、零拒绝、一次 CAS（计数断言） | 批队列正确性 |
 | T42 | 收敛语义：不同文件自动合并（内容逐文件断言）；同文件冲突 ng 隔离、后续票继续；收敛链可再被客户端 rebase 续推（T18 交叉） | merge train |
-| T43 | **已用于 force push 回滚守卫**（docs/04 §6a——fast path 的内容前向校验，回滚形态 force push 拒绝 + 恢复路线 + 根视图单调） | 回滚守卫 |
-| T44 | **已用于仓库级 force push 开关**（docs/04 §6a——opt-in 回滚落地 + /.woven 重置重织、祖先视图 commits 重建） | 受控回滚 |
+| T43 | **已用于 force push 回滚守卫**（docs/gateway/git-compat.md §6a——fast path 的内容前向校验，回滚形态 force push 拒绝 + 恢复路线 + 根视图单调） | 回滚守卫 |
+| T44 | **已用于仓库级 force push 开关**（docs/gateway/git-compat.md §6a——opt-in 回滚落地 + /.woven 重置重织、祖先视图 commits 重建） | 受控回滚 |
 | T45 | 队满 backpressure / 超时 busy / 网关重启（队列消失）后客户端重试仍正确 | 边界与崩溃 |
 | T46 | 4 目录 × 8 并发混合：吞吐与单目录对照不降 | 跨目录零干扰 |
 | T47 | 双网关拓扑同时批：最终一致、零客户端拒绝（OCC 环） | 跨网关 |

@@ -1,5 +1,5 @@
 // sync_test.go — T93: banyan sync, the explicit subtree→root alignment
-// (docs/02 §12 true-divergence rule, docs/06 §3.9). The server replays the
+// (docs/design/data-model.md §12 true-divergence rule, docs/client/cli.md §3.9). The server replays the
 // subtree timeline's local-only commits onto the root's current projection,
 // advances the recorded fork point (Base), and CASes the head; the CLI then
 // materializes via the ordinary pull. Cross-verified by a real git clone:

@@ -12,7 +12,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/gitalypb"
 )
 
-// The praefect family answers cluster-of-one (docs/19): one storage, one
+// The praefect family answers cluster-of-one (docs/integration/gitaly-compat.md): one storage, one
 // primary, one healthy replica, no dataloss, one-replica transactions that
 // always commit, and per-repo partitions whose backup name derives from
 // the repository checksum.

@@ -10,7 +10,7 @@ import (
 )
 
 // Process-wide serve-path counters, published via expvar (ops plane
-// /debug/vars, docs/05 §6 / docs/11). Package-level on purpose: expvar
+// /debug/vars, docs/gateway/service-api.md §6 / docs/operations/performance.md). Package-level on purpose: expvar
 // panics on duplicate names and one process — tests included — may host
 // many Server instances; they share the counters, which is the honest
 // accounting anyway (a process serves what it serves).

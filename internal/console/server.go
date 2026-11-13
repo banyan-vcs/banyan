@@ -15,7 +15,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/auth"
 )
 
-// Server is the product-side control plane (docs/17 §6): the management API,
+// Server is the product-side control plane (docs/web/console.md §6): the management API,
 // the git-traffic front (logical {group}/{project}[/path] routing with a
 // signed identity handed to the gateway), and the policy snapshot the
 // gateway syncs. It never touches gateway metadata directly — project
@@ -113,7 +113,7 @@ func requireAuth(w http.ResponseWriter, r *http.Request, u User) bool {
 	return true
 }
 
-// --- management API (docs/17 §6) ---
+// --- management API (docs/web/console.md §6) ---
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/")

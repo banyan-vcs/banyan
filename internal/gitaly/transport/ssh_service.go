@@ -17,7 +17,7 @@ import (
 // services run as bidirectional sessions — stdin chunks stream in, stdout
 // chunks stream back out, the exit status rides the final message (the
 // workhorse git-over-SSH shape). The sidechannel upload variant moves the
-// session onto a yamux stream (docs/19 §5).
+// session onto a yamux stream (docs/integration/gitaly-compat.md §5).
 type sshService struct {
 	gitalypb.UnimplementedSSHServiceServer
 	*kit.Base

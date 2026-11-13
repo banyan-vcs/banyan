@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite" // pure-Go driver, no cgo (AGENTS.md)
 )
 
-// DB is the console's own sqlite store (docs/17 §3). It is deliberately
+// DB is the console's own sqlite store (docs/web/console.md §3). It is deliberately
 // portable SQL — the HA-2 graduation path is Postgres, so no
 // sqlite-specific behavior beyond the driver pragmas.
 type DB struct {
@@ -378,7 +378,7 @@ func (n *Node) ProtectedBranches() []string {
 }
 
 // Archive soft-deletes a project (and its subprojects): routing stops
-// resolving it, the physical repo is left untouched (docs/17 §6).
+// resolving it, the physical repo is left untouched (docs/web/console.md §6).
 func (d *DB) ArchiveProject(ctx context.Context, id int64) error {
 	if _, err := d.sql.ExecContext(ctx,
 		`UPDATE nodes SET archived=1 WHERE id=? OR (kind='dir' AND parent_id=?)`, id, id); err != nil {

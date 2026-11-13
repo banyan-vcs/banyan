@@ -1,4 +1,4 @@
-// T89/T90 — the subtree management control plane (docs/07 §8, docs/20
+// T89/T90 — the subtree management control plane (docs/gateway/authorization.md §8, docs/integration/gitlab-integration.md
 // §"子树管理控制面"): the /api/v1/subtrees listing (which directory
 // timelines exist, their last commits, which carry a projection ref) and
 // the runtime subtree-access rules (fetch AND push gated by a metadata-plane
@@ -243,7 +243,7 @@ func TestT90SubtreeAccessRules(t *testing.T) {
 	assert.Equal(t, "the plan\n", support.ReadFile(t, filepath.Join(fresh, "plan.txt")), "alice passes the allowlist")
 
 	// The root anchor stays open — the documented boundary: a subtree rule
-	// can never hide content from a shallower anchor (docs/17).
+	// can never hide content from a shallower anchor (docs/web/console.md).
 	home := support.CloneRepo(t, s, bob("/r/t90.git"))
 	assert.Equal(t, "the plan\n", support.ReadFile(t, filepath.Join(home, "secret", "plan.txt")),
 		"root clone serves the full closure (registered boundary)")

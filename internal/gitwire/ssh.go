@@ -1,6 +1,6 @@
-// git-over-SSH transport (docs/04 §7b): the native git transport shape — one
+// git-over-SSH transport (docs/gateway/git-compat.md §7b): the native git transport shape — one
 // connection authenticates with a public key (mapped to a user at the
-// auth.Service seam, docs/07 §7), then execs a git service over a session
+// auth.Service seam, docs/gateway/authorization.md §7), then execs a git service over a session
 // channel:
 //
 //	env GIT_PROTOCOL version=2      ← client SendEnv (v2 negotiation)
@@ -172,7 +172,7 @@ func (s *Server) serveGitExec(ch ssh.Channel, id auth.Identity, protocol, payloa
 
 // ServeSSHSession runs one git service session over plain byte streams — the
 // exec-payload-free form frontends without an SSH daemon use (gitaly
-// SSHService, docs/19). path is the repository path as the exec payload
+// SSHService, docs/integration/gitaly-compat.md). path is the repository path as the exec payload
 // would carry it ("<repo>[.git][/tree/…]"); gitProtocol mirrors the
 // GIT_PROTOCOL env ("version=2" selects protocol v2). gl carries the
 // platform identity (GitLab's SSHReceivePackRequest sets GlId/GlRepository)

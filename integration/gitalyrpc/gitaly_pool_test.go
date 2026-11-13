@@ -1,4 +1,4 @@
-// T74 — object pools and internal metadata (docs/19). The pool is created
+// T74 — object pools and internal metadata (docs/integration/gitaly-compat.md). The pool is created
 // from the origin's closure, linked members materialize the shared objects
 // (banyan's alternates equivalent), GetObjectPool answers the registry, and
 // the InternalGitaly pool-metadata RPCs walk the same records. The oracle

@@ -1,4 +1,4 @@
-// T65 — user-facing merge surface (docs/19): UserMergeBranch, UserMergeToRef,
+// T65 — user-facing merge surface (docs/integration/gitaly-compat.md): UserMergeBranch, UserMergeToRef,
 // UserSquash, UserCherryPick and UserRevert, verified against git's own
 // merge machinery — merge-tree --write-tree for the merged tree, real
 // cherry-pick/revert in a local clone for the applied changes.

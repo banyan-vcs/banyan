@@ -18,7 +18,7 @@ import (
 )
 
 // CleanupService: history rewrite in pure Go — no git-filter-repo(1)
-// subprocess (docs/19). RewriteHistory rebuilds every commit whose tree or
+// subprocess (docs/integration/gitaly-compat.md). RewriteHistory rebuilds every commit whose tree or
 // parents change: blobs named by OID are stripped, redaction patterns are
 // replaced with "***REMOVED***" (literal and regex forms, the subset that
 // covers GitLab's redaction payloads), and every ref is re-pointed at the
@@ -211,7 +211,7 @@ func (cs *cleanupService) rewriteRepo(ctx context.Context, repo string, blobs []
 		}
 		// The rewritten history is disjoint from the old one. Force-updating
 		// the ref alone would keep weaving the old chain in as ancestry
-		// (docs/04 §6a); the timeline is dropped and recreated at the new
+		// (docs/gateway/git-compat.md §6a); the timeline is dropped and recreated at the new
 		// tip and the branch's woven family reset, so the advertised
 		// history contains rewritten commits only. Old objects stay in
 		// storage for garbage collection — like upstream.
@@ -223,7 +223,7 @@ func (cs *cleanupService) rewriteRepo(ctx context.Context, repo string, blobs []
 		}
 	}
 	// Re-derive every affected branch's woven view from the new source
-	// chains (the force-push rebuild, docs/04 §6a).
+	// chains (the force-push rebuild, docs/gateway/git-compat.md §6a).
 	for _, r := range refs {
 		if r.Name == "HEAD" {
 			continue

@@ -1,4 +1,4 @@
-// Package console is the product-side control plane (docs/17): users and
+// Package console is the product-side control plane (docs/web/console.md): users and
 // tokens, the logical repository tree ({group}/{project}[/path]), and the
 // member/permission model whose inheritance runs along the registered-prefix
 // chain. It owns its own database and never touches gateway metadata; the
@@ -12,7 +12,7 @@ import (
 )
 
 // Role is a membership role. The rank order fixes the aggregation: along an
-// inheritance chain roles only ever add up (docs/17 §4 — anchor-granularity
+// inheritance chain roles only ever add up (docs/web/console.md §4 — anchor-granularity
 // access makes "child less than parent" unenforceable, so it is not offered).
 type Role string
 
@@ -77,7 +77,7 @@ const (
 	KindDir     Kind = "dir"
 )
 
-// Node is one node of the logical resource tree (docs/17 §3). Groups sit at
+// Node is one node of the logical resource tree (docs/web/console.md §3). Groups sit at
 // the root, projects under a group, and subprojects ("dirs") under a project.
 // A dir's Segment is the repo-relative path and may contain slashes: the
 // prefix chain is computed against registered nodes only, so registering

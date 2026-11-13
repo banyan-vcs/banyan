@@ -1,4 +1,4 @@
-# 06 · banyan CLI 命令设计
+# banyan CLI 命令设计
 
 > 参考 git 常用命令面梳理。本文只做命令设计，不含实现。核心立场（用户决策）：**不默认 clone 全仓，最小化下载；
 > 读操作（log/blame 等）经常性走 API，由服务端完成**。
@@ -45,7 +45,7 @@ API 直取内容寻址对象；git 客户端走 wire pack——**同一服务端
 
 clone 协商差异（对照 git 的 have/want pack 协商）：native CLI 不做协商，按树递归
 请求不可变对象——可断点续传、任意 HTTP 缓存可服务。
-pack 协商留给 git 协议面（含 have 减除，docs/09 §3.1）。
+pack 协商留给 git 协议面（含 have 减除，docs/storage/indexing-packing.md §3.1）。
 
 ### 3.2 本地与提交
 
@@ -111,7 +111,7 @@ banyan commit:
 2. POST /api/v1/objects（带 payload）上传新 blob     # 只传新内容
 3. POST /api/v1/commit {repo, sub?, base, message, changes[], author?}
    服务端：载 base 树 → 仅沿变更路径重建子树 → 新 commit 锚入目录时间线
-→ {head, root_view}    # root_view = 织入后根视图 OID（CI/webhook 定位用，docs/01 §3.2）
+→ {head, root_view}    # root_view = 织入后根视图 OID（CI/webhook 定位用，docs/design/big-picture.md §3.2）
 ```
 
 changeset 语义（"相对首父的变更清单 + 内容寻址指针"）直接落地为标准 git
@@ -131,7 +131,7 @@ changeset 语义（"相对首父的变更清单 + 内容寻址指针"）直接�
 选 JSON 而非 gRPC：联调成本低；M3 blame 大文件若需流式再升级。所有读响应带
 `ETag: <视图 head OID>`——不可变 ⇒ 浏览器/CDN/Agent 工具链可缓存。
 端点 schema 与服务层归属（httpd / Gitaly 双前端共核心）详见
-[05-service-api.md](05-service-api.md)。
+[service-api.md](../gateway/service-api.md)。
 
 ## 5. 输出约定（Agent 友好）
 
@@ -171,7 +171,7 @@ commit 即发布（changeset 服务端组装 + 目录时间线 CAS）、冲突�
 banyan import <local-repo> <url> [--branch main] [--segment-bytes 3G] [--dry-run]
 ```
 
-存量大仓迁移工具（docs/03 §5 分批导入的编排层）：把本地 git 仓库按拓扑序
+存量大仓迁移工具（docs/storage/storage.md §5 分批导入的编排层）：把本地 git 仓库按拓扑序
 切成字节预算内的段、逐段 `git push` 到 banyan——每段一次快进，服务端流式
 摄入、内存 ∝ 段大小而非仓大小；碎片在多 pack 模型下是一等公民（不 repack）。
 断点续传天然成立：重跑从远端已有 tip 起算（分叉则明确拒绝）；远端不存在
@@ -217,7 +217,7 @@ banyan stack commit [<id>]               # 逐条落台（默认全部，oldest-
 
 顺带补齐了"部分提交"：`stack push -m x -- path` 即按路径分片暂存，落台时机自
 选。边界：pop 在受影响路径当前有改动时拒绝（exit 1）；无 ignore 机制（见
-上）；条目不跨工作区（`.banyan/` 局部状态，docs/06 §2 立场）。
+上）；条目不跨工作区（`.banyan/` 局部状态，docs/client/cli.md §2 立场）。
 
 ### 3.9 子树→根显式对齐 sync（2026-11-08 落地，T93）
 
@@ -225,13 +225,13 @@ banyan stack commit [<id>]               # 逐条落台（默认全部，oldest-
 banyan sync        # 仅子树工作区；服务端重放 + 自动 pull
 ```
 
-docs/02 §12 的"真分叉 → root 侧等待显式 sync"落地：薄客户端没有历史对象，
+docs/design/data-model.md §12 的"真分叉 → root 侧等待显式 sync"落地：薄客户端没有历史对象，
 rebase 只能在服务端做——`POST /api/v1/sync`（与 commit 同推送授权门）把子树
 时间线的**本地段**（自头回溯至投影祖先=合流点；仅线性链）逐提交三方重放
 （internal/merge，与收敛列车同引擎）到根当前投影尖，先推进 Base（织入本地带
 收窄到重放段）再 CAS 时间线头，并重置 /.woven 标记族——换头=回退形，分歧期
 已折入 /.woven 的旧折痕若不清，重放 subject 会被重复折入。重放后的链正是
-push 守卫第三形态（docs/02 §13"rebase 恢复后持投影跨视图重写"）。CLI 随后走
+push 守卫第三形态（docs/design/data-model.md §13"rebase 恢复后持投影跨视图重写"）。CLI 随后走
 普通 pull 物化。
 
 判定（后裔规则同源）：本地含投影（ahead）或投影含本地（落后——pull 即 FF）

@@ -1,4 +1,4 @@
-// T63 — diff and path-scoped history surface (docs/19 slice 4): every
+// T63 — diff and path-scoped history surface (docs/integration/gitaly-compat.md slice 4): every
 // answer byte-compares or set-compares against the git CLI's own output —
 // git diff (patch body incl. index lines), --name-status, --numstat,
 // show --stat, log -- <path>, log -1 -- <path>.

@@ -1,4 +1,4 @@
-// T83 — GitLab-CE e2e over banyan storage (docs/19 §8, opt-in): a real
+// T83 — GitLab-CE e2e over banyan storage (docs/integration/gitaly-compat.md §8, opt-in): a real
 // GitLab whose only gitaly node is banyan (demo/gitlab/docker-compose.yml)
 // must take a project create (CreateRepository), an HTTP push (workhorse →
 // PostReceivePack), and the API read-backs its web UI makes (root-ref

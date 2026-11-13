@@ -1,4 +1,4 @@
-// gitlabhook.go — the post-receive → GitLab internal API adapter (docs/19
+// gitlabhook.go — the post-receive → GitLab internal API adapter (docs/integration/gitaly-compat.md
 // §8's registered open gap): when banyan is a GitLab storage node, the
 // platform's push processing (activity events, pipelines, MR-from-push,
 // repository cache expiry) lives behind /api/v4/internal/{pre,post}_receive

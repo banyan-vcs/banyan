@@ -12,7 +12,7 @@ import (
 )
 
 // Custom hooks tarball surface. banyan's executable hook plane is the HTTP
-// callback registry (docs/04 §7), not the on-disk custom_hooks tree — but
+// callback registry (docs/gateway/git-compat.md §7), not the on-disk custom_hooks tree — but
 // the tarball round-trip keeps gitaly-side backup/restore portable: Get
 // answers what was stored (empty stream when nothing was), Set/Restore
 // persist the bytes verbatim in the metadata plane.

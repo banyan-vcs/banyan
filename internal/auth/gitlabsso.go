@@ -1,4 +1,4 @@
-// GitLab token authentication as a standalone auth.Service (docs/20 §"子树
+// GitLab token authentication as a standalone auth.Service (docs/integration/gitlab-integration.md §"子树
 // 管理控制面"): when banyan sits behind a GitLab instance, the credential
 // set that already exists — GitLab OAuth2 access tokens and personal access
 // tokens — authenticates banyan's own HTTP face too. The credential rides
@@ -11,7 +11,7 @@
 // an error and never a pass — fail-closed, the same posture as the GitLab
 // /allowed policy gate. Identity is the GitLab username; instance admins
 // (is_admin) answer CanAdmin — they are the management plane for the runtime
-// subtree rules (docs/07 §8).
+// subtree rules (docs/gateway/authorization.md §8).
 //
 // The SSH seam stays anonymous on purpose: in GitLab topology git-over-SSH
 // terminates at gitlab-shell, which reaches banyan over gRPC with its own
@@ -173,7 +173,7 @@ func (p *GitLabSSO) IdentifyKey(string, []byte) Identity { return Identity{} }
 
 // VisibleRefs: passthrough — every authenticated user sees every branch
 // (GitLab's own semantics; the personal-namespace filter is the static
-// policy's demo feature, docs/07 §3).
+// policy's demo feature, docs/gateway/authorization.md §3).
 func (p *GitLabSSO) VisibleRefs(_ Identity, _ string, refs []Ref) []Ref { return refs }
 
 // CanFetch: any GitLab-validated identity.

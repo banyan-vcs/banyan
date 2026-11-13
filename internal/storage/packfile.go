@@ -16,7 +16,7 @@ import (
 )
 
 // packfile encode/decode wrapper: go-git is used purely as a codec library
-// (docs/00 base selection). Boundary rule: go-git types never leak out of the storage package.
+// (docs/design/overview.md base selection). Boundary rule: go-git types never leak out of the storage package.
 //
 // v5.13 API mapping:
 //   decode  packfile.NewScanner(r) + NewParserWithStorage(sc, storer) + Parse()
@@ -243,7 +243,7 @@ func DecodePack(raw []byte) (*DecodedPack, error) {
 }
 
 // EncodePack synthesizes a delta-free response pack from an object set
-// (docs/04 §3 step 5: small fetches stay delta-free — below the serve
+// (docs/gateway/git-compat.md §3 step 5: small fetches stay delta-free — below the serve
 // threshold the encoder cost buys nothing).
 func EncodePack(w io.Writer, blobs, trees, commits, tags map[model.OID][]byte) error {
 	return encodePackOpts(w, blobs, trees, commits, tags, 0, false)
@@ -254,9 +254,9 @@ func EncodePack(w io.Writer, blobs, trees, commits, tags map[model.OID][]byte) e
 const packWindow = 10
 
 // EncodePackDelta synthesizes a delta-encoded pack with OFS_DELTA entries
-// (git pack-objects window heuristics are the encoder library's; docs/09
+// (git pack-objects window heuristics are the encoder library's; docs/storage/indexing-packing.md
 // §3.2: repack merges fragments with deltification, the serve path deltas
-// past a size threshold — docs/11 P1-4).
+// past a size threshold — docs/operations/performance.md P1-4).
 //
 // Encoder subtlety (found while implementing P1-4): NewEncoder's third
 // parameter is useRefDeltas, NOT a delta switch — delta compression itself
@@ -353,7 +353,7 @@ func putObject(st *memStorer, t plumbing.ObjectType, oid model.OID, content []by
 
 // VerifyPackChecksum checks the SHA-1 pack trailer: the last 20 bytes must
 // equal SHA-1 over everything before them, and match the pack OID. Identity
-// equals integrity (docs/10 §3) — a cheap full-content check with no decode.
+// equals integrity (docs/storage/ha.md §3) — a cheap full-content check with no decode.
 func VerifyPackChecksum(packOID model.OID, raw []byte) bool {
 	if len(raw) < 20 {
 		return false

@@ -1,7 +1,7 @@
 // Goal: auxiliary ref namespaces (tags and any refs/<ns>/<name>) end-to-end,
 // and the repack mechanism — fragment merge with delta encoding, object
-// preservation, byte shrink, and restart survival (T20/T21, docs/04 §6,
-// docs/03 §5, docs/09 §3.2).
+// preservation, byte shrink, and restart survival (T20/T21, docs/gateway/git-compat.md §6,
+// docs/storage/storage.md §5, docs/storage/indexing-packing.md §3.2).
 package ha
 
 import (
@@ -225,7 +225,7 @@ func TestRepackRestartSurvival(t *testing.T) {
 	assert.Equal(t, len(packsBeforeRestart), len(packs), "重启不应改变 pack 布局（几何合并产物持久）")
 }
 
-// --- T31 synth batching: one weave materialization = one pack (docs/11 P0-2) ---
+// --- T31 synth batching: one weave materialization = one pack (docs/operations/performance.md P0-2) ---
 // Before batching, every synthetic (projection commits, fold rewrites) landed
 // as its own single-object pack — one weave of N objects meant N packs, and in
 // cluster mode N×(R+1) network operations. The view entries now run inside a

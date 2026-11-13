@@ -10,7 +10,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// TestExtractObjectRoundTrip pins docs/11 P1-1 (B2): every object of a
+// TestExtractObjectRoundTrip pins docs/operations/performance.md P1-1 (B2): every object of a
 // delta-encoded pack (bases AND delta entries) extracts byte-identically via
 // idx offsets, without a full-pack decode.
 func TestExtractObjectRoundTrip(t *testing.T) {

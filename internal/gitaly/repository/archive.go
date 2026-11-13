@@ -31,7 +31,7 @@ func (rs *repositoryService) GetArchive(req *gitalypb.GetArchiveRequest, stream 
 	case gitalypb.GetArchiveRequest_TAR, gitalypb.GetArchiveRequest_TAR_GZ, gitalypb.GetArchiveRequest_ZIP:
 	case gitalypb.GetArchiveRequest_TAR_BZ2:
 		// bzip2 compression has no standard-library writer; refusing
-		// beats a wrong-format answer (see docs/19 §6).
+		// beats a wrong-format answer (see docs/integration/gitaly-compat.md §6).
 		return status.Error(codes.Unimplemented, "gitaly: tar.bz2 archives need a bzip2 compressor")
 	default:
 		return status.Error(codes.InvalidArgument, "gitaly: invalid format")
@@ -62,7 +62,7 @@ func (rs *repositoryService) GetArchive(req *gitalypb.GetArchiveRequest, stream 
 	// include_lfs_blobs: GitLab's archive endpoint sends it unconditionally.
 	// Without LFS pointers in the tree the flag changes nothing — the honest
 	// refusal fires only when a pointer is present and smudging would alter
-	// the bytes (docs/19 §6).
+	// the bytes (docs/integration/gitaly-compat.md §6).
 	if req.GetIncludeLfsBlobs() {
 		has, aerr := rs.ContainsLFSPointer(ctx, name, treeOID)
 		if aerr != nil {

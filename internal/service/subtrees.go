@@ -1,4 +1,4 @@
-// Subtree listing (docs/07 §8, docs/20 §"子树管理控制面"): the management
+// Subtree listing (docs/gateway/authorization.md §8, docs/integration/gitlab-integration.md §"子树管理控制面"): the management
 // view of a repo's directory-anchored timelines — which subtrees exist,
 // their branch heads and last commits, and which carry a projection ref
 // (refs/banyan/tree/<dir>, the whole-repo-frontend recipe). The raw

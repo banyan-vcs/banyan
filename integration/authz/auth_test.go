@@ -1,4 +1,4 @@
-// Goal: the authorization surface (docs/07, M5) end to end with real git
+// Goal: the authorization surface (docs/gateway/authorization.md, M5) end to end with real git
 // clients — authentication on every wire endpoint, branch visibility
 // (personal namespaces) on both protocol versions, push guards per
 // granularity, and directory-level fetch control on subtree virtual repos
@@ -25,7 +25,7 @@ import (
 )
 
 // newAuthServer boots the stack with the demo static policy wired into the
-// git wire layer (docs/07 §2): alice/bob are developers, admin owns the
+// git wire layer (docs/gateway/authorization.md §2): alice/bob are developers, admin owns the
 // protected main, /secret is an admin-only subtree.
 func newAuthServer(t *testing.T) (*support.Server, *auth.StaticPolicy) {
 	t.Helper()
@@ -43,7 +43,7 @@ func newAuthServer(t *testing.T) (*support.Server, *auth.StaticPolicy) {
 	gw.Auth = policy
 	gw.Register(mux)
 	api := rpc.NewServer(ms, objects, model.SHA1)
-	api.Auth = policy // same wiring as the banyand demo (docs/07 §5)
+	api.Auth = policy // same wiring as the banyand demo (docs/gateway/authorization.md §5)
 	api.Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -113,7 +113,7 @@ func TestAuthorizationWire(t *testing.T) {
 	// memory store's listing is map-ordered; v2 ls-remote passes it through
 	// unsorted), and the first line is sometimes main's tip, a perfectly
 	// fetchable OID — the months-long "push-run flake" was exactly that
-	// (docs/13: the gzip-body bug masked it locally, git 2.53 unmasked it).
+	// (docs/operations/testing.md: the gzip-body bug masked it locally, git 2.53 unmasked it).
 	var hiddenTip string
 	for _, line := range strings.Split(lsAlice2, "\n") {
 		if strings.HasSuffix(strings.TrimSpace(line), "refs/heads/alice/wip") {
@@ -149,7 +149,7 @@ func TestAuthorizationWire(t *testing.T) {
 	support.FsckClean(t, fresh)
 }
 
-// TestAuthorizationRPC drives the JSON-surface policy (docs/07 §5):
+// TestAuthorizationRPC drives the JSON-surface policy (docs/gateway/authorization.md §5):
 // authentication-gated /api/v1, the login endpoint as the web tier's
 // single-source credential check, and repository creation for the
 // management page.

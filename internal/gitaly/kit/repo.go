@@ -406,7 +406,7 @@ func (s *Base) BundleClosure(ctx context.Context, repo string, refs []BundleRef)
 
 // WalkFilter carries the ListCommits/CountCommits query knobs the pure-Go
 // walk understands; unsupported knobs are ignored where upstream treats them
-// as optional, and rejected where ignoring would lie (docs/19 matrix).
+// as optional, and rejected where ignoring would lie (docs/integration/gitaly-compat.md matrix).
 type WalkFilter struct {
 	FirstParent bool
 	MaxParents  uint32

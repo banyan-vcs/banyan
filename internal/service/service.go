@@ -1,9 +1,9 @@
-// Package service is banyan's protocol-agnostic core (docs/05): the single
+// Package service is banyan's protocol-agnostic core (docs/gateway/service-api.md): the single
 // place where domain operations live. Frontends — httpd's JSON RPC (rpc),
 // Gitaly gRPC (planned) and gitwire's smart HTTP — stay thin (parse, auth,
 // serialize) and depend only on this layer; protocol types never appear here.
 //
-// Write-path invariant (docs/05 §2): "publish" (append a commit to a
+// Write-path invariant (docs/gateway/service-api.md §2): "publish" (append a commit to a
 // directory timeline via head CAS) has exactly one implementation —
 // CreateCommit — shared by the CLI commit RPC and (after the Gitaly
 // frontend lands) GitLab's receive path.
@@ -34,7 +34,7 @@ func New(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlg
 	return &Service{Meta: meta, Objects: objects, Views: view.New(meta, objects, algo), Algo: algo}
 }
 
-// ErrBaseMoved is the changeset conflict (docs/06 §4.2): the client's base
+// ErrBaseMoved is the changeset conflict (docs/client/cli.md §4.2): the client's base
 // commit is no longer the timeline head — pull --rebase and retry.
 type ErrBaseMoved struct {
 	Current model.OID
@@ -55,7 +55,7 @@ func invalid(format string, args ...any) error {
 }
 
 // Translate maps a service error to the stable error-envelope code
-// (docs/05 §3.2). Frontends translate codes to transport status / exit codes.
+// (docs/gateway/service-api.md §3.2). Frontends translate codes to transport status / exit codes.
 func Translate(err error) (code string, data any) {
 	var base *ErrBaseMoved
 	switch {
@@ -115,7 +115,7 @@ func (s *Service) defaultBranchOf(ctx context.Context, repo string) (string, err
 }
 
 // viewHead resolves the (virtual) repo's current view head and its tree
-// (docs/04 §6): root repo → woven tip; subtree repo → subtree view head.
+// (docs/gateway/git-compat.md §6): root repo → woven tip; subtree repo → subtree view head.
 // rootLocal carries the root-local head for subtree timelines (EnsureTimeline
 // base). A zero head means "no commits yet" (root repo only).
 func (s *Service) viewHead(ctx context.Context, repo string, sub model.AnchorPath, branch string) (head, tree, rootLocal model.OID, err error) {
@@ -167,7 +167,7 @@ func (s *Service) ListRepos(ctx context.Context) ([]RepoSummary, error) {
 	return out, nil
 }
 
-// --- object transport (docs/06 §3.1: content-addressed direct fetch) ---
+// --- object transport (docs/client/cli.md §3.1: content-addressed direct fetch) ---
 
 // GetObject returns an object's type and raw bytes (cat / lazy backfill).
 func (s *Service) GetObject(ctx context.Context, repo string, oid model.OID) (model.ObjectType, []byte, error) {
@@ -176,7 +176,7 @@ func (s *Service) GetObject(ctx context.Context, repo string, oid model.OID) (mo
 
 // PutObject is one uploaded object (CLI blob upload before a commit; the
 // hash is verified against the claimed type — content addressing is the
-// integrity contract, docs/05 §3.3).
+// integrity contract, docs/gateway/service-api.md §3.3).
 type PutObject struct {
 	OID  model.OID `json:"oid"`
 	Type string    `json:"type"`
@@ -299,7 +299,7 @@ func (s *Service) Resolve(ctx context.Context, req ResolveRequest) (*ResolveResu
 	return &ResolveResult{Type: "tree", OID: cur}, nil
 }
 
-// --- placement + cluster status (docs/10 §3/§6; no-ops semantics in all-in-one) ---
+// --- placement + cluster status (docs/storage/ha.md §3/§6; no-ops semantics in all-in-one) ---
 
 // SetPlacement records a repo's replica target (0 restores the cluster default).
 func (s *Service) SetPlacement(ctx context.Context, repo string, replicas int) error {
@@ -313,7 +313,7 @@ func (s *Service) GetPlacement(ctx context.Context, repo string) (int, error) {
 	return s.Meta.GetPlacement(ctx, repo)
 }
 
-// SetForcePush toggles the repo-level force-push switch (docs/04 §6a): off
+// SetForcePush toggles the repo-level force-push switch (docs/gateway/git-compat.md §6a): off
 // (default) keeps the subtree rollback guard; on, rewind-shaped subtree
 // updates land and rebuild the woven views.
 func (s *Service) SetForcePush(ctx context.Context, repo string, enabled bool) error {
@@ -380,7 +380,7 @@ func (s *Service) Repack(ctx context.Context, repo string, threshold int) (stora
 	return s.Objects.Repack(ctx, repo, threshold, 0) // 0 = default merge byte cap
 }
 
-// RepoSize reports the repo's scale statistics (docs/11 §6): total pack
+// RepoSize reports the repo's scale statistics (docs/operations/performance.md §6): total pack
 // bytes and pack count.
 func (s *Service) RepoSize(ctx context.Context, repo string) (bytes int64, packs int, err error) {
 	if _, err = s.Meta.GetRepo(ctx, repo); err != nil {

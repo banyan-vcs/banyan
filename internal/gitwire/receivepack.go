@@ -17,7 +17,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// serveReceivePack serves push (docs/04 ÃÂ§5, write path docs/03 ÃÂ§4).
+// serveReceivePack serves push (docs/gateway/git-compat.md ÃÂ§5, write path docs/storage/storage.md ÃÂ§4).
 //
 // v1 session (mirrors receive-pack.c):
 //
@@ -64,7 +64,7 @@ func (s *Server) serveReceivePack(w http.ResponseWriter, r *http.Request, vr Vir
 }
 
 // finishPush serves the receive-pack data phase shared by smart HTTP and the
-// SSH transport (docs/04 §5, write path docs/03 §4): read the ref commands
+// SSH transport (docs/gateway/git-compat.md §5, write path docs/storage/storage.md §4): read the ref commands
 // and pack, then per-ref validation + head CAS with a report-status receipt.
 // A non-nil error is a pre-report protocol failure.
 func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Reader, out *bufWriter, vr VirtualRepo) error {
@@ -153,7 +153,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		}
 	}
 
-	// ①½ receive hooks (docs/04 §7): metadata-plane registry, HTTP
+	// ①½ receive hooks (docs/gateway/git-compat.md §7): metadata-plane registry, HTTP
 	// callbacks. pre-receive sees every update before any ref moves
 	// (declined = the whole push dies); update runs per ref below;
 	// post-receive gets the applied set. Matching + payload live in
@@ -162,7 +162,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	if b, berr := s.Objects.RepoBytes(ctx, vr.Repo); berr == nil {
 		hookBytes = b
 	}
-	// ⓪ GitLab policy gate (docs/20 §2): the /allowed call a stock gitaly
+	// ⓪ GitLab policy gate (docs/integration/gitlab-integration.md §2): the /allowed call a stock gitaly
 	// makes inside its pre-receive hook — ref-level policy (protected
 	// branches) lives in Rails, and workhorse's front-door check cannot
 	// see refs. First in the chain, upstream-ordered: a declined push
@@ -200,13 +200,13 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 	for _, u := range updates {
 		// Ref namespaces: refs/heads/* are branch timelines (weave on read);
 		// any other refs/<ns>/<name> (tags, notes, custom) is an auxiliary
-		// ref — root repo only, stored verbatim, plain CAS (docs/04 §6).
+		// ref — root repo only, stored verbatim, plain CAS (docs/gateway/git-compat.md §6).
 		if !strings.HasPrefix(u.Name, "refs/") || !strings.Contains(strings.TrimPrefix(u.Name, "refs/"), "/") {
 			_ = WritePacket(out, []byte("ng "+u.Name+" unsupported ref namespace\n"))
 			continue
 		}
 		if !strings.HasPrefix(u.Name, "refs/heads/") {
-			// Subtree-projection refs (docs/20 §7): a push to
+			// Subtree-projection refs (docs/integration/gitlab-integration.md §7): a push to
 			// refs/banyan/tree/<dir> IS a push at that directory's scope —
 			// the same write path the /tree/<dir> face takes (directory
 			// anchoring, upward assembly, rollback guards), exposed in the
@@ -269,10 +269,10 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		}
 
 		if !vr.Sub.IsRoot() {
-			// Ⓑ subtree-view push (docs/02 §13): the write path touches ONLY
+			// Ⓑ subtree-view push (docs/design/data-model.md §13): the write path touches ONLY
 			// this directory's timeline — no root head CAS, no adoption merge.
 			// The root view is derived on read (view.RootTip weave).
-			// Under M4 convergence (docs/15) the update queues on the
+			// Under M4 convergence (docs/design/workflow.md) the update queues on the
 			// per-timeline FIFO and divergent chains converge server-side;
 			// otherwise the pre-M4 adopt path runs inline.
 			if s.Convergence {
@@ -297,7 +297,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		}
 
 		// Root repo: the client chain lands VERBATIM as root-local history
-		// (docs/02 §13) — its boundary parent is the advertised woven tip,
+		// (docs/design/data-model.md §13) — its boundary parent is the advertised woven tip,
 		// which the weave persists via the /.woven timeline, so the chain is
 		// self-consistent root-local state; the incremental weave then
 		// identity-reuses those commits (same tree, same parents).
@@ -368,7 +368,7 @@ func (s *Server) spoolPack(br *bufio.Reader) (string, int64, error) {
 }
 
 // warmView pre-materializes the views the next advertisement will resolve
-// after a successful push (docs/11 P2-3, B6): a push only CASes timeline
+// after a successful push (docs/operations/performance.md P2-3, B6): a push only CASes timeline
 // heads — the woven root/subtree views fold lazily on the FIRST subsequent
 // clone's ref discovery. Warming right after the CAS moves that fold off
 // the read path. Best-effort and asynchronous: the push response never
@@ -459,7 +459,7 @@ func (s *Server) reportProjectionPush(ctx context.Context, out *bufWriter, id au
 }
 
 // handleAuxRefUpdate stores refs/tags/* and any other non-heads namespace
-// (docs/04 §6): a fixed pointer to an existing server-side object —
+// (docs/gateway/git-compat.md §6): a fixed pointer to an existing server-side object —
 // annotated tags point at tag objects, lightweight tags at commits. The
 // timeline name IS the full ref name; the head is the raw OID with no
 // derived-view semantics; deletion mirrors the branch path's expected
@@ -492,7 +492,7 @@ func (s *Server) handleAuxRefUpdate(ctx context.Context, out *bufWriter, vr Virt
 	return true
 }
 
-// adoptSubtreePush is the v5 write path for subtree pushes (docs/02 ÃÂ§13):
+// adoptSubtreePush is the v5 write path for subtree pushes (docs/design/data-model.md ÃÂ§13):
 //
 //	Ã¢ÂÂ  content-level check (race-window guard, unchanged): admit only when old's X-view tree == the current merged
 //	  head's X-view tree Ã¢ÂÂ consecutive pushes admitted / stale cross-view rejected (prevents silent rollback) /
@@ -512,7 +512,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 		// history in it — worded so neither case claims the other.
 		return fmt.Errorf("subtree view %s unavailable (no commits visible at this path)", vr.Sub)
 	}
-	// Content-level staleness guard, both sides (docs/02 §13):
+	// Content-level staleness guard, both sides (docs/design/data-model.md §13):
 	//   local side — old must match the combined view tip X-content
 	//     (consecutive pushes pass; a divergent peer local push rejects —
 	//     the v4 race-window rule);
@@ -547,7 +547,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	} else if terr := s.Meta.EnsureTimeline(ctx, localTL, curTip, s.rootLocalHead(ctx, vr.Repo, branch)); terr != nil {
 		return terr
 	}
-	// Rollback guard (force-push revival, docs/04 §6a): git's wire protocol
+	// Rollback guard (force-push revival, docs/gateway/git-compat.md §6a): git's wire protocol
 	// cannot signal "force" — the client-side ancestry check is all that
 	// --force bypasses, and old is always the advertised tip — so a client
 	// that fetches, rewinds (reset --hard) or rewrites away peers' commits
@@ -576,7 +576,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	if !forward {
 		// The rewind landed under the force-push switch: drop the /.woven
 		// family so the next materialization re-weaves every scope from the
-		// new source chains (docs/04 §6a). Failure is logged, not fatal —
+		// new source chains (docs/gateway/git-compat.md §6a). Failure is logged, not fatal —
 		// the rewind itself already landed; views then degrade to a stale
 		// incremental fold until the next reset or restart.
 		if rerr := s.Views.ResetWoven(ctx, vr.Repo, branch); rerr != nil {
@@ -590,7 +590,7 @@ func (s *Server) adoptSubtreePush(ctx context.Context, vr VirtualRepo, branch st
 	return nil
 }
 
-// repoForcePush reads the repo-level force-push switch (docs/04 §6a): a
+// repoForcePush reads the repo-level force-push switch (docs/gateway/git-compat.md §6a): a
 // per-push metadata lookup — pushes are not hot-path enough to need a cache,
 // and the switch must take effect without restarts.
 func (s *Server) repoForcePush(ctx context.Context, repo string) bool {
@@ -628,7 +628,7 @@ func (s *Server) sameXView(vr VirtualRepo, a, b model.OID) bool {
 	return !ta.IsZero() && ta == tb
 }
 
-// xviewTree normalizes a tree to the X view (docs/02 ÃÂ§10 mixed scope).
+// xviewTree normalizes a tree to the X view (docs/design/data-model.md ÃÂ§10 mixed scope).
 // treeKnownXView reports whether the X-view tree of tip is already recorded
 // somewhere in head's ancestry — the rollback guard's content-preserving
 // rewrite recognition (cross-view rewrites carry identical X trees).

@@ -309,7 +309,7 @@ func (rs *repositoryService) GetFileAttributes(ctx context.Context, req *gitalyp
 // ---- FindLicense ----
 
 // licenseFingerprints maps characteristic phrases to SPDX identifiers; the
-// list is a hand-curated subset of the SPDX library upstream embeds (docs/19
+// list is a hand-curated subset of the SPDX library upstream embeds (docs/integration/gitaly-compat.md
 // §6 registers the approximation).
 var licenseFingerprints = []struct {
 	id   string

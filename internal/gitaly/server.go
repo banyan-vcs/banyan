@@ -1,10 +1,10 @@
 // Package gitaly serves the Gitaly gRPC protocol (v19.5.2, vendored pb in
 // internal/gitalypb) on top of banyan's object plane, so a GitLab Rails/workhorse
-// stack can point at banyan instead of a stock gitaly node (docs/19).
+// stack can point at banyan instead of a stock gitaly node (docs/integration/gitaly-compat.md).
 //
 // Trust model: like upstream gitaly, the wire is trusted after a shared
 // bearer token — authorization happens in the frontend (Rails/console), not
-// here. The banyan auth plane (docs/07) is bypassed by design.
+// here. The banyan auth plane (docs/gateway/authorization.md) is bypassed by design.
 //
 // Structure (2026-11-08 split): this package is the shell — server
 // lifecycle, bearer-token auth, the gRPC mux — while each protocol service
@@ -74,7 +74,7 @@ type Server struct {
 	*kit.Base
 
 	// git/mux: an internal gitwire instance serving the git wire protocol;
-	// smart-HTTP/SSH RPCs bridge onto it (docs/19 §1). The Base mirrors
+	// smart-HTTP/SSH RPCs bridge onto it (docs/integration/gitaly-compat.md §1). The Base mirrors
 	// both (Git, Handler) for the families.
 	git     *gitwire.Server
 	grpcSrv *grpc.Server

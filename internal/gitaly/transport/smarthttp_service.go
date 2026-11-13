@@ -26,7 +26,7 @@ type smartHTTPService struct {
 }
 
 // PostUploadPackWithSidechannel runs the fetch exchange over a yamux stream
-// dialed back to the client (docs/19 §5): the request body arrives on the
+// dialed back to the client (docs/integration/gitaly-compat.md §5): the request body arrives on the
 // sidechannel (the client half-closes after it), the pack response returns
 // over the same stream. The gRPC response itself carries only statistics.
 func (sh *smartHTTPService) PostUploadPackWithSidechannel(ctx context.Context, req *gitalypb.PostUploadPackWithSidechannelRequest) (*gitalypb.PostUploadPackWithSidechannelResponse, error) {
@@ -138,7 +138,7 @@ func (sh *smartHTTPService) PostReceivePack(stream gitalypb.SmartHTTPService_Pos
 				return err
 			}
 			// Workhorse sends the pusher's platform identity on the first
-			// message — it drives the post-receive adapter (docs/20 §2).
+			// message — it drives the post-receive adapter (docs/integration/gitlab-integration.md §2).
 			gl[gitwire.GlIDHeader] = msg.GetGlId()
 			gl[gitwire.GlRepoHeader] = msg.GetGlRepository()
 			gl[gitwire.GlUsernameHeader] = msg.GetGlUsername()

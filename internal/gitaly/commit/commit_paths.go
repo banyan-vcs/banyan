@@ -1,6 +1,6 @@
 package commit
 
-// Path-scoped history RPCs (docs/19 slice 4): FindCommits, CommitStats,
+// Path-scoped history RPCs (docs/integration/gitaly-compat.md slice 4): FindCommits, CommitStats,
 // TreeEntry, CommitsByMessage, LastCommitForPath, ListLastCommitsForTree —
 // all built on entryAtPath/pathTouched over the pure-Go history walk.
 

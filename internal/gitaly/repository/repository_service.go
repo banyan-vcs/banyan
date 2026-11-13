@@ -17,7 +17,7 @@ import (
 // repositoryService implements the repo lifecycle slice of gitaly.
 // RepositoryService: lifecycle (create/exists/delete) + identity probes.
 // The maintenance and import surfaces (repack/fsck/bundle/fork…) are later
-// slices — see docs/19 for the coverage matrix.
+// slices — see docs/integration/gitaly-compat.md for the coverage matrix.
 type repositoryService struct {
 	gitalypb.UnimplementedRepositoryServiceServer
 	*kit.Base

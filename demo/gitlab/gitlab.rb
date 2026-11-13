@@ -1,4 +1,4 @@
-# GitLab-CE wired to banyan as its Gitaly storage layer (docs/19 §0/§1).
+# GitLab-CE wired to banyan as its Gitaly storage layer (docs/integration/gitaly-compat.md §0/§1).
 # Mounted into the gitlab-ce container as the omnibus config. The single
 # storage entry replaces the embedded gitaly node with banyand's gRPC
 # frontend: same token, storage_name "default", address = the compose

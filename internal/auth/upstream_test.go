@@ -81,7 +81,7 @@ func TestUpstreamPolicyDecisions(t *testing.T) {
 	require.True(t, p.CanPush(idOf("bob"), "p_x", "", "feature"))
 	require.False(t, p.CanPush(idOf("bob"), "p_x", "", "main"))
 	require.True(t, p.CanPush(idOf("alice"), "p_x", "", "main"))
-	// Admin sees and does everything (docs/07 §3).
+	// Admin sees and does everything (docs/gateway/authorization.md §3).
 	require.True(t, p.CanPush(idOf("root"), "p_x", "", "main"))
 
 	// Personal branches: owner or admin only.

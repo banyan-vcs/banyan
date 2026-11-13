@@ -50,7 +50,7 @@ func (s *Server) handleImports(w http.ResponseWriter, r *http.Request) {
 	if !(strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://")) {
 		writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{
 			Code:    "INVALID_ARG",
-			Message: "url must be http(s):// — ssh remotes are not served (docs/19)"}})
+			Message: "url must be http(s):// — ssh remotes are not served (docs/integration/gitaly-compat.md)"}})
 		return
 	}
 	name := strings.TrimSpace(req.Name)

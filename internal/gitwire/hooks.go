@@ -1,7 +1,7 @@
-// Server-side receive hooks (docs/04 §7): an HTTP-callback registry kept
+// Server-side receive hooks (docs/gateway/git-compat.md §7): an HTTP-callback registry kept
 // in the metadata plane — no gateway-local state, so every gateway in a
 // multi-gateway deployment evaluates the same hooks. The API
-// (/api/v1/repos/<repo>/hooks, docs/05) upserts registrations of shape
+// (/api/v1/repos/<repo>/hooks, docs/gateway/service-api.md) upserts registrations of shape
 // {id, dir, events[], url, secret, timeout_ms}; at push time the serving
 // gateway POSTs one JSON document per matching hook:
 //
@@ -186,7 +186,7 @@ func (s *Server) hooksClient() *WebhookRunner {
 }
 
 // HookUpdate is one ref update of a gitaly-side hook evaluation
-// (the gitaly HookService bridge, docs/19): OIDs render through the same
+// (the gitaly HookService bridge, docs/integration/gitaly-compat.md): OIDs render through the same
 // zero-OID rule the gateway plane uses.
 type HookUpdate struct {
 	Old  string

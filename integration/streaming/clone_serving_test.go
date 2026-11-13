@@ -1,6 +1,6 @@
 package streaming
 
-// T53 (docs/13): the clone-shaped serving contract, in two halves that the
+// T53 (docs/operations/testing.md): the clone-shaped serving contract, in two halves that the
 // same scenario pins together —
 //
 //  1. gitlink safety: a tree entry with mode 160000 references a commit in
@@ -12,7 +12,7 @@ package streaming
 //     serving path streams the pack verbatim and the enumeration probe is
 //     type-directed — no GetPack (whole pack into memory) ever runs on the
 //     local backend. This is the regression guard for the T50 post-mortem
-//     (docs/17 §7): a 20 MiB clone used to allocate ~2.5× the repo because
+//     (docs/web/console.md §7): a 20 MiB clone used to allocate ~2.5× the repo because
 //     the type probe inflated every object through the pack decoder.
 
 import (

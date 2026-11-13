@@ -1,5 +1,5 @@
 // cli_snapshot_test.go — T91: banyan snapshot, the thin workspace's
-// checkpoint/restore (docs/06). Purely local: dirty bytes are captured
+// checkpoint/restore (docs/client/cli.md). Purely local: dirty bytes are captured
 // verbatim, apply restores the snapshot-time state byte for byte (dirty files
 // from the snapshot mirror, clean files from the cache — with the server as
 // backfill when the cache was pruned), apply refuses dirty trees without

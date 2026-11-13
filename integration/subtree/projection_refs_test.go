@@ -1,4 +1,4 @@
-// T84 — subtree projection refs (docs/20 §7, the ref-namespace projection):
+// T84 — subtree projection refs (docs/integration/gitlab-integration.md §7, the ref-namespace projection):
 // every top-level directory of the default branch is addressable as a repo
 // of its own through refs/banyan/tree/<dir> — the same subtree view the
 // /tree/<dir> face serves, inside the parent's ref space, so whole-repo

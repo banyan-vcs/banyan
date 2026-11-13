@@ -8,7 +8,7 @@ import (
 // sqliteDSN builds the SQLite connection string. Pragmas must ride the DSN:
 // database/sql pools plain connections, and a PRAGMA issued via Exec applies
 // to one pooled connection only. WAL keeps readers running while the
-// single-writer CAS holds the write lock (docs/03 §2); busy_timeout bounds
+// single-writer CAS holds the write lock (docs/storage/storage.md §2); busy_timeout bounds
 // lock contention between pool connections. _txlock=immediate makes every
 // transaction take the write lock at BEGIN: a DEFERRED read-then-write
 // transaction whose snapshot is invalidated by a concurrent commit fails

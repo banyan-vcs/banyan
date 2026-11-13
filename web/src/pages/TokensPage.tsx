@@ -1,6 +1,6 @@
 // TokensPage.tsx — personal access tokens: mint (plaintext shown exactly
 // once), list your own, and — when the account is an admin — list and
-// revoke anyone's. Scopes are ceilings, never bypasses (docs/07 §8).
+// revoke anyone's. Scopes are ceilings, never bypasses (docs/gateway/authorization.md §8).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useState } from "react";

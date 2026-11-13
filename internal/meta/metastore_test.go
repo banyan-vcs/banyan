@@ -16,13 +16,13 @@ import (
 
 // The conformance suite runs identically against every MetaStore backend:
 // behavioral parity is the contract that makes the backend swappable
-// (docs/03 §2.1). The concurrent-CAS case doubles as the SQLite
+// (docs/storage/storage.md §2.1). The concurrent-CAS case doubles as the SQLite
 // busy/WAL serialization exercise.
 //
 // metaOpeners is the shared backend matrix — every store-level battery
 // (conformance, the rename fence) runs it, so the cluster backends cannot
 // drift behind the file backends. mysql/postgres join when their DSN is
-// provided — locally via Docker (docs/10), in CI via service containers:
+// provided — locally via Docker (docs/storage/ha.md), in CI via service containers:
 //
 //	BANYAN_TEST_MYSQL_DSN="root:banyan@tcp(127.0.0.1:3306)/banyan?charset=utf8mb4"
 //	BANYAN_TEST_POSTGRES_DSN="postgres://postgres:banyan@127.0.0.1:5432/banyan?sslmode=disable"
@@ -206,7 +206,7 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 	if err := m.CASHead(ctx, sub, "", "s2"); err != nil {
 		t.Fatalf("create via zero expected: %v", err)
 	}
-	// Fork-point advance (SetTimelineBase, docs/02 §12 explicit rebase): the
+	// Fork-point advance (SetTimelineBase, docs/design/data-model.md §12 explicit rebase): the
 	// base moves while the head stays, a later CAS preserves the new base,
 	// and unknown timelines reject.
 	if err := m.SetTimelineBase(ctx, sub, "h9"); err != nil {
@@ -340,7 +340,7 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 		t.Fatalf("delete again: %v", err)
 	}
 
-	// --- token registry (docs/07 §6): every metadata-owning store ---
+	// --- token registry (docs/gateway/authorization.md §6): every metadata-owning store ---
 	tr, ok := m.(TokenRegistry)
 	if !ok {
 		t.Fatal("metadata-owning store must implement TokenRegistry")
@@ -392,7 +392,7 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 		t.Fatal("revoked flag must persist")
 	}
 
-	// --- subtree rule store (docs/07 §8): every metadata-owning store ---
+	// --- subtree rule store (docs/gateway/authorization.md §8): every metadata-owning store ---
 	rs, ok := m.(SubtreeRuleStore)
 	if !ok {
 		t.Fatal("metadata-owning store must implement SubtreeRuleStore")
@@ -455,7 +455,7 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 
 // TestSQLiteBackupRestore pins the online backup contract: VACUUM INTO
 // while the store keeps working, then reopen the snapshot and every piece
-// of state survives (the ops path for single-binary deployments, docs/10).
+// of state survives (the ops path for single-binary deployments, docs/storage/ha.md).
 func TestSQLiteBackupRestore(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewSQLiteMetaStore(filepath.Join(dir, "meta.db"))

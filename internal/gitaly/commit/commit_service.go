@@ -16,7 +16,7 @@ import (
 
 // commitService implements the read slice of gitaly.CommitService: commit
 // lookup, ancestry, history walks and tree/blob listing. Blame, signature
-// and language-analysis RPCs are later slices (docs/19).
+// and language-analysis RPCs are later slices (docs/integration/gitaly-compat.md).
 type commitService struct {
 	gitalypb.UnimplementedCommitServiceServer
 	*kit.Base

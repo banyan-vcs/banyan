@@ -1,4 +1,4 @@
-// T70 — conflicts, fast-export, remote mirror and fork (docs/19 closing
+// T70 — conflicts, fast-export, remote mirror and fork (docs/integration/gitaly-compat.md closing
 // slices). Git is the oracle: conflict markers match `git merge` output,
 // the fast-export stream round-trips through `git fast-import`, the mirror
 // push lands on banyan's own smart-HTTP face, forks clone identically.

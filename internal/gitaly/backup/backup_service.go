@@ -26,7 +26,7 @@ type Runner struct {
 	*kit.Base
 }
 
-// Server-side backups (docs/19). Upstream gitaly streams bundles, refs and
+// Server-side backups (docs/integration/gitaly-compat.md). Upstream gitaly streams bundles, refs and
 // custom-hook archives into a go-cloud blob sink and tracks runs through a
 // backup-id marker registry. banyan mirrors that layout on a local sink
 // directory (the single-node equivalent — no external object storage to

@@ -1,5 +1,5 @@
 // memory_chain_test.go — T46: full-chain usability under a small memory
-// budget (docs/03 §4 write path, §5 read path). A ~150 MiB incompressible
+// budget (docs/storage/storage.md §4 write path, §5 read path). A ~150 MiB incompressible
 // repo is pushed and cloned through the real cluster wiring (git CLI →
 // gateway → ScatteredStore → NodeClient → storenode → disk) while the test
 // process is held to a soft GOMEMLIMIT far below the pack size. Every layer

@@ -271,7 +271,7 @@ func TestBuildSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, snap.Version)
 	// "console" is the service principal the operational passthroughs sign as
-	// (docs/17 §5) — an implicit management-plane admin.
+	// (docs/web/console.md §5) — an implicit management-plane admin.
 	require.ElementsMatch(t, []string{"root", "console"}, snap.Admins)
 	require.ElementsMatch(t, []string{"root", "alice", "bob", "carol"}, snap.Users)
 

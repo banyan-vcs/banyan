@@ -1,9 +1,9 @@
-# 20 · GitLab 集成指南（banyan 作 gitaly 存储节点）
+# GitLab 集成指南（banyan 作 gitaly 存储节点）
 
 > 定位：**面向接入者的操作手册**——已有 GitLab-CE 把存储层换成 banyan，
 > 或先用一键 demo 体验。只讲"怎么接、怎么验、坏了怎么查"；协议覆盖
-> 矩阵与实现账本在 [docs/19](19-gitaly-compat.md)，本文不重复。
-> 2026-11-07 以真 GitLab-CE 19.5.3 活体验收（docs/19 §8）。
+> 矩阵与实现账本在 [docs/integration/gitaly-compat.md](gitaly-compat.md)，本文不重复。
+> 2026-11-07 以真 GitLab-CE 19.5.3 活体验收（docs/integration/gitaly-compat.md §8）。
 
 ## 0. 形态与边界
 
@@ -17,13 +17,13 @@ git/ssh  ──▶ gitlab-shell ┘                          ▲
   banyan 以单个 gitaly 节点身份注册，Rails/workhorse 走标准 gitaly 协议。
 - **版本配对**：vendored 协议 v19.5.2 ↔ GitLab **同 minor**（19.5.x）。
   跨 minor 未验证；banyan 升级 = 锁定 GitLab minor 重放 proto + 全量回归
-  （docs/19 §0 漂移隔离纪律）。
+  （docs/integration/gitaly-compat.md §0 漂移隔离纪律）。
 - **信任模型**：per-storage 共享 token，**token 之后全信**——banyan 的
   gitaly 面不做 GitLab 用户级鉴权（授权、保护分支、审计都在 Rails），
   与上游 gitaly 一致；推送路径经适配器把策略请回 Rails 强制（§2/§4）。
   token 保密级别 = 存储层 root。
 - **praefect**：不需要。单节点形态；praefect 族 RPC 以 cluster-of-one
-  语义诚实作答（docs/19 §6a）。
+  语义诚实作答（docs/integration/gitaly-compat.md §6a）。
 
 ## 1. 一键试用（demo）
 
@@ -127,7 +127,7 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | **最大推送大小（Maximum push size 设置）** | ✅ /allowed verdict 的 `receive.maxInputSize` 由门强制（live：设 1MB、推 2MB 随机包被拒 `pack exceeds maximum allowed size`，复位即通） |
 | SSH 推送/拉取（gitlab-shell） | ✅ 同一授权面；fetch/clone 走 `SSHUploadPackWithSidechannel`（sidechannel 上再包一层 pkt-line sideband 帧——git 协议整体作为 band1 载荷、关流终结；seam 9 活体修复后 clone+fsck 全净） |
 | **子树管理控制面（`/-/banyan/`）** | ✅ GitLab 域名下的 nginx 子页面（§7b）：每仓子树清单/活动/克隆配方 + **运行时访问规则**管理，GitLab SSO 登录 |
-| 服务端维护（housekeeping/repack） | 空操作语义（对象平面恒 compact，docs/19 §6） |
+| 服务端维护（housekeeping/repack） | 空操作语义（对象平面恒 compact，docs/integration/gitaly-compat.md §6） |
 
 ## 5. 回退与数据面
 
@@ -135,7 +135,7 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 
 ```bash
 # banyan 侧导出（任选）：全量 bundle 或服务端备份
-#   CreateBundle / BackupRepository（docs/19 §6a 备份 sink 键位与上游同形）
+#   CreateBundle / BackupRepository（docs/integration/gitaly-compat.md §6a 备份 sink 键位与上游同形）
 # gitaly 侧恢复：git clone <bundle> 或按备份布局回灌
 ```
 
@@ -150,7 +150,7 @@ curl -H "PRIVATE-TOKEN: <PAT>" http://<gitlab>/api/v4/projects/<id>/repository/a
 | **项目页 500**（异常栈 `undefined method 'data=' for nil` → `tree_entry`） | 旧版 banyan 对 TreeEntry 缺失路径答零消息空流（上游答 NotFound；项目页恒探测 `.git-blame-ignore-revs`，API 走查测不到） | 升级 banyan（修复 `f2a4204` 起含） |
 | Web/API 一切像空仓（tree 404、无默认支） | 读缓存陈旧：适配器未配置/未生效（正常由 post_receive 链过期） | 检查 banyan 日志 `post-receive adapter → …` 与 §2 配置；应急 `gitlab-rails runner 'Project.find(<id>).repository.expire_all_method_caches'`（-u git） |
 | 计划删除的项目（路径带 `-deletion_scheduled-N`）还在项目列表 | 正常：CE 默认**缓冲期删除**（7 天后才真删），不是卡死 | 管理区可立即删除或恢复；`pending_delete=false` 属预期 |
-| archive 500（workhorse 日志 `SendArchive: …`） | 树内实有 LFS pointer 且 `include_lfs_blobs`（smudge 面未建，诚实拒绝）；或历史版本缺结构化错 | 前者为能力边界（登记 docs/19 §8）；升级 banyan ≥ 0e137d8 |
+| archive 500（workhorse 日志 `SendArchive: …`） | 树内实有 LFS pointer 且 `include_lfs_blobs`（smudge 面未建，诚实拒绝）；或历史版本缺结构化错 | 前者为能力边界（登记 docs/integration/gitaly-compat.md §8）；升级 banyan ≥ 0e137d8 |
 | 空仓 `FindDefaultBranchName` 答 `refs/heads/main` 但项目页仍"空仓" | 正常契约：无分支时启发式答空 | 先推一个提交 |
 | push 被拒 `! [remote rejected] … (You are not allowed to push code to protected branches…)` | **正常强制**：`/allowed` 策略门在起作用（T86）——保护分支等 ref 级策略由 Rails 判定，消息原样透传 | 无需处置；确需推送走 MR 或放开保护设置 |
 | push 被拒 `gitlab policy check unavailable` | Rails 不可达/答非所问，门 fail-closed（与上游钩子一致） | 查 GitLab 健康（`gitlab-ctl status`）与适配器配置 §2；恢复后重推 |
@@ -199,7 +199,7 @@ git push origin src:refs/banyan/tree/src
 `refs/heads|tags`）。
 
 **备选 A · banyan 自有面直取**（运维/调试后门；绕过 GitLab 权限，走
-banyan 自己的 PAT 面，docs/07 §8）：
+banyan 自己的 PAT 面，docs/gateway/authorization.md §8）：
 
 ```bash
 git clone http://<banyan-host>:8080/r/<64hex>/tree/<dir>   # 64hex = sha256(project_id)
@@ -215,7 +215,7 @@ curl -X POST -H "PRIVATE-TOKEN: <PAT>" .../api/v4/projects \
 ```
 
 **协议层未来**：M3 的服务端 filter 完整规格（含 `subtree:<path>`，
-docs/14）落地后，可对 GitLab URL 直接 partial clone 子树。
+docs/project/roadmap.md）落地后，可对 GitLab URL 直接 partial clone 子树。
 
 ## 7b. 子树管理控制面（`/-/banyan/` 子页面）
 
@@ -237,7 +237,7 @@ OAuth application）：
   `auth.gitlab_sso`（§2）验证同一 token——**实例管理员（is_admin）即
   规则管理者**。项目名自动映射（`sha256(project_id)` → 项目路径，用
   用户自己的 token 拉取，可见性天然同源）。
-- **能力**（docs/07 §8c）：每仓子树清单（目录时间线 × 支线 × 最近
+- **能力**（docs/gateway/authorization.md §8c）：每仓子树清单（目录时间线 × 支线 × 最近
   提交 × projected 标记）、子树详情（路径过滤活动流、两份克隆配方）、
   **运行时访问规则**——fetch 与 push 同门，最浅覆盖规则管辖（`/src`
   的规则管住 `/src/lib`），管理员经表单或
@@ -246,22 +246,22 @@ OAuth application）：
 **信任边界**：GitLab 自身 URL 上的投影 ref fetch 权限仍是 GitLab
 项目级（workhorse 授权看不见 ref 名）——**目录级强制只发生在 banyan
 自有 `/r/` 面**（GitLab token 认证 + 子树规则）；根锚 clone 服务整个
-闭包，深层规则不能遮浅层（与 docs/17 同一结构性边界）。GitLab 不可达
+闭包，深层规则不能遮浅层（与 docs/web/console.md 同一结构性边界）。GitLab 不可达
 时 token 验证与规则面均 fail-closed。
 
 ## 8. FAQ
 
 - **EE 能用吗？** 协议面一致（gitaly 协议不分 CE/EE），EE 特有存储面
   （如 Gitaly Cluster 拓扑）未验证——单节点形态先行。
-- **性能/容量？** 服务端有基准门（docs/11）；gitaly 面走与 git HTTP 同一
-  对象平面，读路径共享整 pack 直传与织入物化（docs/03）。
+- **性能/容量？** 服务端有基准门（docs/operations/performance.md）；gitaly 面走与 git HTTP 同一
+  对象平面，读路径共享整 pack 直传与织入物化（docs/storage/storage.md）。
 - **多存储节点？** GitLab 侧可配多条 storage（不同 storage_name 各指向
-  一个 banyan 实例）；banyan 自身的 HA 拓扑（docs/10）另论。
+  一个 banyan 实例）；banyan 自身的 HA 拓扑（docs/storage/ha.md）另论。
 - **升级节奏？** 跟 GitLab minor：banyan 换 vendored proto + 全量回归
-  （docs/19 §1），demo 栈锁同 minor 镜像先行验证。
+  （docs/integration/gitaly-compat.md §1），demo 栈锁同 minor 镜像先行验证。
 
 ---
 
-相关：[docs/19](19-gitaly-compat.md)（协议覆盖与实现账本）·
-[docs/12](12-docker-demo.md)（demo 总览）·
-[docs/07](07-authorization.md)（banyan 自身授权面——gitaly 面之外的访问）。
+相关：[docs/integration/gitaly-compat.md](gitaly-compat.md)（协议覆盖与实现账本）·
+[docs/operations/docker-demo.md](../operations/docker-demo.md)（demo 总览）·
+[docs/gateway/authorization.md](../gateway/authorization.md)（banyan 自身授权面——gitaly 面之外的访问）。

@@ -14,7 +14,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// Internal wire protocol between cluster roles (docs/10 §2). All JSON over
+// Internal wire protocol between cluster roles (docs/storage/ha.md §2). All JSON over
 // HTTP; pack bytes are raw bodies on the storage path. Error convention: a
 // non-200 response carries {"error":{"code","message"}} and the client maps
 // codes back onto the package's sentinel errors so callers keep using
@@ -129,7 +129,7 @@ func (c *RefsClient) GetPlacement(ctx context.Context, repo string) (int, error)
 
 // --- RemoteMeta: MetaStore over the refs RPC ---
 
-// RemoteMeta is the gateway's MetaStore (docs/10 §4): writes and strong
+// RemoteMeta is the gateway's MetaStore (docs/storage/ha.md §4): writes and strong
 // reads go to the refs service; the interface is unchanged so gitwire, the
 // service layer and the view engine never learn about the split.
 type RemoteMeta struct {
@@ -169,7 +169,7 @@ func (m *RemoteMeta) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	return out.Repos, nil
 }
 
-// RenameRepo flips the registry on the refs service (docs/03 §6). Storage-
+// RenameRepo flips the registry on the refs service (docs/storage/storage.md §6). Storage-
 // layer moves (named addressing) have already happened at the caller — the
 // refs service never touches pack bytes. The flip lifts the fence installed
 // by BeginRename in the same registry transaction.
@@ -179,7 +179,7 @@ func (m *RemoteMeta) RenameRepo(ctx context.Context, from, to string) error {
 }
 
 // BeginRename installs the rename fence on the refs service (write barrier
-// phase 1, docs/03 §6b) — mutations under either name fail with
+// phase 1, docs/storage/storage.md §6b) — mutations under either name fail with
 // ErrRepoRenaming until the flip or AbortRename.
 func (m *RemoteMeta) BeginRename(ctx context.Context, from, to string) error {
 	return m.Refs.call(ctx, "/internal/meta/begin-rename",
@@ -199,7 +199,7 @@ func (m *RemoteMeta) DeleteRepo(ctx context.Context, repo string) error {
 		map[string]string{"repo": repo}, nil)
 }
 
-// SetForcePush toggles the repo-level force-push switch (docs/04 §6a).
+// SetForcePush toggles the repo-level force-push switch (docs/gateway/git-compat.md §6a).
 func (m *RemoteMeta) SetForcePush(ctx context.Context, repo string, enabled bool) error {
 	return m.Refs.call(ctx, "/internal/meta/set-force-push",
 		map[string]any{"repo": repo, "enabled": enabled}, nil)
@@ -212,7 +212,7 @@ func (m *RemoteMeta) SetDefaultBranch(ctx context.Context, repo string, branch s
 		map[string]any{"repo": repo, "branch": branch}, nil)
 }
 
-// ListHooks fetches the repo's receive-hook registry (docs/04 §7).
+// ListHooks fetches the repo's receive-hook registry (docs/gateway/git-compat.md §7).
 func (m *RemoteMeta) ListHooks(ctx context.Context, repo string) ([]HookInfo, error) {
 	var out struct {
 		Hooks []HookInfo `json:"hooks"`

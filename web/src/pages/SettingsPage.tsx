@@ -115,7 +115,7 @@ export function SettingsPage(): ReactNode {
 
       <section>
         <h2>repack</h2>
-        <p className="muted">merges pack fragments and delta-encodes the result (docs/03 §5).</p>
+        <p className="muted">merges pack fragments and delta-encodes the result (docs/storage/storage.md §5).</p>
         <p className="pad">
           <button className="btn ghost" disabled={repack.isPending} onClick={() => repack.mutate()}>
             {repack.isPending ? "repacking…" : "repack now"}

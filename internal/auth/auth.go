@@ -1,4 +1,4 @@
-// Package auth is the authorization abstraction (docs/07, docs/14 M5):
+// Package auth is the authorization abstraction (docs/gateway/authorization.md, docs/project/roadmap.md M5):
 // the git surface needs three granularities — repository, directory (a
 // subtree virtual repo) and branch — for the two operations git has,
 // download (fetch/clone) and commit (push). Implementations decide; the
@@ -39,7 +39,7 @@ type Service interface {
 	Identify(h *http.Request) Identity
 
 	// IdentifyKey maps a public key to an identity (SSH transport,
-	// docs/07 §7): keyBlob is the wire-format key body the SSH server
+	// docs/gateway/authorization.md §7): keyBlob is the wire-format key body the SSH server
 	// presents — the base64 payload of an authorized_keys line. The demo
 	// matches per-user authorized keys in the static table.
 	IdentifyKey(user string, keyBlob []byte) Identity
@@ -48,7 +48,7 @@ type Service interface {
 	// branch visibility. The personal-branch rule lives here:
 	// refs/heads/<user>/* is visible only to its owner and the admins, so
 	// one user's working branches never flood anyone else's ref list (the
-	// monorepo too-many-branches problem, docs/07 §3).
+	// monorepo too-many-branches problem, docs/gateway/authorization.md §3).
 	VisibleRefs(id Identity, repo string, refs []Ref) []Ref
 
 	// CanFetch decides download access at repository and directory

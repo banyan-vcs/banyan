@@ -10,7 +10,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
-// CreateCommit: server-side changeset assembly (docs/06 §4.2, docs/05 §2).
+// CreateCommit: server-side changeset assembly (docs/client/cli.md §4.2, docs/gateway/service-api.md §2).
 // The client uploads only NEW blobs (PutObjects) plus a change list relative
 // to its base; the server rebuilds trees along the touched paths, creates a
 // standard git commit and publishes it with the single directory-timeline
@@ -49,7 +49,7 @@ type CommitRequest struct {
 
 type CommitResult struct {
 	Head     model.OID `json:"head"`     // new timeline head (the created commit)
-	RootView model.OID `json:"rootView"` // woven root view (CI/webhook anchor, docs/01 §3.2)
+	RootView model.OID `json:"rootView"` // woven root view (CI/webhook anchor, docs/design/big-picture.md §3.2)
 	Tree     model.OID `json:"tree"`     // new view tree (client manifest anchor)
 }
 
@@ -135,7 +135,7 @@ func (s *Service) CreateCommit(ctx context.Context, req CommitRequest) (*CommitR
 	commitRaw := commit.Encode()
 
 	// Persist all new trees + the commit as one pack (one fragment per commit;
-	// repack consolidates, docs/09 §3.2).
+	// repack consolidates, docs/storage/indexing-packing.md §3.2).
 	var buf bytes.Buffer
 	if err := storage.EncodePack(&buf, nil, newTrees, map[model.OID][]byte{commitOID: commitRaw}, nil); err != nil {
 		return nil, err

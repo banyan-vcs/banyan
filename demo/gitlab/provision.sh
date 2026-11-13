@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GitLab-CE ↔ banyan walkthrough (docs/19 §8, operator guide docs/20):
+# GitLab-CE ↔ banyan walkthrough (docs/integration/gitaly-compat.md §8, operator guide docs/integration/gitlab-integration.md):
 # every step below is the
 # gitaly protocol surface exercised by real GitLab, not a simulation —
 # project create (CreateRepository), HTTP push (workhorse →
@@ -86,7 +86,7 @@ api() { # api METHOD path [json-body]
 }
 
 # ---------------------------------------- subtree-management subpage ----
-# The control plane lives UNDER the GitLab URL (docs/20 §7b): an nginx
+# The control plane lives UNDER the GitLab URL (docs/integration/gitlab-integration.md §7b): an nginx
 # location routes /-/banyan/ to the banyan-web service, and login is
 # GitLab SSO via an OAuth application minted here (secret answered once,
 # dropped into the web container's /config volume, service bounced).
@@ -174,10 +174,10 @@ echo "-- commits:";        api GET "/projects/$proj_id/repository/commits?per_pa
 echo "-- blob:";           api GET "/projects/$proj_id/repository/files/README.md/raw?ref=main"
 
 say "banyan's own face sees the same repo (@hashed → storage id)"
-# The face authenticates GitLab tokens now (auth.gitlab_sso, docs/07 §8c).
+# The face authenticates GitLab tokens now (auth.gitlab_sso, docs/gateway/authorization.md §8c).
 curl -sf -H "Authorization: Bearer $PAT" "$BANYAN_URL/api/v1/repos" | grep -oE '"id":"[0-9a-f]{16}[^"]*"' | head -5
 
-say "subtree management checks (docs/20 §7b)"
+say "subtree management checks (docs/integration/gitlab-integration.md §7b)"
 # The subpage answers under the GitLab URL. Two hops: an anonymous hit
 # bounces to the login page, and the LOGIN PAGE must hand off to GitLab's
 # authorize endpoint once SSO is wired (staying on the local form = the

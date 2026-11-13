@@ -1,4 +1,4 @@
-// T73 — snapshots, replication and bundle generation (docs/19). GetSnapshot
+// T73 — snapshots, replication and bundle generation (docs/integration/gitaly-compat.md). GetSnapshot
 // answers a bare-repository TAR (HEAD, packed-refs, pack + idx) — the idx is
 // written by banyan and proven correct by plain git cloning from the
 // unpacked directory. CreateRepositoryFromSnapshot round-trips through an

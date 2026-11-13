@@ -1,4 +1,4 @@
-# 17 · 产品端控制面 console：逻辑仓库树与继承式成员权限（M6 设计稿）
+# 产品端控制面 console：逻辑仓库树与继承式成员权限（M6 设计稿）
 
 ## 0. 定位与命名
 
@@ -33,7 +33,7 @@ git/CLI/Web ──HTTP──▶ banyand console
 （无任何访问权的路径一律 404，不泄露存在性）；网关继续承担**深度
 检查**（保护分支、个人分支可见性、隐藏分支 want 覆盖、锚点粒度
 fetch 限制），依据是从 console 同步的快照（§5）。规则只在 console
-定义、以快照形态到达网关——延续 docs/07 §4"规则永不复制到网关，
+定义、以快照形态到达网关——延续 docs/gateway/authorization.md §4"规则永不复制到网关，
 网关跑同一抽象 + 同步的状态"的原则。
 
 代理纪律（T46 教训）：console 对 git 流量是**流式转发**
@@ -46,7 +46,7 @@ fetch 限制），依据是从 console 同步的快照（§5）。规则只在 c
   解析无歧义（1=group、2=project、3+=path）；嵌套组见 §8。
 - **物理名**：console 建项目时生成不可变 `repo_uid`（12 字节 hex），
   以它调用网关建物理仓（POST /api/v1/repos）。组/项目改名 = 产品库
-  改一行，存储零感知（docs/03 rename 保留为运维后门）。console 模式
+  改一行，存储零感知（docs/storage/storage.md rename 保留为运维后门）。console 模式
   下网关关闭 push 自动建仓——console 是唯一建仓前门。
 - **子项目** = 产品库条目 + 既有的子树虚拟仓锚
   （`/r/{repo_uid}/tree/{sub}`）。注册前缀链解析与 hooks 的
@@ -81,7 +81,7 @@ members(id, node_id, user_id, role, created_at,
 
 ## 4. 成员与权限
 
-**角色**（对齐 docs/07 的两操作面 + 管理面）：
+**角色**（对齐 docs/gateway/authorization.md 的两操作面 + 管理面）：
 
 | 角色 | fetch | push | 管理动作 |
 |---|---|---|---|
@@ -90,7 +90,7 @@ members(id, node_id, user_id, role, created_at,
 | Developer | ✓ | ✓ | — |
 | Reporter | ✓ | — | — |
 
-实例 admin（users.is_admin）全局最高（巡检/恢复，同 docs/07 §3）。
+实例 admin（users.is_admin）全局最高（巡检/恢复，同 docs/gateway/authorization.md §3）。
 个人分支规则（refs/heads/<user>/*）不变，仍由网关深度执行。
 
 **继承语义：沿链只增不减（max 聚合）。**
@@ -111,7 +111,7 @@ effectiveRole(user, P) = max{ role | memberships(user, n), n ∈ chain(P) }
 管理动作的门：管某节点成员 = 链上任一 Owner 或实例 admin；建子项目
 = 链上任一 Maintainer+。解析成本 O(链长×一次索引查询)，链长 ≤ 16。
 **保护分支只在根锚点生效**（实现期定案）：它守的是项目集成分支；
-子树时间线有自己的协作语义（收敛队列，docs/15），推子树的 main 是
+子树时间线有自己的协作语义（收敛队列，docs/design/workflow.md），推子树的 main 是
 锚点粒度的日常工作，不算动集成分支。单段子项目名不得占用网关运维
 子资源（placement/size/hooks/rename/force-push）与 `members`。
 
@@ -147,7 +147,7 @@ effectiveRole(user, P) = max{ role | memberships(user, n), n ∈ chain(P) }
 | 子项目 | `POST /repos/{g}/{p}/{path}`（可选 bootstrap） |
 | 透传 | 存储运维端点（repos 的 placement/size/hooks/repack、objects、fetch-trees…）console 做**参数映射**（逻辑名→repo_uid）后原样转发网关，CLI 无感切换 |
 
-错误信封沿用 docs/05 §3.2；无权限访问不存在的资源同样 404。
+错误信封沿用 docs/gateway/service-api.md §3.2；无权限访问不存在的资源同样 404。
 
 ## 7. 里程碑与测试
 
@@ -166,12 +166,12 @@ effectiveRole(user, P) = max{ role | memberships(user, n), n ∈ chain(P) }
 - **M6.4** web 会话 + 最小管理 UI（复用 web/ 零依赖经验）；审计
   事件流（enterprise 候选触点）。
 
-新用例登记 docs/13；console 侧同样"每个能力一个集成用例"。
+新用例登记 docs/operations/testing.md；console 侧同样"每个能力一个集成用例"。
 
 **T50 附带观察（已消项，2026-10-26 专项）**：all-in-one 形态下
 exact-pack 命中的 clone 曾有 ~2.5×repo 的分配落在
 enumerateClosure。根因两层：探针式类型判定对每个对象（含 blob）
-先 Raw；push 走流式 ingest（docs/03 §4）设计上不构建 commit/tree
+先 Raw；push 走流式 ingest（docs/storage/storage.md §4）设计上不构建 commit/tree
 索引，首触 miss 落进 objectFromPack 的"8 次翻转"——整包送进 go-git
 解码器。修复：枚举改类型导向（tree entry 按 mode 分类、want tip
 零 IO 类型探针、blob 字节永不触碰）；翻转改为 backend 能力位

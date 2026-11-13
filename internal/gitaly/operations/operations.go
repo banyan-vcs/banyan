@@ -19,9 +19,9 @@ import (
 // operationService implements gitaly.OperationService's user-facing write
 // slice: branch/tag lifecycle, fast-forward and the web-edit commit flow
 // (operations_commit.go). Merge/rebase/revert/squash land with the 3-way
-// engine (docs/19 §5). Hooks are a no-op: banyan's gitaly face inherits the
+// engine (docs/integration/gitaly-compat.md §5). Hooks are a no-op: banyan's gitaly face inherits the
 // upstream trust model — the token-bearing caller is the frontend, receive
-// hooks evaluate at the banyan gateway (docs/04 §7), not here.
+// hooks evaluate at the banyan gateway (docs/gateway/git-compat.md §7), not here.
 type operationService struct {
 	gitalypb.UnimplementedOperationServiceServer
 	*kit.Base
@@ -99,7 +99,7 @@ func (os *operationService) resolveExpectedOld(ctx context.Context, repo, hex st
 // chain, a revert landing on the advertised twin) additionally resets the
 // branch's woven view — otherwise materialization appends the new chain to
 // the retired one instead of replacing it (the force-push semantics,
-// docs/04 §6a).
+// docs/gateway/git-compat.md §6a).
 func (os *operationService) casRef(ctx context.Context, repo string, tl model.Timeline, expected, next model.OID) error {
 	if !next.IsZero() {
 		if _, _, err := os.Objects.Raw(ctx, repo, next); err != nil {

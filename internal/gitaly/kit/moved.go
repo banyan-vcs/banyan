@@ -96,7 +96,7 @@ func PaginationWindow(p *gitalypb.PaginationParameter) (limit, offset uint32) {
 }
 
 // repoChecksum is the show-ref --head XOR over the allowed ref set — the
-// same value praefect's replica checksums compare (docs/19).
+// same value praefect's replica checksums compare (docs/integration/gitaly-compat.md).
 func RepoChecksum(ctx context.Context, s *Base, name string) string {
 	refs, err := s.AdvertisedRefs(ctx, name)
 	if err != nil {

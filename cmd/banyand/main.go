@@ -1,4 +1,4 @@
-// banyand is banyan's server daemon (docs/10 §2): one binary, four serving
+// banyand is banyan's server daemon (docs/storage/ha.md §2): one binary, four serving
 // roles plus the control-plane subcommands — every server-side job ships in
 // this one process.
 //
@@ -12,9 +12,9 @@
 //	    storage               a pack warehouse: PUT/GET/DELETE by (repo, packOID),
 //	                          heartbeating its address to refs
 //	banyand console    the product-side control plane (formerly the banyans
-//	                    binary, docs/17): users, tokens, the logical repository
+//	                    binary, docs/web/console.md): users, tokens, the logical repository
 //	                    tree, the git front door
-//	banyand bench      the performance harness (docs/11 §3, formerly banyan-bench)
+//	banyand bench      the performance harness (docs/operations/performance.md §3, formerly banyan-bench)
 //	banyand web        the web tier (internal/webapp): sessions, OAuth login,
 //	                    repo import, the SPA — the standalone control plane
 //
@@ -73,7 +73,7 @@ func runServe() {
 		log.Fatalf("%v\nusage: banyand [-config banyan.yaml] [-role all-in-one|gateway|refs|storage] [-listen addr] [-root dir] [-meta mem|sqlite] [-db path] [-refs-addr host:port] [-node-id id] [-init-repo name] [-dev]", err)
 	}
 	fmt.Fprintf(os.Stderr, "banyand config: %s\n", cfg.Describe())
-	// Ops plane (docs/05 §6): pprof family + runtime snapshot + expvar
+	// Ops plane (docs/gateway/service-api.md §6): pprof family + runtime snapshot + expvar
 	// counters on an auxiliary listener, off unless debug.pprof_addr is set.
 	// Started here so every role gets it.
 	debug.Start(debug.Options{
@@ -141,13 +141,13 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
 	switch {
 	case cfg.Auth.Upstream != "":
-		// Console-fronted mode (docs/17 §5): the console (banyand console) control plane
+		// Console-fronted mode (docs/web/console.md §5): the console (banyand console) control plane
 		// authenticates and vouches for callers; rules sync as snapshot v2.
 		up := auth.NewUpstreamPolicy(cfg.Auth.Upstream, []byte(cfg.Auth.UpstreamSecret))
 		gw.Auth, api.Auth = up, up
 		log.Printf("auth: upstream console %s (snapshot v2 + signed identity)", cfg.Auth.Upstream)
 	case cfg.Auth.GitLabSSO != "" || len(cfg.Auth.OAuth) > 0:
-		// Token-fronted mode (docs/20, docs/07 §8d): tokens minted by the
+		// Token-fronted mode (docs/integration/gitlab-integration.md, docs/gateway/authorization.md §8d): tokens minted by the
 		// configured identity provider(s) — GitLab instances (OAuth2/PAT),
 		// github.com or a GitHub Enterprise host — authenticate the HTTP
 		// face. A single GitLab instance rides the original GitLabSSO
@@ -171,14 +171,14 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		}
 		if rs, ok := ms.(meta.SubtreeRuleStore); ok {
 			svc = &auth.SubtreeRulePolicy{Inner: svc, Rules: rs}
-			log.Printf("auth: subtree rules on (runtime directory access rules, docs/07 §8)")
+			log.Printf("auth: subtree rules on (runtime directory access rules, docs/gateway/authorization.md §8)")
 		}
 		gw.Auth = svc
 		api.Auth = svc
 	case staticPolicy(cfg) != nil:
 		policy := staticPolicy(cfg)
 		var svc auth.Service = policy
-		// Metadata-plane PATs ride on top of the static policy (docs/07
+		// Metadata-plane PATs ride on top of the static policy (docs/gateway/authorization.md
 		// §6): passwords and SSH keys keep working, tokens add scoped
 		// credentials (read/write/admin) — the decorator composes at the
 		// same Service seam the wire layers already enforce through.
@@ -186,11 +186,11 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 			svc = &auth.TokenPolicy{Inner: policy, Tokens: tr}
 			log.Printf("auth: token layer on (personal access tokens, scopes read/write/admin)")
 		}
-		// Runtime directory access rules narrow the whole stack (docs/07
+		// Runtime directory access rules narrow the whole stack (docs/gateway/authorization.md
 		// §8): the YAML subtree_access seed stays boot-time only.
 		if rs, ok := ms.(meta.SubtreeRuleStore); ok {
 			svc = &auth.SubtreeRulePolicy{Inner: svc, Rules: rs}
-			log.Printf("auth: subtree rules on (runtime directory access rules, docs/07 §8)")
+			log.Printf("auth: subtree rules on (runtime directory access rules, docs/gateway/authorization.md §8)")
 		}
 		gw.Auth = svc
 		api.Auth = svc
@@ -223,7 +223,7 @@ func toSSOProviders(cfg *config.Config) []auth.SSOProvider {
 	return out
 }
 
-// startGitaly serves the gitaly-protocol gRPC frontend (docs/19) when
+// startGitaly serves the gitaly-protocol gRPC frontend (docs/integration/gitaly-compat.md) when
 // gitaly.listen is configured: a GitLab Rails/workhorse stack can replace
 // its stock gitaly node with this process. Returns the server (nil when the
 // frontend is off) so the caller can drain it at shutdown.
@@ -252,7 +252,7 @@ func startGitaly(cfg *config.Config, ms meta.MetaStore, objects *storage.ObjectS
 }
 
 // gitLabAdapter loads the post-receive → internal API adapter config when
-// both a GitLab URL and the shared secret are present (docs/20 §2).
+// both a GitLab URL and the shared secret are present (docs/integration/gitlab-integration.md §2).
 func gitLabAdapter(cfg *config.Config) *gitwire.GitLabConfig {
 	if cfg.Gitaly.GitLab.URL == "" || cfg.Gitaly.GitLab.SecretPath == "" {
 		return nil
@@ -272,7 +272,7 @@ func gitLabAdapter(cfg *config.Config) *gitwire.GitLabConfig {
 	return &gitwire.GitLabConfig{URL: cfg.Gitaly.GitLab.URL, Secret: string(secret)}
 }
 
-// staticPolicy builds the demo authorization policy from config (docs/07
+// staticPolicy builds the demo authorization policy from config (docs/gateway/authorization.md
 // §2): nil when the auth section is absent — authorization off.
 func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
 	if len(cfg.Auth.Users) == 0 {
@@ -288,8 +288,8 @@ func staticPolicy(cfg *config.Config) *auth.StaticPolicy {
 }
 
 // runGateway is the stateless frontend: every store/metadata call crosses
-// the role boundary (docs/10 §2), so any gateway instance is expendable.
-// An optional on-disk pack cache (cache.pack_dir, docs/11 P2-1) carries the
+// the role boundary (docs/storage/ha.md §2), so any gateway instance is expendable.
+// An optional on-disk pack cache (cache.pack_dir, docs/operations/performance.md P2-1) carries the
 // fetched packs across restarts — the one piece of expendable local state
 // that meaningfully cuts cold-start traffic.
 func runGateway(ctx context.Context, cfg *config.Config) {
@@ -321,7 +321,7 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
 	switch {
 	case cfg.Auth.Upstream != "":
-		// Console-fronted mode on the gateway role (docs/17 §5): same
+		// Console-fronted mode on the gateway role (docs/web/console.md §5): same
 		// upstream policy as all-in-one — the console fronts both git and
 		// management traffic; this process only accepts signed identities.
 		up := auth.NewUpstreamPolicy(cfg.Auth.Upstream, []byte(cfg.Auth.UpstreamSecret))
@@ -329,7 +329,7 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 		log.Printf("auth: upstream console %s (snapshot v2 + signed identity)", cfg.Auth.Upstream)
 	case cfg.Auth.Remote:
 		// The gateway decides against a policy snapshot synced from the
-		// refs service (docs/07 §4) — same abstraction, synced state; the
+		// refs service (docs/gateway/authorization.md §4) — same abstraction, synced state; the
 		// concrete rules live on refs, never duplicated here.
 		policy := auth.NewRemotePolicy(cfg.RefsAddr)
 		gw.Auth = policy
@@ -341,7 +341,7 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 	root(mux)
 	gs := startGitaly(cfg, ms, objects)
 	// Same transport wiring as all-in-one: the gateway decides access
-	// against the synced policy snapshot (keys ride along, docs/07 §4/§7).
+	// against the synced policy snapshot (keys ride along, docs/gateway/authorization.md §4/§7).
 	stopSSH, err := startSSH(cfg.SSH.Listen, sshHostKeyPath(cfg.SSH.HostKey, cfg.Root), gw)
 	if err != nil {
 		log.Fatalf("ssh: %v", err)
@@ -356,7 +356,7 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 }
 
 // runRefs serves the serialization point: meta RPC, the health table and
-// the reconciler (single writer; HA story in docs/10 §4).
+// the reconciler (single writer; HA story in docs/storage/ha.md §4).
 func runRefs(ctx context.Context, cfg *config.Config) {
 	ms := openMeta(cfg)
 	if cfg.MetaBackend == "mem" {

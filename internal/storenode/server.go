@@ -1,4 +1,4 @@
-// Package storenode implements the storage role (docs/10 §3): a dumb pack
+// Package storenode implements the storage role (docs/storage/ha.md §3): a dumb pack
 // warehouse on local disk — PUT/GET/DELETE by (repo, packOID), content
 // addressed, no metadata of its own. It heartbeats its address to the refs
 // service; placement, holder sets and recovery all live elsewhere.
@@ -57,7 +57,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 }
 
 // hListPacks enumerates the pack files under one storage key (fleet sweep
-// input, docs/10 §8.7): [{oid, mtime}] — the sweep diffs this against the
+// input, docs/storage/ha.md §8.7): [{oid, mtime}] — the sweep diffs this against the
 // central registry, keyed by the same storage key the gateway writes.
 func (s *Server) hListPacks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -119,7 +119,7 @@ func (s *Server) hCleanTmp(w http.ResponseWriter, r *http.Request) {
 }
 
 // hRename moves a repo directory between storage keys (named addressing,
-// docs/03 §6). Missing source = OK (idempotent re-runs); existing target is
+// docs/storage/storage.md §6). Missing source = OK (idempotent re-runs); existing target is
 // refused — the node is a warehouse, not a merger.
 func (s *Server) hRename(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -165,7 +165,7 @@ func (s *Server) hDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// hObject serves single-object extraction (docs/11 P1-1): the pack's idx
+// hObject serves single-object extraction (docs/operations/performance.md P1-1): the pack's idx
 // locates the object's offset; only that entry (plus its delta base chain)
 // inflates. The response body is the raw object; X-Banyan-Type carries the
 // git object type. Missing pack/idx/object answer 404 — the gateway falls
@@ -202,7 +202,7 @@ func (s *Server) hPack(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		// One streaming landing with the trailer verified by a trailing
 		// hash window: the whole pack never transits node memory (the
-		// gateway's spool-then-stream chain ends here, docs/03 §4).
+		// gateway's spool-then-stream chain ends here, docs/storage/storage.md §4).
 		idx := decodeIdx(r.Header.Get("X-Banyan-Idx"))
 		if err := s.local.ReceivePack(repo, oid, r.ContentLength, r.Body, idx); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

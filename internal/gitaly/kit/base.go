@@ -43,7 +43,7 @@ type Options struct {
 	Token string
 	// GitLab roots the post-receive → internal API adapter on the internal
 	// gitwire instance (pushes that carry a platform identity notify the
-	// platform's push processing, docs/20). Nil = adapter off.
+	// platform's push processing, docs/integration/gitlab-integration.md). Nil = adapter off.
 	GitLab *gitwire.GitLabConfig
 	// StorageName is the virtual storage this node answers as — must match
 	// the storage name the frontend is configured with. Default "default".

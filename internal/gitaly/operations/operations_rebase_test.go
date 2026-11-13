@@ -16,7 +16,7 @@ import (
 	"github.com/banyan-vcs/banyan/internal/service"
 )
 
-// TestGitalyRebaseAndPatchSurface covers slice 7 (docs/19): the two rebase
+// TestGitalyRebaseAndPatchSurface covers slice 7 (docs/integration/gitaly-compat.md): the two rebase
 // RPCs, the mbox patch flow and the submodule pointer update.
 func TestGitalyRebaseAndPatchSurface(t *testing.T) {
 	srv, objects, svc, addr := startServer(t)

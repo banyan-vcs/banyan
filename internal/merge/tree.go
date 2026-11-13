@@ -1,9 +1,9 @@
-// Tree entry three-way merge (docs/15 §2.2): the merge-ort process_entries
+// Tree entry three-way merge (docs/design/workflow.md §2.2): the merge-ort process_entries
 // trivial subset — per-name 3-way decision, recursion into directories,
 // content merge for modify/modify blobs, explicit conflicts for
 // delete/modify, add/add divergence, mode/type clashes and anything a blob
 // merge reports unclean. Renames are NOT detected: a rename is delete+add
-// and lands in the conflict set rather than silently moving (docs/15 §5).
+// and lands in the conflict set rather than silently moving (docs/design/workflow.md §5).
 package merge
 
 import (

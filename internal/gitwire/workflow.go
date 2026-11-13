@@ -1,4 +1,4 @@
-// M4 directory-level workflow (docs/15 v2): the per-timeline job queue and
+// M4 directory-level workflow (docs/design/workflow.md v2): the per-timeline job queue and
 // the convergence replay. Pure Go merge (internal/merge — merge-ort subset,
 // no git CLI); the queue is gateway-local and advisory (CAS stays the
 // referee), convergence replays a divergent client chain onto the evolving
@@ -19,7 +19,7 @@ import (
 )
 
 // workflow carries the per-gateway queue state (lazily created on the first
-// convergent push; lost on restart by design — docs/15 §2.4).
+// convergent push; lost on restart by design — docs/design/workflow.md §2.4).
 type workflow struct {
 	mu     sync.Mutex
 	queues map[string]*dirQueue
@@ -49,7 +49,7 @@ type jobResult struct {
 }
 
 // runSubtreeJob queues one subtree push for its directory timeline and waits
-// for the drainer (docs/15 §2.1). The drainer processes queued jobs FIFO —
+// for the drainer (docs/design/workflow.md §2.1). The drainer processes queued jobs FIFO —
 // each converging onto the tip left by its predecessor (the merge train) —
 // and exits once the queue is empty, so no goroutine lingers.
 func (s *Server) runSubtreeJob(ctx context.Context, vr VirtualRepo, branch string, old, newHead model.OID) jobResult {
@@ -99,7 +99,7 @@ func (s *Server) drainQueue(q *dirQueue) {
 
 // adoptOrConverge lands one subtree push. Fast path (consecutive push, or
 // first): today's adopt semantics verbatim. Divergent push under
-// convergence: server-side replay onto the combined tip (docs/15 §2.2),
+// convergence: server-side replay onto the combined tip (docs/design/workflow.md §2.2),
 // with conflicts failing this ticket in isolation; without convergence the
 // pre-M4 rejection stands.
 func (s *Server) adoptOrConverge(ctx context.Context, j *subtreeJob) jobResult {
@@ -141,7 +141,7 @@ func (s *Server) adoptOrConverge(ctx context.Context, j *subtreeJob) jobResult {
 // convergeSubtreePush replays the client chain onto the combined tip and
 // CASes the result. OCC: a lost CAS (another gateway landed first) refetches
 // the tip and replays — bounded retries with backoff, never a client round
-// trip (docs/15 §2.3).
+// trip (docs/design/workflow.md §2.3).
 func (s *Server) convergeSubtreePush(ctx context.Context, j *subtreeJob, curTip model.OID) (model.OID, error) {
 	for attempt := 0; attempt < 8; attempt++ {
 		if attempt > 0 {
@@ -174,7 +174,7 @@ func (s *Server) convergeSubtreePush(ctx context.Context, j *subtreeJob, curTip 
 // replayOnto synthesizes the converged chain (no CAS). The first conflicted
 // path fails the ticket; synthesized-but-discarded objects are content-
 // addressed garbage (harmless orphans, repack's business — same crash
-// window as the two-step push, docs/10 v1 deviations).
+// window as the two-step push, docs/storage/ha.md v1 deviations).
 func (s *Server) replayOnto(ctx context.Context, j *subtreeJob, curTip model.OID) (head model.OID, conflict string, err error) {
 	chain, err := s.clientChain(ctx, j.vr.Repo, j.old, j.newHead)
 	if err != nil {

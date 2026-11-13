@@ -1,5 +1,5 @@
 // Package merge implements the three-way merge subset banyan's convergence
-// needs (docs/15 §2.2): blob-level diff3 in the xdl_merge structure (change
+// needs (docs/design/workflow.md §2.2): blob-level diff3 in the xdl_merge structure (change
 // intervals from two pairwise diffs against the base, disjoint changes
 // applied, overlaps conflicted with git-compatible markers) and directory
 // tree entry merge (the merge-ort process_entries trivial subset plus

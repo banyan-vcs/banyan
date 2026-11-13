@@ -1,4 +1,4 @@
-# Cluster demo (docs/10): one refs service, four storage nodes, one gateway.
+# Cluster demo (docs/storage/ha.md): one refs service, four storage nodes, one gateway.
 #   docker compose -f docker-compose.cluster.yml up -d --build
 #   git push → http://localhost:8100/r/<repo>.git
 # Walkthrough script: demo/cluster-demo.sh
@@ -55,7 +55,7 @@ services:
     image: banyan:dev
     container_name: banyan-gateway
     # -dev: the demo gateway runs unauthenticated; production posture
-    # refuses to boot a client-facing role without auth (docs/07 §0)
+    # refuses to boot a client-facing role without auth (docs/gateway/authorization.md §0)
     command: ["-role", "gateway", "-listen", "0.0.0.0:8080", "-dev",
               "-refs-addr", "refs:8102", "-root", "/tmp"]
     ports:

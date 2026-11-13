@@ -1,4 +1,4 @@
-// bench.go — `banyand bench`: the performance comparison harness (docs/11
+// bench.go — `banyand bench`: the performance comparison harness (docs/operations/performance.md
 // §3), formerly the standalone banyan-bench binary. banyan vs a genuine git
 // http-backend on the same machine and transport, deterministic seed repos,
 // cold/warm/incremental lanes plus workflow lanes (dev-loop, 8-writer

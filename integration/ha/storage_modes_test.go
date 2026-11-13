@@ -1,4 +1,4 @@
-// storage_modes_test.go — T40: the two storage addressing modes (docs/03
+// storage_modes_test.go — T40: the two storage addressing modes (docs/storage/storage.md
 // §6) end to end on the in-process cluster with the real git CLI. Named
 // addressing keeps readable on-disk repo directories but a rename must move
 // data on every holder before the registry flips; hashed addressing stores

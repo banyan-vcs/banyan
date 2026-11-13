@@ -71,7 +71,7 @@ func importStatus(err error) error {
 }
 
 // FetchRemote pulls a smart-HTTP remote into an existing repository.
-// SSH remotes (ssh_key/known_hosts) are not served — registered in docs/19.
+// SSH remotes (ssh_key/known_hosts) are not served — registered in docs/integration/gitaly-compat.md.
 func (rs *repositoryService) FetchRemote(ctx context.Context, req *gitalypb.FetchRemoteRequest) (*gitalypb.FetchRemoteResponse, error) {
 	name, err := rs.ExistingRepo(ctx, req.GetRepository())
 	if err != nil {

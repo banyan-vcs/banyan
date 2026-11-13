@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/avatar.png" width="120" alt="banyan" /></p>
+<p align="center"><img src="docs/assets/avatar.png" width="120" alt="banyan" /></p>
 
 # Banyan
 
@@ -59,7 +59,7 @@ directory timelines align both boundaries at the same granularity.
 ## Architecture
 
 <p align="center">
-  <img src="docs/architecture-simple.svg" width="800" alt="banyan simplified architecture: git, GitLab and thin-CLI clients over stateless gateways; a refs service as the only serialization point beside scattered pack storage; directory timelines woven into the root repository on read" />
+  <img src="docs/assets/architecture-simple.svg" width="800" alt="banyan simplified architecture: git, GitLab and thin-CLI clients over stateless gateways; a refs service as the only serialization point beside scattered pack storage; directory timelines woven into the root repository on read" />
 </p>
 
 The four moves that make it work:
@@ -80,7 +80,7 @@ The four moves that make it work:
 ## Design goals
 
 1. **Drop-in git compatibility** — plain `git clone / fetch / push` just works
-   (Smart HTTP v1 + v2 fetch-side command set — ls-refs/fetch, docs/04 9b).
+   (Smart HTTP v1 + v2 fetch-side command set — ls-refs/fetch, docs/gateway/git-compat.md 9b).
 2. **Any subdirectory is a repo** — not sparse checkout: every directory owns
    its commit timeline, and `/r/{repo}/tree/{subdir}` serves a semantically
    complete repository with full projected history.
@@ -98,21 +98,21 @@ The four moves that make it work:
 ## What works today
 
 Everything below is landed and pinned by **106 top-level integration test
-functions** driving the real git CLI ([docs/13](docs/13-testing.md));
+functions** driving the real git CLI ([docs/operations/testing.md](docs/operations/testing.md));
 GitLab-mode rows are additionally verified against a real GitLab-CE
-([docs/19](docs/19-gitaly-compat.md) §8, [docs/20](docs/20-gitlab-integration.md)).
+([docs/integration/gitaly-compat.md](docs/integration/gitaly-compat.md) §8, [docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md)).
 
 **Git protocol** — what a plain git client can do:
 
 | Capability | Notes |
 |---|---|
-| Root + subtree `clone / fetch / push` | Smart HTTP v1 + v2 ([docs/04](docs/04-git-compat.md)) |
+| Root + subtree `clone / fetch / push` | Smart HTTP v1 + v2 ([docs/gateway/git-compat.md](docs/gateway/git-compat.md)) |
 | Git over SSH | `ssh://` + public-key auth, v0 stateful + v2; same serving core, same authz |
 | Partial clone | `--filter=blob:none` / `tree:0`, lazy fetch by OID |
 | Shallow clone | depth / deepen / unshallow |
 | Tags and arbitrary `refs/<ns>` namespaces | stored and advertised verbatim |
 | Push options | `-o` negotiated and parsed |
-| Efficient transfers | serve-path delta packs; thin packs on incremental fetch — 0.87× git's bytes ([docs/11](docs/11-performance.md) §3); have subtraction |
+| Efficient transfers | serve-path delta packs; thin packs on incremental fetch — 0.87× git's bytes ([docs/operations/performance.md](docs/operations/performance.md) §3); have subtraction |
 
 **Directory-anchored storage** — the data model in action:
 
@@ -120,35 +120,35 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 |---|---|
 | Any subdirectory is a repo | `/r/{repo}/tree/{subdir}`, full projected history — `log / show / fsck` all work on it |
 | Per-directory timelines | a push CASes exactly one timeline — zero cross-directory locks; the root view is woven on read (v5) |
-| Directory workflow (M4) | per-timeline queue + server-side convergence: bursts land with zero rejections, conflicts isolated per ticket; `banyan snapshot` workspace checkpoints, `banyan stack` path-scoped changeset queue, and `banyan sync` explicit subtree→root rebase — server-side replay closing the true-divergence race ([docs/15](docs/15-workflow.md), [docs/06](docs/06-cli.md) §3.7-3.9) |
+| Directory workflow (M4) | per-timeline queue + server-side convergence: bursts land with zero rejections, conflicts isolated per ticket; `banyan snapshot` workspace checkpoints, `banyan stack` path-scoped changeset queue, and `banyan sync` explicit subtree→root rebase — server-side replay closing the true-divergence race ([docs/design/workflow.md](docs/design/workflow.md), [docs/client/cli.md](docs/client/cli.md) §3.7-3.9) |
 | Personal branch namespaces | `refs/heads/<user>/*` visible to their owner alone — the monorepo too-many-branches answer |
 | Repack | fragment merge + delta encoding |
-| Bounded-memory serving | exact-pack verbatim streams; typed enumeration + windowed encode at any repo size ([docs/03](docs/03-storage.md) §3) |
+| Bounded-memory serving | exact-pack verbatim streams; typed enumeration + windowed encode at any repo size ([docs/storage/storage.md](docs/storage/storage.md) §3) |
 
 **Platform integration** — GitLab drop-in:
 
 | Capability | Notes |
 |---|---|
-| Gitaly gRPC frontend | protocol v19.5.2, **163/163 RPCs** — Operation/Ref/Commit/Diff/Blob services, praefect (cluster-of-one), backups, bundles, history rewrite, sidechannel transport ([docs/19](docs/19-gitaly-compat.md)) |
-| GitLab-CE on banyan storage | project create, push/clone over HTTP **and** SSH, web browsing, MR merges, wiki, archives — live-verified against GitLab-CE 19.5 ([docs/20](docs/20-gitlab-integration.md)) |
+| Gitaly gRPC frontend | protocol v19.5.2, **163/163 RPCs** — Operation/Ref/Commit/Diff/Blob services, praefect (cluster-of-one), backups, bundles, history rewrite, sidechannel transport ([docs/integration/gitaly-compat.md](docs/integration/gitaly-compat.md)) |
+| GitLab-CE on banyan storage | project create, push/clone over HTTP **and** SSH, web browsing, MR merges, wiki, archives — live-verified against GitLab-CE 19.5 ([docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md)) |
 | Push policy gate | protected branches and friends enforced via `/internal/allowed`; Rails' rejection message reaches the git client verbatim |
 | Platform callbacks | post-receive adapter: activity events, pipelines, cache expiry, MR-from-push (`-o merge_request.create` verified live) |
 | Subtree projection refs | `refs/banyan/tree/<dir>` — one GitLab URL and one credential per subtree; pushes assemble upward into the root view |
-| Subtree management console | `/-/banyan/` under the GitLab URL (an nginx subpage reusing the banyan web tier): subtree listings, activity, clone recipes and **runtime access rules** — GitLab SSO login ([docs/20](docs/20-gitlab-integration.md) §7b) |
+| Subtree management console | `/-/banyan/` under the GitLab URL (an nginx subpage reusing the banyan web tier): subtree listings, activity, clone recipes and **runtime access rules** — GitLab SSO login ([docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b) |
 | GitLab push size limit | the Maximum-push-size setting enforced via `receive.maxInputSize` |
 
 **Production and operations**:
 
 | Capability | Notes |
 |---|---|
-| HA cluster | gateway + refs service + scattered multi-replica packs; node-failure recovery, dynamic per-repo replicas ([docs/10](docs/10-ha.md); local-disk cluster today, MySQL/raft refs → HA-2) |
-| Authorization | repo / directory / branch granularity, fetch and push ([docs/07](docs/07-authorization.md); demo policy, opt-in) |
+| HA cluster | gateway + refs service + scattered multi-replica packs; node-failure recovery, dynamic per-repo replicas ([docs/storage/ha.md](docs/storage/ha.md); local-disk cluster today, MySQL/raft refs → HA-2) |
+| Authorization | repo / directory / branch granularity, fetch and push ([docs/gateway/authorization.md](docs/gateway/authorization.md); demo policy, opt-in) |
 | Personal access tokens | sha256 at rest, plaintext shown once, expiry/revocation on read; scopes are ceilings, never bypasses — TokenPolicy decorates any policy, RPC authz at the same seam |
-| Production posture | secure-by-default startup, DB-backed metadata by default, graceful drain, `/metrics` on every role (P0, [docs/14](docs/14-roadmap.md)) |
+| Production posture | secure-by-default startup, DB-backed metadata by default, graceful drain, `/metrics` on every role (P0, [docs/project/roadmap.md](docs/project/roadmap.md)) |
 | Server-side diff & blame | path-diff and blame RPCs byte-equal to `git diff` / `git blame` |
-| Storage addressing | named vs hashed, renames never touch storage ([docs/03](docs/03-storage.md) §6) |
+| Storage addressing | named vs hashed, renames never touch storage ([docs/storage/storage.md](docs/storage/storage.md) §6) |
 | Service layer + JSON API | `/api/v1/*` unified error envelope; SQLite / MySQL / Postgres metadata + YAML config |
-| Clients & UIs | thin-workspace CLI (`banyan`), React web console (code browsing, history/diff/blame, branches, tokens, subtree management), product console (`banyand console`) with subtree-scoped roles ([docs/17](docs/17-console.md); console SSH/web → M6.3/M6.4) |
+| Clients & UIs | thin-workspace CLI (`banyan`), React web console (code browsing, history/diff/blame, branches, tokens, subtree management), product console (`banyand console`) with subtree-scoped roles ([docs/web/console.md](docs/web/console.md); console SSH/web → M6.3/M6.4) |
 | Ops plane | pprof family, runtime snapshots, serve-path counters |
 
 The thin-CLI commit path is cross-verified by fresh git clones plus `fsck`;
@@ -170,9 +170,9 @@ internal/view/      read-time view engine (v5 weave, subtree views)
 internal/gitwire/   git wire protocol (smart HTTP v1 / upload-pack / receive-pack)
 internal/gitaly/   gitaly gRPC frontend shell (auth/lifecycle) over per-service
                     families (repository/commit/ref/object/operations/transport/
-                    backup/node + kit shared plane), GitLab drop-in, docs/19
+                    backup/node + kit shared plane), GitLab drop-in, docs/integration/gitaly-compat.md
 internal/gitalypb/ vendored gitaly protocol (v19.5.2, generated)
-internal/service/   protocol-agnostic service layer (shared by all frontends, docs/05)
+internal/service/   protocol-agnostic service layer (shared by all frontends, docs/gateway/service-api.md)
 internal/rpc/       httpd JSON frontend (/api/v1)
 internal/cli/       thin-workspace client implementation
 internal/config/    layered config (defaults < YAML < flags)
@@ -184,7 +184,7 @@ internal/config/    layered config (defaults < YAML < flags)
 
 ```bash
 docker compose up -d          # build + run; data persists in the banyan-data volume
-                              # authorization is ON in the demo (docs/07):
+                              # authorization is ON in the demo (docs/gateway/authorization.md):
                               #   web UI  http://localhost:8101 (alice / bob / admin, password demo)
                               #   git     http://alice:demo@localhost:8100/r/demo.git
 
@@ -193,7 +193,7 @@ docker compose up -d          # build + run; data persists in the banyan-data vo
 git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
 
-# git over SSH too (throwaway demo keys in demo/ssh/, docs/12 §3b)
+# git over SSH too (throwaway demo keys in demo/ssh/, docs/operations/docker-demo.md §3b)
 git clone ssh://alice@localhost:8102/r/demo.git \
   -c core.sshCommand="ssh -i demo/ssh/alice -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
@@ -210,7 +210,7 @@ docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
 
 A real GitLab whose only Gitaly storage node is banyan — project create,
 HTTP push, web UI browsing all served by banyan's gitaly gRPC frontend
-(docs/19; the compatibility layer's live-fire acceptance):
+(docs/integration/gitaly-compat.md; the compatibility layer's live-fire acceptance):
 
 ```bash
 docker compose -f demo/gitlab/docker-compose.yml up -d   # GitLab-CE 19.5 + banyan (~4 GiB)
@@ -220,7 +220,7 @@ demo/gitlab/provision.sh                                  # seed, push, read-bac
 ```
 
 Wiring an existing GitLab-CE (config, verification checklist, troubleshooting):
-[docs/20](docs/20-gitlab-integration.md).
+[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md).
 
 
 Constrained networks can build through a mirror:
@@ -228,7 +228,7 @@ Constrained networks can build through a mirror:
 
 ### HA cluster demo
 
-One command boots the split deployment (docs/10): a refs service, four
+One command boots the split deployment (docs/storage/ha.md): a refs service, four
 storage nodes and a stateless gateway — packs scatter across the storage
 nodes with 3 replicas each; killing a storage node keeps reads and writes
 alive while the reconciler restores the replica target.
@@ -276,11 +276,11 @@ go run ../cmd/banyan log           # remote history, zero download
 
 ## Non-goals (current stage)
 
-- Push stays on protocol v0 (git itself never defined v2 for receive-pack); the fetch side speaks v2 natively (ls-refs + fetch, docs/04 9b).
+- Push stays on protocol v0 (git itself never defined v2 for receive-pack); the fetch side speaks v2 natively (ls-refs + fetch, docs/gateway/git-compat.md 9b).
 - No DevOps platform features (MR/CI/permissions UI) — banyan is a
-  **storage layer**; collaboration stays on existing platforms (docs/01).
+  **storage layer**; collaboration stays on existing platforms (docs/design/big-picture.md).
 - No praefect replication protocol; multi-replica follows banyan's own
-  sharding roadmap (docs/03).
+  sharding roadmap (docs/storage/storage.md).
 
 ## Documentation
 
@@ -291,46 +291,46 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 
 | Doc | Contents |
 |---|---|
-| [docs/00-overview.md](docs/00-overview.md) | Vision, design principles, architecture map |
-| [docs/01-big-picture.md](docs/01-big-picture.md) | Positioning: universal code storage layer + platform integration |
+| [docs/design/overview.md](docs/design/overview.md) | Vision, design principles, architecture map |
+| [docs/design/big-picture.md](docs/design/big-picture.md) | Positioning: universal code storage layer + platform integration |
 
 **Core design** — bottom-up by layer (model → storage → wire → service → client):
 
 | Doc | Contents |
 |---|---|
-| [docs/02-data-model.md](docs/02-data-model.md) | **Core**: anchored timelines, assembly, git projection |
-| [docs/03-storage.md](docs/03-storage.md) | Sharded pack storage: CAS, dual indexes, repack |
-| [docs/04-git-compat.md](docs/04-git-compat.md) | Git compatibility: Smart HTTP, SSH transport, virtual subtree repos |
-| [docs/05-service-api.md](docs/05-service-api.md) | Service layer + httpd/Gitaly frontends, API contracts |
-| [docs/06-cli.md](docs/06-cli.md) | Thin-client CLI command design |
+| [docs/design/data-model.md](docs/design/data-model.md) | **Core**: anchored timelines, assembly, git projection |
+| [docs/storage/storage.md](docs/storage/storage.md) | Sharded pack storage: CAS, dual indexes, repack |
+| [docs/gateway/git-compat.md](docs/gateway/git-compat.md) | Git compatibility: Smart HTTP, SSH transport, virtual subtree repos |
+| [docs/gateway/service-api.md](docs/gateway/service-api.md) | Service layer + httpd/Gitaly frontends, API contracts |
+| [docs/client/cli.md](docs/client/cli.md) | Thin-client CLI command design |
 
 **Cross-cutting**:
 
 | Doc | Contents |
 |---|---|
-| [docs/07-authorization.md](docs/07-authorization.md) | Authorization model (incl. secure-by-default startup), personal-branch visibility, web demo |
-| [docs/08-derived-data.md](docs/08-derived-data.md) | Derived data: commit-graph, path history, blame |
-| [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
-| [docs/15-workflow.md](docs/15-workflow.md) | M4 design: per-directory commit queue + convergence (merge train) |
-| [docs/17-console.md](docs/17-console.md) | Product-side console (`banyand console`): group/project routing, PAT auth, member roles |
+| [docs/gateway/authorization.md](docs/gateway/authorization.md) | Authorization model (incl. secure-by-default startup), personal-branch visibility, web demo |
+| [docs/design/derived-data.md](docs/design/derived-data.md) | Derived data: commit-graph, path history, blame |
+| [docs/storage/indexing-packing.md](docs/storage/indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
+| [docs/design/workflow.md](docs/design/workflow.md) | M4 design: per-directory commit queue + convergence (merge train) |
+| [docs/web/console.md](docs/web/console.md) | Product-side console (`banyand console`): group/project routing, PAT auth, member roles |
 **Operations & evolution**:
 
 | Doc | Contents |
 |---|---|
-| [docs/10-ha.md](docs/10-ha.md) | High availability: all-in-one vs gateway + cluster, per-repo replicas |
-| [docs/11-performance.md](docs/11-performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates, measured benchmark report (§3a) |
-| [docs/12-docker-demo.md](docs/12-docker-demo.md) | Docker demo walkthrough: auth, ssh, web UI, cluster pointers |
-| [docs/13-testing.md](docs/13-testing.md) | Integration test matrix |
-| [docs/14-roadmap.md](docs/14-roadmap.md) | Milestones & the production-readiness track |
-| [docs/19-gitaly-compat.md](docs/19-gitaly-compat.md) | Gitaly gRPC compat layer: coverage matrix (163 RPCs), design notes |
-| [docs/20-gitlab-integration.md](docs/20-gitlab-integration.md) | GitLab integration guide: wiring steps, verification checklist, troubleshooting |
+| [docs/storage/ha.md](docs/storage/ha.md) | High availability: all-in-one vs gateway + cluster, per-repo replicas |
+| [docs/operations/performance.md](docs/operations/performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates, measured benchmark report (§3a) |
+| [docs/operations/docker-demo.md](docs/operations/docker-demo.md) | Docker demo walkthrough: auth, ssh, web UI, cluster pointers |
+| [docs/operations/testing.md](docs/operations/testing.md) | Integration test matrix |
+| [docs/project/roadmap.md](docs/project/roadmap.md) | Milestones & the production-readiness track |
+| [docs/integration/gitaly-compat.md](docs/integration/gitaly-compat.md) | Gitaly gRPC compat layer: coverage matrix (163 RPCs), design notes |
+| [docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) | GitLab integration guide: wiring steps, verification checklist, troubleshooting |
 
 ## Conventions
 
 - Layered commits (bottom-up): `docs → model → storage → gitwire → service →
   cli`; every commit builds and passes its tests independently.
 - New capabilities land with an integration case registered in
-  [docs/13](docs/13-testing.md); assertions use testify (require = scenario
+  [docs/operations/testing.md](docs/operations/testing.md); assertions use testify (require = scenario
   gates, assert = independent checks).
 - git is the behavioral reference (its source is the oracle); go-git is just
   a codec library, confined to `internal/storage/packfile.go`.
