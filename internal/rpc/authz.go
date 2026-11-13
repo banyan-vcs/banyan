@@ -137,6 +137,9 @@ func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, errEnvelope{Error: errBody{Code: "INTERNAL", Message: err.Error()}})
 			return
 		}
+		if toks == nil {
+			toks = []meta.TokenInfo{} // "no tokens yet" is [], not null
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"tokens": toks})
 	case r.Method == http.MethodDelete && rest != "":
 		hash := rest

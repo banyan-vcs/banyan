@@ -17,6 +17,9 @@ type LogEntry struct {
 	Author  string `json:"author"`
 	When    int64  `json:"when"`
 	Parents int    `json:"parents"`
+	// ParentOIDs carries the actual parent OIDs (first parent first) so the
+	// web commit view can diff a commit against its parent.
+	ParentOIDs []string `json:"parentOids,omitempty"`
 }
 
 // Log returns up to limit entries (newest first). from zero = the woven
@@ -143,6 +146,13 @@ func (s *Service) Log(ctx context.Context, repo, rev string, from model.OID, pat
 			Author:  c.Author.Name + " <" + c.Author.Email + ">",
 			When:    ci.When,
 			Parents: len(ci.Parents),
+			ParentOIDs: func() []string {
+				ps := make([]string, len(ci.Parents))
+				for i, p := range ci.Parents {
+					ps[i] = string(p)
+				}
+				return ps
+			}(),
 		})
 	}
 	return entries, usedFrom, nil

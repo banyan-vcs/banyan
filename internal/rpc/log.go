@@ -47,11 +47,12 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 
 // logEntry is one log record (hashes exactly match the git view).
 type logEntry struct {
-	OID     string `json:"oid"`
-	Subject string `json:"subject"`
-	Author  string `json:"author"`
-	When    int64  `json:"when"`
-	Parents int    `json:"parents"`
+	OID        string   `json:"oid"`
+	Subject    string   `json:"subject"`
+	Author     string   `json:"author"`
+	When       int64    `json:"when"`
+	Parents    int      `json:"parents"`
+	ParentOIDs []string `json:"parentOids,omitempty"`
 }
 
 type logResponse struct {
