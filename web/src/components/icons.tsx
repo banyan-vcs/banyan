@@ -98,3 +98,10 @@ export const SubmoduleIcon = (): ReactNode => (
     <path d="m5.5 8.5 5-2.5M5.5 8.5 10.5 6M5.5 8.5l5 2.5" />
   </Svg>
 );
+
+export const ImportIcon = (): ReactNode => (
+  <Svg>
+    <path d="M8 2.5v7M5.25 6.75 8 9.5l2.75-2.75" />
+    <path d="M2.5 10.5v1.75A1.25 1.25 0 0 0 3.75 13.5h8.5a1.25 1.25 0 0 0 1.25-1.25V10.5" />
+  </Svg>
+);

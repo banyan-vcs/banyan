@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { BASE_URL } from "./api/client";
 import { AppRoutes } from "./App";
+import { ModeProvider } from "./mode";
 import { SessionProvider } from "./session";
 import "./styles.css";
 
@@ -16,11 +17,13 @@ const basename = BASE_URL.replace(/\/$/, "");
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <SessionProvider>
-        <BrowserRouter basename={basename}>
-          <AppRoutes />
-        </BrowserRouter>
-      </SessionProvider>
+      <ModeProvider>
+        <SessionProvider>
+          <BrowserRouter basename={basename}>
+            <AppRoutes />
+          </BrowserRouter>
+        </SessionProvider>
+      </ModeProvider>
     </QueryClientProvider>
   </StrictMode>
 );

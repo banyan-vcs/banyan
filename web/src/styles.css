@@ -442,3 +442,8 @@ input.days { width: 70px; }
 .commit-subject { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
 
 .rule-box { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
+
+/* import page */
+form.import-form { display: flex; gap: 8px; margin: 14px 0; flex-wrap: wrap; }
+form.import-form .import-url { flex: 1; min-width: 260px; }
+.import-error { font-size: 12px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }

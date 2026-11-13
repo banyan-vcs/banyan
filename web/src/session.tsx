@@ -6,6 +6,7 @@ import { BASE_URL } from "./api/client";
 export interface SessionInfo {
   user: string;
   sso: boolean;
+  provider?: { id: string; kind: string };
 }
 
 interface SessionState {

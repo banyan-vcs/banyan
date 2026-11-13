@@ -6,10 +6,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
 import type { RepoInfo } from "../api/types";
+import { can, useMode } from "../mode";
 import { Empty, ErrorBox, Spinner } from "../components/ui";
 
 export function ReposPage(): ReactNode {
   const nav = useNavigate();
+  const mode = useMode();
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [error, setError] = useState("");
@@ -68,19 +70,26 @@ export function ReposPage(): ReactNode {
               </tbody>
             </table>
           )}
-          <form
-            className="create-repo"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (name.trim()) create.mutate();
-            }}
-          >
-            <input placeholder="new repository (single segment)" value={name} onChange={(e) => setName(e.target.value)} />
-            <button className="btn" type="submit" disabled={create.isPending}>
-              create
-            </button>
-            {error && <span className="muted">{error}</span>}
-          </form>
+          {can(mode, "createRepos") && (
+            <form
+              className="create-repo"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (name.trim()) create.mutate();
+              }}
+            >
+              <input placeholder="new repository (single segment)" value={name} onChange={(e) => setName(e.target.value)} />
+              <button className="btn" type="submit" disabled={create.isPending}>
+                create
+              </button>
+              {error && <span className="muted">{error}</span>}
+            </form>
+          )}
+          {can(mode, "import") && (
+            <p className="pad">
+              <Link to="/settings/imports">import a repository →</Link>
+            </p>
+          )}
         </>
       )}
     </>

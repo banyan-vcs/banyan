@@ -1,21 +1,23 @@
 // Layout.tsx — the application chrome, after bytebase: a light top bar
 // (brand, the logged-in user, logout) over a gray sidebar. The sidebar
 // carries the workspace links and, inside /r/<repo>, that repository's
-// navigation — the whole demo is about per-user visibility, so the user
-// stays visible in the chrome.
+// navigation — narrowed by the deployment's advertised capabilities (the
+// gitlab profile surfaces the subtree features only).
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, type ReactNode } from "react";
 import { BASE_URL } from "../api/client";
 import { useSession } from "../session";
-import { BranchesIcon, CodeIcon, HistoryIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon, TokensIcon } from "./icons";
+import { can, useMode } from "../mode";
+import { BranchesIcon, CodeIcon, HistoryIcon, ImportIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon, TokensIcon } from "./icons";
 
 export function Layout(): ReactNode {
   const { info } = useSession();
-  // GitLab SSO mode wears GitLab's palette (body.gitlab in styles.css)
+  const mode = useMode();
+  // A GitLab-provider session wears GitLab's palette (styles.css body.gitlab)
   useEffect(() => {
-    document.body.classList.toggle("gitlab", !!info?.sso);
-  }, [info?.sso]);
+    document.body.classList.toggle("gitlab", info?.provider?.kind === "gitlab");
+  }, [info?.provider?.kind]);
   const nav = useNavigate();
   const loc = useLocation();
   const qc = useQueryClient();
@@ -40,14 +42,14 @@ export function Layout(): ReactNode {
     </Link>
   );
 
-  const repoNav: Array<[string, string, () => ReactNode, boolean]> = [
-    [base, "overview", OverviewIcon, at(base)],
-    [`${base}/tree`, "code", CodeIcon, under(`${base}/tree`) || under(`${base}/blame`)],
-    [`${base}/history`, "history", HistoryIcon, under(`${base}/history`) || under(`${base}/commit`)],
-    [`${base}/branches`, "branches", BranchesIcon, under(`${base}/branches`)],
-    [`${base}/subtrees`, "subtrees", SubtreesIcon, under(`${base}/subtrees`)],
-    [`${base}/settings`, "settings", SettingsIcon, under(`${base}/settings`)],
-  ];
+  const repoNav = [
+    { to: base, label: "overview", icon: OverviewIcon, enabled: true, active: at(base) },
+    { to: `${base}/tree`, label: "code", icon: CodeIcon, enabled: can(mode, "code"), active: under(`${base}/tree`) || under(`${base}/blame`) },
+    { to: `${base}/history`, label: "history", icon: HistoryIcon, enabled: can(mode, "history"), active: under(`${base}/history`) || under(`${base}/commit`) },
+    { to: `${base}/branches`, label: "branches", icon: BranchesIcon, enabled: can(mode, "branches"), active: under(`${base}/branches`) },
+    { to: `${base}/subtrees`, label: "subtrees", icon: SubtreesIcon, enabled: can(mode, "subtrees"), active: under(`${base}/subtrees`) },
+    { to: `${base}/settings`, label: "settings", icon: SettingsIcon, enabled: can(mode, "settings"), active: under(`${base}/settings`) },
+  ].filter((n) => n.enabled);
 
   return (
     <div className="shell">
@@ -60,7 +62,7 @@ export function Layout(): ReactNode {
           <span className="who">
             <span className="user-dot">{info.user.slice(0, 1).toUpperCase()}</span>
             {info.user}
-            {info.sso ? <span className="pill">gitlab sso</span> : null}
+            {info.provider ? <span className="pill">{info.provider.id}</span> : null}
             <button className="btn ghost" onClick={() => logout.mutate()}>
               log out
             </button>
@@ -73,12 +75,13 @@ export function Layout(): ReactNode {
             <div className="side-group">
               <div className="side-title">workspace</div>
               {item("/", "repositories", RepositoriesIcon, at("/"))}
-              {item("/settings/tokens", "tokens", TokensIcon, under("/settings/tokens"))}
+              {can(mode, "import") && item("/settings/imports", "imports", ImportIcon, under("/settings/imports"))}
+              {can(mode, "tokens") && item("/settings/tokens", "tokens", TokensIcon, under("/settings/tokens"))}
             </div>
             {repo !== "" && (
               <div className="side-group">
                 <div className="side-title">{repo}</div>
-                {repoNav.map(([to, label, icon, active]) => item(to, label, icon, active))}
+                {repoNav.map((n) => item(n.to, n.label, n.icon, n.active))}
               </div>
             )}
           </nav>
