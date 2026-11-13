@@ -59,7 +59,7 @@ directory timelines align both boundaries at the same granularity.
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture-simple.svg" width="800" alt="banyan simplified architecture: git, GitLab and thin-CLI clients over stateless gateways; a refs service as the only serialization point beside scattered pack storage; directory timelines woven into the root repository on read" />
+  <img src="docs/assets/architecture-simple.svg" width="800" alt="banyan simplified architecture: browsers reach a stateless web tier (banyand web — sign-in, import, capability profiles); git, GitLab and thin-CLI clients go straight to stateless gateways; a refs service as the only serialization point beside scattered pack storage; directory timelines woven into the root repository on read" />
 </p>
 
 The four moves that make it work:

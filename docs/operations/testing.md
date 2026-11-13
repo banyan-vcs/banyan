@@ -18,6 +18,8 @@
 | `gitalyrpc/` | 17 个 gitaly_*_test.go | gitaly gRPC 兼容面（T60–T76） |
 | `gitlab/` | gitlab_demo、gitlab_hook、gitlab_pushopts | GitLab 活体集成（T83/T85/T86/T87） |
 | `ops/` | rpc_log、console、ops_plane、metrics | RPC 读面/控制面/可观测（T11/T50/T54 + metrics） |
+| `importer/` | import_test | 服务端导入引擎自举（T94） |
+| `imports/` | api_test | 导入 API 契约（T95） |
 
 ## 形态
 

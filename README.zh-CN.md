@@ -32,7 +32,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 ## 架构
 
 <p align="center">
-  <img src="docs/assets/architecture-simple.zh.svg" width="800" alt="banyan 简化架构：git、GitLab 与薄 CLI 客户端接入无状态网关；refs 服务为唯一串行点，旁边是散布 pack 存储；目录时间线读时织入根仓库" />
+  <img src="docs/assets/architecture-simple.zh.svg" width="800" alt="banyan 简化架构：浏览器接入无状态 web 层（banyand web——登录、导入、能力档位）；git、GitLab 与薄 CLI 客户端直达无状态网关；refs 服务为唯一串行点，旁边是散布 pack 存储；目录时间线读时织入根仓库" />
 </p>
 
 支撑整个设计的四个关键动作：
