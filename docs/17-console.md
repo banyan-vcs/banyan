@@ -2,12 +2,12 @@
 
 ## 0. 定位与命名
 
-`cmd/banyans`（banyan **s**erver，产品端服务）+ `internal/console`（控制面
+`banyand console` 子命令（原 cmd/banyans）+ `internal/console`（控制面
 实现）。它在 gateway **之上**，替代演示版的"代码管理服务端"角色：
 
 - **banyand 保持无产品语义**：gitwire（git 协议）+ rpc（存储运维 API）
   + refs + storage，不认识用户/组/项目这些产品概念；
-- **banyans 是产品前门**：用户、令牌、组/项目/子项目、成员与权限，
+- **console 是产品前门**（`banyand console`）：用户、令牌、组/项目/子项目、成员与权限，
   以及所有产品端 API 与 git 流量入口；
 - **两套数据彻底分离**：console 自带 sqlite（modernc 纯 Go），只存产品
   端数据；gateway 元数据（refs/timelines/packs/hooks）与产品库互不感知；
@@ -17,7 +17,7 @@
 ## 1. 拓扑与请求流
 
 ```
-git/CLI/Web ──HTTP──▶ banyans（console）
+git/CLI/Web ──HTTP──▶ banyand console
                        │ 认证（PAT/会话）→ 逻辑路径解析 → 粗粒度门
                        │ 改写 /{group}/{project}[/path].git
                        │      → /r/{repo_uid}[/tree/{sub}]
@@ -154,7 +154,7 @@ effectiveRole(user, P) = max{ role | memberships(user, n), n ∈ chain(P) }
 - **M6.1 ✅（2026-10-26）** internal/console：模型 + sqlite + 链解析 +
   角色聚合（纯库，无 HTTP）+ auth.UpstreamPolicy（签名身份/快照 v2/
   前缀-max 聚合/未知仓强制刷新）。测试 T49。
-- **M6.2 ✅（2026-10-26）** cmd/banyans：CRUD API + 逻辑路由 + 流式
+- **M6.2 ✅（2026-10-26）** console 服务（现 `banyand console` 子命令）：CRUD API + 逻辑路由 + 流式
   代理 + 签名身份 + 快照 v2 + 变更踢（/internal/authz/refresh）。
   测试 T50：真实 git 客户端经 console clone/push（根+子项目）；
   保护分支 PATCH 即时生效；Reporter 拒 push；锚点级授予后过且根

@@ -148,7 +148,7 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 | Server-side diff & blame | path-diff and blame RPCs byte-equal to `git diff` / `git blame` |
 | Storage addressing | named vs hashed, renames never touch storage ([docs/03](docs/03-storage.md) §6) |
 | Service layer + JSON API | `/api/v1/*` unified error envelope; SQLite / MySQL / Postgres metadata + YAML config |
-| Clients & UIs | thin-workspace CLI (`banyan`), React web console (code browsing, history/diff/blame, branches, tokens, subtree management), product console `banyans` with subtree-scoped roles ([docs/17](docs/17-console.md); console SSH/web → M6.3/M6.4) |
+| Clients & UIs | thin-workspace CLI (`banyan`), React web console (code browsing, history/diff/blame, branches, tokens, subtree management), product console (`banyand console`) with subtree-scoped roles ([docs/17](docs/17-console.md); console SSH/web → M6.3/M6.4) |
 | Ops plane | pprof family, runtime snapshots, serve-path counters |
 
 The thin-CLI commit path is cross-verified by fresh git clones plus `fsck`;
@@ -160,7 +160,7 @@ git diff (T63).
 ## Repository layout
 
 ```
-cmd/banyand/        server daemon (git smart HTTP + JSON API)
+cmd/banyand/        server daemon (roles + subcommands: serve / console / bench)
 cmd/banyan/         thin-workspace CLI
 internal/model/     core data model (anchored commit / timeline / assembly / projection)
 internal/meta/       metadata plane (MetaStore: memory / SQL / sqlite, refs client,
@@ -312,7 +312,7 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 | [docs/08-derived-data.md](docs/08-derived-data.md) | Derived data: commit-graph, path history, blame |
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | Indexes (generations) & packing (have subtraction, delta, repack) |
 | [docs/15-workflow.md](docs/15-workflow.md) | M4 design: per-directory commit queue + convergence (merge train) |
-| [docs/17-console.md](docs/17-console.md) | Product-side console (`banyans`): group/project routing, PAT auth, member roles |
+| [docs/17-console.md](docs/17-console.md) | Product-side console (`banyand console`): group/project routing, PAT auth, member roles |
 **Operations & evolution**:
 
 | Doc | Contents |

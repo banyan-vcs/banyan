@@ -1,12 +1,20 @@
-// banyand is banyan's server daemon (docs/10 §2): one binary, four roles.
+// banyand is banyan's server daemon (docs/10 §2): one binary, four serving
+// roles plus the control-plane subcommands — every server-side job ships in
+// this one process.
 //
-//	all-in-one (default)  git smart HTTP + JSON API + local shards + local meta
-//	gateway               the stateless frontend: gitwire + rpc over the
-//	                      refs service (meta.RemoteMeta) and the scattered store
-//	refs                  the serialization point: meta.MetaStore RPC, node health
-//	                      table, replica reconciler
-//	storage               a pack warehouse: PUT/GET/DELETE by (repo, packOID),
-//	                      heartbeating its address to refs
+//	banyand [serve]    the storage-plane roles (below); bare flags are the
+//	                    historical spelling and stay accepted
+//	    all-in-one (default)  git smart HTTP + JSON API + local shards + local meta
+//	    gateway               the stateless frontend: gitwire + rpc over the
+//	                          refs service (meta.RemoteMeta) and the scattered store
+//	    refs                  the serialization point: meta.MetaStore RPC, node health
+//	                          table, replica reconciler
+//	    storage               a pack warehouse: PUT/GET/DELETE by (repo, packOID),
+//	                          heartbeating its address to refs
+//	banyand console    the product-side control plane (formerly the banyans
+//	                    binary, docs/17): users, tokens, the logical repository
+//	                    tree, the git front door
+//	banyand bench      the performance harness (docs/11 §3, formerly banyan-bench)
 //
 // Configuration resolves as defaults < YAML (-config) < explicit flags
 // (internal/config).
@@ -35,6 +43,25 @@ import (
 )
 
 func main() {
+	// Subcommand dispatch: a known leading word picks a control-plane
+	// subcommand; anything else (a flag, nothing) is the serving path —
+	// `banyand -config x` keeps working exactly as before.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "serve":
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+		case "console":
+			runConsole(os.Args[2:])
+			return
+		case "bench":
+			runBench(os.Args[2:])
+			return
+		}
+	}
+	runServe()
+}
+
+func runServe() {
 	cfg, err := config.Load(os.Args[1:])
 	if err != nil {
 		log.Fatalf("%v\nusage: banyand [-config banyan.yaml] [-role all-in-one|gateway|refs|storage] [-listen addr] [-root dir] [-meta mem|sqlite] [-db path] [-refs-addr host:port] [-node-id id] [-init-repo name] [-dev]", err)
@@ -108,7 +135,7 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
 	switch {
 	case cfg.Auth.Upstream != "":
-		// Console-fronted mode (docs/17 §5): the banyans control plane
+		// Console-fronted mode (docs/17 §5): the console (banyand console) control plane
 		// authenticates and vouches for callers; rules sync as snapshot v2.
 		up := auth.NewUpstreamPolicy(cfg.Auth.Upstream, []byte(cfg.Auth.UpstreamSecret))
 		gw.Auth, api.Auth = up, up

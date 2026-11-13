@@ -367,7 +367,7 @@ func runBurst(s serverIface, dirs []string, repoURL string) (total int64, each [
 // Render prints the comparison table (banyan vs git ratios).
 func (r *Report) Render() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "banyan-bench  profile=%s  repo=%s  runs=%d\n", r.Profile, r.Repo, r.Runs)
+	fmt.Fprintf(&b, "banyand bench  profile=%s  repo=%s  runs=%d\n", r.Profile, r.Repo, r.Runs)
 	fmt.Fprintf(&b, "%-34s %18s %18s %10s %10s\n", "scenario", "banyan", "git", "bytes", "ms")
 	for _, n := range r.orderedRows() {
 		bm, bok := r.Rows["banyan/"+n]

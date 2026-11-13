@@ -80,7 +80,7 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
   base64 的 33% 直接消失；JSON 保留兼容。T33：两帧语义全等 + 实测收缩。
 
 **P1-3 性能 SLO 基准门（工程纪律，参照教训 3）✅**
-- `cmd/banyan-bench`（§3）：种子仓 + git http-backend 对等基线 + 三口径
+- `banyand bench`（§3）：种子仓 + git http-backend 对等基线 + 三口径
   + `--check` 20% 红线；夜间跑，不进单元 CI 热路径。
 
 **P1-4 增量 fetch 字节效率（治 B8+B10）——部分落地 ✅**
@@ -126,7 +126,7 @@ memo（TreeMemo）、薄 CLI 的 tree-diff 增量（下载量=两检出差异）
 | P2-4 写路径扇出下沉 | docs/10 HA-2 | 归 HA-2（主节点写+节点间扇出，砍网关出带宽 R×） |
 | P2-5 同目录写队列 | B7 | 归 M4（tekeburak 形态 change request 状态机 + 投机流水线） |
 
-## 3. 基准设计与实测（P1-3 落地 + 2026-10-25 v2 扩展：`cmd/banyan-bench`）
+## 3. 基准设计与实测（P1-3 落地 + 2026-10-25 v2 扩展：`banyand bench`）
 
 方法对齐三方对比报告的 tekeburak 教训 + hyperfine/scion bench-real 方法论
 （同机对等基线、多口径诚实标注、统计采样、20% 红线进夜间门）：
@@ -262,7 +262,7 @@ bench 场景（多 pack 状态）下浅化克隆对象数相同（116=116）、p
 | 稳态传输（全量/增量/推送） | 字节 0.87–1.07x | 持平；7% 上限来自 verbatim vs 现场 delta 的取舍 |
 | 离散能力（浅化/partial） | 0.65–1.16x | 编码层波动，对象集恒等 |
 
-复现：`go run ./cmd/banyan-bench --profile medium|large --runs 5
+复现：`go run ./cmd/banyand bench --profile medium|large --runs 5
 --md report.md --csv samples.csv`（多轮验证重复执行多次取区间）。
 
 ## 4. 排期对位

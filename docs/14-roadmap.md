@@ -129,7 +129,7 @@ CommitPush 单事务未做（保持 PutPack+CASHead 两步，崩溃窗口=无害
       织入物化批量化（pre-CAS flush 保登记即事实）——集群读/写主路径（T31）
 - [x] perf-2（P1）主体：idx 单对象解压（/internal/object，修 idx 配对错位
       + 补 crc）、fetch-trees 二进制帧（T33）、性能 SLO 基准门
-      （`cmd/banyan-bench`：git http-backend 对等基线 + 三口径 + 20% 红线，
+      （`banyand bench`：git http-backend 对等基线 + 三口径 + 20% 红线，
       实测数字 docs/11 §3）、**增量 fetch 字节效率**（serve 路径 delta 化 +
       filter/allow-reachable 广告，T14/T29）、**protocol v2**（ls-refs/fetch
       命令面，T30；push 按语义恒 v0）

@@ -36,7 +36,8 @@ import (
 )
 
 // consoleStack runs gateway + console in-process, wired exactly like the
-// deployment roles: banyand with auth.upstream, banyans in front.
+// deployment roles: banyand with auth.upstream, the console (banyand
+// console) in front.
 type consoleStack struct {
 	gateway  *httptest.Server
 	console  *httptest.Server

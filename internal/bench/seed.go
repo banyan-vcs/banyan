@@ -6,7 +6,7 @@
 // (tekeburak/scion's method: multi-baseline same-machine benchmarks with
 // honest per-lane reporting and a red line that turns the nightly job red).
 //
-// It is a standalone tool (cmd/banyan-bench), deliberately NOT part of the
+// It is a dev tool (banyand bench), deliberately NOT part of the
 // go test hot path — correctness is pinned by the integration suite, the
 // bench gate pins performance.
 package bench

@@ -112,7 +112,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 服务端 diff 与 blame | 路径 diff、blame RPC 与 `git diff` / `git blame` 逐字节一致 |
 | 存储寻址 | named 可读 / hashed 不透明，rename 零存储动作（[docs/03](docs/03-storage.md) §6） |
 | 服务层 + JSON API | `/api/v1/*` 统一错误信封；SQLite / MySQL / Postgres 元数据 + YAML 配置 |
-| 客户端与界面 | 薄工作区 CLI（`banyan`）、React Web 控制台（代码浏览、历史/diff/blame、分支、token、子树管理）、产品控制台 `banyans` 子树作用域角色（[docs/17](docs/17-console.md)；控制台 SSH/web → M6.3/M6.4） |
+| 客户端与界面 | 薄工作区 CLI（`banyan`）、React Web 控制台（代码浏览、历史/diff/blame、分支、token、子树管理）、产品控制台（`banyand console` 子命令）子树作用域角色（[docs/17](docs/17-console.md)；控制台 SSH/web → M6.3/M6.4） |
 | 运维面 | pprof 全家、运行时快照、服务路径计数器 |
 
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证；gitaly 前端经
@@ -122,7 +122,7 @@ git 自身答案对拍（T60）、workhorse 形态传输模拟器（T61）、真
 ## 代码结构
 
 ```
-cmd/banyand/        服务端守护进程（git smart HTTP + JSON API）
+cmd/banyand/        服务端守护进程（角色 + 子命令：serve / console / bench）
 cmd/banyan/         薄工作区 CLI
 internal/model/     核心数据模型（anchored commit / timeline / assembly / projection）
 internal/meta/       元数据面（MetaStore：memory / SQL / sqlite、refs 客户端、
@@ -271,7 +271,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 | [docs/08-derived-data.md](docs/08-derived-data.md) | 派生数据：commit-graph、路径历史、blame |
 | [docs/09-indexing-packing.md](docs/09-indexing-packing.md) | 索引（代数）与打包（have 减除/delta/repack）设计 |
 | [docs/15-workflow.md](docs/15-workflow.md) | M4 设计：同目录提交队列 + 分歧收敛（merge train） |
-| [docs/17-console.md](docs/17-console.md) | 产品侧控制台（`banyans`）：组/项目路由、PAT 认证、成员角色 |
+| [docs/17-console.md](docs/17-console.md) | 产品侧控制台（`banyand console` 子命令）：组/项目路由、PAT 认证、成员角色 |
 
 **运行与演进**：
 
