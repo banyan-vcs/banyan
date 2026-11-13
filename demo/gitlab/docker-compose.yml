@@ -33,23 +33,32 @@ services:
       - gitlab-config:/etc/gitlab-shared:ro
     restart: unless-stopped
 
-  # The subtree-management control page (docs/20 §7): served UNDER the
-  # GitLab URL by the nginx location provision.sh installs — no host port,
-  # the GitLab domain is the only door. Login is GitLab SSO; provision.sh
-  # mints the OAuth application into /config/gitlab-oauth.json.
+  # The subtree-management control page (docs/20 §7): `banyand web` in the
+  # gitlab profile — served UNDER the GitLab URL by the nginx location
+  # provision.sh installs (no host port, the GitLab domain is the only
+  # door). Login is GitLab SSO (provision.sh mints the OAuth application
+  # into /config/gitlab-oauth.json); the console narrows to banyan's own
+  # subtree features, and its sessions/import state lives in its own
+  # sqlite under /data.
   banyan-web:
     build:
-      context: ../../web
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: web/Dockerfile
+      args:
+        BASE_PATH: /-/banyan
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     image: banyan-web:dev
     container_name: banyan-gitlab-web
     environment:
       BANYAN_URL: http://banyan:8080
       BASE_PATH: /-/banyan
+      BANYAN_WEB_PROFILE: gitlab
+      BANYAN_WEB_DB: sqlite:/data/web.db
       BANYAN_GITLAB_URL: http://banyan-gitlab-ce:8180
       BANYAN_GITLAB_EXTERNAL_URL: http://localhost:8180
     volumes:
       - banyan-web-config:/config
+      - banyan-web-data:/data
     depends_on:
       - banyan
     restart: unless-stopped
@@ -77,5 +86,6 @@ services:
 volumes:
   banyan-gitlab-data:
   banyan-web-config:
+  banyan-web-data:
   gitlab-config:
   gitlab-logs:
