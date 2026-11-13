@@ -168,10 +168,9 @@ git clone ssh://alice@localhost:8102/r/demo.git \
 git clone http://alice:demo@localhost:8100/r/demo.git            # 整个大仓
 git clone http://alice:demo@localhost:8100/r/demo.git/tree/frameworks/base  # 只取其中一个项目
 
-# 薄工作区：最小化下载、无 .git、历史在服务端
-go run ./cmd/banyan clone http://localhost:8100/r/demo
-# ...或主机无 Go 时：
-docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
+# 薄工作区：最小化下载、无 .git、历史在服务端——
+# CLI 的 token 登录是路线图项（M5，docs/client/cli.md），目前需指向
+# 免认证服务端：下方"源码构建"的 -dev 形态即是可用路径
 ```
 
 受限网络可走镜像构建：

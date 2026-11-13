@@ -5,7 +5,8 @@
 #              credentials in the URL: http://alice:demo@localhost:8100/r/<repo>.git
 #   git ssh    ssh://alice@localhost:8102/r/<repo>.git
 #              demo keys in demo/ssh/ (GIT_SSH_COMMAND="ssh -i demo/ssh/alice ...")
-#   thin CLI   go run ./cmd/banyan clone http://alice:demo@localhost:8100/r/<repo>
+#   thin CLI   needs an auth-off server until CLI token login lands (M5,
+#              docs/client/cli.md) — the README "from source" -dev flow
 #
 # Authorization is ON in this demo (demo/auth-demo.yaml): main is
 # admin-push-only, /secret is admin-read-only, and refs/heads/<user>/*

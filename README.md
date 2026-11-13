@@ -205,10 +205,9 @@ git clone ssh://alice@localhost:8102/r/demo.git \
 git clone http://alice:demo@localhost:8100/r/demo.git            # the whole monorepo
 git clone http://alice:demo@localhost:8100/r/demo.git/tree/frameworks/base  # one project out of it
 
-# thin workspace: minimal download, no .git, server-side history
-go run ./cmd/banyan clone http://localhost:8100/r/demo
-# ...or without Go on the host:
-docker compose exec banyan banyan clone http://127.0.0.1:8080/r/demo /tmp/demo
+# thin workspace: minimal download, no .git, server-side history —
+# CLI token login is roadmap (M5, docs/client/cli.md), so today it needs an
+# auth-off server: the "from source" -dev block below is the one that works
 ```
 
 ### GitLab-CE on banyan storage
