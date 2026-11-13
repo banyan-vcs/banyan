@@ -1,10 +1,19 @@
 // Blob.tsx — render file content at a path: line numbers, syntax
 // highlighting for known text types, binary detection, a preview cap and
 // image previews. Lines are highlighted individually (ignoreIllegals) —
-// multi-line constructs lose color but never break rendering.
+// multi-line constructs lose color but never break rendering, and a
+// highlighting error on any single line falls back to plain text.
 import hljs from "highlight.js/lib/common";
 import { useMemo, type ReactNode } from "react";
 import { sizeStr } from "./ui";
+
+function safeHighlight(line: string, lang: string): string | null {
+  try {
+    return hljs.highlight(line, { language: lang, ignoreIllegals: true }).value;
+  } catch {
+    return null; // plain text fallback — never break the tree over one line
+  }
+}
 
 const BLOB_PREVIEW = 64 * 1024;
 
@@ -98,15 +107,14 @@ export function BlobView({ name, bytes, size }: { name: string; bytes: Uint8Arra
             <tr key={i}>
               <td className="lineno">{i + 1}</td>
               <td className="codetext">
-                {view.lang ? (
-                  <span
-                    dangerouslySetInnerHTML={{
-                      __html: hljs.highlight(line, { language: view.lang, ignoreIllegals: true }).value,
-                    }}
-                  />
-                ) : (
-                  line || " "
-                )}
+                {(() => {
+                  const html = view.lang ? safeHighlight(line, view.lang) : null;
+                  return html !== null ? (
+                    <span dangerouslySetInnerHTML={{ __html: html }} />
+                  ) : (
+                    line || " "
+                  );
+                })()}
               </td>
             </tr>
           ))}

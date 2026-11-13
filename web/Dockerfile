@@ -9,7 +9,9 @@ ARG BASE_PATH=
 WORKDIR /src
 COPY package.json package-lock.json tsconfig.json tsconfig.server.json vite.config.ts index.html ./
 RUN npm ci --registry=$NPM_REGISTRY || npm install --registry=$NPM_REGISTRY
-COPY server public src ./
+COPY server ./server
+COPY public ./public
+COPY src ./src
 RUN BASE_PATH=$BASE_PATH npm run build
 
 # Runtime stage: dist/ (SPA) + server-dist/ (BFF) only — the devDependencies
