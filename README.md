@@ -188,7 +188,8 @@ docker compose up -d          # build + run; data persists in the banyan-data vo
                               #   web UI  http://localhost:8101 (alice / bob / admin, password demo)
                               #   git     http://alice:demo@localhost:8100/r/demo.git
 
-# push any git repo (main is admin-push-only under the demo policy)
+# push any git repo (main is admin-push-only under the demo policy) —
+# picture an Android-shaped monorepo: frameworks/base, system/core, external/skia
 git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
 
@@ -196,8 +197,8 @@ git push banyan main
 git clone ssh://alice@localhost:8102/r/demo.git \
   -c core.sshCommand="ssh -i demo/ssh/alice -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
-git clone http://alice:demo@localhost:8100/r/demo.git            # root repo
-git clone http://alice:demo@localhost:8100/r/demo.git/tree/plumbing  # any subtree is a repo
+git clone http://alice:demo@localhost:8100/r/demo.git            # the whole monorepo
+git clone http://alice:demo@localhost:8100/r/demo.git/tree/frameworks/base  # one project out of it
 
 # thin workspace: minimal download, no .git, server-side history
 go run ./cmd/banyan clone http://localhost:8100/r/demo
@@ -260,8 +261,9 @@ git push banyan main
 git clone http://127.0.0.1:8097/r/myrepo.git
 
 # Clone any subdirectory as a standalone repo — full projected history,
-# git log / git show / git fsck all work on it
-git clone http://127.0.0.1:8097/r/myrepo.git/tree/plumbing/format/packfile
+# git log / git show / git fsck all work on it. In an Android-shaped
+# monorepo: one project's history without the other gigabytes.
+git clone http://127.0.0.1:8097/r/myrepo.git/tree/frameworks/base
 
 # Thin workspace: minimal download, no .git, server-side history
 go run ./cmd/banyan clone http://127.0.0.1:8097/r/myrepo.git

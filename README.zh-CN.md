@@ -151,7 +151,8 @@ docker compose up -d          # 构建并启动；数据持久化在 banyan-data
                               #   git      http://alice:demo@localhost:8100/r/demo.git
                               #   git ssh  ssh://alice@localhost:8102/r/demo.git（demo/ssh/ 密钥）
 
-# 推任意 git 仓库上来（demo 策略里 main 仅 admin 可推）
+# 推任意 git 仓库上来（demo 策略里 main 仅 admin 可推）——
+# 想象一个 Android 布局的大仓：frameworks/base、system/core、external/skia
 git remote add banyan http://admin:demo@localhost:8100/r/demo.git
 git push banyan main
 
@@ -159,8 +160,8 @@ git push banyan main
 git clone ssh://alice@localhost:8102/r/demo.git \
   -c core.sshCommand="ssh -i demo/ssh/alice -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 
-git clone http://alice:demo@localhost:8100/r/demo.git            # 根仓库
-git clone http://alice:demo@localhost:8100/r/demo.git/tree/plumbing  # 任意子目录即仓库
+git clone http://alice:demo@localhost:8100/r/demo.git            # 整个大仓
+git clone http://alice:demo@localhost:8100/r/demo.git/tree/frameworks/base  # 只取其中一个项目
 
 # 薄工作区：最小化下载、无 .git、历史在服务端
 go run ./cmd/banyan clone http://localhost:8100/r/demo
@@ -220,8 +221,9 @@ git push banyan main
 git clone http://127.0.0.1:8097/r/myrepo.git
 
 # ★ 任意子目录 clone 为独立仓库——完整投影历史，
-#   git log / git show / git fsck 全部可用
-git clone http://127.0.0.1:8097/r/myrepo.git/tree/plumbing/format/packfile
+#   git log / git show / git fsck 全部可用。Android 布局的大仓里，
+#   取一个项目的历史，不用拉走其余几十 GB。
+git clone http://127.0.0.1:8097/r/myrepo.git/tree/frameworks/base
 
 # 薄工作区：最小化下载、无 .git、历史在服务端
 go run ./cmd/banyan clone http://127.0.0.1:8097/r/myrepo.git
