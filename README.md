@@ -148,7 +148,7 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 | Server-side diff & blame | path-diff and blame RPCs byte-equal to `git diff` / `git blame` |
 | Storage addressing | named vs hashed, renames never touch storage ([docs/03](docs/03-storage.md) §6) |
 | Service layer + JSON API | `/api/v1/*` unified error envelope; SQLite / MySQL / Postgres metadata + YAML config |
-| Clients & UIs | thin-workspace CLI (`banyan`), zero-dependency web UI, product console `banyans` with subtree-scoped roles ([docs/17](docs/17-console.md); console SSH/web → M6.3/M6.4) |
+| Clients & UIs | thin-workspace CLI (`banyan`), React web console (code browsing, history/diff/blame, branches, tokens, subtree management), product console `banyans` with subtree-scoped roles ([docs/17](docs/17-console.md); console SSH/web → M6.3/M6.4) |
 | Ops plane | pprof family, runtime snapshots, serve-path counters |
 
 The thin-CLI commit path is cross-verified by fresh git clones plus `fsck`;

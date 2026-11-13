@@ -3,7 +3,7 @@
 # a merge target deserves and a laptop can't always provide: the metadata
 # conformance and rename-fence batteries against real mysql:8 / postgres:16
 # service containers (BANYAN_TEST_MYSQL_DSN / BANYAN_TEST_POSTGRES_DSN; the
-# openers skip silently when unset). The web console is tsc-only and the
+# openers skip silently when unset). The web console builds and tests with vite/vitest and the
 # enterprise module is a separate Go module — both get their own job.
 name: ci
 
@@ -81,7 +81,7 @@ jobs:
         working-directory: enterprise
 
   web:
-    name: web console (tsc)
+    name: web console (vite build + tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,4 +95,7 @@ jobs:
         working-directory: web
       - name: build
         run: npm run build
+        working-directory: web
+      - name: test
+        run: npm test
         working-directory: web

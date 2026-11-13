@@ -170,7 +170,7 @@ go run ./cmd/banyand -config demo/auth-demo.yaml -listen 127.0.0.1:8097 -root ./
 # 或免认证本地跑：
 #   go run ./cmd/banyand -dev -listen 127.0.0.1:8097 -root ./demo-data
 
-# Web：工具链仅 tsc，运行时零依赖
+# Web：React SPA（vite 构建）+ 零依赖 Node 会话/代理 BFF
 cd web && npm install && npm run build
-BANYAN_URL=http://127.0.0.1:8097 PORT=3000 npm start
+BANYAN_URL=http://127.0.0.1:8097 PORT=3000 npm run bff
 ```
