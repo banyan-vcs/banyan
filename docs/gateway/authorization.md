@@ -195,3 +195,30 @@ gitlab-shell）；分支可见性直通（GitLab 语义：项目成员见全部�
 （YAML 种子之外补运行态）。测试：T89（清单：过滤/分组/projected/
 最近提交）、T90（GitLabSSO 假 GitLab + 规则栈：admin 设规则→bob 子树
 clone 拒/过根 clone（边界断言）/push 同门/删规则恢复/非管理员 403）。
+
+## 8d. 多 OAuth provider（2026-11-14，docs/web/web-layer.md）
+
+GitLabSSO 的姿态推广到**多个同时受信的 token 发行方**：`auth.oauth`
+列表（GitLab 实例、github.com 或 GitHub Enterprise 主机）。凭证形态不变
+——Basic 的密码位（git 的 `oauth2:` / `x-access-token:` 约定）或 Bearer。
+
+- **验证**：逐 provider 顺序探测（GitLab `GET <url>/api/v4/user`、GitHub
+  `GET <api>/user`，GHE 走 `<url>/api/v3`），首个命中者生效；结果按
+  (provider, token hash) 缓存 TTL 60s，**负结果同缓存**——GitLab token
+  每 TTL 至多浪费一次 GitHub 探测，绝不每请求一探。一切失败=匿名，
+  fail-closed。单测见 `internal/auth/multisso_test.go`（假 GitLab +
+  假 GitHub：跨 provider 误探、缓存命中计数、三来源管理员）。
+- **管理员三来源**：GitLab `is_admin` ∥ provider 级 `admins` 名单 ∥
+  部署级 `auth.admins`（GitHub 的 /user 无管理员位，名单是唯一来源）。
+- **配置**：`kind: gitlab` 必须给 `url`；`kind: github` 缺 url=
+  github.com；id 缺省取 kind、重复 id 报错；与 users/upstream/remote
+  互斥。legacy `auth.gitlab_sso: <url>` 归一为 `{id: gitlab}`，单实例
+  部署仍走原 GitLabSSO 策略（行为逐字节不变）。示例见
+  banyan.example.yaml。
+- **web 层配套**（docs/web/web-layer.md）：web 层做多 provider 的
+  authorization-code 登录与凭证代持，授权判定仍在 gateway 本节策略。
+
+**导入 API 的授权**（同一扩展缝）：`POST /api/v1/imports` 走
+`requireWriteRank`（建仓同级门）；目标仓必须不存在（409，导入只落新名）；
+`source_authorization` 只在请求体里存在——用于那次 fetch，不落任何记录、
+不进日志、不回显。任务状态机在 web 层的库里（gateway 面保持无状态）。

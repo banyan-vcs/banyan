@@ -1,4 +1,4 @@
-// T91 — the importer engine (internal/importer): a server-side fetch from
+// T94 — the importer engine (internal/importer): a server-side fetch from
 // one banyan's smart-HTTP face into another, bootstrap-style. The same
 // engine serves the gitaly FetchRemote surface (T69) and the web tier's
 // repo-import API, so this pins the parts T69 does not reach: the streamed
@@ -28,7 +28,7 @@ func serviceFor(t *testing.T, ms meta.MetaStore, objects *storage.ObjectService)
 	return service.New(ms, objects, model.SHA1)
 }
 
-func TestT91ImportFromSiblingServer(t *testing.T) {
+func TestT94ImportFromSiblingServer(t *testing.T) {
 	support.NeedGit(t)
 	src, _, _ := support.NewServerPlane(t)
 
@@ -65,7 +65,7 @@ func TestT91ImportFromSiblingServer(t *testing.T) {
 	support.FsckClean(t, out+"/c")
 }
 
-func TestT91ImportRejectsSSHRemotes(t *testing.T) {
+func TestT94ImportRejectsSSHRemotes(t *testing.T) {
 	support.NeedGit(t)
 	_, meta, objects := support.NewServerPlane(t)
 	svc := serviceFor(t, meta, objects)

@@ -98,7 +98,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 推送策略门 | 保护分支等 ref 级策略经 `/internal/allowed` 强制，Rails 拒绝原话透传到 git 客户端 |
 | 平台回调 | post-receive 适配器：活动事件、pipeline、缓存过期、MR-from-push（`-o merge_request.create` 活体实证） |
 | 子树投影 ref | `refs/banyan/tree/<dir>`——一个 GitLab URL、一套凭证取推任意子树；推送向上装配回根视图 |
-| 子树管理控制面 | GitLab 域名下 `/-/banyan/`（nginx 子页面，复用 banyan web）：子树清单/活动/克隆配方 + **运行时访问规则**——GitLab SSO 登录（[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b） |
+| 子树管理控制面 | GitLab 域名下 `/-/banyan/`（`banyand web` 的 gitlab 档位——只透出 banyan 特有的子树功能，项目管理留给 GitLab）：子树清单/活动/克隆配方 + **运行时访问规则**——GitLab SSO 登录（[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b） |
 | 推送大小上限 | GitLab Maximum push size 设置经 `receive.maxInputSize` 强制 |
 
 **生产与运维**：
@@ -112,7 +112,9 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 服务端 diff 与 blame | 路径 diff、blame RPC 与 `git diff` / `git blame` 逐字节一致 |
 | 存储寻址 | named 可读 / hashed 不透明，rename 零存储动作（[docs/storage/storage.md](docs/storage/storage.md) §6） |
 | 服务层 + JSON API | `/api/v1/*` 统一错误信封；SQLite / MySQL / Postgres 元数据 + YAML 配置 |
-| 客户端与界面 | 薄工作区 CLI（`banyan`）、React Web 控制台（代码浏览、历史/diff/blame、分支、token、子树管理）、产品控制台（`banyand console` 子命令）子树作用域角色（[docs/web/console.md](docs/web/console.md)；控制台 SSH/web → M6.3/M6.4） |
+| web 层（`banyand web`） | 三层独立站部署（web → gateway → 存储）：会话与导入历史落在 web 层自己的数据库——sqlite / mysql / postgres，可**与 gateway 共用同一库**（demo 即如此）；本地登录 + OAuth（**GitHub、gitlab.com、私有 GitLab 多实例并存**；gateway 侧 `auth.oauth`）；独立站档位下是唯一控制面（[docs/web/web-layer.md](docs/web/web-layer.md)） |
+| 仓库导入 | 按 URL 从 github.com / gitlab.com / 私有 GitLab 导入，凭登录 provider 的 token 或粘贴的 PAT——服务端 fetch，走与 push 相同的入库路径，pack 流式落盘不占内存（[docs/web/web-layer.md](docs/web/web-layer.md) §4） |
+| 客户端与界面 | 薄工作区 CLI（`banyan`）、React Web 控制台（代码浏览、历史/diff/blame、分支、token、子树管理、导入）、产品控制台（`banyand console` 子命令）子树作用域角色（[docs/web/console.md](docs/web/console.md)；控制台 SSH/web → M6.3/M6.4） |
 | 运维面 | pprof 全家、运行时快照、服务路径计数器 |
 
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证；gitaly 前端经
@@ -122,7 +124,7 @@ git 自身答案对拍（T60）、workhorse 形态传输模拟器（T61）、真
 ## 代码结构
 
 ```
-cmd/banyand/        服务端守护进程（角色 + 子命令：serve / console / bench）
+cmd/banyand/        服务端守护进程（角色 + 子命令：serve / web / console / bench）
 cmd/banyan/         薄工作区 CLI
 internal/model/     核心数据模型（anchored commit / timeline / assembly / projection）
 internal/meta/       元数据面（MetaStore：memory / SQL / sqlite、refs 客户端、
@@ -136,6 +138,9 @@ internal/gitaly/   gitaly gRPC 前端壳（鉴权/生命周期）+ 按协议服�
 internal/gitalypb/ vendored gitaly 协议（v19.5.2，生成代码）
 internal/service/   协议无关服务层（三前端共核心，docs/gateway/service-api.md）
 internal/rpc/       httpd JSON 前端（/api/v1）
+internal/importer/  服务端远程 fetch（仓库导入 + gitaly FetchRemote）
+internal/webapp/    web 层（`banyand web`：会话库、OAuth、导入任务、SPA 托管）
+web/                React 控制台（Vite SPA，由 web 层提供服务）
 internal/cli/       薄工作区客户端实现
 internal/config/    三层配置（默认 < YAML < 显式标志）
 ```

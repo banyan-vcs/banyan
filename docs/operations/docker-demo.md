@@ -8,7 +8,7 @@
 
 | 栈 | compose 文件 | 演示 | 端口 |
 |---|---|---|---|
-| 授权 + Web（本文） | `docker-compose.yml` | 权限三粒度、个人分支可见性、Web 管理页 | 8100 / 8101 |
+| 授权 + Web（本文） | `docker-compose.yml` | 权限三粒度、个人分支可见性、Web 管理页（三层：`banyand web` → gateway → 存储，web 与 gateway 共用 sqlite） | 8100 / 8101 |
 | HA 集群 | `docker-compose.cluster.yml` | 散布多副本、杀节点恢复、动态 R（docs/storage/ha.md，`bash demo/cluster-demo.sh`） | 8100 + 内部 |
 | **GitLab-CE 存储替身** | `demo/gitlab/docker-compose.yml` | 真 GitLab-CE 全功能跑在 banyan 存储上 + `/-/banyan/` 子树管理控制面（GitLab SSO，docs/integration/gitlab-integration.md §7b；`bash demo/gitlab/provision.sh`） | 8180 / 8170 |
 
@@ -141,7 +141,16 @@ v0 协商应答轮次（docs/gateway/git-compat.md §7b）。
   列表来自过滤广告）；**目录**级限制只在 git wire（clone `/tree/secret`
   → 403）——Web 文件浏览走 RPC 读面（仅认证门），demo 里 alice 页面上
   仍能看到 `/secret` 列表，这正是已登记的 M5 后续项；
-- 会话存 web 进程内存（HttpOnly cookie）：重启 web 容器 = 全员重新登录。
+- **web 层 = `banyand web`（Go，docs/web/web-layer.md）**：会话存数据库（表前缀
+  `web_`），demo 里**与 gateway 共用同一个 sqlite**（`/var/lib/banyan/banyan.db`，
+  WAL 多进程共用）——重启 web 容器会话与导入历史都在；
+- **仓库导入**（侧栏 imports）：填源 URL（github.com / gitlab.com / 私有 GitLab
+  或任意 git http URL）+ token，gateway 服务端 fetch。自举演示：先在
+  tokens 页铸一个 write 级 PAT，再导入 `http://banyan:8080/r/<repo>.git` 到新名
+  ——任务表会依次留下 409（重名）、401（凭证形态）、成功等真实历史；
+- OAuth 登录（GitHub / GitLab 多实例）默认不开：给 web 容器配
+  `BANYAN_OAUTH_PROVIDERS` 或挂 `/config/oauth-providers.json`，同时 gateway 侧
+  换 `auth.oauth`（docs/gateway/authorization.md §8d）。
 
 ## 5. 数据持久化与清理
 

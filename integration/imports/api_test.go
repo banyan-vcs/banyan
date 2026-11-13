@@ -1,4 +1,4 @@
-// T92 — the import API (POST /api/v1/imports): one synchronous call that
+// T95 — the import API (POST /api/v1/imports): one synchronous call that
 // creates the target repo and pulls a smart-HTTP remote through
 // internal/importer. Bootstrap-style: the source is another banyan's own
 // git face. The web tier's import orchestration (job state, credential
@@ -68,7 +68,7 @@ func callImport(t *testing.T, s *support.Server, user, pass string, body map[str
 	return resp.StatusCode, out
 }
 
-func TestT92ImportAPI(t *testing.T) {
+func TestT95ImportAPI(t *testing.T) {
 	support.NeedGit(t)
 	// The source: a plain unauthenticated banyan serving a seeded repo with
 	// a non-main default branch and a tag.

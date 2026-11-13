@@ -134,7 +134,7 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 | Push policy gate | protected branches and friends enforced via `/internal/allowed`; Rails' rejection message reaches the git client verbatim |
 | Platform callbacks | post-receive adapter: activity events, pipelines, cache expiry, MR-from-push (`-o merge_request.create` verified live) |
 | Subtree projection refs | `refs/banyan/tree/<dir>` — one GitLab URL and one credential per subtree; pushes assemble upward into the root view |
-| Subtree management console | `/-/banyan/` under the GitLab URL (an nginx subpage reusing the banyan web tier): subtree listings, activity, clone recipes and **runtime access rules** — GitLab SSO login ([docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b) |
+| Subtree management console | `/-/banyan/` under the GitLab URL (`banyand web` in its gitlab profile — banyan's subtree features only, GitLab keeps project management): subtree listings, activity, clone recipes and **runtime access rules** — GitLab SSO login ([docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b) |
 | GitLab push size limit | the Maximum-push-size setting enforced via `receive.maxInputSize` |
 
 **Production and operations**:
@@ -148,7 +148,9 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 | Server-side diff & blame | path-diff and blame RPCs byte-equal to `git diff` / `git blame` |
 | Storage addressing | named vs hashed, renames never touch storage ([docs/storage/storage.md](docs/storage/storage.md) §6) |
 | Service layer + JSON API | `/api/v1/*` unified error envelope; SQLite / MySQL / Postgres metadata + YAML config |
-| Clients & UIs | thin-workspace CLI (`banyan`), React web console (code browsing, history/diff/blame, branches, tokens, subtree management), product console (`banyand console`) with subtree-scoped roles ([docs/web/console.md](docs/web/console.md); console SSH/web → M6.3/M6.4) |
+| Web tier (`banyand web`) | the three-layer standalone deployment (web → gateway → storage): sessions and import history in the web tier's own database — sqlite / mysql / postgres, optionally **shared with the gateway** (the demo does) — local and OAuth login (**GitHub, gitlab.com and private GitLab instances side by side**; gateway side: `auth.oauth`), the SPA, and the single control plane in the standalone profile ([docs/web/web-layer.md](docs/web/web-layer.md)) |
+| Repository import | from github.com / gitlab.com / private GitLab by URL, authenticated by the login provider's token or a pasted PAT — a server-side fetch through the same ingest a push rides, pack streamed to disk at any repo size ([docs/web/web-layer.md](docs/web/web-layer.md) §4) |
+| Clients & UIs | thin-workspace CLI (`banyan`), React web console (code browsing, history/diff/blame, branches, tokens, subtree management, import), product console (`banyand console`) with subtree-scoped roles ([docs/web/console.md](docs/web/console.md); console SSH/web → M6.3/M6.4) |
 | Ops plane | pprof family, runtime snapshots, serve-path counters |
 
 The thin-CLI commit path is cross-verified by fresh git clones plus `fsck`;
@@ -160,7 +162,7 @@ git diff (T63).
 ## Repository layout
 
 ```
-cmd/banyand/        server daemon (roles + subcommands: serve / console / bench)
+cmd/banyand/        server daemon (roles + subcommands: serve / web / console / bench)
 cmd/banyan/         thin-workspace CLI
 internal/model/     core data model (anchored commit / timeline / assembly / projection)
 internal/meta/       metadata plane (MetaStore: memory / SQL / sqlite, refs client,
@@ -174,6 +176,9 @@ internal/gitaly/   gitaly gRPC frontend shell (auth/lifecycle) over per-service
 internal/gitalypb/ vendored gitaly protocol (v19.5.2, generated)
 internal/service/   protocol-agnostic service layer (shared by all frontends, docs/gateway/service-api.md)
 internal/rpc/       httpd JSON frontend (/api/v1)
+internal/importer/  server-side remote fetch (repo import + gitaly FetchRemote)
+internal/webapp/    the web tier behind `banyand web` (sessions DB, OAuth, import jobs, SPA)
+web/                the React console (Vite SPA, served by the web tier)
 internal/cli/       thin-workspace client implementation
 internal/config/    layered config (defaults < YAML < flags)
 ```

@@ -226,14 +226,17 @@ location（CE 19.5 的 omnibus server 块**没有** conf.d include——把
 `demo/gitlab/banyan-subpage.conf` 的 location 拼进渲染产物
 `/var/opt/gitlab/nginx/conf/service_conf/gitlab-rails.conf`（provision
 锚定 health-partial include 拼接）+ `gitlab-ctl hup nginx`，reconfigure
-重渲染后需重拼）、起 banyan-web 服务（`BASE_PATH=/-/banyan`）、铸
-OAuth application）：
+重渲染后需重拼）、起 web 层（`banyand web -profile gitlab`，
+`BASE_PATH=/-/banyan`，docs/web/web-layer.md）、铸 OAuth application）：
 
 - **URL**：`http://<gitlab>/-/banyan/`——`/-/` 是 GitLab 保留应用命名
   空间（与 `/-/health` 同族），group 不可能叫 "-"，永不遮蔽项目路由；
   nginx location 全路径透传，web 侧 BASE_PATH 对齐。
-- **登录 = GitLab SSO**：web 走 OAuth2 授权码流程（scope `read_api`，
-  state 防 CSRF），会话凭证即用户的 GitLab token；banyan 侧
+- **web 层档位 = gitlab**：与 GitLab 协作的形态——console 只透出 banyan
+  特有的**子树功能**（仓库列表作导航 + 每仓 subtrees 页），项目管理与
+  代码浏览留给 GitLab 自己；独立站档位（standalone）才是完整控制面。
+- **登录 = GitLab SSO**：web 走 OAuth2 授权码流程（scope `read_api
+  read_repository`，state 入库防 CSRF），会话凭证即用户的 GitLab token；banyan 侧
   `auth.gitlab_sso`（§2）验证同一 token——**实例管理员（is_admin）即
   规则管理者**。项目名自动映射（`sha256(project_id)` → 项目路径，用
   用户自己的 token 拉取，可见性天然同源）。

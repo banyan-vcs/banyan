@@ -164,6 +164,8 @@ effectiveRole(user, P) = max{ role | memberships(user, n), n ∈ chain(P) }
 - **M6.3** 子项目 bootstrap / visibility 细化 / 归档恢复 / SSH
   （T51/T52，SSH 允许滑出到独立里程碑）。
 - **M6.4** web 会话 + 最小管理 UI（复用 web/ 零依赖经验）；审计
+  （2026-11-14 注：独立站形态的 web 会话/OAuth/导入已由 `banyand web`
+  承担——docs/web/web-layer.md；console 自身的 web UI 仍是本里程碑的后续项）
   事件流（enterprise 候选触点）。
 
 新用例登记 docs/operations/testing.md；console 侧同样"每个能力一个集成用例"。

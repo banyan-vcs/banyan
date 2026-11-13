@@ -1,5 +1,5 @@
 // imports.go — POST /api/v1/imports: the server-side repository import
-// (docs/web). One synchronous call: create the target repo, fetch every
+// (docs/web/web-layer.md §4). One synchronous call: create the target repo, fetch every
 // ref of a smart-HTTP remote through internal/importer (the same ingest a
 // push rides), adopt the remote's HEAD as the default branch. The source
 // credential rides the request body ONLY — it is used for the fetch and

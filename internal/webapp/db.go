@@ -28,7 +28,7 @@ import (
 // Session is one logged-in browser. Credential is the gateway-facing
 // secret (a local password or a provider OAuth token) stored in the same
 // demo posture as the static policy's plaintext YAML — an at-rest-encrypted
-// column is the registered follow-up (docs/web).
+// column is the registered follow-up (docs/web/web-layer.md §1).
 type Session struct {
 	ID            string
 	Username      string
