@@ -547,6 +547,9 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 				writeServiceErr(w, err)
 				return
 			}
+			if rules == nil {
+				rules = []meta.SubtreeRule{} // JSON null would crash the console (the token-layer precedent)
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "rules": rules})
 		case http.MethodPut:
 			var rule meta.SubtreeRule

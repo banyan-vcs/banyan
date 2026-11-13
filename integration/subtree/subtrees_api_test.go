@@ -202,6 +202,18 @@ func TestT90SubtreeAccessRules(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "anonymous must be challenged")
 
+	// An empty rule store must serialize as [] — JSON null crashed the
+	// console's rule lookup on the admin path (the token-layer precedent).
+	resp = ssoCall(t, "GET", s.URL+"/api/v1/repos/t90/subtree-access", "root-token", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode, "admin lists rules")
+	var emptyRules struct {
+		Rules []map[string]any `json:"rules"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&emptyRules))
+	resp.Body.Close()
+	require.NotNil(t, emptyRules.Rules, "empty rule list must be [] not null")
+	require.Empty(t, emptyRules.Rules)
+
 	// bob can reach the unmanaged secret subtree first…
 	bobSecret := support.CloneRepo(t, s, bob("/r/t90.git/tree/secret"))
 	assert.Equal(t, "the plan\n", support.ReadFile(t, filepath.Join(bobSecret, "plan.txt")))
