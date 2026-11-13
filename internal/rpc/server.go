@@ -51,6 +51,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/timelines", s.authn(s.handleTimelines))
 	mux.HandleFunc("/api/v1/subtrees", s.authn(s.handleSubtrees)) // subtree listing (docs/07 §8)
 	mux.HandleFunc("/api/v1/log", s.authn(s.handleLog))
+	mux.HandleFunc("/api/v1/tree", s.authn(s.handleTree)) // structured tree listing (web code browser)
 	mux.HandleFunc("/api/v1/repack", s.authn(s.handleRepack))
 	mux.HandleFunc("/api/v1/fetch-trees", s.authn(s.handleFetchTrees))
 	mux.HandleFunc("/api/v1/commit", s.authn(s.handleCommit))

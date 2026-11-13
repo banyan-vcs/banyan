@@ -28,7 +28,7 @@ type BlameHunk struct {
 	Commit     model.OID
 }
 
-// Blame is blame derived data: Scion's file-level diff recursive merge algorithm (docs/08 §1).
+// Blame is blame derived data: the file-level diff recursive merge algorithm (docs/08 §1).
 type Blame interface {
 	Blame(ctx context.Context, repo string, rev model.OID, path string) ([]BlameHunk, error)
 }

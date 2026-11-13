@@ -8,9 +8,9 @@ import (
 	"github.com/banyan-vcs/banyan/internal/service"
 )
 
-// handleLog: GET /api/v1/log?repo=<r>&path=/a/b&limit=20[&from=<oid>] —
-// thin adapter over service.Log (docs/05 §6: one implementation, every
-// frontend). Response shape unchanged since M1.
+// handleLog: GET /api/v1/log?repo=<r>&rev=<branch>&path=/a/b&limit=20[&from=<oid>]
+// — thin adapter over service.Log (docs/05 §6: one implementation, every
+// frontend). rev only applies when from is absent (start at a branch tip).
 func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 	repo := r.URL.Query().Get("repo")
 	if repo == "" {
@@ -23,10 +23,11 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	rev := r.URL.Query().Get("rev")
 	from := model.OID(r.URL.Query().Get("from"))
 	path := r.URL.Query().Get("path")
 
-	entries, usedFrom, err := s.Svc.Log(r.Context(), repo, from, path, limit)
+	entries, usedFrom, err := s.Svc.Log(r.Context(), repo, rev, from, path, limit)
 	if err != nil {
 		writeServiceErr(w, err)
 		return
@@ -39,7 +40,7 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 		le[i] = logEntry(e)
 	}
 	writeJSON(w, http.StatusOK, logResponse{
-		Repo: repo, Path: path, From: string(usedFrom),
+		Repo: repo, Rev: rev, Path: path, From: string(usedFrom),
 		Count: len(le), Entries: le,
 	})
 }
@@ -55,6 +56,7 @@ type logEntry struct {
 
 type logResponse struct {
 	Repo    string     `json:"repo"`
+	Rev     string     `json:"rev,omitempty"`
 	Path    string     `json:"path,omitempty"`
 	From    string     `json:"from"`
 	Count   int        `json:"count"`

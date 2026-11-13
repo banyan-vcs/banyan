@@ -16,7 +16,7 @@ import (
 // standard git commit and publishes it with the single directory-timeline
 // CAS — the same write path as a git push (v5: zero cross-directory locks).
 //
-// Scion's changeset semantics ("list of files changed relative to the first
+// changeset semantics ("list of files changed relative to the first
 // parent") on git's object model: git clients and mirror topologies see a
 // perfectly ordinary commit.
 type Identity struct {

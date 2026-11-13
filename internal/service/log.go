@@ -9,7 +9,7 @@ import (
 
 // Log is the server-side history query (docs/02 §10): post-order DFS over
 // the unified DAG — hashes match the git view exactly; path filtering is
-// query semantics only (Scion: "problem queries are RPCs"). Moved here from
+// query semantics only ("problem queries are RPCs"). Moved here from
 // the rpc handler (docs/05 §6) so every frontend shares one implementation.
 type LogEntry struct {
 	OID     string `json:"oid"`
@@ -19,17 +19,22 @@ type LogEntry struct {
 	Parents int    `json:"parents"`
 }
 
-// Log returns up to limit entries (newest first). from zero = current
-// default-branch woven tip. path ("/a/b" anchor form, "" = full history)
-// keeps only commits whose X-view subtree changed.
-func (s *Service) Log(ctx context.Context, repo string, from model.OID, path string, limit int) (entries []LogEntry, usedFrom model.OID, err error) {
+// Log returns up to limit entries (newest first). from zero = the woven
+// tip of rev ("" = the repo's default branch) — from wins when both are
+// given, so cursor paging from any starting tip keeps working. path
+// ("/a/b" anchor form, "" = full history) keeps only commits whose X-view
+// subtree changed.
+func (s *Service) Log(ctx context.Context, repo, rev string, from model.OID, path string, limit int) (entries []LogEntry, usedFrom model.OID, err error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	if from.IsZero() {
-		branch, err := s.defaultBranchOf(ctx, repo)
-		if err != nil {
-			return nil, "", err
+		branch := rev
+		if branch == "" {
+			var err error
+			if branch, err = s.defaultBranchOf(ctx, repo); err != nil {
+				return nil, "", err
+			}
 		}
 		tip, terr := s.Views.RootTip(ctx, repo, branch)
 		if terr != nil {
