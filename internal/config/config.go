@@ -18,6 +18,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// OAuthProvider is one trusted token issuer under auth.oauth.
+// kind: gitlab requires url; kind: github without url means github.com
+// (API at api.github.com), with url a GitHub Enterprise host (API at
+// <url>/api/v3).
+type OAuthProvider struct {
+	ID     string   `yaml:"id"`
+	Kind   string   `yaml:"kind"` // gitlab | github
+	URL    string   `yaml:"url"`
+	Admins []string `yaml:"admins"`
+}
+
 // Config is the effective banyand configuration.
 type Config struct {
 	Listen      string `yaml:"listen"`    // HTTP listen address (external for gateway/all-in-one, internal for refs/storage)
@@ -55,6 +66,13 @@ type Config struct {
 		// GET <url>/api/v4/user (fail-closed). Mutually exclusive with the
 		// user table and the console.
 		GitLabSSO string `yaml:"gitlab_sso"`
+		// OAuth lists several trusted token issuers at once (docs/07 §8d):
+		// GitLab instances, github.com or a GitHub Enterprise host. A
+		// presented token is validated against the providers in order —
+		// the multi-provider generalisation of gitlab_sso, which folds
+		// into this list as {id: gitlab}. Mutually exclusive with the user
+		// table, the console and remote mode.
+		OAuth []OAuthProvider `yaml:"oauth"`
 		// Users enables the demo authorization policy (docs/07): HTTP Basic
 		// against this static table; absent = authorization off.
 		Users  map[string]string `yaml:"users"`
@@ -338,14 +356,44 @@ func (c *Config) normalize() error {
 		}
 		c.Auth.GitLabSSO = withScheme(strings.TrimRight(c.Auth.GitLabSSO, "/"))
 	}
+	if len(c.Auth.OAuth) > 0 {
+		if c.Auth.Remote {
+			return fmt.Errorf("config: auth.oauth and auth.remote are mutually exclusive")
+		}
+		if c.Auth.Upstream != "" {
+			return fmt.Errorf("config: auth.oauth and auth.upstream are mutually exclusive")
+		}
+		if len(c.Auth.Users) > 0 {
+			return fmt.Errorf("config: auth.oauth and the demo auth.users table are mutually exclusive")
+		}
+		seen := map[string]bool{}
+		for i := range c.Auth.OAuth {
+			p := &c.Auth.OAuth[i]
+			if p.Kind != "gitlab" && p.Kind != "github" {
+				return fmt.Errorf("config: auth.oauth[%d].kind %q: want gitlab|github", i, p.Kind)
+			}
+			if p.ID == "" {
+				p.ID = p.Kind
+			}
+			if seen[p.ID] {
+				return fmt.Errorf("config: auth.oauth: duplicate provider id %q", p.ID)
+			}
+			seen[p.ID] = true
+			if p.URL != "" {
+				p.URL = withScheme(strings.TrimRight(p.URL, "/"))
+			} else if p.Kind == "gitlab" {
+				return fmt.Errorf("config: auth.oauth[%d] (%s): kind gitlab requires url", i, p.ID)
+			}
+		}
+	}
 	// Production posture (secure by default): the client-facing roles
 	// refuse to start unauthenticated, and the gitaly frontend refuses an
 	// empty token. Dev mode is the explicit opt-out for local/demo
 	// deployments — an open server must be a decision, never an accident.
 	if !c.Dev {
 		if c.Role == "" || c.Role == "all-in-one" || c.Role == "gateway" {
-			if c.Auth.Upstream == "" && c.Auth.GitLabSSO == "" && len(c.Auth.Users) == 0 {
-				return fmt.Errorf("config: production mode requires authentication (auth.upstream, auth.gitlab_sso or auth.users); set dev: true for an unauthenticated local deployment")
+			if c.Auth.Upstream == "" && c.Auth.GitLabSSO == "" && len(c.Auth.OAuth) == 0 && len(c.Auth.Users) == 0 {
+				return fmt.Errorf("config: production mode requires authentication (auth.upstream, auth.gitlab_sso, auth.oauth or auth.users); set dev: true for an unauthenticated local deployment")
 			}
 		}
 		if c.Gitaly.Listen != "" && c.Gitaly.Token == "" {

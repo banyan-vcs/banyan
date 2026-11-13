@@ -206,3 +206,49 @@ func TestMetaPostureDefaults(t *testing.T) {
 		})
 	}
 }
+
+func TestOAuthProviderList(t *testing.T) {
+	path := writeYAML(t, `dev: true
+auth:
+  oauth:
+    - id: github
+      kind: github
+    - kind: gitlab
+      url: "https://gitlab.example.com/"
+      admins: [ops]
+`)
+	cfg, err := Load([]string{"-config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Auth.OAuth) != 2 {
+		t.Fatalf("providers = %+v", cfg.Auth.OAuth)
+	}
+	if cfg.Auth.OAuth[0].ID != "github" || cfg.Auth.OAuth[0].Kind != "github" || cfg.Auth.OAuth[0].URL != "" {
+		t.Fatalf("github provider = %+v", cfg.Auth.OAuth[0])
+	}
+	// Missing id defaults to the kind; the trailing slash is trimmed.
+	if cfg.Auth.OAuth[1].ID != "gitlab" || cfg.Auth.OAuth[1].URL != "https://gitlab.example.com" {
+		t.Fatalf("gitlab provider = %+v", cfg.Auth.OAuth[1])
+	}
+}
+
+func TestOAuthValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"bad kind", "dev: true\nauth:\n  oauth:\n    - kind: gitea\n", "want gitlab|github"},
+		{"gitlab without url", "dev: true\nauth:\n  oauth:\n    - kind: gitlab\n", "requires url"},
+		{"duplicate id", "dev: true\nauth:\n  oauth:\n    - id: a\n      kind: github\n    - id: a\n      kind: github\n", "duplicate provider id"},
+		{"users conflict", "dev: true\nauth:\n  oauth:\n    - kind: github\n    - kind: gitlab\n      url: http://gl\n  users:\n    alice: demo\n", "mutually exclusive"},
+	}
+	for _, c := range cases {
+		path := writeYAML(t, c.body)
+		_, err := Load([]string{"-config", path})
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s: err = %v, want %q", c.name, err, c.want)
+		}
+	}
+}

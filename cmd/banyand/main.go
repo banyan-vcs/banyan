@@ -26,6 +26,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
@@ -140,18 +141,35 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		up := auth.NewUpstreamPolicy(cfg.Auth.Upstream, []byte(cfg.Auth.UpstreamSecret))
 		gw.Auth, api.Auth = up, up
 		log.Printf("auth: upstream console %s (snapshot v2 + signed identity)", cfg.Auth.Upstream)
-	case cfg.Auth.GitLabSSO != "":
-		// GitLab-fronted mode (docs/20): tokens minted by the GitLab
-		// instance (OAuth2 / PAT) authenticate the HTTP face; identity and
-		// instance-admin status come from /api/v4/user.
-		var svc auth.Service = auth.NewGitLabSSO(cfg.Auth.GitLabSSO)
+	case cfg.Auth.GitLabSSO != "" || len(cfg.Auth.OAuth) > 0:
+		// Token-fronted mode (docs/20, docs/07 §8d): tokens minted by the
+		// configured identity provider(s) — GitLab instances (OAuth2/PAT),
+		// github.com or a GitHub Enterprise host — authenticate the HTTP
+		// face. A single GitLab instance rides the original GitLabSSO
+		// policy; anything more uses the multi-provider policy.
+		providers := make([]auth.SSOProvider, 0, len(cfg.Auth.OAuth)+1)
+		if cfg.Auth.GitLabSSO != "" {
+			providers = append(providers, auth.SSOProvider{ID: "gitlab", Kind: auth.SSOKindGitLab, URL: cfg.Auth.GitLabSSO})
+		}
+		providers = append(providers, toSSOProviders(cfg)...)
+		var svc auth.Service
+		if len(providers) == 1 && providers[0].Kind == auth.SSOKindGitLab {
+			svc = auth.NewGitLabSSO(providers[0].URL)
+			log.Printf("auth: gitlab sso %s (token → /api/v4/user)", providers[0].URL)
+		} else {
+			svc = &auth.MultiSSO{Providers: providers, Admins: cfg.Auth.Admins}
+			ids := make([]string, len(providers))
+			for i, p := range providers {
+				ids[i] = p.ID + "(" + p.Kind + ")"
+			}
+			log.Printf("auth: oauth providers %s (token → each provider's /user, in order)", strings.Join(ids, ", "))
+		}
 		if rs, ok := ms.(meta.SubtreeRuleStore); ok {
 			svc = &auth.SubtreeRulePolicy{Inner: svc, Rules: rs}
 			log.Printf("auth: subtree rules on (runtime directory access rules, docs/07 §8)")
 		}
 		gw.Auth = svc
 		api.Auth = svc
-		log.Printf("auth: gitlab sso %s (token → /api/v4/user)", cfg.Auth.GitLabSSO)
 	case staticPolicy(cfg) != nil:
 		policy := staticPolicy(cfg)
 		var svc auth.Service = policy
@@ -189,6 +207,15 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 	if gs != nil {
 		gs.GracefulStop() // in-flight gRPC streams drain after the HTTP face
 	}
+}
+
+// toSSOProviders maps the config's auth.oauth list onto auth providers.
+func toSSOProviders(cfg *config.Config) []auth.SSOProvider {
+	out := make([]auth.SSOProvider, 0, len(cfg.Auth.OAuth))
+	for _, p := range cfg.Auth.OAuth {
+		out = append(out, auth.SSOProvider{ID: p.ID, Kind: p.Kind, URL: p.URL, Admins: p.Admins})
+	}
+	return out
 }
 
 // startGitaly serves the gitaly-protocol gRPC frontend (docs/19) when
