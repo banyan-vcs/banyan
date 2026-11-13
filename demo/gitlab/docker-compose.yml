@@ -47,7 +47,11 @@ services:
       args:
         BASE_PATH: /-/banyan
         GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
-    image: banyan-web:dev
+    # its own tag: BASE_PATH is a BUILD-time arg, so this build is not
+    # interchangeable with the root demo's banyan-web:dev (base "/") —
+    # sharing one tag would let whichever stack builds last overwrite
+    # the other's assets prefix.
+    image: banyan-web:gitlab
     container_name: banyan-gitlab-web
     environment:
       BANYAN_URL: http://banyan:8080

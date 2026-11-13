@@ -93,10 +93,14 @@ api() { # api METHOD path [json-body]
 say "wiring the /-/banyan/ subpage (nginx location + OAuth application)"
 # GitLab-CE 19.5's omnibus nginx has no conf.d inside the server block —
 # splice the location into the rendered gitlab-rails.conf, anchored on the
-# health-partial include (the server block's last include). Anchored on
-# content, not line numbers; idempotent; a re-render (gitlab-ctl
+# health-partial include (the server block's last include). The location
+# block itself lives in banyan-subpage.conf (canonical copy); it is copied
+# in and appended after the anchor with sed's `r` command — a single-line
+# sed s### substitution cannot carry it (the block's own # comments collide
+# with every sane delimiter). Idempotent; a re-render (gitlab-ctl
 # reconfigure) drops the splice, re-running provision re-applies it.
-docker exec "$GL_CTR" sh -c 'grep -q banyan-gitlab-web /var/opt/gitlab/nginx/conf/service_conf/gitlab-rails.conf || sed -i "s#  include /var/opt/gitlab/nginx/conf/service_conf/gitlab-health.partial;#  location ^~ /-/banyan/ {\n      proxy_pass http://banyan-gitlab-web:3000;\n      # \$http_host carries the port (\$host strips it) — the web tier derives\n      # the OAuth redirect_uri from the Host header, and GitLab matches it\n      # exactly.\n      proxy_set_header Host \$http_host;\n      proxy_set_header X-Real-IP \$remote_addr;\n      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n      proxy_set_header X-Forwarded-Proto \$scheme;\n  }\n&#" /var/opt/gitlab/nginx/conf/service_conf/gitlab-rails.conf'
+docker cp "$(dirname "$0")/banyan-subpage.conf" "$GL_CTR:/tmp/banyan-subpage.conf"
+docker exec "$GL_CTR" sh -c 'grep -q banyan-gitlab-web /var/opt/gitlab/nginx/conf/service_conf/gitlab-rails.conf || sed -i "/gitlab-health.partial;/r /tmp/banyan-subpage.conf" /var/opt/gitlab/nginx/conf/service_conf/gitlab-rails.conf'
 docker exec "$GL_CTR" gitlab-ctl hup nginx
 
 # Reruns recreate the application (the old secret is gone for good —
@@ -105,7 +109,7 @@ for aid in $(api GET "/applications" | grep -oE '"id":[0-9]+' | grep -oE '[0-9]+
   api DELETE "/applications/$aid" >/dev/null 2>&1 || true
 done
 app=$(curl -sf -X POST -H "PRIVATE-TOKEN: $PAT" -H "Content-Type: application/json" \
-  -d '{"name":"banyan-subtree-console","redirect_uri":"http://localhost:8180/-/banyan/auth/callback","scopes":"read_api"}' \
+  -d '{"name":"banyan-subtree-console","redirect_uri":"http://localhost:8180/-/banyan/auth/callback","scopes":"read_api read_repository"}' \
   "$GITLAB_URL/api/v4/applications")
 # Flatten the response first (pretty/wrapped JSON breaks line greps), then
 # strip the key — a bare '[a-f0-9]+' grep also shreds the KEY name's hex
@@ -178,15 +182,14 @@ say "banyan's own face sees the same repo (@hashed → storage id)"
 curl -sf -H "Authorization: Bearer $PAT" "$BANYAN_URL/api/v1/repos" | grep -oE '"id":"[0-9a-f]{16}[^"]*"' | head -5
 
 say "subtree management checks (docs/integration/gitlab-integration.md §7b)"
-# The subpage answers under the GitLab URL. Two hops: an anonymous hit
-# bounces to the login page, and the LOGIN PAGE must hand off to GitLab's
-# authorize endpoint once SSO is wired (staying on the local form = the
-# OAuth config didn't reach the web container).
-loc=$(curl -s -o /dev/null -w '%{redirect_url}' "$GITLAB_URL/-/banyan/")
-loc=$(curl -s -o /dev/null -w '%{redirect_url}' "$loc")
+# The subpage answers under the GitLab URL. An anonymous GET / serves the
+# SPA shell (client-side routing takes over from there), so the SSO proof
+# is the auth endpoint itself bouncing to GitLab's authorize URL (staying
+# put = the OAuth config didn't reach the web container).
+loc=$(curl -s -o /dev/null -w '%{redirect_url}' "$GITLAB_URL/-/banyan/api/auth/gitlab")
 case "$loc" in
-  *"/oauth/authorize"*) echo "GET /-/banyan/ (anon) → GitLab authorize (SSO armed)" ;;
-  *) echo "GET /-/banyan/ (anon) → $loc — WARNING: expected the GitLab authorize redirect" ;;
+  *"/oauth/authorize"*) echo "GET /-/banyan/api/auth/gitlab (anon) → GitLab authorize (SSO armed)" ;;
+  *) echo "GET /-/banyan/api/auth/gitlab (anon) → ${loc:-no redirect} — WARNING: expected the GitLab authorize redirect" ;;
 esac
 # The subtree listing for the demo project: repo = sha256(project_id).
 repo=$(printf '%s' "$proj_id" | sha256sum | cut -d' ' -f1)

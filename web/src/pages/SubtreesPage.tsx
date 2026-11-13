@@ -1,17 +1,19 @@
 // SubtreesPage.tsx — the directory-timeline management view: every
 // directory that owns a history, branch heads with their last commits, the
-// projected pill (refs/banyan/tree/<dir>), per-path activity, and the
-// runtime access rules (admin).
+// projected pill (refs/banyan/tree/<dir>), per-path activity, the two
+// clone recipes, and the runtime access rules (admin).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api, qs } from "../api/client";
+import { useSession } from "../session";
 import type { LogResponse, SubtreeListing, SubtreeRule, SubtreeSummary } from "../api/types";
 import { Empty, ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 
 export function SubtreesPage(): ReactNode {
   const { repo = "" } = useParams();
   const qc = useQueryClient();
+  const { info } = useSession();
   const [params, setParams] = useSearchParams();
   const selected = params.get("path") || "";
   const [ruleUsers, setRuleUsers] = useState("");
@@ -22,6 +24,13 @@ export function SubtreesPage(): ReactNode {
     queryFn: () => api<SubtreeListing>(`/api/v1/subtrees${qs({ repo })}`),
     retry: false,
   });
+  // GitLab-profile display names (hashed repo id → root/project); empty
+  // in the standalone profile — same cache the repos page rides.
+  const names = useQuery({
+    queryKey: ["gitlab-names"],
+    queryFn: () => api<{ names: Record<string, string> }>("/api/gitlab-names"),
+    retry: false,
+  });
   const rules = useQuery({
     queryKey: ["subtree-rules", repo],
     queryFn: () => api<{ rules: SubtreeRule[] }>(`/api/v1/repos/${encodeURIComponent(repo)}/subtree-access`),
@@ -29,6 +38,9 @@ export function SubtreesPage(): ReactNode {
   });
   const admin = rules.isSuccess;
   const sub: SubtreeSummary | undefined = listing.data?.subtrees.find((s) => s.path === selected);
+  // projection refs are per top-level directory — /frameworks/base rides
+  // refs/banyan/tree/frameworks (docs/design/data-model.md §12)
+  const top = sub ? sub.path.replace(/^\//, "").split("/")[0] : "";
   const activity = useQuery({
     queryKey: ["log", repo, "", selected, "activity"],
     queryFn: () => api<LogResponse>(`/api/v1/log${qs({ repo, limit: 10, path: selected })}`),
@@ -121,6 +133,25 @@ export function SubtreesPage(): ReactNode {
                     ))}
                   </tbody>
                 </table>
+                <h3>clone</h3>
+                {info?.provider?.kind === "gitlab" && (names.data?.names[repo] || "").includes("/") && (
+                  <>
+                    <p className="muted">via the GitLab URL (one URL, one credential):</p>
+                    <pre>
+                      <code>{`git clone http://<gitlab-host>/${names.data!.names[repo]}.git
+git fetch origin refs/banyan/tree/${top}:refs/heads/${top}
+git checkout ${top}          # workspace = that subtree only
+# work, commit, then push back:
+git push origin ${top}:refs/banyan/tree/${top}`}</code>
+                    </pre>
+                  </>
+                )}
+                <p className="muted">via banyan's own face:</p>
+                <pre>
+                  <code>{`git clone http://<banyan>/r/${repo}.git/tree${sub.path}
+# work, commit, then push back:
+git push origin ${listing.data?.defaultBranch || "main"}`}</code>
+                </pre>
                 <h3>activity</h3>
                 {activity.isPending && <Spinner />}
                 {activity.isSuccess && activity.data.entries.length === 0 && <p className="muted pad">no history at this path yet.</p>}
