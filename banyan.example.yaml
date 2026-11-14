@@ -70,6 +70,16 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 #   pack_dir: "/var/lib/banyan/gateway-cache"
 #   pack_max_mb: 1024
 
+# --- 单请求下载内存预算（docs/operations/performance.md §8.2；all-in-one/gateway） ---
+
+# 一次 clone/fetch 请求在本节点的服务内存上限（按请求计，非按进程——并发
+# 请求各占各的窗口）：服务梯按它路由——包字节 ≥ 预算 1/4 的仓恒走流式梯
+# （闭包零驻留）、响应缓存条目以预算 1/2 封顶、整包解码 memoize 门槛同按
+# 1/4 收紧；网关 verbatim 拷贝窗（256KiB）池化复用。默认 200 MiB；
+# 实测极限 100 MiB（T96：120MiB 三包仓在 100MiB 预算+软限下克隆，
+# fsck 净、峰值在窗内）；-1 关闭收紧。
+# fetch_mem_budget: 209715200
+
 # --- 开发/生产姿态（secure by default） ---
 # 生产缺省：面向客户端的角色（all-in-one/gateway）无认证配置（auth.upstream 或 auth.users）
 # 时拒绝启动；gitaly 前端监听但无 token 同样拒绝。以下显式放开为本地/演示形态：

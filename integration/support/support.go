@@ -52,6 +52,28 @@ func NewServer(t *testing.T) *Server {
 	return s
 }
 
+// NewServerTuned is NewServer with a tuning hook — tests that exercise
+// server knobs (the per-request fetch memory budget, consolidation caps)
+// adjust the gitwire server and the object plane before serving starts.
+func NewServerTuned(t *testing.T, tune func(gw *gitwire.Server, objects *storage.ObjectService)) *Server {
+	t.Helper()
+	ms := meta.NewMemoryMetaStore()
+	local := storage.NewLocalShardStore(TempDirQuiet(t))
+	nodes := []storage.Node{{ID: "t1", Local: true}}
+	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
+	mux := http.NewServeMux()
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
+	gw.AdvertiseProjections = true
+	if tune != nil {
+		tune(gw, objects)
+	}
+	gw.Register(mux)
+	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return &Server{Server: srv}
+}
+
 // NewServerPlane is NewServer with the underlying object plane exposed —
 // auxiliary frontends (the gitaly gRPC server) serve the same plane.
 func NewServerPlane(t *testing.T) (*Server, meta.MetaStore, *storage.ObjectService) {

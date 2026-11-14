@@ -86,8 +86,21 @@ func StartBanyan(shardRoot string) (*BanyanServer, error) {
 			objects.ConsolidateMaxBytes = n
 		}
 	}
+	// BANYAN_BENCH_FETCH_MEM (bytes) squeezes the per-request download
+	// memory budget (fetch_mem_budget's harness twin, docs/operations/
+	// performance.md §8.2): the serve ladder reroutes so each clone stays
+	// inside the window — 100 MiB is the validated extreme.
+	fetchMem := int64(0)
+	if v := os.Getenv("BANYAN_BENCH_FETCH_MEM"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			fetchMem = n
+		}
+	}
 	mux := http.NewServeMux()
-	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
+	bgw := gitwire.NewServer(ms, objects, model.SHA1)
+	bgw.FetchMemBudget = fetchMem
+	objects.FetchMemBudget = fetchMem
+	bgw.Register(mux)
 	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
 	ctr := &counter{}
 	srv := httptest.NewServer(countingHandler(mux, ctr))

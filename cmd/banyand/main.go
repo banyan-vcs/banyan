@@ -140,6 +140,8 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 	objects.Addressing = meta.NewAddressing(cfg.Storage.Mode, ms)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
+	gw.FetchMemBudget = cfg.FetchMemBudget
+	objects.FetchMemBudget = cfg.FetchMemBudget
 	gw.AdvertiseProjections = cfg.AdvertiseProjections
 	switch {
 	case cfg.Auth.Upstream != "":
@@ -242,6 +244,7 @@ func startGitaly(cfg *config.Config, ms meta.MetaStore, objects *storage.ObjectS
 		ReportedVersion:  cfg.Gitaly.ReportedVersion,
 		Convergence:      cfg.Workflow.Convergence == "auto",
 		FullCloneMaxByte: cfg.FullCloneMaxBytes,
+		FetchMemBudget:   cfg.FetchMemBudget,
 		GitLab:           gitLabAdapter(cfg),
 	})
 	go func() {
@@ -322,6 +325,8 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 	objects.Addressing = meta.NewAddressing(cfg.Storage.Mode, ms)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
+	gw.FetchMemBudget = cfg.FetchMemBudget
+	objects.FetchMemBudget = cfg.FetchMemBudget
 	gw.AdvertiseProjections = cfg.AdvertiseProjections
 	switch {
 	case cfg.Auth.Upstream != "":

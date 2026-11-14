@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
@@ -533,8 +534,9 @@ func (s *Server) streamPackVerbatim(ctx context.Context, out io.Writer, vr Virtu
 		return "", false // before the first byte: the closure path still can
 	}
 	defer rc.Close()
-	buf := make([]byte, 256<<10)
-	if _, cerr := io.CopyBuffer(out, rc, buf); cerr != nil {
+	bufp := copyBufPool.Get().(*[]byte)
+	defer copyBufPool.Put(bufp)
+	if _, cerr := io.CopyBuffer(out, rc, *bufp); cerr != nil {
 		log.Printf("upload-pack %s%s: %s %s broke mid-copy: %v", vr.Repo, vr.Sub, rung, packOID, cerr)
 		fetchExactPackStream.Add(1)
 		return rung + " " + string(packOID) + " (broken)", true
@@ -599,6 +601,57 @@ func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr Virtu
 // hold" judgment the memoize ladder makes).
 const streamServeMinPackBytes = 32 << 20
 
+// defaultFetchMemBudget bounds what ONE download (clone/fetch) request's
+// serving path may pin on this node (docs/operations/performance.md §8.2):
+// per request, not per process — a gateway serves many in parallel, and
+// each stays inside its own window. The ladder enforces it by routing:
+// the materializing closure ladder only serves repos whose pack bytes fit
+// a quarter of the budget, response-cache entries are capped at half, and
+// the ObjectService twin (FetchMemBudget) tightens the whole-pack memoize
+// cap to the same quarter. Configurable via fetch_mem_budget; 100 MiB
+// (half the default) is the validated extreme.
+const defaultFetchMemBudget = 200 << 20
+
+// fetchMemBudget resolves the effective budget (0 = default; negative = off).
+func (s *Server) fetchMemBudget() int64 {
+	if s.FetchMemBudget != 0 {
+		return s.FetchMemBudget
+	}
+	return defaultFetchMemBudget
+}
+
+// streamServeMin is the pack-byte cutoff for the streaming rung under the
+// current budget: min(32 MiB, budget/4), so a budget squeezed to 100 MiB
+// pushes every repo ≥ 25 MiB of packs onto the streaming rungs — the
+// closure ladder's maps plus its encoded buffer then always fit the
+// budget with room to spare. Negative budgets keep the fixed cutoff.
+func (s *Server) streamServeMin() int64 {
+	if b := s.fetchMemBudget(); b > 0 {
+		return min(streamServeMinPackBytes, b/4)
+	}
+	return streamServeMinPackBytes
+}
+
+// respEntryMax is the per-entry byte cap of the clone-shaped response
+// cache under the current budget: min(128 MiB, budget/2). The cap governs
+// what a single request may DOUBLE (its closure maps are resident, the
+// cached entry is the same bytes re-encoded) — over it the response is
+// written but not cached.
+func (s *Server) respEntryMax() int64 {
+	if b := s.fetchMemBudget(); b > 0 {
+		return min(storage.ResponsePackCacheMax, b/2)
+	}
+	return storage.ResponsePackCacheMax
+}
+
+// copyBufPool recycles the 256 KiB verbatim-copy windows across requests —
+// a gateway serving many clones otherwise allocates one per serve, and the
+// window is exactly the reuse the streaming paths want (get, copy, put).
+var copyBufPool = sync.Pool{New: func() any {
+	b := make([]byte, 256<<10)
+	return &b
+}}
+
 // tryStreamingServe is the multi-pack clone-shaped rung (docs/storage/storage.md §3, the
 // "way in is the way out" fix for streamed imports): the exact-pack fast
 // path missed because the closure spans packs, and no stored pack equals
@@ -616,10 +669,10 @@ const streamServeMinPackBytes = 32 << 20
 //     wire, page-cache contiguity locally — then one delta-free pack
 //     written entry by entry (StreamEncodePack: hash + zlib on the fly).
 //
-// Small repositories (pack-group bytes below streamServeMinPackBytes)
-// return false and keep the closure+encode+cache ladder. A miss before the
-// first byte falls back to the closure path; a break mid-encode is
-// terminal like any dropped response.
+// Small repositories (pack-group bytes below streamServeMin, the fetch
+// memory budget's quarter) return false and keep the closure+encode+cache
+// ladder. A miss before the first byte falls back to the closure path; a
+// break mid-encode is terminal like any dropped response.
 func (s *Server) tryStreamingServe(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID, ofsDelta bool) bool {
 	if raw, ok := s.Objects.CachedResponsePack(vr.Repo, vr.Sub, wants, ofsDelta); ok {
 		if _, werr := out.Write(raw); werr == nil {
@@ -662,10 +715,10 @@ func (s *Server) tryDeepenServe(ctx context.Context, out io.Writer, vr VirtualRe
 // (StreamEncodePack: hash + zlib on the fly; the type bits come from the
 // enumeration, Raw re-derives them as the authoritative check).
 //
-// Small repositories (pack-group bytes below streamServeMinPackBytes)
-// return false and keep the closure+encode+cache ladder. A miss before the
-// first byte falls back to the closure path; a break mid-encode is
-// terminal like any dropped response.
+// Small repositories (pack-group bytes below streamServeMin, the fetch
+// memory budget's quarter) return false and keep the closure+encode+cache
+// ladder. A miss before the first byte falls back to the closure path; a
+// break mid-encode is terminal like any dropped response.
 func (s *Server) streamTypedPack(ctx context.Context, out io.Writer, vr VirtualRepo, typed map[model.OID]model.ObjectType, shape string, nwants int) bool {
 	oids := make([]model.OID, 0, len(typed))
 	for oid := range typed {
@@ -688,7 +741,7 @@ func (s *Server) streamTypedPack(ctx context.Context, out io.Writer, vr VirtualR
 		}
 		byPack[p] = append(byPack[p], oid)
 	}
-	if known && total < streamServeMinPackBytes {
+	if known && total < s.streamServeMin() {
 		return false // small repo: the closure ladder keeps its response cache
 	}
 	groups := make([]model.OID, 0, len(byPack))
@@ -700,6 +753,11 @@ func (s *Server) streamTypedPack(ctx context.Context, out io.Writer, vr VirtualR
 	for _, p := range groups {
 		order = append(order, byPack[p]...)
 	}
+	// The grouping scaffolding is dead weight from here on — the encode
+	// below runs for the better part of a minute at flagship scale, and
+	// dropping the references lets the collector reclaim the O(closure)
+	// maps while objects stream (the per-request budget is the whole point).
+	oids, packs, byPack = nil, nil, nil
 
 	// Peek the first object before committing the pack header: a missing
 	// object here falls back to the closure path, whose error reporting is
@@ -772,8 +830,9 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 	}
 	if packOID, ok := s.Objects.ExactPackHit(vr.Repo, wanted); ok {
 		if rc, _, oerr := s.Objects.OpenPackStream(ctx, vr.Repo, packOID); oerr == nil {
-			buf := make([]byte, 256<<10)
-			n, cerr := io.CopyBuffer(out, rc, buf)
+			bufp := copyBufPool.Get().(*[]byte)
+			n, cerr := io.CopyBuffer(out, rc, *bufp)
+			copyBufPool.Put(bufp)
 			rc.Close()
 			if cerr == nil {
 				return "exact-pack-stream " + string(packOID)
@@ -805,7 +864,7 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 		if err := serveObjectPack(&buf, blobs, trees, commits, tags, ofsDelta); err != nil {
 			log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
 		}
-		if len(buf.Bytes()) > storage.ResponsePackCacheMax {
+		if int64(len(buf.Bytes())) > s.respEntryMax() {
 			_, _ = out.Write(buf.Bytes())
 			return "encode" // the encoded response itself over budget: not cached
 		}

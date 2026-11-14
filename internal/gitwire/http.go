@@ -107,6 +107,19 @@ type Server struct {
 	// points the client at partial/shallow clones. 0 = the 100 GiB default;
 	// negative disables the gate.
 	FullCloneMaxBytes int64
+	// FetchMemBudget is the per-request serving-memory bound for ONE
+	// download (clone/fetch) request on this node (docs/operations/
+	// performance.md §8.2): the serve ladder routes so the request's
+	// working set — closure bytes, response buffers, memoized packs —
+	// stays inside it. Repos whose pack bytes exceed a quarter of the
+	// budget always take the streaming rungs (nothing O(closure) ever
+	// resident); response-cache entries are capped at half of it; the
+	// ObjectService mirror of this field tightens the whole-pack memoize
+	// ladder to the same quarter. 0 = the 200 MiB default; negative keeps
+	// the fixed thresholds (no tightening). A single object larger than
+	// the budget is still served — correctness outranks the budget; only
+	// aggregate buffering is bounded.
+	FetchMemBudget int64
 	// GitLab roots the post-receive → internal API adapter (docs/integration/gitlab-integration.md §2):
 	// when set, pushes carrying a GitLab identity (the gitaly face threads
 	// workhorse's GlId/GlRepository) notify the platform's push processing.

@@ -56,6 +56,10 @@ type Options struct {
 	// clone-budget gate apply to gitaly traffic exactly as to /r/).
 	Convergence      bool
 	FullCloneMaxByte int64
+	// FetchMemBudget mirrors the per-request download memory budget onto
+	// the internal gitwire instance (docs/operations/performance.md §8.2)
+	// — gitaly traffic serves under the same window as /r/.
+	FetchMemBudget int64
 	// BackupDir roots the server-side backup sink (the local-directory
 	// stand-in for upstream's go-cloud blob sink). Empty = server-side
 	// backups off: the backup RPCs answer FailedPrecondition, like an

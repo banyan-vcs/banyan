@@ -163,6 +163,17 @@ type Config struct {
 	// the metadata plane via /api/v1/repos/<repo>/hooks.
 	FullCloneMaxBytes int64 `yaml:"full_clone_max_bytes"`
 
+	// FetchMemBudget bounds the serving memory of ONE download (clone/
+	// fetch) request on this node (docs/operations/performance.md §8.2) —
+	// per request, not per process; concurrent requests each get their own
+	// window. The serve ladder routes so a request's working set (closure
+	// bytes, response buffers, memoized packs) stays inside it: repos
+	// whose pack bytes exceed a quarter of the budget always stream,
+	// response-cache entries cap at half, and the whole-pack memoize
+	// ladder tightens to the same quarter. Default 200 MiB; 100 MiB is
+	// the validated extreme; -1 keeps the fixed thresholds.
+	FetchMemBudget int64 `yaml:"fetch_mem_budget"`
+
 	// AdvertiseProjections lists refs/banyan/tree/* in the plain-HTTP
 	// advertisement (docs/integration/gitlab-integration.md §7). The gitaly
 	// face always does (GitLab's fsck and projection-fetch recipe read

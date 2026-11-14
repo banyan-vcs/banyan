@@ -100,6 +100,15 @@ type ObjectService struct {
 	// entry tables (发现⑤'s heap profile). Deployments with RAM to spare
 	// can raise it; correctness never depends on the cache.
 	IndexTreesMaxBytes int64
+	// FetchMemBudget is the per-request serving-memory bound for ONE
+	// download request as seen by this read ladder (docs/operations/
+	// performance.md §8.2; gitwire.Server carries the twin that routes the
+	// serve ladder). Here it tightens the whole-pack fetch+decode+memoize
+	// rung: a walk under a squeezed budget only ever parks packs whose
+	// bytes fit a quarter of it in the decoded LRU — the shared
+	// MemoMaxBytes ceiling still applies on top. 0 = the 200 MiB default;
+	// negative keeps the fixed packMemoMaxBytes cap.
+	FetchMemBudget int64
 	consolMu           sync.Mutex
 	consolIn           map[string]bool
 	consolSched        map[string]bool // a scheduler goroutine is alive for the repo
@@ -825,7 +834,19 @@ func (s *ObjectService) packSizeCached(ctx context.Context, repo string, packOID
 // legacy deployments keep the old ladder.
 func (s *ObjectService) packTooBigToMemo(ctx context.Context, repo string, packOID model.OID) bool {
 	size := s.packSizeCached(ctx, repo, packOID)
-	return size > packMemoMaxBytes
+	return size > s.packMemoCap()
+}
+
+// packMemoCap is the whole-pack memoize ceiling under the per-request
+// fetch memory budget: min(32 MiB, budget/4) — the same quarter-share the
+// gitwire ladder uses for its small-repo cutoff, so a squeezed budget
+// keeps every rung of one request inside the same window. A negative or
+// unset budget keeps the fixed 32 MiB (0 resolves to the 200 MiB default).
+func (s *ObjectService) packMemoCap() int64 {
+	if b := s.FetchMemBudget; b > 0 {
+		return min(packMemoMaxBytes, b/4)
+	}
+	return packMemoMaxBytes
 }
 
 // memoizedPack keys the decoded-pack LRU (repo + packOID: packOID alone is
