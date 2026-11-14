@@ -140,6 +140,7 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 	objects.Addressing = meta.NewAddressing(cfg.Storage.Mode, ms)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
+	gw.AdvertiseProjections = cfg.AdvertiseProjections
 	switch {
 	case cfg.Auth.Upstream != "":
 		// Console-fronted mode (docs/web/console.md §5): the console (banyand console) control plane
@@ -321,6 +322,7 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 	objects.Addressing = meta.NewAddressing(cfg.Storage.Mode, ms)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
+	gw.AdvertiseProjections = cfg.AdvertiseProjections
 	switch {
 	case cfg.Auth.Upstream != "":
 		// Console-fronted mode on the gateway role (docs/web/console.md §5): same

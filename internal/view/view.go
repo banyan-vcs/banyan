@@ -770,6 +770,57 @@ type headsKey struct {
 	root   model.OID
 }
 
+// projAnchor is the persisted per-directory projection-head snapshot row:
+// /.woven/proj/<dir>, inside the same hidden family as the weave anchors
+// (every ListAllTimelines consumer already filters IsWovenFamily, and
+// ResetWoven sweeps it with the rest). Base carries the root-local tip the
+// derivation answers, making (Base, Head) a pure on-disk cache of HeadsFor's
+// output — a cold process re-reads it instead of re-walking the whole
+// history (docs/operations/performance.md §3b 发现⑤ ①: the shared walk is
+// ~110s at git.git scale, every cold advertisement).
+func projAnchor(dir string) model.AnchorPath {
+	return model.AnchorPath(string(wovenAnchor) + "/proj/" + dir)
+}
+
+// snapshotHeads persists one derivation's heads as /.woven/proj rows. Write
+// order is load-bearing: the head CAS lands BEFORE the base flip, so a
+// crashed write leaves Base≠rootLocal — the reader rejects the row and
+// re-derives — never a stale head under a fresh base.
+func (s *Service) snapshotHeads(ctx context.Context, repo, branch string, rootLocal model.OID, heads map[string]model.OID) {
+	for dir, head := range heads {
+		tl := model.Timeline{Repo: repo, Anchor: projAnchor(dir), Name: branch}
+		cur, err := s.Meta.Timeline(ctx, tl)
+		if err != nil {
+			_ = s.Meta.EnsureTimeline(ctx, tl, head, rootLocal) // atomic first write
+			continue
+		}
+		if cur.Head != head {
+			_ = s.Meta.CASHead(ctx, tl, cur.Head, head)
+		}
+		_ = s.Meta.SetTimelineBase(ctx, tl, rootLocal)
+	}
+}
+
+// SnapshotHeads returns the persisted per-directory projection heads for
+// rootLocal when a row exists for EVERY requested directory — a partial
+// snapshot is worthless (the advertisement would omit refs that gitaly
+// fsck reads). nil means "not covered": derive. O(dirs) meta reads, no
+// history walk, no object materialization.
+func (s *Service) SnapshotHeads(ctx context.Context, repo, branch string, rootLocal model.OID, dirs []string) map[string]model.OID {
+	if rootLocal.IsZero() || len(dirs) == 0 {
+		return nil
+	}
+	out := make(map[string]model.OID, len(dirs))
+	for _, d := range dirs {
+		st, err := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: projAnchor(d), Name: branch})
+		if err != nil || st.Head.IsZero() || st.Base != rootLocal {
+			return nil
+		}
+		out[d] = st.Head
+	}
+	return out
+}
+
 // HeadsFor returns every top-level directory's projected head for the
 // root-local tip, derived in ONE shared history walk
 // (model.ProjectionHeads) and memoized per tip. The advertisement path uses
@@ -808,6 +859,7 @@ func (s *Service) HeadsFor(repo, branch string, rootLocal model.OID) map[string]
 			heads[dir] = res.Head
 		}
 	}
+	s.snapshotHeads(context.Background(), repo, branch, rootLocal, heads)
 	s.mu.Lock()
 	if _, exists := s.headsCache[key]; !exists {
 		// FIFO-bounded, no whole-map reset: the old ≥16 reset threw away

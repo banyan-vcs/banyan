@@ -28,6 +28,7 @@ func Engines(ms meta.MetaStore, objects *storage.ObjectService, algo model.HashA
 	b := &kit.Base{Meta: ms, Objects: objects, Algo: algo, Svc: svc}
 	s := &Server{Base: b}
 	s.git = gitwire.NewServer(ms, objects, algo)
+	s.git.AdvertiseProjections = true // gitaly/GitLab mode: refs/banyan/tree/* are the contract
 	b.Git = s.git
 	return s
 }

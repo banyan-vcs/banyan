@@ -86,6 +86,17 @@ type Server struct {
 	// reject-and-rebase behavior; cmd/banyand turns it on via config.
 	Convergence bool
 
+	// AdvertiseProjections lists refs/banyan/tree/* in the advertisement
+	// (docs/integration/gitlab-integration.md §7). Front ends that only
+	// know whole repos — GitLab in gitaly mode — need them (its projection
+	// fetch recipe and fsck read every one); a plain standalone clone never
+	// names a subtree by ref, and every advertised tip must be fetchable —
+	// the projection chains are real bytes in every clone (git.git:
+	// 328K commits, ~135MiB of the 445MiB single pack, 发现⑤ ②). Default
+	// off; the gitaly wiring turns it on. The /tree/<dir> faces work
+	// identically either way — they do not go through these refs.
+	AdvertiseProjections bool
+
 	// Hooks overrides the webhook client used to evaluate registered
 	// receive hooks (docs/gateway/git-compat.md §7) — nil uses the default. Hook
 	// REGISTRATIONS live in the metadata plane (multi-gateway consistent);

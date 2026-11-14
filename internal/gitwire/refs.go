@@ -73,14 +73,20 @@ func (s *Server) ResolveRefs(ctx context.Context, vr VirtualRepo) ([]Ref, error)
 		}
 		// Projection refs join the advertisement unless a verbatim aux
 		// ref already owns the name (UpdateReferences could have written
-		// one; first-wins keeps the advertisement free of duplicates).
-		have := map[string]bool{}
-		for _, r := range refs {
-			have[r.Name] = true
-		}
-		for _, r := range s.ProjectionRefs(ctx, vr.Repo, defaultBranch) {
-			if !have[r.Name] {
-				refs = append(refs, r)
+		// one; first-wins keeps the advertisement free of duplicates) —
+		// and only when this face advertises them at all (gitaly/GitLab
+		// mode; a plain standalone clone never names a subtree by ref, and
+		// every advertised tip must be fetchable: the projection chains
+		// cost real bytes in every clone, git.git ~135MiB of 445).
+		if s.AdvertiseProjections {
+			have := map[string]bool{}
+			for _, r := range refs {
+				have[r.Name] = true
+			}
+			for _, r := range s.ProjectionRefs(ctx, vr.Repo, defaultBranch) {
+				if !have[r.Name] {
+					refs = append(refs, r)
+				}
 			}
 		}
 		return refs, nil
@@ -110,16 +116,6 @@ func (s *Server) ProjectionRefs(ctx context.Context, repo string, defaultBranch 
 	if err != nil {
 		return nil
 	}
-	// Shared-walk heads (docs/operations/performance.md §3b finding ④): ONE
-	// history walk derives every directory's head (cached per tip, nothing
-	// persisted — the /tree/<dir> face materializes on demand), instead of a
-	// SubtreeHead per directory (O(dirs × history), each materializing its
-	// whole projection chain before the advertisement answers).
-	state, terr := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: defaultBranch})
-	if terr != nil {
-		return nil
-	}
-	heads := s.Views.HeadsFor(repo, defaultBranch, state.Head)
 	// Directories with local timeline activity at or below them fold those
 	// commits in (a strictly longer chain than the shared derivation) —
 	// they keep the full SubtreeHead. Rare: subtree pushes only.
@@ -136,6 +132,27 @@ func (s *Server) ProjectionRefs(ctx context.Context, repo string, defaultBranch 
 				local[seg[0]] = true
 			}
 		}
+	}
+	// Shared-walk heads (docs/operations/performance.md §3b finding ④): ONE
+	// history walk derives every directory's head instead of a SubtreeHead
+	// per directory (O(dirs × history)). The persisted /.woven/proj snapshot
+	// (发现⑤ ①) answers a cold process in O(dirs) meta reads; the walk
+	// (which persists the chains the advertised OIDs promise AND refreshes
+	// the snapshot) stays the fallback for the first advertisement after a
+	// push or a reset.
+	state, terr := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: defaultBranch})
+	if terr != nil {
+		return nil
+	}
+	var plainDirs []string
+	for _, e := range tree.Entries {
+		if e.IsDir && e.Mode != "160000" && !local[e.Name] {
+			plainDirs = append(plainDirs, e.Name)
+		}
+	}
+	heads := s.Views.SnapshotHeads(ctx, repo, defaultBranch, state.Head, plainDirs)
+	if heads == nil {
+		heads = s.Views.HeadsFor(repo, defaultBranch, state.Head)
 	}
 	var out []Ref
 	for _, e := range tree.Entries {

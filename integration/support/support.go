@@ -61,7 +61,9 @@ func NewServerPlane(t *testing.T) (*Server, meta.MetaStore, *storage.ObjectServi
 	nodes := []storage.Node{{ID: "t1", Local: true}}
 	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
 	mux := http.NewServeMux()
-	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
+	gw.AdvertiseProjections = true // full-feature harness: the projection refs are part of the contract under test
+	gw.Register(mux)
 	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -329,7 +331,9 @@ func NewStack(t *testing.T, shardRoot, dbPath string, sqlite bool) (*Server, *st
 	nodes := []storage.Node{{ID: "t1", Local: true}}
 	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
 	mux := http.NewServeMux()
-	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
+	gw := gitwire.NewServer(ms, objects, model.SHA1)
+	gw.AdvertiseProjections = true // full-feature harness: the projection refs are part of the contract under test
+	gw.Register(mux)
 	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

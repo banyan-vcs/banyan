@@ -482,15 +482,37 @@ clone 形态零枚举整包直传（广告 OID 必须可取回的契约保证闭
 （原 ≥16 全表重置在多分支仓每分支重推导）；⑤**ri.trees 512MiB 字节上限**
 （FIFO 逐出，miss 走 Raw 权威路径）。
 
+**冷克隆优化（发现⑤ ①推送期快照 + ②按需广告，Run E 同口径复测）**：
+
+- **①投影头快照**：HeadsFor 把推导结果持久化为 `/.woven/proj/<dir>` 时间线
+  行（Base=rootLocal、Head=投影头，写序先 head 后 base——崩溃残留=失效而非
+  陈旧）；广告先读快照（O(目录数) 次 meta 读），未覆盖才落全史走；ResetWoven
+  随家族清扫。推送后预热（warmView）在 gitaly 档把整条链物化+快照提前到
+  push 内完成。
+- **②投影 ref 按需广告**：refs/banyan/tree/* 只在显式开启的面出现（gitaly/
+  GitLab 档恒开——fsck 与投影 fetch 配方是契约方；独立站默认关，配置
+  `advertise_projections`）。未被广告的投影**不再物化**——328K 提交链不进
+  包，克隆字节与内存同步回落。/tree/ URL 面两态等价（不经这些 ref）。
+
+| 场景 | Run C（⑤修复后） | Run E（①+②后） |
+|---|---|---|
+| clone 全量 cold | 1.46x / 233.6s | **1.13x / 99.2s**（336.8 vs 297.6MB；cold−warm 差仅 2s——广告物化成本归零，剩余差距=多余 39MB 的 index-pack+检出+轮 0 的内联合笼收敛 ~1m，与客户端检出重叠） |
+| clone 全量 warm | 0.74x* | **0.99x**（97.1 vs 97.8s，真持平；*Run C 的 0.74x 载于漂移窗口，git warm 139s 异常） |
+| clone-shallow | 0.55x | **0.61x**（45.1 vs 74.1s） |
+| ls-remote | 1.01x 字节 | **0.99x 字节 / 1.37x 耗时**（111.2 vs 111.8KB——广告少了 ~30 条投影 ref） |
+| 服务端峰值内存 | 5.9GB | **2.4GB**（无投影物化、无全史树走查） |
+
 **仍登记（修复后）**：①model 层投影走查的每调用 treeMemo 瞬态（冷广告
-峰值 GB 级、随调用释放——上限化或预热是下一梯）；②流式摄入的顺序预热
-扫描（go-git parser observer 只给 nil content，parser.go:167，索引需自扫）；
-③**子树选择性在旗舰尺度的回退**——子树广告的物化使仓短暂回到两包态，
-单包梯落空走 delta-free 流式重编码（t/ 538MB > 全量 434MB；需要闭包感知
-的重编码或子树专用包）；④filtered/partial fetch 仍走 closure() 全物化路径；
+峰值 GB 级、随调用释放——上限化或预热是下一梯；独立站默认已不触发，
+gitaly 档快照命中后也不触发，仅首次推导/ResetWoven 后的首次走查）；
+②流式摄入的顺序预热扫描（go-git parser observer 只给 nil content，
+parser.go:167，索引需自扫）；③**子树选择性在旗舰尺度的回退**——/tree/ 面
+首次访问的按需物化使仓回到多包态，单包梯落空走 delta-free 流式重编码
+（需闭包感知的重编码或子树专用包；独立站 t/ 子树克隆现为按需付费）；
+④filtered/partial fetch 仍走 closure() 全物化路径；
 ⑤write-path 族补测（当晚实测）：**fetch-incremental 旗舰尺度受阻**——带
 haves 的请求走 closure()/haveClosure 老路径，have 闭包走查撞同一堵未索引墙
-（等①的顺序预热解锁）；**push-one-commit round 0 全链通过**——新落的
+（等②的顺序预热解锁）；**push-one-commit round 0 全链通过**——新落的
 "单服在飞时开服前内联合笼"（收敛循环，444MB 追加合并实测 1m30s）→ 单包
 verbatim 直传 → 推送本身秒级；但**推送后的第二次克隆**未再收敛到单包
 （多包窗口 × 广告期物化 flush 的时序，卡 28 分钟待诊断——diag 测试需扩展

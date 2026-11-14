@@ -104,6 +104,7 @@ func NewServer(meta meta.MetaStore, objects *storage.ObjectService, algo model.H
 	s.git.SetGitLab(opts.GitLab)
 	s.git.Convergence = opts.Convergence
 	s.git.FullCloneMaxBytes = opts.FullCloneMaxByte
+	s.git.AdvertiseProjections = true // gitaly/GitLab mode: fsck and the projection recipe read refs/banyan/tree/*
 	b.Git = s.git
 	mux := http.NewServeMux()
 	s.git.Register(mux)

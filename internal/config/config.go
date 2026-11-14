@@ -162,6 +162,16 @@ type Config struct {
 	// Receive hooks (docs/gateway/git-compat.md §7) need no config here: registrations live in
 	// the metadata plane via /api/v1/repos/<repo>/hooks.
 	FullCloneMaxBytes int64 `yaml:"full_clone_max_bytes"`
+
+	// AdvertiseProjections lists refs/banyan/tree/* in the plain-HTTP
+	// advertisement (docs/integration/gitlab-integration.md §7). The gitaly
+	// face always does (GitLab's fsck and projection-fetch recipe read
+	// them); standalone defaults OFF because a plain clone never names a
+	// subtree by ref, and every advertised tip must be fetchable — the
+	// projection chains ride in every clone (~135MiB of 445 at git.git
+	// scale, docs/operations/performance.md §3b 发现⑤ ②). Turn on only if
+	// tooling fetches subtree refs over plain HTTP.
+	AdvertiseProjections bool `yaml:"advertise_projections"`
 }
 
 // Default returns the built-in defaults. MetaBackend stays empty: the

@@ -380,6 +380,18 @@ func (s *Server) warmView(repo string, sub model.AnchorPath, branch string) {
 		defer cancel()
 		if sub.IsRoot() {
 			_, _ = s.Views.RootTip(ctx, repo, branch)
+			// Push-time projection materialization (发现⑤ ①): when this
+			// face advertises refs/banyan/tree/* (gitaly mode), the first
+			// cold advertisement must not pay the shared walk — derive and
+			// persist the chains plus the /.woven/proj snapshot here, off
+			// the read path. Standalone mode skips it: unadvertised
+			// projections stay unmaterialized, and clones stay 135MiB
+			// lighter at git.git scale.
+			if s.AdvertiseProjections {
+				if st, terr := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: branch}); terr == nil && !st.Head.IsZero() {
+					s.Views.HeadsFor(repo, branch, st.Head)
+				}
+			}
 			return
 		}
 		// A subtree push lands in two views: its own subtree view and the
