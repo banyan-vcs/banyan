@@ -265,6 +265,111 @@ bench 场景（多 pack 状态）下浅化克隆对象数相同（116=116）、p
 复现：`go run ./cmd/banyand bench --profile medium|large --runs 5
 --md report.md --csv samples.csv`（多轮验证重复执行多次取区间）。
 
+### 3b. 真实仓库样本（2026-11-14）：`--repo` 模式与它摇出的三个问题
+
+合成种子是确定性且快的，但它们**单分支、纯文本、blob 尺寸均匀、零合并**
+——真实历史（合并拓扑、数百 tag、二进制 blob、深度 delta 链）走的协商/
+闭包/打包/织入路径种子根本碰不到。`banyand bench --repo <本地仓>` 把上级
+目录的真实仓镜像进两个对端（git CGI 直接服镜像；banyan 经 git push 吃进
+全部分支+tag），跑同一套场景矩阵：
+
+	banyand bench --repo F:\Workspace\go-git --runs 3 --md r.md --csv s.csv
+	banyand bench --repo F:\Workspace\git --scenarios clone-full,ls-remote \
+	    --runs 3            # 大样本：--scenarios 过滤场景族
+
+实现要点（internal/bench/real.go）：镜像仓的默认分支如实注入（git.git 是
+`master`，本地 go-git 检出在 `merge-ort`——不猜 `main`）；子树场景骑文件
+数最多的顶层目录（go-git=plumbing、git.git=t）；burst 写者分布到真实顶层
+目录；增量基线**按对端各自克隆**（见下②——镜像基线会被织入视图判
+non-fast-forward，那是正确语义）。
+
+**摇出的四个问题**（真实样本的价值所在；前三个当日修复，第四个登记）：
+
+1. **GetObject 每次单对象读都重新读盘+重解码整个 idx**（shardstore.go）：
+   idx 是内容寻址且不可变的，却没有任何 memo——视图物化按目录逐个
+   SplitHistory 全史重走时，4K 提交的仓把一个 780KB idx 重解码了数万次，
+   冷克隆 **17 分钟未完成**（CPU 持续 40% 燃烧，goroutine 栈钉在
+   DecodeIdx）。修复=LocalShardStore idx memo（128MiB 字节预算 LRU，
+   最新条目永不逐出；回归测试 TestIdxMemoServesWithoutIdxFile：删掉 idx
+   文件后读仍命中）。修复后同一冷克隆 **39 秒**完成。
+2. **合并富历史在广告层被织入重线性化**（设计使然，非 bug）：根视图是
+   线性无合并链（docs/design/data-model.md §13），合成种子的线性史走了
+   identity 快路径所以 OID 原样；真实合并拓扑每个提交都被重写。tag 是
+   逐字 aux ref 钉住**原始**历史，分支广告**织入**重写——克隆因此同时
+   携带两套提交对象（go-git：原始 5,550 → 服务 9,598 个提交对象）。
+   harness 修复=增量基线按对端克隆（镜像基线对 banyan 推送必吃
+   non-fast-forward——receivepack 的 race guard 语义正确）。
+3. **bench 的 git CGI 包装漏转发 HTTP_CONTENT_ENCODING**：git remote-curl
+   对大 fetch 请求体发 gzip（`Content-Encoding: gzip`），包装没按 CGI 规范
+   转成 `HTTP_*` 变量 → http-backend 把 gzip 字节当 pkt-line 解析，
+   "bad line length character" 死给 502。种子请求体太小从不触发。修复=
+   转发该头 + 502 响应体现场带 CGI stderr（本次排查靠独立 repro 才看到
+   真实错误）。
+4. **git.git 尺度的冷广告是 O(顶层目录 × 全史) 物化，当日未修**（登记
+   为后续项）：ls-refs 的 ProjectionRefs 对每个顶层目录各跑一次
+   SplitHistory 全史走（82K 提交 × ~30 目录），并把每个目录的投影提交
+   全部落成合成对象——诊断 dump 里服务 goroutine 停在 SplitHistory、
+   进程内存涨到 **9GB**、首个冷克隆 **20+ 分钟不返回**（goroutine 存活
+   且 runnable——不是死锁，是组合量级）。go-git 尺度同一路径 39 秒完成，
+   从未暴露。两个已登记的结构修复方向：广告期所有目录**共享一次全史走**
+   （一次根树读服务全部目录的 SubtreeAt）；投影 ref 的 head-only 快速
+   推导（广告只需要 head，不必持久化整条投影史——物化留给子树面真被
+   访问时）。
+
+**go-git 全矩阵实测**（4,039 提交 · 95 refs · 11.8MiB · branch merge-ort，
+runs=3，2026-11-14；同机同栈同口径，对照 §3 合成数字读）：
+
+| 场景 | 字节比 | 耗时比 | 合成种子（medium/large） |
+|---|---|---|---|
+| clone 全量（cold / warm） | **2.06x / 2.05x** | 1.39x / **2.11x** | 1.07x / 0.49–0.61x |
+| clone partial blob:none | **0.45x** | 1.86x | 0.65–0.91x |
+| clone 浅化 depth=1 | 1.05x | 1.42x | 1.14–1.15x |
+| clone 子树 plumbing/ | 7.1MiB（全量 **35%**，git 无） | 19.9s | 全量 5.9–14% |
+| fetch 增量（1 提交） | 0.92x | 1.36x | **0.87x** |
+| push 1 提交 | 1.09x | 0.51x | 0.92x |
+| dev-loop 每轮 | 1.04x | **0.56x** | 0.89x |
+| burst-8 total | 1.06x | **1.46x** | **0.53–0.55x** |
+| ls-remote | 1.08x | 0.66x | 0.85x |
+
+诚实读数（真实形态改写了哪些合成结论）：
+
+- **全量克隆字节 2x**：来源=①织入重线性化后克隆携带两套提交对象（②的
+  结构代价）；②多 pack 状态下 ExactPackHit 不命中（织入合成 pack +
+  推送 pack），走在线编码。耗时 2.11x（warm）来自每克隆重复付闭包重走
+  （28–50s/次）+ 在线编码（22s/次）——**闭包计算无跨请求复用**是下一个
+  优化面（种子仓太小从未暴露）；
+- **burst-8 耗时反转为 1.46x**：8 个并发推送各自触发织入物化（每目录
+  SplitHistory 全史走），冷织入税在争用下叠加；种子仓目录少、历史浅，
+  曾是 0.55x 的主场。收敛列车的往返优势被物化成本吃掉——同目录队列
+  （M4）+ 物化增量化（见下）之前的真实形态读数；
+- **仍然成立的优势**：partial clone 0.45x（树遍历服务端消化）、
+  dev-loop 0.56x、push 0.51x、子树克隆 35%（git 无对应）；fetch 增量
+  0.92x 字节（thin pack 把未减除的树闭包 delta 掉——闭包对象集里
+  140 树/767 blob 全被对端持有基压缩回收）；
+- **已登记的后续项**：克隆闭包的跨请求缓存（闭包是 wants 的纯函数，
+  P2-2 已缓存响应包但闭包重算）、广告期逐目录 SplitHistory 的共享一次
+  全史走（当前 O(目录×历史)）、burst 的冷织入增量化。
+
+**git.git 旗舰样本**（85,613 提交 · 2,031 refs · 324MiB · branch master）：
+**没有车道数字——发现④把跑数本身挡住了**，如实记录：
+
+- 推送与摄入正常：2,031 refs（全部分支+tag）一次推送落地，82,466 个
+  提交的轻量索引 **27 秒**建完（发现①的 idx memo 在起作用——修复前
+  这一步就是小时级）；
+- 此后冷广告的投影物化 **47 分钟未完成**，进程在内存压力下无输出死
+  亡（exit 1、无 panic 文本——诊断期同一路径的残留进程常驻 9GB）。
+  缩减场景族（跳过 clone-full/subtree）也无济于事——第一个 ls-remote
+  就要付全部物化成本；
+- 结论：git.git 尺度在发现④修复前**不可测**，这本身就是登记项的量化
+  论据。`banyand bench --memlimit <MiB>`（GOMEMLIMIT 语义）给进程内
+  服务端加了软内存上限——大样本跑数宁可 GC 变慢也不再撑死机器。
+
+复现：`go run ./cmd/banyand bench --repo <path> --runs 3 --work <dir>
+--md report.md --csv samples.csv`；大样本用 `--scenarios` 聚焦（全部族：
+clone-full、ls-remote、fetch-incremental、push-one-commit、clone-shallow、
+clone-partial、dev-loop、burst、clone-subtree、push-subtree）+ `--memlimit`
+设软上限。
+
 ## 4. 排期对位
 
 ```

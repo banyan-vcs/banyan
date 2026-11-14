@@ -2,6 +2,7 @@ package bench
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,9 +12,9 @@ import (
 	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/gitwire"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/rpc"
-	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -61,22 +62,30 @@ func countingHandler(next http.Handler, c *counter) http.Handler {
 // counting proxy — a "cold" server is simply a fresh instance after the seed
 // push, exactly the state a restarted deployment boots into.
 type BanyanServer struct {
-	URL string
-	ctr *counter
-	srv *httptest.Server
+	URL  string
+	ctr  *counter
+	srv  *httptest.Server
+	meta *meta.MemoryMetaStore
 }
 
 func StartBanyan(shardRoot string) (*BanyanServer, error) {
-	meta := meta.NewMemoryMetaStore()
+	ms := meta.NewMemoryMetaStore()
 	local := storage.NewLocalShardStore(shardRoot)
 	nodes := []storage.Node{{ID: "b1", Local: true}}
-	objects := storage.NewObjectService(meta, local, nodes, model.SHA1)
+	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
 	mux := http.NewServeMux()
-	gitwire.NewServer(meta, objects, model.SHA1).Register(mux)
-	rpc.NewServer(meta, objects, model.SHA1).Register(mux)
+	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
+	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
 	ctr := &counter{}
 	srv := httptest.NewServer(countingHandler(mux, ctr))
-	return &BanyanServer{URL: srv.URL, ctr: ctr, srv: srv}, nil
+	return &BanyanServer{URL: srv.URL, ctr: ctr, srv: srv, meta: ms}, nil
+}
+
+// SetDefaultBranch re-points the repo's advertised HEAD symref — real-sample
+// mode needs it after the seed push (the auto-created repo defaults to main;
+// git.git for one says master).
+func (b *BanyanServer) SetDefaultBranch(repo, branch string) error {
+	return b.meta.SetDefaultBranch(context.Background(), repo, branch)
 }
 
 func (b *BanyanServer) Stop() { b.srv.Close() }
@@ -133,10 +142,22 @@ func (g *GitCGIServer) serve(w http.ResponseWriter, r *http.Request) {
 	if gp := r.Header.Get("Git-Protocol"); gp != "" {
 		cmd.Env = append(cmd.Env, "GIT_PROTOCOL="+gp)
 	}
+	// CGI passes request headers as HTTP_* variables — http-backend needs
+	// HTTP_CONTENT_ENCODING to inflate the gzipped request bodies git's
+	// remote-curl sends for large fetch negotiations (real samples: dozens
+	// of want lines; without it the backend parses gzip bytes as pkt-lines
+	// and dies with "bad line length character").
+	if ce := r.Header.Get("Content-Encoding"); ce != "" {
+		cmd.Env = append(cmd.Env, "HTTP_CONTENT_ENCODING="+ce)
+	}
 	cmd.Stdin = r.Body
 	out, err := cmd.Output()
 	if err != nil {
-		http.Error(w, "git http-backend: "+err.Error(), http.StatusBadGateway)
+		msg := err.Error()
+		if e, ok := err.(*exec.ExitError); ok {
+			msg += ": " + strings.TrimSpace(string(e.Stderr))
+		}
+		http.Error(w, "git http-backend: "+msg, http.StatusBadGateway)
 		return
 	}
 	// CGI: headers then a blank line, then the body.
