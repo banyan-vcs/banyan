@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -27,7 +28,13 @@ type Report struct {
 	Repo    string            `json:"repo"` // repo size summary (commits, files)
 	Runs    int               `json:"runs"`
 	Rows    map[string]Metric `json:"rows"`
-	Env     string            `json:"env"` // go version + timestamp
+	Env     string            `json:"env"` // cpu/maxprocs/go/git fingerprint + timestamp
+	// Control is the host-performance thermistor: one local clone of a
+	// fixed tiny repo per paired round. Not a scenario — a bias detector:
+	// its drift across the run measures the MACHINE, so wide spreads
+	// downgrade wall-time ratios (bytes are immune). Absorbed into
+	// baselines for reference; Check ignores it.
+	Control []int64 `json:"control,omitempty"`
 }
 
 // gitRun times one git command against a server and returns the metric
@@ -112,7 +119,8 @@ func runTargets(profileName, pushDir string, pushArgs []string, scratch, workdir
 		Repo:    env.summary,
 		Runs:    runs,
 		Rows:    map[string]Metric{},
-		Env:     fmt.Sprintf("%s", time.Now().Format(time.RFC3339)),
+		Env: fmt.Sprintf("cpu=%d maxprocs=%d go=%s git=%s %s",
+			runtime.NumCPU(), runtime.GOMAXPROCS(0), runtime.Version(), gitVersion(), time.Now().Format(time.RFC3339)),
 	}
 	want := familyFilter(o.Scenarios)
 
@@ -141,9 +149,6 @@ func runTargets(profileName, pushDir string, pushArgs []string, scratch, workdir
 			return nil, err
 		}
 	}
-	if err := runScenarios(rep, "banyan", banyan, banyanRepo, banyanSub, scratch, filepath.Join(workdir, "clients-b"), runs, env, want); err != nil {
-		return nil, err
-	}
 
 	// --- git baseline target ---
 	gitSrv, err := StartGitCGI(filepath.Join(workdir, "gitroot"))
@@ -153,10 +158,98 @@ func runTargets(profileName, pushDir string, pushArgs []string, scratch, workdir
 	defer gitSrv.Stop()
 	gitBase := gitAdapter{gitSrv}
 	gitRepo := gitBase.RepoURL() + "/seed.git"
-	if err := runScenarios(rep, "git", gitBase, gitRepo, "", scratch, filepath.Join(workdir, "clients-g"), runs, env, want); err != nil {
+
+	// Paired, interleaved rounds — the anti-bias core (docs/operations/
+	// performance.md §3b): for every scenario family, banyan's sample and
+	// git's sample of the SAME round run back-to-back, so host drift
+	// (thermal throttling, background load, page-cache state) lands inside
+	// the round, on both sides of the ratio equally, instead of between two
+	// whole-target blocks. A control clone measured before each pair shows
+	// how much of the wall-time movement was the machine itself.
+	famB := buildFamilies(rep, "banyan", banyan, banyanRepo, banyanSub, scratch, filepath.Join(workdir, "clients-b"), runs, env, want)
+	byName := map[string]*family{}
+	for _, f := range buildFamilies(rep, "git", gitBase, gitRepo, "", scratch, filepath.Join(workdir, "clients-g"), runs, env, want) {
+		byName[f.name] = f
+	}
+	control, err := newControl(workdir)
+	if err != nil {
 		return nil, err
 	}
+	for _, a := range famB {
+		b := byName[a.name] // nil = banyan-only family (the subtree lanes)
+		if a.setup != nil {
+			if err := a.setup(); err != nil {
+				return nil, err
+			}
+		}
+		if b != nil && b.setup != nil {
+			if err := b.setup(); err != nil {
+				return nil, err
+			}
+		}
+		for i := 0; i < a.rounds; i++ {
+			rep.Control = append(rep.Control, control.sample())
+			if err := a.round(i); err != nil {
+				return nil, err
+			}
+			if b != nil {
+				if err := b.round(i); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if a.finish != nil {
+			a.finish()
+		}
+		if b != nil && b.finish != nil {
+			b.finish()
+		}
+	}
 	return rep, nil
+}
+
+// controlChannel is the host-performance thermistor: a fixed tiny LOCAL
+// clone measured before every paired round. Deterministic repo, never the
+// sample, no server in the path — only the machine is under test (process
+// spawn + pack write + checkout).
+type controlChannel struct {
+	bare string
+	dst  string
+	n    int
+}
+
+func newControl(workdir string) (*controlChannel, error) {
+	c := &controlChannel{
+		bare: filepath.Join(workdir, "control.git"),
+		dst:  filepath.Join(workdir, "control-clones"),
+	}
+	if err := SeedRepo(filepath.Join(workdir, "control-seed"), c.bare, Profiles["small"], 7); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (c *controlChannel) sample() int64 {
+	c.n++
+	dst := filepath.Join(c.dst, fmt.Sprintf("ctl-%d", c.n))
+	start := time.Now()
+	if _, err := git("", "clone", "-q", "--no-local", c.bare, dst); err != nil {
+		return -1 // a failed probe is itself a host signal; keep sampling
+	}
+	return time.Since(start).Milliseconds()
+}
+
+// gitVersion surfaces the baseline's git for the report env fingerprint.
+func gitVersion() string {
+	out, err := git("", "--version")
+	if err != nil {
+		return "?"
+	}
+	parts := strings.SplitN(strings.TrimSpace(out), " ", 3)
+	if len(parts) < 3 {
+		return "?"
+	}
+	return parts[2]
 }
 
 // ScenarioFamilies is the filterable scenario set (--scenarios): big real
@@ -176,51 +269,78 @@ func familyFilter(set map[string]bool) func(string) bool {
 	return func(f string) bool { return set[f] }
 }
 
-// runScenarios measures every scenario for one target. dirBase holds the
-// per-scenario client clones; subURL empty skips the subtree scenarios
-// (stock git has no subtree clone — the full clone is its nearest baseline,
-// and the sparse-checkout variant is measured separately). env carries the
-// sample's branch and burst layout; want gates families for filtered runs.
-func runScenarios(rep *Report, target string, s serverIface, repoURL, subURL, scratch, dirBase string, runs int, env scenarioEnv, want func(string) bool) error {
+// family is one scenario family's per-target harness: setup runs once
+// before the family's rounds (client clones, increment bases), round(i)
+// executes one measured sample, finish stores the accumulated rows. The
+// paired scheduler in runTargets runs each family's rounds interleaved
+// across the two targets.
+type family struct {
+	name   string
+	rounds int
+	setup  func() error
+	round  func(i int) error
+	finish func()
+}
+
+// buildFamilies instantiates every runnable scenario family for one target.
+// dirBase holds the per-scenario client clones; subURL empty omits the
+// subtree families (stock git has no subtree clone — the full clone is its
+// nearest baseline, and the sparse-checkout variant is measured separately).
+// env carries the sample's branch and burst layout; want gates families for
+// filtered runs.
+func buildFamilies(rep *Report, target string, s serverIface, repoURL, subURL, scratchIn, dirBase string, runs int, env scenarioEnv, want func(string) bool) []*family {
 	store := func(row string, set *sampleSet) {
 		if !set.empty() {
 			rep.Rows[target+"/"+row] = set.summarize()
 		}
 	}
+	var fams []*family
 
-	// clone-full: run 0 is the cold lane, the rest warm (fresh client each
+	// clone-full: round 0 is the cold lane, the rest warm (fresh client each
 	// time; the server keeps its state).
 	if want("clone-full") {
 		var cold sampleSet
 		warm := &sampleSet{}
-		for i := 0; i < runs; i++ {
-			dst := filepath.Join(dirBase, fmt.Sprintf("clone-%d", i))
-			ms, out, in, err := gitRun(s, "", "clone", "-q", repoURL, dst)
-			if err != nil {
-				return err
-			}
-			if i == 0 {
-				cold.add(ms, out, in)
-			} else {
-				warm.add(ms, out, in)
-			}
-		}
-		store("clone-full-cold", &cold)
-		store("clone-full-warm", warm)
+		fams = append(fams, &family{
+			name:   "clone-full",
+			rounds: runs,
+			round: func(i int) error {
+				dst := filepath.Join(dirBase, fmt.Sprintf("clone-%d", i))
+				ms, out, in, err := gitRun(s, "", "clone", "-q", repoURL, dst)
+				if err != nil {
+					return err
+				}
+				if i == 0 {
+					cold.add(ms, out, in)
+				} else {
+					warm.add(ms, out, in)
+				}
+				return nil
+			},
+			finish: func() {
+				store("clone-full-cold", &cold)
+				store("clone-full-warm", warm)
+			},
+		})
 	}
 
 	// ls-remote (advertisement cost — for banyan this includes the woven
 	// root view resolution).
 	if want("ls-remote") {
 		ls := &sampleSet{}
-		for i := 0; i < runs; i++ {
-			ms, out, in, err := gitRun(s, "", "ls-remote", repoURL)
-			if err != nil {
-				return err
-			}
-			ls.add(ms, out, in)
-		}
-		store("ls-remote", ls)
+		fams = append(fams, &family{
+			name:   "ls-remote",
+			rounds: runs,
+			round: func(i int) error {
+				ms, out, in, err := gitRun(s, "", "ls-remote", repoURL)
+				if err != nil {
+					return err
+				}
+				ls.add(ms, out, in)
+				return nil
+			},
+			finish: func() { store("ls-remote", ls) },
+		})
 	}
 
 	// fetch-incremental: one client holds the history; each round pushes one
@@ -228,85 +348,109 @@ func runScenarios(rep *Report, target string, s serverIface, repoURL, subURL, sc
 	if want("fetch-incremental") {
 		fetches := &sampleSet{}
 		fetchClient := filepath.Join(dirBase, "fetch-client")
-		if _, err := git("", "clone", "-q", repoURL, fetchClient); err != nil {
-			return err
-		}
-		// A real merge-rich sample: the increment base must be cloned from
-		// THIS target — banyan advertises the woven view (a re-linearized
-		// chain), so a mirror-based scratch would push a stale old tip and
-		// rightly draw non-fast-forward. Seed profiles pass a shared mirror
-		// clone (identity OIDs, byte-stable synthetic baseline).
-		if scratch == "" {
-			scratch = filepath.Join(dirBase, "scratch")
-			if _, err := git("", "clone", "-q", repoURL, scratch); err != nil {
-				return err
-			}
-			s.take() // setup, unmeasured
-		}
-		for i := 0; i < runs; i++ {
-			if err := IncrementCommit(scratch, target, i); err != nil {
-				return err
-			}
-			if _, err := git(scratch, "push", "-q", repoURL, env.branch); err != nil {
-				return err
-			}
-			s.take() // discard the push's bytes
-			ms, out, in, err := gitRun(s, fetchClient, "fetch", "-q", "origin")
-			if err != nil {
-				return err
-			}
-			fetches.add(ms, out, in)
-		}
-		store("fetch-incremental", fetches)
+		scratch := scratchIn
+		fams = append(fams, &family{
+			name:   "fetch-incremental",
+			rounds: runs,
+			setup: func() error {
+				if _, err := git("", "clone", "-q", repoURL, fetchClient); err != nil {
+					return err
+				}
+				// A real merge-rich sample: the increment base must be
+				// cloned from THIS target — banyan advertises the woven view
+				// (a re-linearized chain), so a mirror-based scratch pushes
+				// a stale old tip and rightly draws non-fast-forward. Seed
+				// profiles pass a shared mirror clone (identity OIDs).
+				if scratch == "" {
+					scratch = filepath.Join(dirBase, "scratch")
+					if _, err := git("", "clone", "-q", repoURL, scratch); err != nil {
+						return err
+					}
+					s.take() // setup, unmeasured
+				}
+				return nil
+			},
+			round: func(i int) error {
+				if err := IncrementCommit(scratch, target, i); err != nil {
+					return err
+				}
+				if _, err := git(scratch, "push", "-q", repoURL, env.branch); err != nil {
+					return err
+				}
+				s.take() // discard the push's bytes
+				ms, out, in, err := gitRun(s, fetchClient, "fetch", "-q", "origin")
+				if err != nil {
+					return err
+				}
+				fetches.add(ms, out, in)
+				return nil
+			},
+			finish: func() { store("fetch-incremental", fetches) },
+		})
 	}
 
 	// push: fresh client commits one unique change and pushes it.
 	if want("push-one-commit") {
 		pushes := &sampleSet{}
-		for i := 0; i < runs; i++ {
-			dst := filepath.Join(dirBase, fmt.Sprintf("push-client-%d", i))
-			if _, err := git("", "clone", "-q", repoURL, dst); err != nil {
-				return err
-			}
-			s.take() // discard the setup clone's bytes — only the push is measured
-			if err := IncrementCommit(dst, target, 100+i); err != nil {
-				return err
-			}
-			ms, out, in, err := gitRun(s, dst, "push", "-q", repoURL, env.branch)
-			if err != nil {
-				return err
-			}
-			pushes.add(ms, out, in)
-		}
-		store("push-one-commit", pushes)
+		fams = append(fams, &family{
+			name:   "push-one-commit",
+			rounds: runs,
+			round: func(i int) error {
+				dst := filepath.Join(dirBase, fmt.Sprintf("push-client-%d", i))
+				if _, err := git("", "clone", "-q", repoURL, dst); err != nil {
+					return err
+				}
+				s.take() // discard the setup clone's bytes — only the push is measured
+				if err := IncrementCommit(dst, target, 100+i); err != nil {
+					return err
+				}
+				ms, out, in, err := gitRun(s, dst, "push", "-q", repoURL, env.branch)
+				if err != nil {
+					return err
+				}
+				pushes.add(ms, out, in)
+				return nil
+			},
+			finish: func() { store("push-one-commit", pushes) },
+		})
 	}
 
 	// clone-shallow (depth=1): both servers implement deepen.
 	if want("clone-shallow") {
 		shallow := &sampleSet{}
-		for i := 0; i < runs; i++ {
-			dst := filepath.Join(dirBase, fmt.Sprintf("shallow-%d", i))
-			ms, out, in, err := gitRun(s, "", "clone", "-q", "--depth", "1", repoURL, dst)
-			if err != nil {
-				return err
-			}
-			shallow.add(ms, out, in)
-		}
-		store("clone-shallow", shallow)
+		fams = append(fams, &family{
+			name:   "clone-shallow",
+			rounds: runs,
+			round: func(i int) error {
+				dst := filepath.Join(dirBase, fmt.Sprintf("shallow-%d", i))
+				ms, out, in, err := gitRun(s, "", "clone", "-q", "--depth", "1", repoURL, dst)
+				if err != nil {
+					return err
+				}
+				shallow.add(ms, out, in)
+				return nil
+			},
+			finish: func() { store("clone-shallow", shallow) },
+		})
 	}
 
 	// clone-partial (blob:none): both servers advertise the filter.
 	if want("clone-partial") {
 		partial := &sampleSet{}
-		for i := 0; i < runs; i++ {
-			dst := filepath.Join(dirBase, fmt.Sprintf("partial-%d", i))
-			ms, out, in, err := gitRun(s, "", "clone", "-q", "--filter=blob:none", "--no-checkout", repoURL, dst)
-			if err != nil {
-				return err
-			}
-			partial.add(ms, out, in)
-		}
-		store("clone-partial", partial)
+		fams = append(fams, &family{
+			name:   "clone-partial",
+			rounds: runs,
+			round: func(i int) error {
+				dst := filepath.Join(dirBase, fmt.Sprintf("partial-%d", i))
+				ms, out, in, err := gitRun(s, "", "clone", "-q", "--filter=blob:none", "--no-checkout", repoURL, dst)
+				if err != nil {
+					return err
+				}
+				partial.add(ms, out, in)
+				return nil
+			},
+			finish: func() { store("clone-partial", partial) },
+		})
 	}
 
 	// dev-loop: one client, steady-state rounds of edit+commit+push+fetch —
@@ -314,26 +458,34 @@ func runScenarios(rep *Report, target string, s serverIface, repoURL, subURL, sc
 	if want("dev-loop") {
 		loop := &sampleSet{}
 		loopClient := filepath.Join(dirBase, "dev-loop")
-		if _, err := git("", "clone", "-q", repoURL, loopClient); err != nil {
-			return err
-		}
-		s.take()
-		for i := 0; i < runs; i++ {
-			if err := IncrementCommit(loopClient, target, 200+i); err != nil {
-				return err
-			}
-			start := time.Now()
-			if _, err := git(loopClient, "push", "-q", "origin", env.branch); err != nil {
-				return err
-			}
-			if _, err := git(loopClient, "fetch", "-q", "origin"); err != nil {
-				return err
-			}
-			ms := time.Since(start).Milliseconds()
-			q, a := s.take() // q = client→server, a = server→client
-			loop.add(ms, a, q)
-		}
-		store("dev-loop", loop)
+		fams = append(fams, &family{
+			name:   "dev-loop",
+			rounds: runs,
+			setup: func() error {
+				if _, err := git("", "clone", "-q", repoURL, loopClient); err != nil {
+					return err
+				}
+				s.take()
+				return nil
+			},
+			round: func(i int) error {
+				if err := IncrementCommit(loopClient, target, 200+i); err != nil {
+					return err
+				}
+				start := time.Now()
+				if _, err := git(loopClient, "push", "-q", "origin", env.branch); err != nil {
+					return err
+				}
+				if _, err := git(loopClient, "fetch", "-q", "origin"); err != nil {
+					return err
+				}
+				ms := time.Since(start).Milliseconds()
+				q, a := s.take() // q = client→server, a = server→client
+				loop.add(ms, a, q)
+				return nil
+			},
+			finish: func() { store("dev-loop", loop) },
+		})
 	}
 
 	// burst-writers: W clients (cloned outside the timer) each edit a
@@ -346,53 +498,65 @@ func runScenarios(rep *Report, target string, s serverIface, repoURL, subURL, sc
 		totals := &sampleSet{}
 		p50s := &sampleSet{}
 		p99s := &sampleSet{}
-		for round := 0; round < max(2, runs-1); round++ {
-			dirs := make([]string, writers)
-			for w := 0; w < writers; w++ {
-				d := filepath.Join(dirBase, fmt.Sprintf("burst-%d-%d", round, w))
-				if _, err := git("", "clone", "-q", repoURL, d); err != nil {
-					return err
+		fams = append(fams, &family{
+			name:   "burst",
+			rounds: max(2, runs-1),
+			round: func(round int) error {
+				dirs := make([]string, writers)
+				for w := 0; w < writers; w++ {
+					d := filepath.Join(dirBase, fmt.Sprintf("burst-%d-%d", round, w))
+					if _, err := git("", "clone", "-q", repoURL, d); err != nil {
+						return err
+					}
+					full := filepath.Join(d, filepath.FromSlash(env.burstPath(w)))
+					if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+						return err
+					}
+					if err := os.WriteFile(full, []byte(fmt.Sprintf("writer %d round %d\n%s\n", w, round, strings.Repeat("burst ", 64))), 0o644); err != nil {
+						return err
+					}
+					if _, err := git(d, "add", "-A"); err != nil {
+						return err
+					}
+					if _, err := git(d, "commit", "-qm", fmt.Sprintf("burst writer %d round %d", w, round)); err != nil {
+						return err
+					}
+					dirs[w] = d
 				}
-				full := filepath.Join(d, filepath.FromSlash(env.burstPath(w)))
-				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-					return err
-				}
-				if err := os.WriteFile(full, []byte(fmt.Sprintf("writer %d round %d\n%s\n", w, round, strings.Repeat("burst ", 64))), 0o644); err != nil {
-					return err
-				}
-				if _, err := git(d, "add", "-A"); err != nil {
-					return err
-				}
-				if _, err := git(d, "commit", "-qm", fmt.Sprintf("burst writer %d round %d", w, round)); err != nil {
-					return err
-				}
-				dirs[w] = d
-			}
-			s.take()
-			total, each := runBurst(s, dirs, repoURL, env.branch)
-			q, a := s.take() // q = client→server, a = server→client
-			totals.add(total, a, q)
-			p50s.add(pctl(each, 0.50), 0, 0)
-			p99s.add(pctl(each, 0.99), 0, 0)
-		}
-		store("burst-writers-8-total", totals)
-		store("burst-writers-8-p50", p50s)
-		store("burst-writers-8-p99", p99s)
+				s.take()
+				total, each := runBurst(s, dirs, repoURL, env.branch)
+				q, a := s.take() // q = client→server, a = server→client
+				totals.add(total, a, q)
+				p50s.add(pctl(each, 0.50), 0, 0)
+				p99s.add(pctl(each, 0.99), 0, 0)
+				return nil
+			},
+			finish: func() {
+				store("burst-writers-8-total", totals)
+				store("burst-writers-8-p50", p50s)
+				store("burst-writers-8-p99", p99s)
+			},
+		})
 	}
 
 	if subURL != "" && want("clone-subtree") {
 		// subtree clone (banyan structural capability): download equals the
 		// subtree's own history closure, not the monorepo's.
 		subs := &sampleSet{}
-		for i := 0; i < runs; i++ {
-			dst := filepath.Join(dirBase, fmt.Sprintf("sub-%d", i))
-			ms, out, in, err := gitRun(s, "", "clone", "-q", subURL, dst)
-			if err != nil {
-				return err
-			}
-			subs.add(ms, out, in)
-		}
-		store("clone-subtree", subs)
+		fams = append(fams, &family{
+			name:   "clone-subtree",
+			rounds: runs,
+			round: func(i int) error {
+				dst := filepath.Join(dirBase, fmt.Sprintf("sub-%d", i))
+				ms, out, in, err := gitRun(s, "", "clone", "-q", subURL, dst)
+				if err != nil {
+					return err
+				}
+				subs.add(ms, out, in)
+				return nil
+			},
+			finish: func() { store("clone-subtree", subs) },
+		})
 	}
 
 	if subURL != "" && want("push-subtree") {
@@ -400,24 +564,29 @@ func runScenarios(rep *Report, target string, s serverIface, repoURL, subURL, sc
 		// directory-granular write path (no git counterpart; the full-repo
 		// push row is the nearest baseline).
 		subPush := &sampleSet{}
-		for i := 0; i < runs; i++ {
-			dst := filepath.Join(dirBase, fmt.Sprintf("sub-push-%d", i))
-			if _, err := git("", "clone", "-q", subURL, dst); err != nil {
-				return err
-			}
-			s.take()
-			if err := IncrementCommit(dst, target, 300+i); err != nil {
-				return err
-			}
-			ms, out, in, err := gitRun(s, dst, "push", "-q", "origin", env.branch)
-			if err != nil {
-				return err
-			}
-			subPush.add(ms, out, in)
-		}
-		store("push-subtree", subPush)
+		fams = append(fams, &family{
+			name:   "push-subtree",
+			rounds: runs,
+			round: func(i int) error {
+				dst := filepath.Join(dirBase, fmt.Sprintf("sub-push-%d", i))
+				if _, err := git("", "clone", "-q", subURL, dst); err != nil {
+					return err
+				}
+				s.take()
+				if err := IncrementCommit(dst, target, 300+i); err != nil {
+					return err
+				}
+				ms, out, in, err := gitRun(s, dst, "push", "-q", "origin", env.branch)
+				if err != nil {
+					return err
+				}
+				subPush.add(ms, out, in)
+				return nil
+			},
+			finish: func() { store("push-subtree", subPush) },
+		})
 	}
-	return nil
+	return fams
 }
 
 // runBurst fires all writers' pushes simultaneously and returns the total
@@ -453,6 +622,10 @@ func runBurst(s serverIface, dirs []string, repoURL, branch string) (total int64
 func (r *Report) Render() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "banyand bench  profile=%s  repo=%s  runs=%d\n", r.Profile, r.Repo, r.Runs)
+	fmt.Fprintf(&b, "%s\n", r.Env)
+	if ctl := r.controlLine(); ctl != "" {
+		fmt.Fprintf(&b, "%s\n", ctl)
+	}
 	fmt.Fprintf(&b, "%-34s %18s %18s %10s %10s\n", "scenario", "banyan", "git", "bytes", "ms")
 	for _, n := range r.orderedRows() {
 		bm, bok := r.Rows["banyan/"+n]
@@ -478,6 +651,29 @@ func fmtMetric(m Metric) string {
 		suffix = fmt.Sprintf(" (+%d)", m.Outliers)
 	}
 	return fmt.Sprintf("%7.1fKB %4dms%s", float64(m.BytesOut)/1024, m.Milliseconds, suffix)
+}
+
+// controlLine renders the host thermistor: median local-clone time with its
+// Tukey-trimmed spread, and a drift warning when the spread exceeds a
+// quarter of the median — at that point wall-time ratios are machine noise,
+// and the report says so instead of hiding it (byte ratios are unaffected).
+func (r *Report) controlLine() string {
+	live := make([]int64, 0, len(r.Control))
+	for _, v := range r.Control {
+		if v >= 0 {
+			live = append(live, v)
+		}
+	}
+	if len(live) < 2 {
+		return ""
+	}
+	sort.Slice(live, func(i, j int) bool { return live[i] < live[j] })
+	med := live[len(live)/2]
+	warn := ""
+	if live[len(live)-1]-live[0] > med/4 {
+		warn = "  ← 主机漂移明显：耗时比可信度降级（字节比不受影响）"
+	}
+	return fmt.Sprintf("control %dms %s%s", med, disp(live), warn)
 }
 
 func ratio(a, b int64) string {

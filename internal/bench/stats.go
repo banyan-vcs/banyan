@@ -121,7 +121,11 @@ func (r *Report) RenderMarkdown() string {
 	fmt.Fprintf(&b, "# banyan vs git 性能对比报告\n\n")
 	fmt.Fprintf(&b, "- profile：%s（%s）\n", r.Profile, r.Repo)
 	fmt.Fprintf(&b, "- 运行：%s\n", r.Env)
-	fmt.Fprintf(&b, "- 方法：同机对等基线（git http-backend CGI）；每场景 %d 采样，中位数 + IQR 离群计数；字节为服务端计数代理往返均值\n\n", r.Runs)
+	fmt.Fprintf(&b, "- 方法：同机对等基线（git http-backend CGI）；配对交错轮（同轮双目标背靠背，主机漂移作用于轮内两侧）+ 控制通道（固定小仓本地克隆热敏，宽离散=耗时比降级）；每场景 %d 采样，中位数 + IQR 离群计数；字节为服务端计数代理往返均值\n", r.Runs)
+	if ctl := r.controlLine(); ctl != "" {
+		fmt.Fprintf(&b, "- %s\n", ctl)
+	}
+	fmt.Fprintf(&b, "- 环境：%s\n\n", r.Env)
 
 	fmt.Fprintf(&b, "## 字节（server→client，越低越好）\n\n")
 	fmt.Fprintf(&b, "| 场景 | banyan | git | banyan/git | 口径 |\n|---|---|---|---|---|\n")
