@@ -1165,6 +1165,92 @@ func (r *repoLookup) Commit(oid model.OID) (*model.AnchoredCommit, error) {
 // itself under named addressing, an opaque @hashed/… path under hashed.
 type LocalShardStore struct {
 	Root string
+
+	// idxMemo caches decoded pack indexes for the single-object read path
+	// (docs/operations/performance.md P1-1): a pack is content-addressed
+	// and immutable, so its idx never changes — but decoding it afresh on
+	// every GetObject made each object read cost O(idx bytes) (the
+	// real-sample bench: a 4K-commit repo's view materialization re-decoded
+	// a 780KB idx tens of thousands of times and a cold clone never
+	// finished). Entries are shared strictly read-only after decode; packs
+	// deleted by GC leave a harmless memory-only entry until eviction.
+	idxMu    sync.Mutex
+	idxLRU   *list.List // front = newest; *idxEntry
+	idxMap   map[idxKey]*list.Element
+	idxBytes int64
+}
+
+// idxKey identifies one decoded index: the pack it belongs to (immutable
+// content) plus the oid width the decode assumed.
+type idxKey struct {
+	repo string
+	pack model.OID
+	algo model.HashAlgo
+}
+
+type idxEntry struct {
+	key idxKey
+	pi  *PackIndex
+	sz  int64 // estimated footprint, for the byte budget
+}
+
+// idxCacheMaxBytes bounds the decoded-idx memory. The most recent entry is
+// always kept even past the bound — the biggest idx is exactly the one the
+// per-object path keeps hitting (git.git-scale: one idx ≈ tens of MiB for
+// 400K+ objects).
+const idxCacheMaxBytes = 128 << 20
+
+// idxEstimate approximates a decoded index's footprint: per object an oid
+// string, one map entry in two maps, and the order slot.
+func idxEstimate(pi *PackIndex) int64 {
+	return int64(len(pi.OIDOrder))*128 + 4096
+}
+
+// idxCached returns the decoded pack index for (repo, pack), reading and
+// decoding the file at most once per cache lifetime. Concurrent first
+// readers race harmlessly — content-addressed input decodes to identical
+// output, and the loser's decode is discarded.
+func (l *LocalShardStore) idxCached(repo string, packOID model.OID, algo model.HashAlgo) (*PackIndex, error) {
+	k := idxKey{repo: repo, pack: packOID, algo: algo}
+	l.idxMu.Lock()
+	if el, ok := l.idxMap[k]; ok {
+		l.idxLRU.MoveToFront(el)
+		pi := el.Value.(*idxEntry).pi
+		l.idxMu.Unlock()
+		return pi, nil
+	}
+	l.idxMu.Unlock()
+
+	idxRaw, err := os.ReadFile(l.idxPath(repo, packOID))
+	if err != nil {
+		return nil, fmt.Errorf("%w: idx of %s: %v", model.ErrObjectNotFound, packOID, err)
+	}
+	pi, err := DecodeIdx(idxRaw, algo)
+	if err != nil {
+		return nil, err
+	}
+	sz := idxEstimate(pi)
+
+	l.idxMu.Lock()
+	defer l.idxMu.Unlock()
+	if l.idxMap == nil {
+		l.idxMap = map[idxKey]*list.Element{}
+		l.idxLRU = list.New()
+	}
+	if el, ok := l.idxMap[k]; ok { // lost the race: keep the winner's
+		l.idxLRU.MoveToFront(el)
+		return el.Value.(*idxEntry).pi, nil
+	}
+	l.idxMap[k] = l.idxLRU.PushFront(&idxEntry{key: k, pi: pi, sz: sz})
+	l.idxBytes += sz
+	for l.idxBytes > idxCacheMaxBytes && l.idxLRU.Len() > 1 {
+		oldest := l.idxLRU.Back()
+		e := oldest.Value.(*idxEntry)
+		l.idxLRU.Remove(oldest)
+		delete(l.idxMap, e.key)
+		l.idxBytes -= e.sz
+	}
+	return pi, nil
 }
 
 func NewLocalShardStore(root string) *LocalShardStore { return &LocalShardStore{Root: root} }
@@ -1517,11 +1603,7 @@ func (l *LocalShardStore) GetDecoded(repo string, packOID model.OID) (*DecodedPa
 // memory, never O(pack). A missing or unusable idx surfaces as an error —
 // callers fall back to the whole-pack path.
 func (l *LocalShardStore) GetObject(repo string, packOID, oid model.OID, algo model.HashAlgo) (model.ObjectType, []byte, error) {
-	idxRaw, err := os.ReadFile(l.idxPath(repo, packOID))
-	if err != nil {
-		return "", nil, fmt.Errorf("%w: idx of %s: %v", model.ErrObjectNotFound, packOID, err)
-	}
-	pi, err := DecodeIdx(idxRaw, algo)
+	pi, err := l.idxCached(repo, packOID, algo)
 	if err != nil {
 		return "", nil, err
 	}
