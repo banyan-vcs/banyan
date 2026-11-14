@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -179,6 +180,9 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 // gates, closure, thin-pack plan and the serve ladder (docs/operations/performance.md P2-2).
 // Shared by the HTTP and SSH transports.
 func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo, id auth.Identity, st *fetchReq) {
+	// Consolidate quiescence — the v1/SSH twin of fetchV2's hold.
+	s.Objects.ServeHold(vr.Repo)
+	defer s.Objects.ServeRelease(vr.Repo)
 	// Authorization gates (docs/gateway/authorization.md): identity + repository/directory fetch
 	// permission, then the want-coverage check against the identity's
 	// VISIBLE tips — with auth on this replaces (and strengthens) the
@@ -215,7 +219,7 @@ func (s *Server) finishFetch(ctx context.Context, out *bufWriter, vr VirtualRepo
 			s.rejectFullClone(out, vr.Repo, bytes, s.fullCloneBudget())
 			return
 		}
-		if served, ok := s.tryExactPackStream(ctx, out, vr, st.wants); ok {
+		if served, ok := s.tryExactPackStream(ctx, out, vr, st.wants, true); ok {
 			_ = out.Flush()
 			log.Printf("upload-pack %s%s: %d wants → %s (closure skipped)", vr.Repo, vr.Sub, len(st.wants), served)
 			return
@@ -437,6 +441,11 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 		}
 	}
 	seen := map[model.OID]bool{}
+	// BANYAN_CLOSURE_DEBUG prints walk progress every quarter million
+	// objects — a stall's walk rate is diagnosis (发现⑤: six minutes past
+	// the hang budget with no attribution). Zero cost when off.
+	closureDebug := os.Getenv("BANYAN_CLOSURE_DEBUG") != ""
+	closureStart := time.Now()
 	for len(queue) > 0 {
 		it := queue[0]
 		queue = queue[1:]
@@ -444,6 +453,10 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 			continue
 		}
 		seen[it.oid] = true
+		if closureDebug && len(seen)%250000 == 0 {
+			log.Printf("closure %s%s: %d walked, queue %d, %s",
+				vr.Repo, vr.Sub, len(seen), len(queue), time.Since(closureStart).Round(time.Millisecond))
+		}
 		if exclude[it.oid] {
 			// The client provably has it (reachable from haves, bounded by
 			// its grafts) — same traverse-through rule as closure(): a
@@ -510,6 +523,26 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 	return types, nil
 }
 
+// streamPackVerbatim copies one stored pack to the response. A break
+// mid-copy is terminal (bytes already on the wire, same as any dropped
+// response); an open failure answers false so callers can fall back before
+// their first byte.
+func (s *Server) streamPackVerbatim(ctx context.Context, out io.Writer, vr VirtualRepo, packOID model.OID, rung string) (string, bool) {
+	rc, _, oerr := s.Objects.OpenPackStream(ctx, vr.Repo, packOID)
+	if oerr != nil {
+		return "", false // before the first byte: the closure path still can
+	}
+	defer rc.Close()
+	buf := make([]byte, 256<<10)
+	if _, cerr := io.CopyBuffer(out, rc, buf); cerr != nil {
+		log.Printf("upload-pack %s%s: %s %s broke mid-copy: %v", vr.Repo, vr.Sub, rung, packOID, cerr)
+		fetchExactPackStream.Add(1)
+		return rung + " " + string(packOID) + " (broken)", true
+	}
+	fetchExactPackStream.Add(1)
+	return rung + " " + string(packOID), true
+}
+
 // tryExactPackStream is the clone-shaped fast path (docs/storage/storage.md §5): enumerate
 // the wanted set (OIDs + types), probe for a stored pack with exactly that
 // object set, and stream the pack verbatim — node disk → network →
@@ -518,7 +551,21 @@ func (s *Server) enumerateClosure(ctx context.Context, vr VirtualRepo, wants []m
 // encode for multi-pack closures, then the full closure path); a break
 // MID-copy is terminal (bytes are already on the wire, same as any dropped
 // response).
-func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID) (string, bool) {
+//
+// shaped (every want is an advertised tip, verified by the clone-shaped
+// gate) unlocks the zero-enumeration rung first: a single-pack repository
+// contains the wants' closure by construction, so the whole pack streams
+// verbatim without the walk (发现⑤: at git.git scale the walk is a million
+// index misses over the streamed pack).
+func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID, shaped bool) (string, bool) {
+	if shaped {
+		if packOID, ok := s.Objects.SinglePackCover(ctx, vr.Repo, wants); ok {
+			if rung, ok := s.streamPackVerbatim(ctx, out, vr, packOID, "single-pack-stream"); ok {
+				return rung, true
+			}
+			return "", false // open failed before any byte: fall through to the ladder
+		}
+	}
 	oids, err := s.enumerateClosure(ctx, vr, wants, enumerateOpts{})
 	if err != nil {
 		return "", false
@@ -537,19 +584,7 @@ func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr Virtu
 	if !hit {
 		return "", false
 	}
-	rc, _, oerr := s.Objects.OpenPackStream(ctx, vr.Repo, packOID)
-	if oerr != nil {
-		return "", false // before the first byte: the closure path still can
-	}
-	defer rc.Close()
-	buf := make([]byte, 256<<10)
-	if _, cerr := io.CopyBuffer(out, rc, buf); cerr != nil {
-		log.Printf("upload-pack %s%s: %s %s broke mid-copy: %v", vr.Repo, vr.Sub, rung, packOID, cerr)
-		fetchExactPackStream.Add(1)
-		return rung + " " + string(packOID) + " (broken)", true
-	}
-	fetchExactPackStream.Add(1)
-	return rung + " " + string(packOID), true
+	return s.streamPackVerbatim(ctx, out, vr, packOID, rung)
 }
 
 // streamServeMinPackBytes is the small-repo cutoff for the streaming

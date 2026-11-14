@@ -72,6 +72,122 @@ func TestConsolidateRestoresExactPackHit(t *testing.T) {
 	}
 }
 
+// The dominant-group exception (docs/operations/performance.md §3b 发现⑤
+// fix): a [small-synth, big-push] pair whose inputs exceed the group byte
+// cap must still merge when the big pack dominates — tryAppendMerge's
+// working set is the dominant pack itself, and the split is what kept
+// git.git's clone closure spanning two packs with the superset ladder dead.
+// cap=1 forces every group over the line; dominance is purely pack size.
+func TestConsolidateDominantGroupOverCap(t *testing.T) {
+	ctx := context.Background()
+	small := map[model.OID][]byte{}
+	for i := 0; i < 3; i++ {
+		b := []byte(repeatN("synth", 64) + string(rune('0'+i)))
+		small[model.ObjectOID(model.BlobType, b, model.SHA1)] = b
+	}
+	big := map[model.OID][]byte{}
+	for i := 0; i < 60; i++ {
+		b := []byte(string(rune('a'+i%26)) + repeatN("push", 96) + string(rune('0'+i%10)))
+		big[model.ObjectOID(model.BlobType, b, model.SHA1)] = b
+	}
+	ms := meta.NewMemoryMetaStore()
+	require.NoError(t, ms.CreateRepo(ctx, "r", model.SHA1))
+	svc := NewObjectService(ms, NewLocalShardStore(t.TempDir()), []Node{{ID: "n1", Local: true}}, model.SHA1)
+	for _, m := range []map[model.OID][]byte{small, big} {
+		var buf testBuffer
+		require.NoError(t, EncodePack(&buf, m, nil, nil, nil))
+		_, err := svc.IngestPack(ctx, "r", buf.Bytes())
+		require.NoError(t, err)
+	}
+	svc.ConsolidateMaxBytes = 1 // every addition exceeds; only dominance decides
+	res, err := svc.Consolidate(ctx, "r")
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.PacksAfter, "the dominant [synth, push] pair merges past the byte cap")
+	for oid := range big {
+		_, _, rerr := svc.Raw(ctx, "r", oid)
+		require.NoError(t, rerr, "object readable after the capped merge: %s", oid)
+	}
+}
+
+// SinglePackCover: the zero-enumeration clone rung's probe — one pack
+// holding every want answers that pack; a second pack or an outside want
+// answers false and the ladder proceeds (发现⑤ fix).
+func TestSinglePackCover(t *testing.T) {
+	ctx := context.Background()
+	full := map[model.OID][]byte{}
+	var want model.OID
+	for i := 0; i < 20; i++ {
+		b := []byte(repeatN("cover", 64) + string(rune('0'+i)))
+		oid := model.ObjectOID(model.BlobType, b, model.SHA1)
+		full[oid] = b
+		if i == 0 {
+			want = oid
+		}
+	}
+	ms := meta.NewMemoryMetaStore()
+	require.NoError(t, ms.CreateRepo(ctx, "r", model.SHA1))
+	svc := NewObjectService(ms, NewLocalShardStore(t.TempDir()), []Node{{ID: "n1", Local: true}}, model.SHA1)
+	var buf testBuffer
+	require.NoError(t, EncodePack(&buf, full, nil, nil, nil))
+	_, err := svc.IngestPack(ctx, "r", buf.Bytes())
+	require.NoError(t, err)
+
+	pack, ok := svc.SinglePackCover(ctx, "r", []model.OID{want})
+	assert.True(t, ok, "single pack covering the want answers")
+	assert.NotEmpty(t, pack)
+
+	missing := model.OID("0123456789012345678901234567890123456789")
+	_, ok = svc.SinglePackCover(ctx, "r", []model.OID{want, missing})
+	assert.False(t, ok, "a want outside the pack misses")
+
+	buf = testBuffer{}
+	extra := map[model.OID][]byte{model.ObjectOID(model.BlobType, []byte("second pack"), model.SHA1): []byte("second pack")}
+	require.NoError(t, EncodePack(&buf, extra, nil, nil, nil))
+	_, err = svc.IngestPack(ctx, "r", buf.Bytes())
+	require.NoError(t, err)
+	_, ok = svc.SinglePackCover(ctx, "r", []model.OID{want})
+	assert.False(t, ok, "two-pack state misses (the union is not one stream)")
+}
+
+// Consolidate quiescence: a flush arriving under a live serve hold defers
+// the merge instead of contending the meta lock under the walk; the last
+// serve out re-arms it (发现⑤'s diag dump caught the self-inflicted
+// registerAndSwap→PutPack lock).
+func TestConsolidateQuiescence(t *testing.T) {
+	ctx := context.Background()
+	msQ := meta.NewMemoryMetaStore()
+	require.NoError(t, msQ.CreateRepo(ctx, "r", model.SHA1))
+	svcQ := NewObjectService(msQ, NewLocalShardStore(t.TempDir()), []Node{{ID: "n1", Local: true}}, model.SHA1)
+	mk := func(tag string, n int) {
+		m := map[model.OID][]byte{}
+		for i := 0; i < n; i++ {
+			b := []byte(repeatN(tag, 64) + string(rune('0'+i)))
+			m[model.ObjectOID(model.BlobType, b, model.SHA1)] = b
+		}
+		var buf testBuffer
+		require.NoError(t, EncodePack(&buf, m, nil, nil, nil))
+		_, err := svcQ.IngestPack(ctx, "r", buf.Bytes())
+		require.NoError(t, err)
+	}
+	mk("aaa", 5)
+	mk("bbb", 5)
+
+	svcQ.ServeHold("r")
+	svcQ.scheduleConsolidate("r")
+	svcQ.consolMu.Lock()
+	sched := svcQ.consolSched["r"]
+	again := svcQ.consolAgain["r"]
+	svcQ.consolMu.Unlock()
+	assert.False(t, sched, "no merge spawns under the serve hold")
+	assert.True(t, again, "the trigger is remembered")
+
+	svcQ.ServeRelease("r")
+	require.Eventually(t, func() bool {
+		packs, perr := msQ.ListPacks(ctx, "r")
+		return perr == nil && len(packs) == 1
+	}, 10*time.Second, 50*time.Millisecond, "the deferred merge runs when the last serve exits")
+}
+
 func repeatN(s string, n int) string {
 	out := make([]byte, 0, len(s)*n)
 	for i := 0; i < n; i++ {

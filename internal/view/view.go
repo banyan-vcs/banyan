@@ -40,6 +40,7 @@ type Service struct {
 	subCache   map[subKey]model.OID
 	rootCache  map[rootKey]model.OID
 	headsCache map[headsKey]map[string]model.OID
+	headsFIFO  []headsKey // insertion order for FIFO eviction (headsCacheMax)
 }
 
 func New(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Service {
@@ -657,6 +658,7 @@ func (s *Service) ResetWoven(ctx context.Context, repo, branch string) error {
 			delete(s.headsCache, k)
 		}
 	}
+	s.headsFIFO = s.headsFIFO[:0]
 	s.mu.Unlock()
 	return nil
 }
@@ -807,10 +809,26 @@ func (s *Service) HeadsFor(repo, branch string, rootLocal model.OID) map[string]
 		}
 	}
 	s.mu.Lock()
-	if len(s.headsCache) >= 16 { // tips move per push; stale tips-sets are useless
-		s.headsCache = map[headsKey]map[string]model.OID{}
+	if _, exists := s.headsCache[key]; !exists {
+		// FIFO-bounded, no whole-map reset: the old ≥16 reset threw away
+		// EVERY branch's derivation once a repo crossed it — git.git's 566
+		// branches re-derived the full shared walk per branch per
+		// advertisement (发现⑤, docs/operations/performance.md §3b).
+		// Entries are content-addressed per tip and never stale; eviction
+		// only costs a re-derivation on demand.
+		if len(s.headsFIFO) >= headsCacheMax {
+			old := s.headsFIFO[0]
+			s.headsFIFO = s.headsFIFO[1:]
+			delete(s.headsCache, old)
+		}
+		s.headsFIFO = append(s.headsFIFO, key)
 	}
 	s.headsCache[key] = heads
 	s.mu.Unlock()
 	return heads
 }
+
+// headsCacheMax bounds the per-tip shared-walk memo. One entry is a heads
+// map (a handful of OIDs) — 512 covers real branch counts (git.git: 566
+// refs across ~570 heads/tips) without WholeMap resets.
+const headsCacheMax = 512

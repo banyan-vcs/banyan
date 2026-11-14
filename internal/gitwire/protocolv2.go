@@ -303,6 +303,12 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 		_ = WriteFlush(out)
 		return
 	}
+	// Consolidate quiescence (docs/operations/performance.md §3b 发现⑤):
+	// the fetch's own materialization flushes schedule merges that contend
+	// the meta lock under the walk and invalidate its location cache — hold
+	// them off until the response is out.
+	s.Objects.ServeHold(vr.Repo)
+	defer s.Objects.ServeRelease(vr.Repo)
 	// Authorization gates (docs/gateway/authorization.md): repository/directory fetch
 	// permission, then want coverage against the identity's VISIBLE tips
 	// (with auth off this is the plain allow-reachable-sha1-in-want
@@ -407,7 +413,7 @@ func (s *Server) fetchV2(ctx context.Context, out *bufWriter, vr VirtualRepo, ar
 	// stream — the closure (object bytes resident) is skipped entirely, so
 	// big repos serve in a small memory window.
 	if cacheable && len(fa.clientShallow) == 0 {
-		if fast, ok := s.tryExactPackStream(ctx, sb, vr, fa.wants); ok {
+		if fast, ok := s.tryExactPackStream(ctx, sb, vr, fa.wants, true); ok {
 			_ = WriteFlush(out)
 			log.Printf("v2 fetch %s%s: %d wants → %s (closure skipped)", vr.Repo, vr.Sub, len(fa.wants), fast)
 			return

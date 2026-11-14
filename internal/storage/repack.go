@@ -44,6 +44,13 @@ type Repacker struct {
 // budget. Oversized groups split at the cap.
 const repackMergeMaxBytes = 256 << 20
 
+// consolidateDominantMax is the absolute size ceiling for the
+// dominant-group exception in Consolidate: a pack above it never rides the
+// append-merge path even when it dominates its group (its bytes become the
+// merge's resident working set — 2GiB keeps the exception to git.git-class
+// repos and leaves datacenter-class packs on the split rule).
+const consolidateDominantMax = 2 << 30
+
 func NewRepacker(objects *ObjectService, fragmentThreshold int) *Repacker {
 	if fragmentThreshold <= 0 {
 		fragmentThreshold = 64
@@ -386,8 +393,20 @@ func (s *ObjectService) Consolidate(ctx context.Context, repo string) (RepackRes
 	}
 	for _, sp := range sizedPacks {
 		if len(cur) > 0 && acc+sp.size > groupCap {
-			emit()
-			acc = 0
+			// Dominant-group exception (docs/operations/performance.md §3b
+			// 发现⑤, the A5 experiment): a group whose incoming pack dwarfs
+			// the rest merges through tryAppendMerge — verbatim dominant
+			// prefix + streamed extras — whose working set is the dominant
+			// pack itself, never the union the byte cap guards. Without the
+			// exception, [134MiB synth, 310MiB push] splits at the 256MiB
+			// cap, clone closures span two packs, and the superset ladder
+			// dies. Equal-sized packs (no dominant) still split — the
+			// re-encode path holds the union. Bounded by an absolute ceiling
+			// so 10GiB-class packs never ride the exception.
+			if !(sp.size > acc && sp.size <= consolidateDominantMax) {
+				emit()
+				acc = 0
+			}
 		}
 		cur = append(cur, sp.info)
 		acc += sp.size

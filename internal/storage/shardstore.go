@@ -95,9 +95,10 @@ type ObjectService struct {
 	// recommendation — the cap bounds the merge's working set.
 	ConsolidateMaxBytes int64
 	consolMu            sync.Mutex
-	consolIn        map[string]bool
-	consolSched     map[string]bool // a scheduler goroutine is alive for the repo
-	consolAgain     map[string]bool // a flush arrived while it ran → rerun once
+	consolIn            map[string]bool
+	consolSched         map[string]bool // a scheduler goroutine is alive for the repo
+	consolAgain         map[string]bool // a flush arrived while it ran → rerun once
+	serveHold           map[string]int  // in-flight clone-shaped serves (consolidate quiescence)
 
 	// Clone-shaped response pack cache (docs/operations/performance.md P2-2, B9): a subtree (or
 	// woven-root) clone's closure never equals a stored pack — projection and
@@ -189,6 +190,7 @@ func newObjectService(ms meta.MetaStore, local *LocalShardStore, backend ShardBa
 		consolIn:    map[string]bool{},
 		consolSched: map[string]bool{},
 		consolAgain: map[string]bool{},
+		serveHold:   map[string]int{},
 		respCache:   map[closureKey]*list.Element{},
 		respLRU:     list.New(),
 		readAmp:     map[string]int{},
@@ -382,10 +384,15 @@ func (s *ObjectService) flushSynthBatch(repo string) error {
 // while one round is in flight, later triggers only mark a rerun — the
 // running round predates their flush, and dropping it (the first cut's
 // busy-and-drop) left the repository stuck at two packs when a clone's own
-// materialization raced the post-push round.
+// materialization raced the post-push round. A live serve hold defers the
+// spawn instead (ServeHold/ServeRelease): a merge racing the walk that
+// triggered it both contends the meta lock under the enumeration and
+// invalidates its location cache mid-stride (发现⑤'s diag dump caught the
+// serve blocked in Prefetch→LocateObjects on a registerAndSwap→PutPack of
+// 329K objects the clone itself had scheduled).
 func (s *ObjectService) scheduleConsolidate(repo string) {
 	s.consolMu.Lock()
-	if s.consolSched[repo] {
+	if s.consolSched[repo] || s.serveHold[repo] > 0 {
 		s.consolAgain[repo] = true
 		s.consolMu.Unlock()
 		return
@@ -413,6 +420,30 @@ func (s *ObjectService) scheduleConsolidate(repo string) {
 			return
 		}
 	}()
+}
+
+// ServeHold marks one in-flight clone-shaped serve for the repo: scheduled
+// consolidations defer (see scheduleConsolidate) so a background merge
+// never contends the meta lock or invalidates the location cache under a
+// live walk. Pair every hold with ServeRelease.
+func (s *ObjectService) ServeHold(repo string) {
+	s.consolMu.Lock()
+	s.serveHold[repo]++
+	s.consolMu.Unlock()
+}
+
+// ServeRelease drops one serve hold; the last one out re-arms the deferred
+// consolidation if any flush arrived while the serve ran.
+func (s *ObjectService) ServeRelease(repo string) {
+	s.consolMu.Lock()
+	s.serveHold[repo]--
+	if s.serveHold[repo] > 0 || !s.consolAgain[repo] {
+		s.consolMu.Unlock()
+		return
+	}
+	delete(s.consolAgain, repo)
+	s.consolMu.Unlock()
+	s.scheduleConsolidate(repo)
 }
 
 func (s *ObjectService) persistSynthEach(repo string, buf map[model.OID]synthObject) error {
@@ -1005,6 +1036,34 @@ func (s *ObjectService) PackSupersetHit(repo string, oids map[model.OID]model.Ob
 		}
 	}
 	return "", false
+}
+
+// SinglePackCover reports the repo's sole pack when every want is located
+// in it (docs/operations/performance.md §3b 发现⑤ fix): a single-pack
+// repository holds its whole persisted universe, and advertised tips are
+// fetchable by contract (the gitaly fsck guarantee), so a clone-shaped
+// wants' closure is contained in that pack — the response streams verbatim
+// with ZERO enumeration. That matters at git.git scale, where the closure
+// walk is a million index misses over an un-indexed streamed pack. A want
+// living only in the synthetic table (unflushed) or in another pack answers
+// false and the ladder proceeds.
+func (s *ObjectService) SinglePackCover(ctx context.Context, repo string, wants []model.OID) (model.OID, bool) {
+	packs, err := s.Meta.ListPacks(ctx, repo)
+	if err != nil || len(packs) != 1 {
+		return "", false
+	}
+	pack := packs[0].PackOID
+	locs, lerr := s.Meta.LocateObjects(ctx, repo, wants)
+	if lerr != nil {
+		return "", false
+	}
+	for _, w := range wants {
+		loc, ok := locs[w]
+		if !ok || loc.PackOID != pack {
+			return "", false
+		}
+	}
+	return pack, true
 }
 
 // Placements reports each object's pack OID — synthetic objects report the
