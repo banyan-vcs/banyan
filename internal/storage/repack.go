@@ -424,6 +424,11 @@ func (s *ObjectService) tryAppendMerge(ctx context.Context, repo string, set []m
 	if len(set) < 2 {
 		return res, false, nil
 	}
+	if s.Algo != model.SHA1 {
+		// newPackWriter hashes the trailer with SHA-1; the re-encode path
+		// carries the repo algo through its encoder.
+		return res, false, nil
+	}
 	var base meta.PackInfo
 	var baseBytes, total int64
 	for _, p := range set {
