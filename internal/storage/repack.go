@@ -374,6 +374,10 @@ func (s *ObjectService) Consolidate(ctx context.Context, repo string) (RepackRes
 	var mergeSets [][]meta.PackInfo
 	var cur []meta.PackInfo
 	var acc int64
+	groupCap := int64(repackMergeMaxBytes)
+	if s.ConsolidateMaxBytes > 0 {
+		groupCap = s.ConsolidateMaxBytes
+	}
 	emit := func() {
 		if len(cur) >= 2 {
 			mergeSets = append(mergeSets, cur)
@@ -381,7 +385,7 @@ func (s *ObjectService) Consolidate(ctx context.Context, repo string) (RepackRes
 		cur = nil
 	}
 	for _, sp := range sizedPacks {
-		if len(cur) > 0 && acc+sp.size > repackMergeMaxBytes {
+		if len(cur) > 0 && acc+sp.size > groupCap {
 			emit()
 			acc = 0
 		}

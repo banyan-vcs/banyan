@@ -401,8 +401,9 @@ fetch 增量 0.92x 字节持平；字节类全部与上午位级一致——**�
 go-git 聚焦族终测（runs=3、--memlimit 4096、配对交错）：cold 11.4MB/
 3.8s（1.16x/1.46x）、warm 1.9s（0.50x，快于 git CGI）、fetch 增量
 0.92x 字节持平、push 0.05x 耗时、ls-remote 0.45x 耗时。剩余差距登记：
-冷克隆的织入物化与枚举（~1.5s）、warm 字节 1.32x（增量后包增长）、
-Go 编码器质量（追加式合笼已绕开主路径）。
+冷克隆的织入物化与枚举（~1.5s；同一成本在 git.git 尺度升级为发现⑤——
+见旗舰样本）、warm 字节 1.32x（增量后包增长）、Go 编码器质量（追加式
+合笼已绕开主路径）。
 
 **下载效率的 reftable 视角（2026-11-14 分析，未实施）**：git 的
 reftable 是 refs 的有序块索引格式（O(log n) 查找、前缀扫描、栈式原子
@@ -429,24 +430,59 @@ partial clone（0.45x 字节）仍是现成的最大杠杆。**结论：先修�
 广告快照的实现参考。**
 
 **git.git 旗舰样本**（85,613 提交 · 2,031 refs · 324MiB · branch master）：
-**没有车道数字——发现④把跑数本身挡住了**，如实记录：
+发现④修复前**整体不可测**（第一个 ls-remote 的投影物化 47 分钟无输出死亡、
+诊断期残留进程常驻 9GB——push 与摄入本身正常，82,466 提交的轻量索引 27 秒）。
+③ 落地后广告解锁，但全历史 wants 的 clone 形态撞上**发现⑤**——分档如实记录：
 
-- 推送与摄入正常：2,031 refs（全部分支+tag）一次推送落地，82,466 个
-  提交的轻量索引 **27 秒**建完（发现①的 idx memo 在起作用——修复前
-  这一步就是小时级）；
-- 此后冷广告的投影物化 **47 分钟未完成**，进程在内存压力下无输出死
-  亡（exit 1、无 panic 文本——诊断期同一路径的残留进程常驻 9GB）。
-  缩减场景族（跳过 clone-full/subtree）也无济于事——第一个 ls-remote
-  就要付全部物化成本；
-- 结论：git.git 尺度在发现④修复前**不可测**，这本身就是登记项的量化
-  论据。`banyand bench --memlimit <MiB>`（GOMEMLIMIT 语义）给进程内
-  服务端加了软内存上限——大样本跑数宁可 GC 变慢也不再撑死机器。
+**可测车道**（默认配置、runs=3、配对交错、--memlimit 6144，2026-11-14）：
+
+| 场景 | 字节比 | 耗时比 | 备注 |
+|---|---|---|---|
+| ls-remote（冷广告=投影链共享走+持久化） | **1.01x**（113.3 vs 111.8KB） | 1.29x | 修复前 47 分钟物化致死 → 1.1s |
+| clone-shallow depth=1 | **1.08x**（14.7 vs 13.6MB） | **0.54x**（31.9 vs 59.0s） | 旗舰尺度首条反超车道：闭包=织入 tip+HEAD 快照，不碰全史 |
+
+（本轮 control 1849ms ±1601ms——漂移告警生效，耗时比降级读，字节位级稳定。）
+
+**发现⑤：全历史 wants 的 clone 服务在 git.git 尺度无界累积（2026-11-14 实测登记）**。
+clone-full / clone-partial / clone-subtree 三形态三次独立复现（默认配置两次、
+单包化实验一次）：冷服务 **20+ 分钟零字节送出**、进程 WS 8.5→9.1GB 爬升、
+12 核全燃（GC 极限运转）、`--memlimit 6144` 被活集合击穿，按内存纪律三次击杀。
+机制两层：
+
+1. **织入根链未持久化（主因）**：根视图是线性无合并链（docs/design/
+   data-model.md §13），git.git 的合并富历史织入后几乎每个提交都被重写——
+   这些织入对象**不在任何 pack 里**（广告期只持久化了目录投影链 328K 个）。
+   clone wants 含整条织入链 → ExactPackHit/PackSupersetHit 永不命中 →
+   每请求在线物化+编码整条链。
+2. **合笼分组上限是次要放大器**：Consolidate 的 256MiB 每组输入上限把
+   [投影包 134MB, 推送包 310MB] 拆成两包（3→2），t/ 子树闭包（提交在投影包、
+   树/blob 在推送包）横跨两包同样击穿超集梯。A5 实验
+   （`BANYAN_BENCH_CONSOLIDATE_MAX=1GiB` 强制单包，日志验证
+   `2 → 1 packs, 492,771 objects`）后冷克隆**依然 9GB 打转**——单包化治不了
+   织入链缺失，主因坐实；go-git 尺度同一机制顺畅（全量 ~20MB 单包直传 3.8s）
+   只因它的合笼产物本就单包且织入链物化只有 ~9.6K 提交。
+
+卡死期间合成批**确有增量落盘**（mid-clone 日志 `consolidate 738,940 objects`，
+较首合笼 +246K）——不是死锁，是慢且无界的物化；16GB 主机撑不到收敛点。
+诊断 dump（`TestRealSampleDiag`，6 分钟预算复现）钉住服务 goroutine 停在
+`enumerateClosure → Prefetch → LocateObjects` 的 meta 锁等待——持有者正是
+本次克隆**自己**调度的后台 Consolidate（`registerAndSwap → PutPack` 正在
+注册 32.9 万对象的合笼包）：自伤循环=枚举物化 → 合成批 flush → 调度合笼 →
+锁竞争+位置缓存失效 → 枚举代价重付；GC 在 ~9GB 堆上全核运转。
+修复方向登记：①织入根链在 weave/广告期持久化（照 HeadsFor 投影链的模式：
+共享一次全史走 + treeMemo 每树一读）；②服务端闭包枚举改共享走+流式有界；
+③两者落地后 clone wants ⊆ 刷新包 → 超集 verbatim 直传（go-git 3.8s 模式
+放大到旗舰尺度）；④**合笼静默窗口**——枚举/流式服务期间挂起后台合笼
+（请求末再触发），消除自伤性锁竞争与 loc 失效。**其余场景族
+（fetch-incremental / push-one-commit / dev-loop / burst / clone-partial /
+push-subtree）的 setup 都要克隆对端**，被 ⑤ 一并挡住——修复后补测。
 
 复现：`go run ./cmd/banyand bench --repo <path> --runs 3 --work <dir>
 --md report.md --csv samples.csv`；大样本用 `--scenarios` 聚焦（全部族：
 clone-full、ls-remote、fetch-incremental、push-one-commit、clone-shallow、
 clone-partial、dev-loop、burst、clone-subtree、push-subtree）+ `--memlimit`
-设软上限。
+设软上限；发现⑤的单包化对照实验加 `BANYAN_BENCH_CONSOLIDATE_MAX=<bytes>`
+（诊断旋钮，非调优建议）。
 
 ## 4. 排期对位
 

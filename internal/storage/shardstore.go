@@ -87,7 +87,14 @@ type ObjectService struct {
 	// async Consolidate on a coalescing scheduler. Opt-in — pack-count
 	// assertions in tests must stay deterministic.
 	AutoConsolidate bool
-	consolMu        sync.Mutex
+	// ConsolidateMaxBytes raises the per-group input byte cap for
+	// Consolidate (0 = the 256MiB default). Diagnostics knob: at git.git
+	// scale the default splits [synth pack, push pack] into two groups, no
+	// single pack covers the clone closure, and the superset serve ladder
+	// dies (docs/operations/performance.md §3b 发现⑤). Not a tuning
+	// recommendation — the cap bounds the merge's working set.
+	ConsolidateMaxBytes int64
+	consolMu            sync.Mutex
 	consolIn        map[string]bool
 	consolSched     map[string]bool // a scheduler goroutine is alive for the repo
 	consolAgain     map[string]bool // a flush arrived while it ran → rerun once

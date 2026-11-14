@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -74,6 +75,17 @@ func StartBanyan(shardRoot string) (*BanyanServer, error) {
 	nodes := []storage.Node{{ID: "b1", Local: true}}
 	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
 	objects.AutoConsolidate = true // deployment parity: post-materialization consolidation joins the synth and push packs
+	// BANYAN_BENCH_CONSOLIDATE_MAX (bytes) raises Consolidate's per-group
+	// byte cap — the A5 experiment for 发现⑤ (docs/operations/performance.md
+	// §3b): the 256MiB default splits git.git's [134MiB synth, 310MiB push]
+	// pair into two packs, no single pack covers the clone closure, and the
+	// superset ladder dies into an unbounded online re-encode. Diagnostics
+	// knob, not a tuning recommendation.
+	if v := os.Getenv("BANYAN_BENCH_CONSOLIDATE_MAX"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			objects.ConsolidateMaxBytes = n
+		}
+	}
 	mux := http.NewServeMux()
 	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
 	rpc.NewServer(ms, objects, model.SHA1).Register(mux)
