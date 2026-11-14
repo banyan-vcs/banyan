@@ -298,3 +298,61 @@ func TestStreamingServeResponseCacheFirst(t *testing.T) {
 	out.Reset()
 	assert.False(t, srv.tryStreamingServe(t.Context(), &out, VirtualRepo{Repo: "r"}, []model.OID{z.commit1}, false))
 }
+
+// The response cache stores the ENCODED pack, so its budget gate must
+// compare the encoded bytes — the pre-fix gate compared RAW closure bytes
+// and never stored for repos whose object bodies crossed the budget while
+// the encoded pack fit easily (the real-sample finding: every clone of a
+// 10MiB-pack repo recomputed + re-encoded).
+func TestServeClosurePackCachesByEncodedBytes(t *testing.T) {
+	z, srv := ingestZoo(t)
+	vr := VirtualRepo{Repo: "r"}
+	wants := []model.OID{z.commit2}
+	load := func() (blobs, trees, commits, tags map[model.OID][]byte) {
+		typed, err := srv.enumerateClosure(t.Context(), vr, wants, enumerateOpts{})
+		require.NoError(t, err)
+		for oid, typ := range typed {
+			_, raw, rerr := srv.Objects.Raw(t.Context(), "r", oid)
+			require.NoError(t, rerr)
+			switch typ {
+			case model.BlobType:
+				if blobs == nil {
+					blobs = map[model.OID][]byte{}
+				}
+				blobs[oid] = raw
+			case model.TreeType:
+				if trees == nil {
+					trees = map[model.OID][]byte{}
+				}
+				trees[oid] = raw
+			case model.CommitType:
+				if commits == nil {
+					commits = map[model.OID][]byte{}
+				}
+				commits[oid] = raw
+			default:
+				if tags == nil {
+					tags = map[model.OID][]byte{}
+				}
+				tags[oid] = raw
+			}
+		}
+		return
+	}
+	blobs, trees, commits, tags := load()
+	var first bytes.Buffer
+	rung := srv.serveClosurePack(t.Context(), &first, vr, wants, blobs, trees, commits, tags, true, false, nil)
+	assert.Equal(t, "encode+cache", rung, "small encoded response must cache")
+
+	if raw, ok := srv.Objects.CachedResponsePack("r", "", wants, false); ok {
+		assert.Equal(t, first.Bytes(), raw, "stored bytes are the served bytes")
+	} else {
+		t.Fatal("nothing stored — the cache gate refused an easily-fitting pack")
+	}
+
+	// The repeat answers from the cache verbatim.
+	var second bytes.Buffer
+	rung = srv.serveClosurePack(t.Context(), &second, vr, wants, nil, nil, nil, nil, true, false, nil)
+	assert.Equal(t, "closure-cache", rung)
+	assert.Equal(t, first.Bytes(), second.Bytes())
+}

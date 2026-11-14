@@ -262,3 +262,68 @@ type stubHeads struct{ head OID }
 func (s *stubHeads) TimelineHead(_ Timeline) (TimelineState, error) {
 	return TimelineState{Head: s.head}, nil
 }
+
+// ProjectionHeads (the advertisement's shared walk) must derive each
+// top-level directory's head BYTE-IDENTICALLY to a per-directory
+// SplitHistory — the /tree/<dir> face materializes on demand and the two
+// derivations must never disagree (an advertised head is a ref).
+func TestProjectionHeadsMatchesSplitHistory(t *testing.T) {
+	lookup := NewMemoryLookup(SHA1)
+	libV1 := mkTree(t, lookup, file(t, lookup, "a.go", "v1"))
+	libV2 := mkTree(t, lookup, file(t, lookup, "a.go", "v2"))
+	libV3 := mkTree(t, lookup, file(t, lookup, "a.go", "v3"))
+	docsV1 := mkTree(t, lookup, file(t, lookup, "readme.md", "one"))
+	docsV2 := mkTree(t, lookup, file(t, lookup, "readme.md", "two"))
+
+	mkRoot := func(lib, docs OID) OID {
+		entries := []TreeEntry{}
+		if lib != "" {
+			entries = append(entries, TreeEntry{Name: "lib", Mode: "40000", Target: lib, IsDir: true})
+		}
+		if docs != "" {
+			entries = append(entries, TreeEntry{Name: "docs", Mode: "40000", Target: docs, IsDir: true})
+		}
+		return mkTree(t, lookup, entries...)
+	}
+	put := func(tree OID, parents ...OID) OID {
+		return lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: tree, Parents: parents, Author: ident("a"), Committer: ident("a"), Message: "m\n"})
+	}
+
+	// History: c1(lib v1) → c2(lib v2 + docs born) → merge of [c2, side(lib v1→v3)]
+	// → c4(docs only) — plus an adoption merge adopting a lib-scoped commit.
+	c1 := put(mkRoot(libV1, ""))
+	c2 := put(mkRoot(libV2, docsV1))
+	side := put(mkRoot(libV3, ""), c1)
+	merge := put(mkRoot(libV2, docsV1), c2, side)
+	// Adoption: a lib-scoped commit whose tree IS libV3, adopted by a merge
+	// whose root carries libV3 at /lib.
+	scoped := lookup.PutCommit(&AnchoredCommit{Anchor: RootAnchor, TreeOID: libV3, Author: ident("s"), Committer: ident("s"), Message: "scoped\n"})
+	adopt := put(mkRoot(libV3, docsV2), merge, scoped)
+	head := put(mkRoot(libV3, docsV2), adopt) // a plain commit on top
+
+	heads, err := ProjectionHeads(lookup, SHA1, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(heads) != 2 {
+		t.Fatalf("want lib+docs results, got %v", heads)
+	}
+	for _, dir := range []string{"lib", "docs"} {
+		res, serr := SplitHistory(lookup, SHA1, head, AnchorPath("/"+dir))
+		if serr != nil {
+			t.Fatalf("%s: %v", dir, serr)
+		}
+		shared := heads[dir]
+		if res.Head != shared.Head {
+			t.Fatalf("%s: shared %s ≠ per-dir %s", dir, shared.Head, res.Head)
+		}
+		if len(res.Commits) != len(shared.Commits) {
+			t.Fatalf("%s: chain length %d ≠ %d", dir, len(shared.Commits), len(res.Commits))
+		}
+		for i := range res.Commits {
+			if res.Commits[i].OID(SHA1) != shared.Commits[i].OID(SHA1) {
+				t.Fatalf("%s: chain[%d] diverges", dir, i)
+			}
+		}
+	}
+}

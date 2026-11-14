@@ -524,6 +524,16 @@ func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr Virtu
 		return "", false
 	}
 	packOID, hit := s.Objects.ExactPackHit(vr.Repo, oids)
+	rung := "exact-pack-stream"
+	if !hit {
+		// The consolidated repository (post-materialization 合笼) keeps one
+		// pack holding the pushed objects plus the woven/projection
+		// synthetics — a clone wants a SUBSET of it. A superset pack
+		// streams verbatim too: git tolerates extra objects, and the few
+		// extra bytes beat the closure walk + online re-encode whole.
+		packOID, hit = s.Objects.PackSupersetHit(vr.Repo, oids)
+		rung = "pack-superset-stream"
+	}
 	if !hit {
 		return "", false
 	}
@@ -534,12 +544,12 @@ func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr Virtu
 	defer rc.Close()
 	buf := make([]byte, 256<<10)
 	if _, cerr := io.CopyBuffer(out, rc, buf); cerr != nil {
-		log.Printf("upload-pack %s%s: exact-pack stream %s broke mid-copy: %v", vr.Repo, vr.Sub, packOID, cerr)
+		log.Printf("upload-pack %s%s: %s %s broke mid-copy: %v", vr.Repo, vr.Sub, rung, packOID, cerr)
 		fetchExactPackStream.Add(1)
-		return "exact-pack-stream " + string(packOID) + " (broken)", true
+		return rung + " " + string(packOID) + " (broken)", true
 	}
 	fetchExactPackStream.Add(1)
-	return "exact-pack-stream " + string(packOID), true
+	return rung + " " + string(packOID), true
 }
 
 // streamServeMinPackBytes is the small-repo cutoff for the streaming
@@ -744,24 +754,21 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 				return "closure-cache"
 			}
 		}
-		// Oversized closures skip the cache by construction — serve them
-		// straight off the encoder instead of parking a whole-response
-		// buffer that would only be thrown away.
-		total := 0
-		for _, m := range []map[model.OID][]byte{blobs, trees, commits, tags} {
-			for _, b := range m {
-				total += len(b)
-			}
-		}
-		if total > storage.ResponsePackCacheMax {
-			if err := serveObjectPack(out, blobs, trees, commits, tags, ofsDelta); err != nil {
-				log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
-			}
-			return "encode"
-		}
+		// The closure maps are already resident; the extra cost of caching
+		// is the ENCODED buffer — the same currency the LRU bounds. The old
+		// gate compared RAW (decompressed) closure bytes against the cache
+		// budget, which refused caching for any repo whose object bodies
+		// exceeded 128MiB raw even when the encoded pack fits easily — the
+		// real-sample finding: a 10MiB-pack repo whose every clone
+		// recomputed the closure and re-encoded because the cache never
+		// stored (docs/operations/performance.md §3b).
 		var buf bytes.Buffer
 		if err := serveObjectPack(&buf, blobs, trees, commits, tags, ofsDelta); err != nil {
 			log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
+		}
+		if len(buf.Bytes()) > storage.ResponsePackCacheMax {
+			_, _ = out.Write(buf.Bytes())
+			return "encode" // the encoded response itself over budget: not cached
 		}
 		s.Objects.StoreResponsePack(vr.Repo, vr.Sub, wants, ofsDelta, buf.Bytes())
 		_, _ = out.Write(buf.Bytes())

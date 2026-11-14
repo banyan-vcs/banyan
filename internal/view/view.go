@@ -26,8 +26,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/meta"
+	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -36,18 +36,20 @@ type Service struct {
 	Objects *storage.ObjectService
 	Algo    model.HashAlgo
 
-	mu        sync.Mutex
-	subCache  map[subKey]model.OID
-	rootCache map[rootKey]model.OID
+	mu         sync.Mutex
+	subCache   map[subKey]model.OID
+	rootCache  map[rootKey]model.OID
+	headsCache map[headsKey]map[string]model.OID
 }
 
 func New(meta meta.MetaStore, objects *storage.ObjectService, algo model.HashAlgo) *Service {
 	return &Service{
-		Meta:      meta,
-		Objects:   objects,
-		Algo:      algo,
-		subCache:  map[subKey]model.OID{},
-		rootCache: map[rootKey]model.OID{},
+		Meta:       meta,
+		Objects:    objects,
+		Algo:       algo,
+		subCache:   map[subKey]model.OID{},
+		rootCache:  map[rootKey]model.OID{},
+		headsCache: map[headsKey]map[string]model.OID{},
 	}
 }
 
@@ -650,6 +652,11 @@ func (s *Service) ResetWoven(ctx context.Context, repo, branch string) error {
 			delete(s.subCache, k)
 		}
 	}
+	for k := range s.headsCache {
+		if k.repo == repo {
+			delete(s.headsCache, k)
+		}
+	}
 	s.mu.Unlock()
 	return nil
 }
@@ -750,4 +757,60 @@ func (s *Service) ProjectionTip(repo string, sub model.AnchorPath, rootLocal mod
 		s.Objects.PutSynthetic(repo, pc.OID(s.Algo), model.CommitType, pc.Encode())
 	}
 	return res.Head, nil
+}
+
+// headsKey identifies one shared projection-heads derivation: a pure
+// function of the root-local tip (content-addressed — a new push is a new
+// key, entries never go stale).
+type headsKey struct {
+	repo   string
+	branch string
+	root   model.OID
+}
+
+// HeadsFor returns every top-level directory's projected head for the
+// root-local tip, derived in ONE shared history walk
+// (model.ProjectionHeads) and memoized per tip. The advertisement path uses
+// this instead of a SubtreeHead per directory (docs/operations/performance.md
+// §3b finding ④: O(dirs × history) with per-directory walks — tens of
+// minutes and GBs at git.git scale); the shared walk's reads happen once
+// for ALL directories. The advertised OIDs must themselves be fetchable
+// (gitaly fsck reads every ref; the GitLab projection-fetch recipe fetches
+// refs/banyan/tree/*), so every directory's chain persists as ONE synth
+// batch. Directories with local timelines must keep using SubtreeHead —
+// the caller filters.
+func (s *Service) HeadsFor(repo, branch string, rootLocal model.OID) map[string]model.OID {
+	if rootLocal.IsZero() {
+		return nil
+	}
+	key := headsKey{repo: repo, branch: branch, root: rootLocal}
+	s.mu.Lock()
+	if m, ok := s.headsCache[key]; ok {
+		s.mu.Unlock()
+		return m
+	}
+	s.mu.Unlock()
+	s.Objects.BeginSynthBatch(repo)
+	defer s.Objects.EndSynthBatch(repo)
+	results, err := model.ProjectionHeads(s.Objects.Lookup(repo), s.Algo, rootLocal)
+	if err != nil {
+		log.Printf("projection heads %s/%s: %v", repo, branch, err)
+		return nil
+	}
+	heads := make(map[string]model.OID, len(results))
+	for dir, res := range results {
+		for _, pc := range res.Commits {
+			s.Objects.PutSynthetic(repo, pc.OID(s.Algo), model.CommitType, pc.Encode())
+		}
+		if !res.Head.IsZero() {
+			heads[dir] = res.Head
+		}
+	}
+	s.mu.Lock()
+	if len(s.headsCache) >= 16 { // tips move per push; stale tips-sets are useless
+		s.headsCache = map[headsKey]map[string]model.OID{}
+	}
+	s.headsCache[key] = heads
+	s.mu.Unlock()
+	return heads
 }

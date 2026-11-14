@@ -125,6 +125,7 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 	local := storage.NewLocalShardStore(cfg.Root)
 	nodes := []storage.Node{{ID: "local-1", Local: true}}
 	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
+	objects.AutoConsolidate = true // post-materialization pack consolidation (docs/operations/performance.md §3b 合笼)
 
 	if cfg.InitRepo != "" {
 		if err := ms.CreateRepo(context.Background(), cfg.InitRepo, model.SHA1); err != nil {
@@ -306,6 +307,7 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 		log.Printf("gateway: pack cache %s (%d entries, %.1f MiB)", cfg.Cache.PackDir, entries, float64(bytes)/(1<<20))
 	}
 	objects := storage.NewObjectServiceWithBackend(ms, backend, model.SHA1)
+	objects.AutoConsolidate = true // post-materialization pack consolidation (docs/operations/performance.md §3b 合笼)
 
 	if cfg.InitRepo != "" {
 		if err := ms.CreateRepo(context.Background(), cfg.InitRepo, model.SHA1); err != nil {

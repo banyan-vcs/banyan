@@ -2,13 +2,15 @@ package storage
 
 import (
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"sort"
 
 	"github.com/banyan-vcs/banyan/internal/meta"
-		"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/model"
 )
 
 // Repack merges pack fragments under git's geometric packing strategy
@@ -205,6 +207,16 @@ func (s *ObjectService) Repack(ctx context.Context, repo string, threshold int, 
 // location atomically per object — reads switch as of this call), then drop
 // the old shards (metadata first, then files, then caches).
 func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []meta.PackInfo) (RepackResult, error) {
+	// Fast path — append consolidation: see tryAppendMerge.
+	if res, ok, err := s.tryAppendMerge(ctx, repo, set); err != nil {
+		log.Printf("repack %s: append merge fell back to re-encode: %v", repo, err)
+	} else if ok {
+		return res, nil
+	}
+	return s.mergePacksReencode(ctx, repo, set)
+}
+
+func (s *ObjectService) mergePacksReencode(ctx context.Context, repo string, set []meta.PackInfo) (RepackResult, error) {
 	var res RepackResult
 	var blobs, trees, commits, tags = map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}, map[model.OID][]byte{}
 	// skipped collects fragments whose bytes could not be read (all holders
@@ -308,4 +320,272 @@ func (s *ObjectService) mergePacks(ctx context.Context, repo string, set []meta.
 	// through Raw's stale-placement retry.
 	s.locInvalidate(repo)
 	return res, nil
+}
+
+// errConsolidateBusy reports an in-flight consolidation for the repo — the
+// trigger is dropped (the running round already covers the current state,
+// and the next materialization re-asks).
+var errConsolidateBusy = errors.New("consolidate: another round is in flight")
+
+// Consolidate merges EVERY pack of a repo into one — an explicit,
+// strategy-free collapse. The geometric rule deliberately leaves
+// [small-synth-pack, big-push-pack] pairs alone (their adjacent ratio
+// holds), but a woven repo's clone closure spans exactly such a pair and
+// whole-pack direct serve dies with it: every clone re-encodes online
+// (docs/operations/performance.md §3b 合笼). Groups split at the same
+// per-group byte cap as Repack, so giant repos consolidate in bounded
+// chunks instead of one unbounded union.
+func (s *ObjectService) Consolidate(ctx context.Context, repo string) (RepackResult, error) {
+	s.consolMu.Lock()
+	if s.consolIn[repo] {
+		s.consolMu.Unlock()
+		return RepackResult{}, errConsolidateBusy
+	}
+	s.consolIn[repo] = true
+	s.consolMu.Unlock()
+	defer func() {
+		s.consolMu.Lock()
+		delete(s.consolIn, repo)
+		s.consolMu.Unlock()
+	}()
+
+	packs, err := s.Meta.ListPacks(ctx, repo)
+	if err != nil {
+		return RepackResult{}, err
+	}
+	res := RepackResult{PacksBefore: len(packs)}
+	if len(packs) < 2 {
+		res.PacksAfter = len(packs)
+		return res, nil
+	}
+	type sized struct {
+		info meta.PackInfo
+		size int64
+	}
+	sizedPacks := make([]sized, 0, len(packs))
+	for _, p := range packs {
+		sz := s.packSizeCached(ctx, repo, p.PackOID)
+		if sz < 0 {
+			sz = 0 // unknown (old node): size-blind placement is safe, the cap just loses a guard
+		}
+		sizedPacks = append(sizedPacks, sized{info: p, size: sz})
+	}
+	sort.Slice(sizedPacks, func(i, j int) bool { return sizedPacks[i].size < sizedPacks[j].size })
+	var mergeSets [][]meta.PackInfo
+	var cur []meta.PackInfo
+	var acc int64
+	emit := func() {
+		if len(cur) >= 2 {
+			mergeSets = append(mergeSets, cur)
+		}
+		cur = nil
+	}
+	for _, sp := range sizedPacks {
+		if len(cur) > 0 && acc+sp.size > repackMergeMaxBytes {
+			emit()
+			acc = 0
+		}
+		cur = append(cur, sp.info)
+		acc += sp.size
+	}
+	emit()
+	if len(mergeSets) == 0 {
+		res.PacksAfter = len(packs)
+		return res, nil
+	}
+	for _, set := range mergeSets {
+		setRes, merr := s.mergePacks(ctx, repo, set)
+		if merr != nil {
+			return res, merr
+		}
+		res.Objects += setRes.Objects
+		res.BytesBefore += setRes.BytesBefore
+		res.BytesAfter += setRes.BytesAfter
+		res.Delta = res.Delta || setRes.Delta
+	}
+	res.PacksAfter = res.PacksBefore
+	for _, set := range mergeSets {
+		res.PacksAfter -= len(set) - 1
+	}
+	return res, nil
+}
+
+// tryAppendMerge copies the dominant pack's entry region under a fresh
+// header/count and appends the other packs' (deduplicated) objects as
+// delta-free entries (docs/operations/performance.md §3b 合笼 fast path).
+// Pack entries are position-independent except OFS_DELTA, whose offsets
+// are RELATIVE — a verbatim prefix copy keeps every delta valid, so the
+// dominant pack's (typically C-git-quality) deltas survive instead of
+// being re-delta'd by the Go encoder (which roughly doubled a real push
+// pack's bytes). ok=false with nil error means the shape did not qualify;
+// the caller re-encodes as before.
+func (s *ObjectService) tryAppendMerge(ctx context.Context, repo string, set []meta.PackInfo) (RepackResult, bool, error) {
+	var res RepackResult
+	if len(set) < 2 {
+		return res, false, nil
+	}
+	var base meta.PackInfo
+	var baseBytes, total int64
+	for _, p := range set {
+		sz := s.packSizeCached(ctx, repo, p.PackOID)
+		if sz < 0 {
+			sz = 0
+		}
+		total += sz
+		if sz > baseBytes {
+			baseBytes, base = sz, p
+		}
+	}
+	if baseBytes <= 0 || baseBytes*2 <= total {
+		return res, false, nil // no dominant pack: the general path applies
+	}
+	baseRaw, err := s.PackBytes(ctx, repo, base.PackOID)
+	if err != nil {
+		return res, false, err
+	}
+	if len(baseRaw) < 32 || string(baseRaw[:4]) != "PACK" ||
+		binary.BigEndian.Uint32(baseRaw[4:8]) != 2 {
+		return res, false, fmt.Errorf("append merge: base pack is not a v2 pack")
+	}
+	baseObjs := map[model.OID]bool{}
+	objs, oerr := s.Meta.PackObjects(ctx, repo, base.PackOID)
+	if oerr != nil {
+		return res, false, oerr
+	}
+	for _, o := range objs {
+		baseObjs[o] = true
+	}
+
+	type extraObj struct {
+		t    model.ObjectType
+		data []byte
+	}
+	extras := map[model.OID]extraObj{}
+	add := func(m map[model.OID][]byte, t model.ObjectType) {
+		for oid, data := range m {
+			if !baseObjs[oid] {
+				extras[oid] = extraObj{t, data}
+			}
+		}
+	}
+	skipped := map[model.OID]bool{}
+	for _, p := range set {
+		if p.PackOID == base.PackOID {
+			res.BytesBefore += int64(len(baseRaw))
+			continue
+		}
+		raw, rerr := s.PackBytes(ctx, repo, p.PackOID)
+		if rerr != nil {
+			skipped[p.PackOID] = true // unreadable fragment: kept, never dropped
+			continue
+		}
+		res.BytesBefore += int64(len(raw))
+		dp, derr := DecodePack(raw)
+		if derr != nil {
+			skipped[p.PackOID] = true
+			continue
+		}
+		add(dp.Blobs, model.BlobType)
+		add(dp.Trees, model.TreeType)
+		add(dp.Commits, model.CommitType)
+		add(dp.Tags, model.TagType)
+	}
+	count := int64(len(baseObjs) + len(extras))
+	res.Objects = int(count)
+	if res.Objects == 0 {
+		return res, false, nil
+	}
+
+	tmp, err := os.CreateTemp("", "banyan-repack-*.pack")
+	if err != nil {
+		return res, false, err
+	}
+	tmpName := tmp.Name()
+	w := newPackWriter(tmp)
+	w.write([]byte("PACK"))
+	var hdr [8]byte
+	binary.BigEndian.PutUint32(hdr[0:4], 2)
+	binary.BigEndian.PutUint32(hdr[4:8], uint32(count))
+	w.write(hdr[:])
+	w.write(baseRaw[12 : len(baseRaw)-20]) // entry region verbatim — OFS_DELTA offsets are relative
+	for _, o := range extras {
+		var typ byte
+		switch o.t {
+		case model.CommitType:
+			typ = writeTypeCommit
+		case model.TreeType:
+			typ = writeTypeTree
+		case model.BlobType:
+			typ = writeTypeBlob
+		case model.TagType:
+			typ = writeTypeTag
+		default:
+			tmp.Close()
+			os.Remove(tmpName)
+			return res, false, fmt.Errorf("append merge: object type %q", o.t)
+		}
+		w.object(typ, len(o.data), nil, o.data)
+	}
+	if err := w.finish(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return res, false, err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return res, false, err
+	}
+	res.Delta = true // the base pack's deltas ride along verbatim
+	newOID, size, rerr := s.registerAndSwap(ctx, repo, tmpName, set, skipped)
+	if rerr != nil {
+		return res, false, rerr
+	}
+	res.BytesAfter = size
+	_ = newOID
+	return res, true, nil
+}
+
+// registerAndSwap registers the spooled merged pack, then drops the merged
+// fragments: register FIRST (the crash window leaves duplicate locations —
+// still correct, the next repack cleans up); unreadable fragments keep
+// their registration (their objects are not covered by the merge).
+func (s *ObjectService) registerAndSwap(ctx context.Context, repo, tmpName string, set []meta.PackInfo, skipped map[model.OID]bool) (model.OID, int64, error) {
+	st, serr := os.Stat(tmpName)
+	if serr != nil {
+		os.Remove(tmpName)
+		return "", 0, serr
+	}
+	newOID, err := s.IngestPackFile(ctx, repo, tmpName, st.Size())
+	os.Remove(tmpName)
+	if err != nil {
+		return "", 0, err
+	}
+	s.rememberPackSize(repo, newOID, st.Size())
+	key, kerr := s.storeKey(ctx, repo)
+	if kerr != nil {
+		return newOID, st.Size(), kerr
+	}
+	for _, p := range set {
+		if p.PackOID == newOID || skipped[p.PackOID] {
+			continue
+		}
+		if derr := s.Meta.DropPack(ctx, repo, p.PackOID); derr != nil {
+			log.Printf("repack %s: drop meta %s: %v", repo, p.PackOID, derr)
+			continue
+		}
+		s.Backend.DeletePack(ctx, key, p.PackOID, p.Nodes) // key, not name (hashed addressing)
+		s.forgetDecoded(repo, p.PackOID)
+		s.forgetPackSize(repo, p.PackOID)
+		s.readMu.Lock()
+		delete(s.readAmp, repo+"/"+string(p.PackOID))
+		s.readMu.Unlock()
+		s.mu.Lock()
+		delete(s.packOrder[repo], p.PackOID)
+		s.mu.Unlock()
+	}
+	// Every merged-away pack invalidates cached placements: locations only
+	// ever change at repack (docs/operations/performance.md P0-1). Other gateways' caches self-heal
+	// through Raw's stale-placement retry.
+	s.locInvalidate(repo)
+	return newOID, st.Size(), nil
 }

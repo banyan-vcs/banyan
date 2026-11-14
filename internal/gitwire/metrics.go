@@ -113,7 +113,7 @@ func countServeRung(rung string) {
 		fetchThin.Add(1)
 	case rung == "closure-cache":
 		fetchClosureCache.Add(1)
-	case strings.HasPrefix(rung, "exact-pack-stream"):
+	case strings.HasPrefix(rung, "exact-pack-stream"), strings.HasPrefix(rung, "pack-superset-stream"):
 		fetchVerbatimPack.Add(1)
 	default:
 		fetchEncoded.Add(1)

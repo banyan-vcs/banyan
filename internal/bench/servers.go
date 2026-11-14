@@ -73,6 +73,7 @@ func StartBanyan(shardRoot string) (*BanyanServer, error) {
 	local := storage.NewLocalShardStore(shardRoot)
 	nodes := []storage.Node{{ID: "b1", Local: true}}
 	objects := storage.NewObjectService(ms, local, nodes, model.SHA1)
+	objects.AutoConsolidate = true // deployment parity: post-materialization consolidation joins the synth and push packs
 	mux := http.NewServeMux()
 	gitwire.NewServer(ms, objects, model.SHA1).Register(mux)
 	rpc.NewServer(ms, objects, model.SHA1).Register(mux)

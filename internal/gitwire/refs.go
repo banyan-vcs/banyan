@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/view"
 )
 
 // Ref is one externally exposed ref view (docs/gateway/git-compat.md §6).
@@ -109,13 +110,47 @@ func (s *Server) ProjectionRefs(ctx context.Context, repo string, defaultBranch 
 	if err != nil {
 		return nil
 	}
+	// Shared-walk heads (docs/operations/performance.md §3b finding ④): ONE
+	// history walk derives every directory's head (cached per tip, nothing
+	// persisted — the /tree/<dir> face materializes on demand), instead of a
+	// SubtreeHead per directory (O(dirs × history), each materializing its
+	// whole projection chain before the advertisement answers).
+	state, terr := s.Meta.Timeline(ctx, model.Timeline{Repo: repo, Anchor: model.RootAnchor, Name: defaultBranch})
+	if terr != nil {
+		return nil
+	}
+	heads := s.Views.HeadsFor(repo, defaultBranch, state.Head)
+	// Directories with local timeline activity at or below them fold those
+	// commits in (a strictly longer chain than the shared derivation) —
+	// they keep the full SubtreeHead. Rare: subtree pushes only.
+	local := map[string]bool{}
+	if all, aerr := s.Meta.ListAllTimelines(ctx, repo); aerr == nil {
+		for _, tl := range all {
+			if tl.Name != defaultBranch || tl.Anchor == model.RootAnchor || view.IsWovenFamily(tl.Anchor) {
+				continue
+			}
+			if st, serr := s.Meta.Timeline(ctx, tl); serr != nil || st.Head.IsZero() {
+				continue
+			}
+			if seg := strings.SplitN(strings.TrimPrefix(string(tl.Anchor), "/"), "/", 2); len(seg) > 0 && seg[0] != "" {
+				local[seg[0]] = true
+			}
+		}
+	}
 	var out []Ref
 	for _, e := range tree.Entries {
 		if !e.IsDir || e.Mode == "160000" {
 			continue // blobs and gitlinks have no subtree view
 		}
-		head, _, serr := s.Views.SubtreeHead(ctx, repo, model.AnchorPath("/"+e.Name), defaultBranch)
-		if serr != nil || head.IsZero() {
+		var head model.OID
+		if local[e.Name] {
+			if h, _, serr := s.Views.SubtreeHead(ctx, repo, model.AnchorPath("/"+e.Name), defaultBranch); serr == nil {
+				head = h
+			}
+		} else {
+			head = heads[e.Name]
+		}
+		if head.IsZero() {
 			continue // path never existed in history: /tree/ answers empty too
 		}
 		out = append(out, Ref{Name: projectionRefPrefix + e.Name, OID: head})

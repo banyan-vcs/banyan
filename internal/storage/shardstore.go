@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -80,6 +81,17 @@ type ObjectService struct {
 	batchDep map[string]int
 	batchBuf map[string]map[model.OID]synthObject
 
+	// Post-materialization consolidation (docs/operations/performance.md §3b
+	// 合笼): a persisted synth batch sits beside the push pack, clone closures
+	// span both, and whole-pack direct serve dies. Each flush schedules an
+	// async Consolidate on a coalescing scheduler. Opt-in — pack-count
+	// assertions in tests must stay deterministic.
+	AutoConsolidate bool
+	consolMu        sync.Mutex
+	consolIn        map[string]bool
+	consolSched     map[string]bool // a scheduler goroutine is alive for the repo
+	consolAgain     map[string]bool // a flush arrived while it ran → rerun once
+
 	// Clone-shaped response pack cache (docs/operations/performance.md P2-2, B9): a subtree (or
 	// woven-root) clone's closure never equals a stored pack — projection and
 	// weave OIDs are synthetic — so ExactPackHit cannot fire and every clone
@@ -153,23 +165,26 @@ func NewObjectServiceWithBackend(ms meta.MetaStore, backend ShardBackend, algo m
 
 func newObjectService(ms meta.MetaStore, local *LocalShardStore, backend ShardBackend, algo model.HashAlgo) *ObjectService {
 	return &ObjectService{
-		Meta:      ms,
-		Local:     local,
-		Backend:   backend,
-		Algo:      algo,
-		cache:     map[string]map[model.OID]*DecodedPack{},
-		cacheLRU:  list.New(),
-		packOrder: map[string]map[model.OID][]model.OID{},
-		synth:     map[string]map[model.OID]synthObject{},
-		idx:       map[string]*repoIndex{},
-		loc:       map[string]map[model.OID]meta.ObjectLocation{},
-		locLRU:    map[string]*list.List{},
-		locElem:   map[string]map[model.OID]*list.Element{},
-		batchDep:  map[string]int{},
-		batchBuf:  map[string]map[model.OID]synthObject{},
-		respCache: map[closureKey]*list.Element{},
-		respLRU:   list.New(),
-		readAmp:   map[string]int{},
+		Meta:        ms,
+		Local:       local,
+		Backend:     backend,
+		Algo:        algo,
+		cache:       map[string]map[model.OID]*DecodedPack{},
+		cacheLRU:    list.New(),
+		packOrder:   map[string]map[model.OID][]model.OID{},
+		synth:       map[string]map[model.OID]synthObject{},
+		idx:         map[string]*repoIndex{},
+		loc:         map[string]map[model.OID]meta.ObjectLocation{},
+		locLRU:      map[string]*list.List{},
+		locElem:     map[string]map[model.OID]*list.Element{},
+		batchDep:    map[string]int{},
+		batchBuf:    map[string]map[model.OID]synthObject{},
+		consolIn:    map[string]bool{},
+		consolSched: map[string]bool{},
+		consolAgain: map[string]bool{},
+		respCache:   map[closureKey]*list.Element{},
+		respLRU:     list.New(),
+		readAmp:     map[string]int{},
 	}
 }
 
@@ -345,7 +360,52 @@ func (s *ObjectService) flushSynthBatch(repo string) error {
 		log.Printf("synth batch %s: persist: %v (per-object fallback)", repo, err)
 		return s.persistSynthEach(repo, buf)
 	}
+	// The batch just became a pack of its own, beside the push pack: clone
+	// closures now span both and whole-pack direct serving is gone until
+	// they merge. Schedule the consolidation (coalescing — a flush arriving
+	// mid-round triggers one rerun, never a dropped last state). Opt-in via
+	// AutoConsolidate so tests stay deterministic.
+	if s.AutoConsolidate {
+		s.scheduleConsolidate(repo)
+	}
 	return nil
+}
+
+// scheduleConsolidate runs repo consolidations on a coalescing scheduler:
+// while one round is in flight, later triggers only mark a rerun — the
+// running round predates their flush, and dropping it (the first cut's
+// busy-and-drop) left the repository stuck at two packs when a clone's own
+// materialization raced the post-push round.
+func (s *ObjectService) scheduleConsolidate(repo string) {
+	s.consolMu.Lock()
+	if s.consolSched[repo] {
+		s.consolAgain[repo] = true
+		s.consolMu.Unlock()
+		return
+	}
+	s.consolSched[repo] = true
+	s.consolMu.Unlock()
+	go func() {
+		for {
+			res, cerr := s.Consolidate(context.Background(), repo)
+			switch {
+			case cerr != nil && !errors.Is(cerr, errConsolidateBusy):
+				log.Printf("consolidate %s: %v", repo, cerr)
+			case res.PacksAfter < res.PacksBefore:
+				log.Printf("consolidate %s: %d → %d packs, %d objects, %d → %d bytes (delta=%v)",
+					repo, res.PacksBefore, res.PacksAfter, res.Objects, res.BytesBefore, res.BytesAfter, res.Delta)
+			}
+			s.consolMu.Lock()
+			if s.consolAgain[repo] {
+				delete(s.consolAgain, repo)
+				s.consolMu.Unlock()
+				continue
+			}
+			delete(s.consolSched, repo)
+			s.consolMu.Unlock()
+			return
+		}
+	}()
 }
 
 func (s *ObjectService) persistSynthEach(repo string, buf map[model.OID]synthObject) error {
@@ -896,6 +956,50 @@ func (s *ObjectService) ExactPackHit(repo string, oids map[model.OID]model.Objec
 	return "", false
 }
 
+// PackSupersetHit reports a stored pack that CONTAINS every requested
+// object (docs/storage/storage.md §5): a superset pack streams verbatim
+// too — git clients tolerate extra objects (index-pack keeps them), so the
+// trade is a few extra bytes against the whole closure walk plus online
+// re-encode. The post-materialization consolidation (AutoConsolidate)
+// makes this the steady state: one pack holds the pushed objects plus the
+// woven/projection synthetics, and a clone wants a subset of it. Exact
+// equality stays the first preference; candidates scan smallest-first so
+// the fewest-extras pack wins.
+func (s *ObjectService) PackSupersetHit(repo string, oids map[model.OID]model.ObjectType) (model.OID, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	type cand struct {
+		pack model.OID
+		set  map[model.OID]bool
+		n    int
+	}
+	var cands []cand
+	for packOID, order := range s.packOrder[repo] {
+		if len(order) < len(oids) {
+			continue
+		}
+		set := make(map[model.OID]bool, len(order))
+		for _, oid := range order {
+			set[oid] = true
+		}
+		cands = append(cands, cand{packOID, set, len(order)})
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].n < cands[j].n })
+	for _, c := range cands {
+		ok := true
+		for oid := range oids {
+			if !c.set[oid] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return c.pack, true
+		}
+	}
+	return "", false
+}
+
 // Placements reports each object's pack OID — synthetic objects report the
 // zero OID. One batched locate feeds the cache (Prefetch), then everything
 // is answered from the warmed cache; unknown placement reports zero (the
@@ -1011,20 +1115,21 @@ func (s *ObjectService) forgetPackSize(repo string, packOID model.OID) {
 // RenameRepo renames a repository end to end (docs/storage/storage.md §6, write barrier
 // §6a). Two phases around the storage move:
 //
-//	1. BeginRename installs the fence at the metadata authority: every
-//	   mutating operation on either name fails with ErrRepoRenaming until
-//	   the flip. A push racing the rename therefore FAILS CLEANLY — its
-//	   client retries under the settled name — instead of landing a
-//	   confirmed-but-invisible write under the name about to die.
-//	2. the move itself, then the registry flip, which lifts the fence in
-//	   the same transaction.
+//  1. BeginRename installs the fence at the metadata authority: every
+//     mutating operation on either name fails with ErrRepoRenaming until
+//     the flip. A push racing the rename therefore FAILS CLEANLY — its
+//     client retries under the settled name — instead of landing a
+//     confirmed-but-invisible write under the name about to die.
 //
-//	hashed addressing: the registry flip alone — the storage key derives
-//	 from the immutable storage id and never moves. The fence still applies:
-//	 a registration under the old name must not commit after the flip.
-//	named addressing:  every storage location moves (idempotent — re-running
-//	 after a partial failure only hits laggards), the registry flips LAST,
-//	 so the data is never behind the name it is looked up by.
+//  2. the move itself, then the registry flip, which lifts the fence in
+//     the same transaction.
+//
+//     hashed addressing: the registry flip alone — the storage key derives
+//     from the immutable storage id and never moves. The fence still applies:
+//     a registration under the old name must not commit after the flip.
+//     named addressing:  every storage location moves (idempotent — re-running
+//     after a partial failure only hits laggards), the registry flips LAST,
+//     so the data is never behind the name it is looked up by.
 //
 // Crash between phases leaves the fence standing: the repo rejects writes
 // until the rename is re-run (idempotent) or aborted — liveness for the
