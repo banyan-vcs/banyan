@@ -94,11 +94,17 @@ type ObjectService struct {
 	// dies (docs/operations/performance.md §3b 发现⑤). Not a tuning
 	// recommendation — the cap bounds the merge's working set.
 	ConsolidateMaxBytes int64
-	consolMu            sync.Mutex
-	consolIn            map[string]bool
-	consolSched         map[string]bool // a scheduler goroutine is alive for the repo
-	consolAgain         map[string]bool // a flush arrived while it ran → rerun once
-	serveHold           map[string]int  // in-flight clone-shaped serves (consolidate quiescence)
+	// IndexTreesMaxBytes bounds the per-repo decoded-tree cache (0 = the
+	// 512MiB default). The unbounded original retained every tree ever
+	// decoded for the process lifetime — git.git's walks held ~4.6GB of
+	// entry tables (发现⑤'s heap profile). Deployments with RAM to spare
+	// can raise it; correctness never depends on the cache.
+	IndexTreesMaxBytes int64
+	consolMu           sync.Mutex
+	consolIn           map[string]bool
+	consolSched        map[string]bool // a scheduler goroutine is alive for the repo
+	consolAgain        map[string]bool // a flush arrived while it ran → rerun once
+	serveHold          map[string]int  // in-flight clone-shaped serves (consolidate quiescence)
 
 	// Clone-shaped response pack cache (docs/operations/performance.md P2-2, B9): a subtree (or
 	// woven-root) clone's closure never equals a stored pack — projection and

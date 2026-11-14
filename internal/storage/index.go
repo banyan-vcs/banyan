@@ -35,6 +35,14 @@ type CommitInfo struct {
 type repoIndex struct {
 	commits map[model.OID]*CommitInfo
 	trees   map[model.OID][]model.TreeEntry
+	// trees is byte-bounded (idxTreesMaxBytes, FIFO eviction below): the
+	// unbounded original held every tree ever decoded for the process
+	// lifetime — git.git's closure walks retained ~4.6GB of entry tables
+	// (发现⑤'s heap profile: 79% of a 9GB heap in DecodeTree). Misses after
+	// eviction re-read through Raw, the authoritative path.
+	treeFIFO  []model.OID
+	treeSize  map[model.OID]int64
+	treeBytes int64
 	// gen memoizes generation numbers (0 = not yet computed). Exact under the
 	// complete-objects invariant: a value is written only after every known
 	// ancestor resolved; missing objects are never cached. Ancestors that
@@ -91,10 +99,71 @@ func (s *ObjectService) buildIndex(repo string, dp *DecodedPack) {
 		if _, done := ri.trees[oid]; done {
 			continue
 		}
-		if t, err := model.DecodeTree(raw); err == nil {
-			ri.trees[oid] = t.Entries
+		s.indexTreeLocked(repo, ri, oid, raw)
+	}
+}
+
+// idxTreesMaxBytes bounds one repo's decoded-tree cache. 512MiB holds a
+// go-git-class repo's whole tree set; git.git-class repos cycle through the
+// FIFO (walks re-read evicted trees through Raw — sequential pack reads,
+// not the random per-object pattern that made un-indexed walks crawl).
+const idxTreesMaxBytes = 512 << 20
+
+// idxTreeBytes estimates one cached tree's retained bytes: the decoded
+// entries' name/mode/target strings track the encoded payload closely.
+func idxTreeBytes(raw []byte) int64 { return int64(len(raw)) + 64 }
+
+// indexTree decodes and caches one tree under the byte cap (FIFO eviction;
+// the just-inserted tree never evicts itself). Returns the entries and
+// whether the decode succeeded. idxMu must NOT be held — takes it once.
+func (s *ObjectService) indexTree(repo string, oid model.OID, raw []byte) ([]model.TreeEntry, bool) {
+	s.idxMu.Lock()
+	defer s.idxMu.Unlock()
+	ri := s.idx[repo]
+	if ri == nil {
+		ri = newRepoIndex()
+		s.idx[repo] = ri
+	}
+	if e, ok := ri.trees[oid]; ok {
+		return e, true
+	}
+	s.indexTreeLocked(repo, ri, oid, raw)
+	e, ok := ri.trees[oid]
+	return e, ok
+}
+
+// indexTreeLocked is indexTree with the caller holding idxMu and ri.
+func (s *ObjectService) indexTreeLocked(repo string, ri *repoIndex, oid model.OID, raw []byte) {
+	if _, ok := ri.trees[oid]; ok {
+		return
+	}
+	t, err := model.DecodeTree(raw)
+	if err != nil {
+		return
+	}
+	budget := s.treesCap()
+	sz := idxTreeBytes(raw)
+	ri.trees[oid] = t.Entries
+	ri.treeSize[oid] = sz
+	ri.treeBytes += sz
+	ri.treeFIFO = append(ri.treeFIFO, oid)
+	for ri.treeBytes > budget && len(ri.treeFIFO) > 1 {
+		old := ri.treeFIFO[0]
+		ri.treeFIFO = ri.treeFIFO[1:]
+		if _, ok := ri.trees[old]; ok {
+			delete(ri.trees, old)
+			ri.treeBytes -= ri.treeSize[old]
+			delete(ri.treeSize, old)
 		}
 	}
+}
+
+// treesCap resolves the tree-cache byte budget (0 = default).
+func (s *ObjectService) treesCap() int64 {
+	if s.IndexTreesMaxBytes > 0 {
+		return s.IndexTreesMaxBytes
+	}
+	return idxTreesMaxBytes
 }
 
 // IndexTypeOf answers an object's type from the in-memory views only — the
@@ -192,16 +261,13 @@ func (s *ObjectService) TreeEntries(repo string, oid model.OID) ([]model.TreeEnt
 	if t != model.TreeType {
 		return nil, model.ErrObjectNotFound
 	}
-	tree, err := model.DecodeTree(raw)
-	if err != nil {
-		return nil, err
+	if entries, ok := s.indexTree(repo, oid, raw); ok { // cached under the byte cap
+		return entries, nil
 	}
-	s.idxMu.Lock()
-	if s.idx[repo] == nil {
-		s.idx[repo] = newRepoIndex()
+	tree, derr := model.DecodeTree(raw) // surface the specific decode failure
+	if derr != nil {
+		return nil, derr
 	}
-	s.idx[repo].trees[oid] = tree.Entries
-	s.idxMu.Unlock()
 	return tree.Entries, nil
 }
 
@@ -212,6 +278,7 @@ func newRepoIndex() *repoIndex {
 	return &repoIndex{
 		commits:     map[model.OID]*CommitInfo{},
 		trees:       map[model.OID][]model.TreeEntry{},
+		treeSize:    map[model.OID]int64{},
 		gen:         map[model.OID]uint32{},
 		genTainted:  map[model.OID]bool{},
 		treeCommits: map[model.OID][]model.OID{},
