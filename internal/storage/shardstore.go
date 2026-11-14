@@ -452,6 +452,63 @@ func (s *ObjectService) ServeRelease(repo string) {
 	s.scheduleConsolidate(repo)
 }
 
+// ConsolidateIfIdle merges the repo's pending packs INLINE when the caller
+// is the only serve in flight and more than one pack exists — the missing
+// link between quiescence and the single-pack rung (发现⑤ follow-up): a
+// push right before a clone leaves [mega pack, push pack, synth pack], the
+// clone's own hold defers the background merge, SinglePackCover misses,
+// and the whole serve falls into the un-indexed walk (20+ minutes at
+// git.git scale, measured). The loop CONVERGES to one pack (or gives up on
+// a genuinely unmergeable shape): each append-merge rewrites the dominant
+// pack whole — tens of seconds at 444MiB — and the advertisement's own
+// materialization may flush another synth pack mid-wait, so a fixed short
+// busy-wait raced exactly that at flagship scale. Budget: 5 minutes —
+// still an order under the walk it prevents. No-op unless AutoConsolidate
+// is on (tests stay deterministic).
+func (s *ObjectService) ConsolidateIfIdle(ctx context.Context, repo string) {
+	if !s.AutoConsolidate {
+		return
+	}
+	s.consolMu.Lock()
+	alone := s.serveHold[repo] <= 1
+	s.consolMu.Unlock()
+	if !alone {
+		return
+	}
+	start := time.Now()
+	waited := false
+	deadline := start.Add(5 * time.Minute)
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		packs, err := s.Meta.ListPacks(ctx, repo)
+		if err != nil || len(packs) < 2 {
+			break
+		}
+		res, cerr := s.Consolidate(ctx, repo)
+		if errors.Is(cerr, errConsolidateBusy) {
+			waited = true
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		if cerr != nil {
+			log.Printf("consolidate %s (inline before serve): %v", repo, cerr)
+			break
+		}
+		if res.PacksAfter >= res.PacksBefore {
+			break // nothing mergeable (cap/shape): the ladder proceeds as-is
+		}
+	}
+	// The inline rounds folded whatever a deferred trigger was waiting for.
+	s.consolMu.Lock()
+	delete(s.consolAgain, repo)
+	s.consolMu.Unlock()
+	if waited {
+		log.Printf("consolidate %s (inline before serve): converged in %s behind a running round", repo, time.Since(start).Round(time.Millisecond))
+	}
+}
+
 func (s *ObjectService) persistSynthEach(repo string, buf map[model.OID]synthObject) error {
 	var firstErr error
 	for oid, so := range buf {

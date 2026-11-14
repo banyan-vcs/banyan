@@ -559,6 +559,10 @@ func (s *Server) streamPackVerbatim(ctx context.Context, out io.Writer, vr Virtu
 // index misses over the streamed pack).
 func (s *Server) tryExactPackStream(ctx context.Context, out io.Writer, vr VirtualRepo, wants []model.OID, shaped bool) (string, bool) {
 	if shaped {
+		// A push right before this clone leaves the repo multi-pack with
+		// the background merge deferred by our own hold: fold it inline
+		// first when we are the only serve (seconds vs the un-indexed walk).
+		s.Objects.ConsolidateIfIdle(ctx, vr.Repo)
 		if packOID, ok := s.Objects.SinglePackCover(ctx, vr.Repo, wants); ok {
 			if rung, ok := s.streamPackVerbatim(ctx, out, vr, packOID, "single-pack-stream"); ok {
 				return rung, true

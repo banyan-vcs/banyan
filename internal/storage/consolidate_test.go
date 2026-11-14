@@ -188,6 +188,62 @@ func TestConsolidateQuiescence(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond, "the deferred merge runs when the last serve exits")
 }
 
+// ConsolidateIfIdle: the link between quiescence and the single-pack rung —
+// a clone arriving on a multi-pack repo (a push just landed; the clone's
+// own hold defers the background merge) folds the packs inline when it is
+// the only serve, so SinglePackCover hits instead of the un-indexed walk.
+// A second in-flight serve or AutoConsolidate off must leave packs alone.
+func TestConsolidateIfIdle(t *testing.T) {
+	ctx := context.Background()
+	newSvc := func(t *testing.T) (*ObjectService, *meta.MemoryMetaStore) {
+		ms := meta.NewMemoryMetaStore()
+		require.NoError(t, ms.CreateRepo(ctx, "r", model.SHA1))
+		svc := NewObjectService(ms, NewLocalShardStore(t.TempDir()), []Node{{ID: "n1", Local: true}}, model.SHA1)
+		for _, tag := range []string{"one", "two"} {
+			m := map[model.OID][]byte{}
+			for i := 0; i < 5; i++ {
+				b := []byte(repeatN(tag, 64) + string(rune('0'+i)))
+				m[model.ObjectOID(model.BlobType, b, model.SHA1)] = b
+			}
+			var buf testBuffer
+			require.NoError(t, EncodePack(&buf, m, nil, nil, nil))
+			_, err := svc.IngestPack(ctx, "r", buf.Bytes())
+			require.NoError(t, err)
+		}
+		return svc, ms
+	}
+	packCount := func(ms *meta.MemoryMetaStore) int {
+		packs, err := ms.ListPacks(ctx, "r")
+		require.NoError(t, err)
+		return len(packs)
+	}
+
+	// The only serve, AutoConsolidate on: merges inline.
+	svc, ms := newSvc(t)
+	svc.AutoConsolidate = true
+	svc.ServeHold("r")
+	svc.ConsolidateIfIdle(ctx, "r")
+	assert.Equal(t, 1, packCount(ms), "the lone clone-shaped serve folds the packs before probing")
+	svc.ServeRelease("r")
+
+	// Another serve in flight: leave the packs alone (no swap under its walk).
+	svc, ms = newSvc(t)
+	svc.AutoConsolidate = true
+	svc.ServeHold("r")
+	svc.ServeHold("r")
+	svc.ConsolidateIfIdle(ctx, "r")
+	assert.Equal(t, 2, packCount(ms), "a second in-flight serve defers the inline merge")
+	svc.ServeRelease("r")
+	svc.ServeRelease("r")
+
+	// AutoConsolidate off: no-op (test determinism contract).
+	svc, ms = newSvc(t)
+	svc.ServeHold("r")
+	svc.ConsolidateIfIdle(ctx, "r")
+	assert.Equal(t, 2, packCount(ms), "opt-in only")
+	svc.ServeRelease("r")
+}
+
 func repeatN(s string, n int) string {
 	out := make([]byte, 0, len(s)*n)
 	for i := 0; i < n; i++ {
