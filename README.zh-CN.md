@@ -29,6 +29,20 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 
 **远景**：让代码存储成为像数据库一样**独立的基础设施层**——任何平台（GitLab / Gitea / 自建）、任何客户端（git CLI / IDE / CI / AI Agent）、任何规模（个人项目到企业 monorepo），都以标准协议访问同一个存储层。banyan 管"代码住在哪里、怎么高效取用"；协作流程归平台，组织与权限归企业——目录时间线把两者的边界对齐在同一粒度上。
 
+## 实测性能
+
+同机对真 `git http-backend`，直接在 **git.git 上实测**（8.5 万提交、
+2,031 refs、324 MiB packs）——方法与全表见
+[docs/operations/performance.md](docs/operations/performance.md) §3b：
+
+- **全量克隆：字节 1.13×，warm 耗时持平（0.99×）**——合笼单包 verbatim
+  直传，零枚举、零重编码。
+- **浅克隆：耗时 0.61× git**（字节 1.08×）。
+- **广告：2,031 refs 字节 0.99×**。
+- **子树克隆：真实仓上仅全量字节的 35%**——git 没有的形态。
+- **有界内存服务**：旗舰克隆峰值堆 2.4GB（6GB 软限下）；包服务窗口本身
+  恒定内存（72MiB 三包克隆峰值 12.3MiB，64MiB 软限集成测试钉住）。
+
 ## 架构
 
 <p align="center">
@@ -76,7 +90,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 浅克隆 | depth / deepen / unshallow |
 | tags 与任意 `refs/<ns>` 命名空间 | 原样存储与广告 |
 | push options | `-o` 选项段协商与解析 |
-| 高效传输 | serve 路径 delta 包；增量 fetch 真 thin pack——字节 0.87× git（[docs/operations/performance.md](docs/operations/performance.md) §3）；have 减除 |
+| 高效传输 | 合笼单包 verbatim 直传；增量 fetch delta + 真 thin pack——git.git 实测：全量克隆字节 1.13×、浅克隆耗时 0.61×（[docs/operations/performance.md](docs/operations/performance.md) §3b）；have 减除 |
 
 **目录锚定存储**——数据模型本身：
 
@@ -282,7 +296,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 | 文档 | 内容 |
 |---|---|
 | [docs/storage/ha.md](docs/storage/ha.md) | 高可用：一体化 vs 网关 + 集群、仓库级副本 |
-| [docs/operations/performance.md](docs/operations/performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门、实测报告（§3a） |
+| [docs/operations/performance.md](docs/operations/performance.md) | 性能方案：瓶颈清单、优化项、SLO 基准门、实测报告（§3a 合成种子；§3b 真实仓含 git.git） |
 | [docs/operations/docker-demo.md](docs/operations/docker-demo.md) | Docker demo 走查：授权、SSH、Web、集群栈指引 |
 | [docs/operations/testing.md](docs/operations/testing.md) | 集成测试矩阵 |
 | [docs/project/roadmap.md](docs/project/roadmap.md) | 里程碑与生产主轴 |

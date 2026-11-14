@@ -56,6 +56,22 @@ code lives and how it is served efficiently"; collaboration flows stay on
 the platforms, organization and permissions stay with the enterprise —
 directory timelines align both boundaries at the same granularity.
 
+## Measured performance
+
+Against a real `git http-backend` on the same machine, on **git.git itself**
+(85K commits, 2,031 refs, 324 MiB packs) — methodology and full tables in
+[docs/operations/performance.md](docs/operations/performance.md) §3b:
+
+- **Full clone: 1.13× git's bytes, warm wall time at parity (0.99×)** — the
+  consolidated single pack streams verbatim; no enumeration, no re-encode.
+- **Shallow clone: 0.61× git's wall time** (1.08× bytes).
+- **Advertisement: 0.99× git's bytes** for all 2,031 refs.
+- **Subtree clone: 35% of a full clone's bytes** on a real repository — a
+  shape git does not have.
+- **Constant-memory serving**: the flagship clone peaks at 2.4 GB heap under
+  a 6 GB soft limit, and the pack-serve window itself is bounded (12.3 MiB
+  peak for a 72 MiB three-pack clone, integration-tested under 64 MiB).
+
 ## Architecture
 
 <p align="center">
@@ -112,7 +128,7 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 | Shallow clone | depth / deepen / unshallow |
 | Tags and arbitrary `refs/<ns>` namespaces | stored and advertised verbatim |
 | Push options | `-o` negotiated and parsed |
-| Efficient transfers | serve-path delta packs; thin packs on incremental fetch — 0.87× git's bytes ([docs/operations/performance.md](docs/operations/performance.md) §3); have subtraction |
+| Efficient transfers | verbatim single-pack streams; delta + thin packs on incremental fetch — measured on git.git: full clone 1.13× bytes, shallow clone 0.61× wall ([docs/operations/performance.md](docs/operations/performance.md) §3b); have subtraction |
 
 **Directory-anchored storage** — the data model in action:
 
@@ -322,7 +338,7 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 | Doc | Contents |
 |---|---|
 | [docs/storage/ha.md](docs/storage/ha.md) | High availability: all-in-one vs gateway + cluster, per-repo replicas |
-| [docs/operations/performance.md](docs/operations/performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates, measured benchmark report (§3a) |
+| [docs/operations/performance.md](docs/operations/performance.md) | Performance plan: bottlenecks, optimizations, SLO bench gates, measured benchmark reports (§3a synthetic, §3b real repositories incl. git.git) |
 | [docs/operations/docker-demo.md](docs/operations/docker-demo.md) | Docker demo walkthrough: auth, ssh, web UI, cluster pointers |
 | [docs/operations/testing.md](docs/operations/testing.md) | Integration test matrix |
 | [docs/project/roadmap.md](docs/project/roadmap.md) | Milestones & the production-readiness track |
