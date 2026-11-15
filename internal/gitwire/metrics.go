@@ -73,16 +73,29 @@ func (w *statusWriter) Flush() {
 
 // observeGit wraps one git-protocol endpoint dispatch: inflight gauge up
 // for the duration, latency histogram, and the request counter classified
-// by response status.
+// by response status. All accounting runs in a defer — the mid-stream abort
+// discipline (abortStream / ReverseProxy-style ErrAbortHandler) unwinds
+// through this wrapper, and a handler-return-only decrement would leak the
+// gauge on every aborted request.
 func observeGit(op string, handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w, status: 200}
 		mGitInflight.With().Gauge().Add(1)
 		start := time.Now()
+		defer func() {
+			if p := recover(); p != nil {
+				// The request died mid-serve (an aborted stream counts as
+				// an error, whatever status was already on the wire) —
+				// account it, then let the panic keep unwinding so
+				// net/http still kills the connection.
+				sw.status = 599
+				defer panic(p)
+			}
+			mGitLatency.With("transport", "http", "op", op).Observe(time.Since(start).Seconds())
+			mGitRequests.With("transport", "http", "op", op, "result", resultClass(sw.status)).Inc()
+			mGitInflight.With().Gauge().Add(-1)
+		}()
 		handler(sw, r)
-		mGitLatency.With("transport", "http", "op", op).Observe(time.Since(start).Seconds())
-		mGitRequests.With("transport", "http", "op", op, "result", resultClass(sw.status)).Inc()
-		mGitInflight.With().Gauge().Add(-1)
 	}
 }
 

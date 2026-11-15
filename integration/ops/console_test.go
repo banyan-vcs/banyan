@@ -43,6 +43,7 @@ type consoleStack struct {
 	console  *httptest.Server
 	db       *console.DB
 	secret   []byte
+	objects  *storage.ObjectService
 	tokens   map[string]string // username → PAT
 	tokenIDs map[string]int64
 }
@@ -78,7 +79,7 @@ func newConsoleStack(t *testing.T) *consoleStack {
 	gw.Auth, api.Auth = up, up
 
 	return &consoleStack{
-		gateway: gateway, console: consoleSrv, db: db, secret: secret,
+		gateway: gateway, console: consoleSrv, db: db, secret: secret, objects: objects,
 		tokens: map[string]string{}, tokenIDs: map[string]int64{},
 	}
 }

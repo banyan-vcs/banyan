@@ -69,3 +69,72 @@ func TestProxyRelaysCompleteBody(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, len(body))
 }
+
+// TestProxyAbortsOnImmediateUpstreamDeath: headers arrive, then the gateway
+// connection dies before a single body byte (hijack + close — no panic
+// involved). The client must see a transport error: a cleanly ended empty
+// body would be a well-formed response promising nothing.
+func TestProxyAbortsOnImmediateUpstreamDeath(t *testing.T) {
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		if hj, ok := w.(http.Hijacker); ok {
+			conn, _, _ := hj.Hijack()
+			conn.Close()
+		}
+	}))
+	defer gw.Close()
+
+	s := &Server{Gateway: gw.URL, Secret: []byte("t-secret")}
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.proxyToGateway(w, r, "/r/p_test01.git/git-upload-pack", "", "alice")
+	}))
+	defer front.Close()
+
+	resp, err := http.Get(front.URL)
+	if err != nil {
+		// The abort fired before the response head was flushed: the client
+		// does not even get headers — an even earlier hard failure, the
+		// same contract.
+		return
+	}
+	defer resp.Body.Close()
+	_, rerr := io.Copy(io.Discard, resp.Body)
+	require.Error(t, rerr, "headers-then-death must surface as a transport error, not a clean empty body")
+}
+
+// TestProxyAPIAbortsOnUpstreamBreak: the management passthrough shares
+// streamCopy — an upstream API body that dies mid-stream must not reach the
+// SPA as a truncated-but-cleanly-ended JSON payload (the frontend would try
+// to parse it). Path carries no repo argument, so the nil DB is never
+// touched.
+func TestProxyAPIAbortsOnUpstreamBreak(t *testing.T) {
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"partial":`))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		panic("upstream API death mid-body")
+	}))
+	defer gw.Close()
+
+	s := &Server{Gateway: gw.URL, Secret: []byte("t-secret")}
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.proxyAPI(w, r)
+	}))
+	defer front.Close()
+
+	resp, err := http.Get(front.URL + "/api/v1/status")
+	if err != nil {
+		// Killed before the head was flushed — same abort contract, earlier.
+		return
+	}
+	defer resp.Body.Close()
+	_, rerr := io.Copy(io.Discard, resp.Body)
+	require.Error(t, rerr, "a truncated API body must surface as a transport error, not clean JSON-looking output")
+}
