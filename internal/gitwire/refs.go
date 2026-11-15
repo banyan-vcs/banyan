@@ -221,8 +221,12 @@ func (s *Server) resolveSubtreeRefs(ctx context.Context, vr VirtualRepo, default
 }
 
 // bufWriter batches writes (the pkt stream is not flushed per record).
+// abort is non-nil only on HTTP sinks (newAbortBufWriter): a serve path
+// whose stream broke mid-copy uses it to kill the connection instead of
+// ending the response short (see abortStream).
 type bufWriter struct {
-	bw *bufio.Writer
+	bw   *bufio.Writer
+	abort func()
 }
 
 func newBufWriter(w io.Writer) *bufWriter {

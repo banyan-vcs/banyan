@@ -3,6 +3,7 @@ package gitwire
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -185,6 +186,38 @@ func (s *Server) Register(mux *http.ServeMux) {
 	// mutations so the next decision re-syncs snapshot v2 immediately
 	// (docs/web/console.md §5) instead of waiting out the sync TTL.
 	mux.HandleFunc("/internal/authz/refresh", s.handleAuthzRefresh)
+}
+
+// newAbortBufWriter is the HTTP sink flavor of newBufWriter: a serve path
+// whose stream broke mid-copy cannot end the response honestly — a clean
+// ending hands the client a truncated pack inside a well-formed response
+// (git reports "N bytes of body are still expected"; nothing on the server
+// side says why). abortStream on such a sink kills the connection instead,
+// so the client sees a hard, retryable transport error — the stdlib
+// ReverseProxy precedent (Go issue 23643). Non-HTTP sinks (SSH sessions,
+// gitaly stream frontends) keep plain newBufWriter: their session wrapper
+// ends the session its own way, and an ErrAbortHandler panic there would
+// take the process.
+func newAbortBufWriter(w http.ResponseWriter) *bufWriter {
+	b := newBufWriter(w)
+	b.abort = func() { panic(http.ErrAbortHandler) }
+	return b
+}
+
+// abortStream kills the connection when a mid-serve stream can no longer be
+// completed honestly. It walks the v1/v2 writer chain (the closure ladder
+// receives the bufWriter directly; the v2 packfile section wraps it in
+// sidebandWriter). Non-HTTP sinks abort to a no-op and the caller ends the
+// response its existing way.
+func abortStream(w io.Writer) {
+	switch v := w.(type) {
+	case *bufWriter:
+		if v.abort != nil {
+			v.abort()
+		}
+	case sidebandWriter:
+		abortStream(v.w)
+	}
 }
 
 // policyRefresher is implemented by upstream-backed auth services whose

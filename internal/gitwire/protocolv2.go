@@ -85,7 +85,7 @@ func (s *Server) serveUploadPackV2(w http.ResponseWriter, r *http.Request, vr Vi
 		return
 	}
 	br := bodyReader(r, 64*1024)
-	out := newBufWriter(w)
+	out := newAbortBufWriter(w)
 
 	s.serveV2Command(r.Context(), br, out, vr, id)
 	_ = out.Flush()

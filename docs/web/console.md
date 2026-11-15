@@ -37,7 +37,10 @@ fetch 限制），依据是从 console 同步的快照（§5）。规则只在 c
 网关跑同一抽象 + 同步的状态"的原则。
 
 代理纪律（T46 教训）：console 对 git 流量是**流式转发**
-（io.Copy 级，无整包缓冲），sideband/pack 逐块穿透。
+（io.Copy 级，无整包缓冲），sideband/pack 逐块穿透。上游中途断流
+（连接断、网关 handler panic）**拦断下游连接**——不以干净收尾转出
+短响应；客户端拿到可重试的传输错误，而非解析出截断 pack
+（ReverseProxy 于 Go issue 23643 的同一处置）。
 
 ## 2. 逻辑寻址与物理映射
 

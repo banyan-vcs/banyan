@@ -110,7 +110,7 @@ func (s *Server) serveUploadPack(w http.ResponseWriter, r *http.Request, vr Virt
 	}
 
 	br := bodyReader(r, 64*1024)
-	out := newBufWriter(w)
+	out := newAbortBufWriter(w)
 
 	st := &fetchReq{}
 	// Stateless HTTP negotiation (mirrors remote-curl.c / upload-pack.c get_common_commits):
@@ -539,6 +539,10 @@ func (s *Server) streamPackVerbatim(ctx context.Context, out io.Writer, vr Virtu
 	if _, cerr := io.CopyBuffer(out, rc, *bufp); cerr != nil {
 		log.Printf("upload-pack %s%s: %s %s broke mid-copy: %v", vr.Repo, vr.Sub, rung, packOID, cerr)
 		fetchExactPackStream.Add(1)
+		// Bytes are on the wire; ending here would dress the break as a
+		// complete response. HTTP kills the connection (abortStream); SSH
+		// ends the stream short as before.
+		abortStream(out)
 		return rung + " " + string(packOID) + " (broken)", true
 	}
 	fetchExactPackStream.Add(1)
@@ -811,6 +815,7 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 	if thin != nil && len(thin.bases) > 0 {
 		if err := storage.EncodePackThin(out, s.Objects.Algo, blobs, trees, commits, tags, thin.bases, thin.loadBase); err != nil {
 			log.Printf("upload-pack %s%s: thin encode: %v", vr.Repo, vr.Sub, err)
+			abortStream(out) // partial encode bytes may be on the wire — never dress them as a complete response
 			return "thin-error"
 		}
 		return "thin"
@@ -839,8 +844,11 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 			}
 			if n > 0 {
 				// Bytes are already on the wire: terminal, like any dropped
-				// response — falling through would append a second pack.
+				// response — falling through would append a second pack. HTTP
+				// kills the connection (a clean ending would dress the break
+				// as a complete response); SSH ends short as before.
 				log.Printf("upload-pack %s%s: exact-pack %s broke mid-copy: %v", vr.Repo, vr.Sub, packOID, cerr)
+				abortStream(out)
 				return "exact-pack-stream " + string(packOID) + " (broken)"
 			}
 			// Nothing written yet: the ladder below still can serve.
@@ -863,6 +871,10 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 		var buf bytes.Buffer
 		if err := serveObjectPack(&buf, blobs, trees, commits, tags, ofsDelta); err != nil {
 			log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
+			// A failed or partial encode must neither reach the wire as a
+			// clean-ended response nor enter the response cache.
+			abortStream(out)
+			return "encode-error"
 		}
 		if int64(len(buf.Bytes())) > s.respEntryMax() {
 			_, _ = out.Write(buf.Bytes())
@@ -874,6 +886,8 @@ func (s *Server) serveClosurePack(ctx context.Context, out io.Writer, vr Virtual
 	}
 	if err := serveObjectPack(out, blobs, trees, commits, tags, ofsDelta); err != nil {
 		log.Printf("upload-pack %s%s: encode: %v", vr.Repo, vr.Sub, err)
+		abortStream(out) // partial pack bytes may be on the wire — never dress them as a complete response
+		return "encode-error"
 	}
 	return "encode"
 }
