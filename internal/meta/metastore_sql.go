@@ -23,9 +23,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/model"
 
-	_ "github.com/glebarez/go-sqlite" // pure-Go SQLite driver (modernc engine), no cgo
-	"github.com/go-sql-driver/mysql"
-	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/glebarez/go-sqlite"  // pure-Go SQLite driver (modernc engine), no cgo
 	_ "github.com/jackc/pgx/v5/stdlib" // pure-Go PostgreSQL driver (database/sql)
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -36,34 +34,10 @@ const sqlChunk = 500 // rows per batched statement (safe under every driver's pa
 type sqlDialect struct {
 	name        string
 	driver      string
-	beginWrite  string // takes the connection's write transaction (SQLite: IMMEDIATE)
-	rowLock     string // appended to CAS selects on MVCC backends (" FOR UPDATE")
+	rowLock     string // appended to locking reads on the MVCC backends (" FOR UPDATE")
 	rebind      func(string) string
 	hasColumn   func(ctx context.Context, db *sql.DB, table, column string) (bool, error)
 	indexExists func(ctx context.Context, db *sql.DB, index string) (bool, error)
-	isUnique    func(error) bool
-}
-
-// insertIgnore renders an insert-that-tolerates-existing-rows from the
-// "(cols) VALUES(...)" tail shared by every backend.
-func (d sqlDialect) insertIgnore(table, tail string) string {
-	switch d.name {
-	case "sqlite":
-		return "INSERT OR IGNORE INTO " + table + tail
-	case "mysql":
-		return "INSERT IGNORE INTO " + table + tail
-	default: // postgres
-		return "INSERT INTO " + table + tail + " ON CONFLICT DO NOTHING"
-	}
-}
-
-// objectsUpsertSuffix re-points object rows at the registering pack (repack:
-// merged packs register while rows still name the old shards).
-func (d sqlDialect) objectsUpsertSuffix() string {
-	if d.name == "mysql" {
-		return " ON DUPLICATE KEY UPDATE pack_oid=VALUES(pack_oid), node_id=VALUES(node_id)"
-	}
-	return " ON CONFLICT(repo, oid) DO UPDATE SET pack_oid=excluded.pack_oid, node_id=excluded.node_id"
 }
 
 // rebindPG rewrites ? placeholders to $N outside single-quoted strings.
@@ -85,20 +59,6 @@ func rebindPG(q string) string {
 		}
 	}
 	return b.String()
-}
-
-func isUniqueSQLite(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
-}
-
-func isUniqueMySQL(err error) bool {
-	var me *mysql.MySQLError
-	return errors.As(err, &me) && me.Number == 1062
-}
-
-func isUniquePG(err error) bool {
-	var pe *pgconn.PgError
-	return errors.As(err, &pe) && pe.Code == "23505"
 }
 
 func hasColumnSQL(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
@@ -152,31 +112,25 @@ var (
 	sqliteDialect = sqlDialect{
 		name:        "sqlite",
 		driver:      "sqlite",
-		beginWrite:  "BEGIN IMMEDIATE",
 		rebind:      func(q string) string { return q },
 		hasColumn:   hasColumnSQL,
 		indexExists: indexExistsSQL,
-		isUnique:    isUniqueSQLite,
 	}
 	mysqlDialect = sqlDialect{
 		name:        "mysql",
 		driver:      "mysql",
-		beginWrite:  "BEGIN",
 		rowLock:     " FOR UPDATE",
 		rebind:      func(q string) string { return q },
 		hasColumn:   hasColumnMySQL,
 		indexExists: indexExistsMySQL,
-		isUnique:    isUniqueMySQL,
 	}
 	postgresDialect = sqlDialect{
 		name:        "postgres",
 		driver:      "pgx",
-		beginWrite:  "BEGIN",
 		rowLock:     " FOR UPDATE",
 		rebind:      rebindPG,
 		hasColumn:   hasColumnPG,
 		indexExists: indexExistsPG,
-		isUnique:    isUniquePG,
 	}
 )
 
@@ -418,53 +372,6 @@ type SQLMetaStore struct {
 // q rebinds placeholders through the dialect.
 func (s *SQLMetaStore) q(sql string) string { return s.d.rebind(sql) }
 
-// fenceHitTx is the in-transaction fence probe: run as the first statement
-// of a mutating transaction it takes a locking read (rowLock on the MVCC
-// backends; SQLite serializes writers wholesale), so a fence installed after
-// this probe cannot slip its flip in before COMMIT — and the flip's DELETE
-// of the fence row blocks until this transaction settles.
-func (s *SQLMetaStore) fenceHitTx(ctx context.Context, q queryer, names ...string) (bool, error) {
-	var one int
-	for _, n := range names {
-		err := q.QueryRowContext(ctx, s.q("SELECT 1 FROM rename_fence WHERE (frm=? OR dst=?) AND done=0"+s.d.rowLock), n, n).Scan(&one)
-		if err == nil {
-			return true, nil
-		}
-		if err != sql.ErrNoRows {
-			return false, err
-		}
-	}
-	return false, nil
-}
-
-// queryer is the shared surface of *sql.Tx, *sql.Conn and *sql.DB for the
-// fence probe.
-type queryer interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
-// fenceRejectTx returns ErrRepoRenaming when a fence covers any name.
-func (s *SQLMetaStore) fenceRejectTx(ctx context.Context, q queryer, names ...string) error {
-	hit, err := s.fenceHitTx(ctx, q, names...)
-	if err != nil {
-		return err
-	}
-	if hit {
-		if len(names) == 1 {
-			return fmt.Errorf("%w: %s", ErrRepoRenaming, names[0])
-		}
-		return fmt.Errorf("%w: %v", ErrRepoRenaming, names)
-	}
-	return nil
-}
-
-// fenceReject is the standalone probe for single-statement writers (config
-// rows); the check-to-commit gap is sub-millisecond, versus the fence's
-// minutes-long life covering a storage move.
-func (s *SQLMetaStore) fenceReject(ctx context.Context, names ...string) error {
-	return s.fenceRejectTx(ctx, s.db, names...)
-}
-
 // NewSQLMetaStore opens (creating if needed) the metadata database on the
 // given backend ("sqlite" | "mysql" | "postgres") and applies the schema.
 // SQLite expects a file path; MySQL/PostgreSQL expect a driver DSN (the
@@ -675,7 +582,7 @@ func firstLine(s string) string {
 func (s *SQLMetaStore) Close() error { return s.db.Close() }
 
 func (s *SQLMetaStore) CreateRepo(ctx context.Context, repo string, algo model.HashAlgo) error {
-	if err := s.fenceReject(ctx, repo); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), repo); err != nil {
 		return err
 	}
 	orm := s.orm.WithContext(ctx)
@@ -767,7 +674,7 @@ func (s *SQLMetaStore) GetRepo(ctx context.Context, repo string) (RepoInfo, erro
 }
 
 func (s *SQLMetaStore) SetForcePush(ctx context.Context, repo string, enabled bool) error {
-	if err := s.fenceReject(ctx, repo); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), repo); err != nil {
 		return err
 	}
 	res := s.orm.WithContext(ctx).Model(&repoRow{}).
@@ -782,7 +689,7 @@ func (s *SQLMetaStore) SetForcePush(ctx context.Context, repo string, enabled bo
 }
 
 func (s *SQLMetaStore) SetDefaultBranch(ctx context.Context, repo string, branch string) error {
-	if err := s.fenceReject(ctx, repo); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), repo); err != nil {
 		return err
 	}
 	// MySQL reports an unchanged UPDATE as 0 affected rows, so existence is
@@ -861,150 +768,123 @@ func boolInt(b bool) int {
 }
 
 func (s *SQLMetaStore) ListHooks(ctx context.Context, repo string) ([]HookInfo, error) {
-	rows, err := s.db.QueryContext(ctx, s.q(
-		"SELECT id, dir, events, url, secret, timeout_ms FROM hooks WHERE repo=? ORDER BY id"), repo)
-	if err != nil {
+	var rows []hookRow
+	if err := s.orm.WithContext(ctx).Where("repo = ?", repo).Order("id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []HookInfo
-	for rows.Next() {
-		var h HookInfo
-		var events string
-		if err := rows.Scan(&h.ID, &h.Dir, &events, &h.URL, &h.Secret, &h.TimeoutMS); err != nil {
-			return nil, err
-		}
-		h.Events = strings.Split(events, ",")
-		out = append(out, h)
+	out := make([]HookInfo, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, HookInfo{
+			ID: r.ID, Dir: r.Dir, Events: strings.Split(r.Events, ","),
+			URL: r.URL, Secret: r.Secret, TimeoutMS: r.TimeoutMS,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *SQLMetaStore) SetHook(ctx context.Context, repo string, h HookInfo) error {
 	if err := h.validate(); err != nil {
 		return err
 	}
-	if err := s.fenceReject(ctx, repo); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), repo); err != nil {
 		return err
 	}
-	var exists int
-	if err := s.db.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM repos WHERE name=?"), repo).Scan(&exists); err != nil {
-		return err
-	}
-	if exists == 0 {
+	var one int
+	switch err := s.orm.WithContext(ctx).Model(&repoRow{}).Select("1").
+		Where("name = ?", repo).Limit(1).Row().Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	case err != nil:
+		return err
 	}
-	tail := "(repo, id, dir, events, url, secret, timeout_ms) VALUES(?,?,?,?,?,?,?)"
-	var stmt string
-	switch s.d.name {
-	case "sqlite":
-		stmt = "INSERT OR REPLACE INTO hooks" + tail
-	case "mysql":
-		stmt = "REPLACE INTO hooks" + tail
-	default:
-		stmt = "INSERT INTO hooks" + tail +
-			" ON CONFLICT(repo, id) DO UPDATE SET dir=excluded.dir, events=excluded.events, url=excluded.url, secret=excluded.secret, timeout_ms=excluded.timeout_ms"
-	}
-	_, err := s.db.ExecContext(ctx, s.q(stmt),
-		repo, h.ID, h.Dir, strings.Join(h.Events, ","), h.URL, h.Secret, h.TimeoutMS)
-	return err
+	// Upsert by (repo, id) — the OnConflict form replaces the three
+	// per-dialect REPLACE spellings.
+	return s.orm.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "repo"}, {Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"dir", "events", "url", "secret", "timeout_ms"}),
+	}).Create(&hookRow{
+		Repo: repo, ID: h.ID, Dir: h.Dir, Events: strings.Join(h.Events, ","),
+		URL: h.URL, Secret: h.Secret, TimeoutMS: h.TimeoutMS,
+	}).Error
 }
 
 func (s *SQLMetaStore) DeleteHook(ctx context.Context, repo, id string) error {
-	if err := s.fenceReject(ctx, repo); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), repo); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM hooks WHERE repo=? AND id=?"), repo, id)
-	return err
+	return s.orm.WithContext(ctx).
+		Where("repo = ? AND id = ?", repo, id).Delete(&hookRow{}).Error
 }
 
 func (s *SQLMetaStore) SetRepoBlob(ctx context.Context, repo, key string, data []byte) error {
-	if err := s.fenceReject(ctx, repo); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), repo); err != nil {
 		return err
 	}
-	suffix := " ON CONFLICT(repo, blob_key) DO UPDATE SET data=excluded.data"
-	if s.d.name == "mysql" {
-		suffix = " ON DUPLICATE KEY UPDATE data=VALUES(data)"
-	}
-	_, err := s.db.ExecContext(ctx,
-		s.q("INSERT INTO repo_blobs(repo, blob_key, data) VALUES(?,?,?)"+suffix), repo, key, data)
-	return err
+	return s.orm.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "repo"}, {Name: "blob_key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"data"}),
+	}).Create(&repoBlobRow{Repo: repo, BlobKey: key, Data: data}).Error
 }
 
 func (s *SQLMetaStore) GetRepoBlob(ctx context.Context, repo, key string) ([]byte, bool, error) {
-	var data []byte
-	err := s.db.QueryRowContext(ctx,
-		s.q("SELECT data FROM repo_blobs WHERE repo=? AND blob_key=?"), repo, key).Scan(&data)
-	if err == sql.ErrNoRows {
+	var row repoBlobRow
+	err := s.orm.WithContext(ctx).
+		Where("repo = ? AND blob_key = ?", repo, key).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	return data, true, nil
+	return row.Data, true, nil
 }
 
 func (s *SQLMetaStore) LinkPool(ctx context.Context, member, pool string, upstream bool) error {
-	if err := s.fenceReject(ctx, member, pool); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), member, pool); err != nil {
 		return err
 	}
-	suffix := " ON CONFLICT(member) DO UPDATE SET pool=excluded.pool, upstream=excluded.upstream"
-	if s.d.name == "mysql" {
-		suffix = " ON DUPLICATE KEY UPDATE pool=VALUES(pool), upstream=VALUES(upstream)"
-	}
-	_, err := s.db.ExecContext(ctx,
-		s.q("INSERT INTO repo_pools(member, pool, upstream) VALUES(?,?,?)"+suffix),
-		member, pool, boolInt(upstream))
-	return err
+	return s.orm.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "member"}},
+		DoUpdates: clause.AssignmentColumns([]string{"pool", "upstream"}),
+	}).Create(&repoPoolRow{Member: member, Pool: pool, Upstream: boolInt(upstream)}).Error
 }
 
 func (s *SQLMetaStore) UnlinkPool(ctx context.Context, member string) error {
-	if err := s.fenceReject(ctx, member); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), member); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM repo_pools WHERE member=?"), member)
-	return err
+	return s.orm.WithContext(ctx).Where("member = ?", member).Delete(&repoPoolRow{}).Error
 }
 
 func (s *SQLMetaStore) PoolOf(ctx context.Context, member string) (string, bool, error) {
-	var pool string
-	err := s.db.QueryRowContext(ctx,
-		s.q("SELECT pool FROM repo_pools WHERE member=?"), member).Scan(&pool)
-	if err == sql.ErrNoRows {
+	var row repoPoolRow
+	err := s.orm.WithContext(ctx).Where("member = ?", member).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", false, nil
 	}
 	if err != nil {
 		return "", false, err
 	}
-	return pool, true, nil
+	return row.Pool, true, nil
 }
 
 func (s *SQLMetaStore) ListPoolMembers(ctx context.Context) ([]PoolInfo, error) {
-	rows, err := s.db.QueryContext(ctx,
-		s.q("SELECT member, pool, upstream FROM repo_pools ORDER BY member"))
-	if err != nil {
+	var rows []repoPoolRow
+	if err := s.orm.WithContext(ctx).Order("member").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []PoolInfo
-	for rows.Next() {
-		var p PoolInfo
-		var upstream int
-		if err := rows.Scan(&p.Member, &p.Pool, &upstream); err != nil {
-			return nil, err
-		}
-		p.Upstream = upstream != 0
-		out = append(out, p)
+	out := make([]PoolInfo, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, PoolInfo{Member: r.Member, Pool: r.Pool, Upstream: r.Upstream != 0})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *SQLMetaStore) DeletePoolRecords(ctx context.Context, pool string) error {
-	if err := s.fenceReject(ctx, pool); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), pool); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM repo_pools WHERE pool=?"), pool)
-	return err
+	return s.orm.WithContext(ctx).Where("pool = ?", pool).Delete(&repoPoolRow{}).Error
 }
 
 func (s *SQLMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
@@ -1509,6 +1389,5 @@ func (s *SQLMetaStore) Backup(path string) error {
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("meta backup: %s already exists", path)
 	}
-	_, err := s.db.Exec("VACUUM INTO ?", path)
-	return err
+	return s.orm.Exec("VACUUM INTO ?", path).Error
 }

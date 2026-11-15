@@ -9,9 +9,13 @@ package meta
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+
+	"gorm.io/gorm/clause"
 )
 
 // SubtreeRule is one directory-granular access rule: fetch AND push of the
@@ -117,59 +121,45 @@ func (m *MemoryMetaStore) DeleteSubtreeRule(_ context.Context, repo, path string
 // --- SQL implementation (sqlite / mysql / postgres share it) ---
 
 func (s *SQLMetaStore) SubtreeRules(ctx context.Context, repo string) ([]SubtreeRule, error) {
-	rows, err := s.db.QueryContext(ctx, s.q(
-		"SELECT path, users FROM subtree_rules WHERE repo=? ORDER BY path"), repo)
-	if err != nil {
+	var rows []subtreeRuleRow
+	if err := s.orm.WithContext(ctx).Where("repo = ?", repo).Order("path").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []SubtreeRule
-	for rows.Next() {
-		var r SubtreeRule
-		var users string
-		if err := rows.Scan(&r.Path, &users); err != nil {
-			return nil, err
-		}
-		r.Users = strings.Split(users, ",")
-		out = append(out, r)
+	out := make([]SubtreeRule, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SubtreeRule{Path: r.Path, Users: strings.Split(r.Users, ",")})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *SQLMetaStore) SetSubtreeRule(ctx context.Context, repo string, rule SubtreeRule) error {
 	if err := rule.Valid(); err != nil {
 		return err
 	}
-	if err := s.fenceReject(ctx, repo); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), repo); err != nil {
 		return err
 	}
-	var exists int
-	if err := s.db.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM repos WHERE name=?"), repo).Scan(&exists); err != nil {
-		return err
-	}
-	if exists == 0 {
+	var one int
+	switch err := s.orm.WithContext(ctx).Model(&repoRow{}).Select("1").
+		Where("name = ?", repo).Limit(1).Row().Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	case err != nil:
+		return err
 	}
 	sort.Strings(rule.Users)
-	tail := "(repo, path, users) VALUES(?,?,?)"
-	var stmt string
-	switch s.d.name {
-	case "sqlite":
-		stmt = "INSERT OR REPLACE INTO subtree_rules" + tail
-	case "mysql":
-		stmt = "REPLACE INTO subtree_rules" + tail
-	default:
-		stmt = "INSERT INTO subtree_rules" + tail +
-			" ON CONFLICT(repo, path) DO UPDATE SET users=excluded.users"
-	}
-	_, err := s.db.ExecContext(ctx, s.q(stmt), repo, rule.Path, strings.Join(rule.Users, ","))
-	return err
+	// Upsert by (repo, path) — the OnConflict form replaces the three
+	// per-dialect REPLACE spellings.
+	return s.orm.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "repo"}, {Name: "path"}},
+		DoUpdates: clause.AssignmentColumns([]string{"users"}),
+	}).Create(&subtreeRuleRow{Repo: repo, Path: rule.Path, Users: strings.Join(rule.Users, ",")}).Error
 }
 
 func (s *SQLMetaStore) DeleteSubtreeRule(ctx context.Context, repo, path string) error {
-	if err := s.fenceReject(ctx, repo); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), repo); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM subtree_rules WHERE repo=? AND path=?"), repo, path)
-	return err
+	return s.orm.WithContext(ctx).
+		Where("repo = ? AND path = ?", repo, path).Delete(&subtreeRuleRow{}).Error
 }

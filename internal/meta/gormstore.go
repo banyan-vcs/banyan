@@ -149,6 +149,13 @@ type tokenRow struct {
 
 func (tokenRow) TableName() string { return "tokens" }
 
+func (r tokenRow) info() TokenInfo {
+	return TokenInfo{
+		Hash: r.TokenHash, User: r.Owner, Name: r.Name, Scope: r.Scope,
+		Expires: r.ExpiresAt, Revoked: r.Revoked != 0, Created: r.CreatedAt,
+	}
+}
+
 type subtreeRuleRow struct {
 	Repo  string `gorm:"primaryKey"`
 	Path  string `gorm:"primaryKey"`

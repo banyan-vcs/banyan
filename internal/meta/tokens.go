@@ -12,7 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
+	"gorm.io/gorm"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -162,69 +162,56 @@ func (s *SQLMetaStore) PutToken(ctx context.Context, t TokenInfo) error {
 	if err := t.Valid(); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, s.q(
-		"INSERT INTO tokens(token_hash, owner, name, scope, expires_at, revoked, created_at) VALUES(?,?,?,?,?,?,?)"),
-		t.Hash, t.User, t.Name, t.Scope, t.Expires, boolInt(t.Revoked), t.Created)
-	if s.d.isUnique(err) {
+	err := s.orm.WithContext(ctx).Create(&tokenRow{
+		TokenHash: t.Hash, Owner: t.User, Name: t.Name, Scope: t.Scope,
+		ExpiresAt: t.Expires, Revoked: boolInt(t.Revoked), CreatedAt: t.Created,
+	}).Error
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return fmt.Errorf("token hash already exists")
 	}
 	return err
 }
 
 func (s *SQLMetaStore) TokenByHash(ctx context.Context, hash string) (TokenInfo, error) {
-	var t TokenInfo
-	var revoked int
-	err := s.db.QueryRowContext(ctx, s.q(
-		"SELECT token_hash, owner, name, scope, expires_at, revoked, created_at FROM tokens WHERE token_hash=?"), hash).
-		Scan(&t.Hash, &t.User, &t.Name, &t.Scope, &t.Expires, &revoked, &t.Created)
-	if errors.Is(err, sql.ErrNoRows) {
+	var row tokenRow
+	err := s.orm.WithContext(ctx).Where("token_hash = ?", hash).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return TokenInfo{}, fmt.Errorf("%w: %s", ErrTokenUnknown, hash)
 	}
 	if err != nil {
 		return TokenInfo{}, err
 	}
-	t.Revoked = revoked != 0
-	return t, nil
+	return row.info(), nil
 }
 
 func (s *SQLMetaStore) ListTokens(ctx context.Context, user string) ([]TokenInfo, error) {
-	q := "SELECT token_hash, owner, name, scope, expires_at, revoked, created_at FROM tokens"
-	args := []any{}
+	q := s.orm.WithContext(ctx).Model(&tokenRow{})
 	if user != "" {
-		q += " WHERE owner=?"
-		args = append(args, user)
+		q = q.Where("owner = ?", user)
 	}
-	q += " ORDER BY created_at, token_hash"
-	rows, err := s.db.QueryContext(ctx, s.q(q), args...)
-	if err != nil {
+	var rows []tokenRow
+	if err := q.Order("created_at, token_hash").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []TokenInfo
-	for rows.Next() {
-		var t TokenInfo
-		var revoked int
-		if err := rows.Scan(&t.Hash, &t.User, &t.Name, &t.Scope, &t.Expires, &revoked, &t.Created); err != nil {
-			return nil, err
-		}
-		t.Revoked = revoked != 0
-		out = append(out, t)
+	out := make([]TokenInfo, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.info())
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *SQLMetaStore) RevokeToken(ctx context.Context, hash string) error {
-	_, err := s.db.ExecContext(ctx, s.q("UPDATE tokens SET revoked=1 WHERE token_hash=?"), hash)
-	return err
+	return s.orm.WithContext(ctx).Model(&tokenRow{}).
+		Where("token_hash = ?", hash).Update("revoked", 1).Error
 }
 
 func (s *SQLMetaStore) DeleteExpiredTokens(ctx context.Context, now int64) (int64, error) {
-	res, err := s.db.ExecContext(ctx, s.q("DELETE FROM tokens WHERE expires_at != 0 AND expires_at < ?"), now)
-	if err != nil {
-		return 0, err
+	res := s.orm.WithContext(ctx).
+		Where("expires_at != 0 AND expires_at < ?", now).Delete(&tokenRow{})
+	if res.Error != nil {
+		return 0, res.Error
 	}
-	n, _ := res.RowsAffected()
-	return n, nil
+	return res.RowsAffected, nil
 }
 
 // HashToken is the at-rest form of a token plaintext (sha256 hex).
