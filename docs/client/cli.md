@@ -25,7 +25,7 @@ API 直取内容寻址对象；git 客户端走 wire pack——**同一服务端
   cache/objects # 内容寻址 blob 缓存（LRU 上界，可随时清）
 工作区 = 普通目录，无 .git，无本地历史
 
-2026-10-25 review 复核（T22c）：状态模型确认**无全局仓库配置**——一切工作区状态在 `.banyan/`（config.json + manifest.json + 可清缓存；磁盘足迹 KB 级，比 .git 轻一个量级），无 ~/.banyan 全局注册表（`BANYAN_SERVER` 环境变量仅为无工作区时 `repo ls` 的服务器地址回退）。补齐 .git 同款语义：**向上工作区发现**——任意子目录调用命令都会沿目录树向上找到 `.banyan/config.json` 锚点，子目录 status/commit 作用于整个工作区（与 git 子目录行为一致）；工作区之外报明确错误（exit 2）。
+2026-10-25 review 复核（T22c）：状态模型确认**无全局仓库配置**——一切工作区状态在 `.banyan/`（config.json + manifest.json + 可清缓存；磁盘足迹 KB 级，比 .git 轻一个量级），全局仅有登录凭证表（`~/conf/banyan.yaml`：多主机 + 默认主机，§4.5a——工作区之外的唯一状态），`BANYAN_SERVER` 是临时覆盖、default_host 是链尾回退。补齐 .git 同款语义：**向上工作区发现**——任意子目录调用命令都会沿目录树向上找到 `.banyan/config.json` 锚点，子目录 status/commit 作用于整个工作区（与 git 子目录行为一致）；工作区之外报明确错误（exit 2）。
 ```
 
 - 薄工作区天然无历史：log/blame/diff/show 永远问服务端，从不下载提交闭包；
@@ -184,11 +184,55 @@ CLI 是 banyan 自己的客户端，走**专用 API 车道**（`internal/cliprot
    用既有会话或 GitHub/GitLab OAuth 登录后点批准，短时会话经一次性授予中继
    回 CLI（5 分钟窗口、领取即焚）。此路径**不刷新**：过期重跑 `login`。
 
-凭证存 `~/.banyan/credentials.json`（0600，`BANYAN_HOME` 可迁移）；每个请求
+凭证存多主机配置 `~/conf/banyan.yaml`（0600，见 §4.5a）；每个请求
 带 `Authorization: Basic <user>:banyan_…`；`login --status` 查看状态；
 `logout` 丢弃本地凭证（服务端会话自然过期，管理员可吊销）。另：克隆 URL 的
 userinfo（`http://alice:demo@host/…`）现在直接作为 Basic 凭证生效（原先被
 丢弃）。
+
+### 4.5a. 多主机与默认主机（gh 式，2026-11-15 落地）
+
+私有化部署没有公网统一登录——每台 banyan 服务器是一座孤岛，凭证按**主机**
+记录在同一个 YAML（docker login 模型），其中一个被标记为默认：
+
+```yaml
+# ~/conf/banyan.yaml（--config <file> / BANYAN_CONFIG 可改路径；0600）
+default_host: http://banyan.corp:8080
+hosts:
+  http://banyan.corp:8080:
+    user: alice
+    token: banyan_…          # 12h 会话——永非永久 PAT
+    expires: 1763000000
+    method: ssh              # ssh 会话 401 静默续签
+    ssh: banyan.corp:8022
+  http://banyan.example.io: {user: bob, method: web}
+ssh_host_keys:               # SSH TOFU 主机指纹钉扎（变更即拒）
+  banyan.corp:8022: c3NoLWVkMjU1MTk…
+```
+
+- **server 解析链**：`参数 > 工作区 .banyan/config > BANYAN_SERVER > default_host`
+  ——`repo ls` 等无工作区命令走同一条链的尾部两级；
+- 首次 login 的主机自动成为 `default_host`（gh 同义）；切换显式走
+  `banyan host use <server>`，**无参时是编号菜单**（终端从多站点中选择，
+  空值/EOF 退化为提示语）；
+- `banyan host ls [--json]`：全部主机一览——默认 `*` 标记、user/method/
+  过期时刻/时钟状态；`login --status` 是它的探活版：逐台真发一次认证请求
+  （valid / rejected / EXPIRED / unreachable），显式给 server 时只报该台、
+  缺凭证 exit 1；
+- `logout` 无参且多主机时先选目标；被删的是默认主机则 default 置空
+  （**不静默改指**——下一次默认由用户显式 `host use`）；
+- 上一代 `~/.banyan/credentials.json` + `known_hosts.json` 首次加载自动
+  迁移（旧文件留置原地，其 12h 会话自行过期）。
+
+与 gh 的对照（语义对齐、命名对齐）：
+
+| gh | banyan |
+|---|---|
+| `gh auth login` | `banyan login [server]`（无参=已知主机菜单＋新地址项） |
+| `gh auth status` | `banyan login --status`（逐台网络探活） |
+| `gh auth switch` | `banyan host use [server]`（切换默认主机） |
+| `~/.config/gh/hosts.yml` | `~/conf/banyan.yaml`（`--config` / `BANYAN_CONFIG`） |
+| `GH_HOST` | `BANYAN_SERVER`（链位更高——临时覆盖，不改配置） |
 
 ## 5. 输出约定（Agent 友好）
 
