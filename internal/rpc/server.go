@@ -606,14 +606,21 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		// Repository creation for the management surface (docs/gateway/authorization.md sec.5, the
 		// web tier): the same registry the git-surface auto-create uses.
+		// Parent (docs/design/data-model.md §14) optionally nests the new repo under an
+		// existing one — organizational metadata only, names stay flat.
 		var req struct {
-			Name string `json:"name"`
+			Name   string `json:"name"`
+			Parent string `json:"parent"`
 		}
 		if !decodeBody(w, r, &req) {
 			return
 		}
 		if req.Name == "" || strings.Contains(req.Name, "/") {
 			writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "name required, single path segment"}})
+			return
+		}
+		if req.Parent == req.Name {
+			writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "a repo cannot be its own parent"}})
 			return
 		}
 		// A metadata-plane write: scoped credentials need write rank
@@ -627,7 +634,17 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 			writeServiceErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"name": req.Name})
+		// Link after create; a refused link (missing parent, over-deep chain)
+		// rolls the half-created repo back — creation stays all-or-nothing
+		// (the imports precedent).
+		if req.Parent != "" {
+			if err := s.Meta.SetRepoParent(r.Context(), req.Name, req.Parent); err != nil {
+				_ = s.Meta.DeleteRepo(r.Context(), req.Name)
+				writeServiceErr(w, err)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"name": req.Name, "parent": req.Parent})
 	default:
 		repos, err := s.Svc.ListRepos(r.Context())
 		if err != nil {
@@ -643,13 +660,42 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
-	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks" && parts[1] != "subtree-access") {
-		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access)"}})
+	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks" && parts[1] != "subtree-access" && parts[1] != "parent") {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access|parent)"}})
 		return
 	}
 	// Repo management is admin territory (docs/gateway/authorization.md §5); size stays a plain
 	// repo stat for any authenticated member.
 	if parts[1] != "size" && !s.requireAdmin(w, r, parts[0]) {
+		return
+	}
+	if parts[1] == "parent" {
+		// The hierarchy link (docs/design/data-model.md §14). Re-homing an existing repo is
+		// repo management — the outer requireAdmin gate covers it; cycle
+		// and depth validation live in the store.
+		switch r.Method {
+		case http.MethodGet:
+			info, err := s.Meta.GetRepo(r.Context(), parts[0])
+			if err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"repo": parts[0], "parent": info.Parent})
+		case http.MethodPut:
+			var req struct {
+				Parent string `json:"parent"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if err := s.Meta.SetRepoParent(r.Context(), parts[0], req.Parent); err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"repo": parts[0], "parent": req.Parent})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET or PUT"}})
+		}
 		return
 	}
 	if parts[1] == "hooks" {

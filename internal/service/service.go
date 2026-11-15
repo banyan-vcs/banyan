@@ -155,6 +155,9 @@ type RepoSummary struct {
 	ID            string `json:"id"`
 	DefaultBranch string `json:"defaultBranch"`
 	Algorithm     string `json:"algorithm"`
+	// Parent is the hierarchy link (docs/design/data-model.md §14): the parent repo's
+	// name, empty for a root — the web tree and `repo ls` group by it.
+	Parent string `json:"parent,omitempty"`
 }
 
 func (s *Service) ListRepos(ctx context.Context) ([]RepoSummary, error) {
@@ -168,7 +171,7 @@ func (s *Service) ListRepos(ctx context.Context) ([]RepoSummary, error) {
 		if r.Algo == model.SHA256 {
 			algo = "sha256"
 		}
-		out = append(out, RepoSummary{ID: r.ID, DefaultBranch: r.DefaultBranch, Algorithm: algo})
+		out = append(out, RepoSummary{ID: r.ID, DefaultBranch: r.DefaultBranch, Algorithm: algo, Parent: r.Parent})
 	}
 	return out, nil
 }
