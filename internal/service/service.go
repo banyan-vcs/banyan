@@ -70,6 +70,12 @@ func Translate(err error) (code string, data any) {
 		errors.Is(err, meta.ErrPackNotFound),
 		errors.Is(err, meta.ErrTimelineUnknown):
 		return "NOT_FOUND", nil
+	case errors.Is(err, meta.ErrRepoCycle),
+		errors.Is(err, meta.ErrRepoDepth):
+		// A refused hierarchy link is a client-input problem, not a server
+		// fault — the parent the caller picked loops or nests too deep
+		// (docs/design/data-model.md §14).
+		return "INVALID_ARG", nil
 	default:
 		var conflict *ErrSyncConflict
 		if errors.As(err, &conflict) {

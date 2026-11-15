@@ -195,7 +195,8 @@ func ddlSQLite() []string {
 	algo           INTEGER NOT NULL,
 	default_branch TEXT NOT NULL,
 	storage_id     TEXT NOT NULL DEFAULT '',
-	force_push     INTEGER NOT NULL DEFAULT 0
+	force_push     INTEGER NOT NULL DEFAULT 0,
+	parent         TEXT NOT NULL DEFAULT ''
 )`,
 		`CREATE TABLE IF NOT EXISTS timelines(
 	repo   TEXT NOT NULL,
@@ -265,7 +266,8 @@ func ddlMySQL() []string {
 	algo           INTEGER NOT NULL,
 	default_branch VARCHAR(120) NOT NULL,
 	storage_id     VARCHAR(64) NOT NULL DEFAULT '',
-	force_push     INTEGER NOT NULL DEFAULT 0
+	force_push     INTEGER NOT NULL DEFAULT 0,
+	parent         VARCHAR(190) NOT NULL DEFAULT ''
 )`,
 		`CREATE TABLE IF NOT EXISTS timelines(
 	repo   VARCHAR(190) NOT NULL,
@@ -334,7 +336,8 @@ func ddlPostgres() []string {
 	algo           INTEGER NOT NULL,
 	default_branch TEXT NOT NULL,
 	storage_id     TEXT NOT NULL DEFAULT '',
-	force_push     INTEGER NOT NULL DEFAULT 0
+	force_push     INTEGER NOT NULL DEFAULT 0,
+	parent         TEXT NOT NULL DEFAULT ''
 )`,
 		`CREATE TABLE IF NOT EXISTS timelines(
 	repo   TEXT NOT NULL,
@@ -518,6 +521,15 @@ func (s *SQLMetaStore) applySchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.migrateColumn(ctx, "repos", "force_push", "INTEGER NOT NULL DEFAULT 0", ""); err != nil {
+		return err
+	}
+	// The hierarchy link: MySQL can't DEFAULT a TEXT column, so the ALTER
+	// spells a VARCHAR like the schema (the column is repo names, not blobs).
+	parentType := "TEXT NOT NULL DEFAULT ''"
+	if s.d.name == "mysql" {
+		parentType = "VARCHAR(190) NOT NULL DEFAULT ''"
+	}
+	if err := s.migrateColumn(ctx, "repos", "parent", parentType, ""); err != nil {
 		return err
 	}
 	return s.migrateColumn(ctx, "rename_fence", "done", "INTEGER NOT NULL DEFAULT 0", "")
@@ -733,8 +745,8 @@ func (s *SQLMetaStore) GetRepo(ctx context.Context, repo string) (RepoInfo, erro
 	var algo int
 	var force int
 	err := s.db.QueryRowContext(ctx, s.q(
-		"SELECT name, algo, default_branch, storage_id, force_push FROM repos WHERE name=?"), repo).
-		Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID, &force)
+		"SELECT name, algo, default_branch, storage_id, force_push, parent FROM repos WHERE name=?"), repo).
+		Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID, &force, &info.Parent)
 	if err == sql.ErrNoRows {
 		return RepoInfo{}, fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
@@ -772,6 +784,51 @@ func (s *SQLMetaStore) SetDefaultBranch(ctx context.Context, repo string, branch
 	}
 	_, err := s.db.ExecContext(ctx, s.q("UPDATE repos SET default_branch=? WHERE name=?"), branch, repo)
 	return err
+}
+
+// SetRepoParent re-homes a repo in the hierarchy (docs/design/data-model.md §14). The
+// ancestor walk and the UPDATE share one transaction whose chain reads take
+// row locks on the MVCC backends: two opposite-direction links racing each
+// other deadlock on the row locks instead of committing a loop (one side
+// aborts with the error). SQLite serializes writers on the file lock, so a
+// deferred tx is equally safe there.
+func (s *SQLMetaStore) SetRepoParent(ctx context.Context, repo string, parent string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.fenceRejectTx(ctx, tx, repo); err != nil {
+		return err
+	}
+	var one int
+	if err := tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"+s.d.rowLock), repo).Scan(&one); err == sql.ErrNoRows {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	} else if err != nil {
+		return err
+	}
+	var walkErr error
+	if err := ValidateReparent(repo, parent, func(name string) (string, bool) {
+		var p string
+		switch err := tx.QueryRowContext(ctx, s.q("SELECT parent FROM repos WHERE name=?"+s.d.rowLock), name).Scan(&p); {
+		case err == nil:
+			return p, true
+		case errors.Is(err, sql.ErrNoRows):
+			return "", false
+		default:
+			walkErr = err // a real query failure must not read as "no such repo"
+			return "", false
+		}
+	}); err != nil {
+		if walkErr != nil {
+			return walkErr
+		}
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET parent=? WHERE name=?"), parent, repo); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func boolInt(b bool) int {
@@ -930,7 +987,7 @@ func (s *SQLMetaStore) DeletePoolRecords(ctx context.Context, pool string) error
 
 func (s *SQLMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 	rows, err := s.db.QueryContext(ctx, s.q(
-		"SELECT name, algo, default_branch, storage_id, force_push FROM repos ORDER BY name"))
+		"SELECT name, algo, default_branch, storage_id, force_push, parent FROM repos ORDER BY name"))
 	if err != nil {
 		return nil, err
 	}
@@ -940,7 +997,7 @@ func (s *SQLMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
 		var info RepoInfo
 		var algo int
 		var force int
-		if err := rows.Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID, &force); err != nil {
+		if err := rows.Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID, &force, &info.Parent); err != nil {
 			return nil, err
 		}
 		info.Algo = model.HashAlgo(algo)
@@ -980,6 +1037,11 @@ func (s *SQLMetaStore) RenameRepo(ctx context.Context, from, to string) error {
 	if _, err := tx.ExecContext(ctx, s.q("UPDATE repo_pools SET member=? WHERE member=?"), to, from); err != nil {
 		return err
 	}
+	// Children follow the renamed parent — the hierarchy link is name-keyed,
+	// and `to` was just confirmed absent, so no child can already point at it.
+	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET parent=? WHERE parent=?"), to, from); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET name=? WHERE name=?"), to, from); err != nil {
 		return err
 	}
@@ -1011,6 +1073,15 @@ func (s *SQLMetaStore) DeleteRepo(ctx context.Context, repo string) error {
 	if err := s.fenceRejectTx(ctx, tx, repo); err != nil {
 		return err
 	}
+	// Deleting a parent re-homes its children one level up (to the deleted
+	// repo's own parent) — directory semantics, the tree stays connected
+	// instead of sprouting roots that point at a vanished name. A missing
+	// repo keeps deletion idempotent: the deletes below are no-ops anyway.
+	orphanTo := ""
+	err = tx.QueryRowContext(ctx, s.q("SELECT parent FROM repos WHERE name=?"), repo).Scan(&orphanTo)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
 	for _, table := range []string{"objects", "pack_nodes", "packs", "timelines", "placement", "hooks", "repo_blobs", "subtree_rules"} {
 		if _, err := tx.ExecContext(ctx, s.q("DELETE FROM "+table+" WHERE repo=?"), repo); err != nil {
 			return err
@@ -1027,6 +1098,9 @@ func (s *SQLMetaStore) DeleteRepo(ctx context.Context, repo string) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM repos WHERE name=?"), repo); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET parent=? WHERE parent=?"), orphanTo, repo); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -521,3 +521,100 @@ func TestSQLiteBackupRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestRepoHierarchyConformance: the project-hierarchy link (docs/design/data-model.md §14)
+// across every backend — the validation matrix (missing repo, missing
+// parent, self, cycle, depth ceiling), the link riding on List/Get, and the
+// two structural invariants: a rename retargets children, a delete re-homes
+// orphans one level up.
+func TestRepoHierarchyConformance(t *testing.T) {
+	for name, o := range metaOpeners() {
+		t.Run(name, func(t *testing.T) {
+			m, done := o(t)
+			defer done()
+			ctx := context.Background()
+
+			// A three-level chain plus a detachable sibling.
+			for _, r := range []string{"root", "mid", "leaf", "solo"} {
+				if err := m.CreateRepo(ctx, r, model.SHA1); err != nil {
+					t.Fatalf("create %s: %v", r, err)
+				}
+			}
+			mustLink := func(repo, parent string) {
+				t.Helper()
+				if err := m.SetRepoParent(ctx, repo, parent); err != nil {
+					t.Fatalf("link %s under %s: %v", repo, parent, err)
+				}
+			}
+			mustLink("mid", "root")
+			mustLink("leaf", "mid")
+			if info, err := m.GetRepo(ctx, "leaf"); err != nil || info.Parent != "mid" {
+				t.Fatalf("get leaf = %+v, %v", info, err)
+			}
+
+			// Validation: the four refused links and a legal detach.
+			if err := m.SetRepoParent(ctx, "nope", "root"); !errors.Is(err, ErrRepoNotFound) {
+				t.Fatalf("missing repo = %v, want ErrRepoNotFound", err)
+			}
+			if err := m.SetRepoParent(ctx, "solo", "nope"); !errors.Is(err, ErrRepoNotFound) {
+				t.Fatalf("missing parent = %v, want ErrRepoNotFound", err)
+			}
+			err := m.SetRepoParent(ctx, "solo", "solo")
+			if !errors.Is(err, ErrRepoCycle) {
+				t.Fatalf("self link = %v, want ErrRepoCycle", err)
+			}
+			if err := m.SetRepoParent(ctx, "root", "leaf"); !errors.Is(err, ErrRepoCycle) {
+				t.Fatalf("ancestor under descendant = %v, want ErrRepoCycle", err)
+			}
+			mustLink("solo", "root") // a legal second child
+			mustLink("solo", "")     // detach back to a root
+
+			// Listing carries the link for every backend.
+			repos, err := m.ListRepos(ctx)
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			parents := map[string]string{}
+			for _, r := range repos {
+				parents[r.ID] = r.Parent
+			}
+			if parents["root"] != "" || parents["mid"] != "root" || parents["leaf"] != "mid" || parents["solo"] != "" {
+				t.Fatalf("listed parents = %v", parents)
+			}
+
+			// Depth ceiling: a chain of MaxRepoDepth repos stacks; one more
+			// is refused (d00 is the root, d%02d under d%02d…).
+			for i := 0; i <= MaxRepoDepth; i++ {
+				name := fmt.Sprintf("d%02d", i)
+				if err := m.CreateRepo(ctx, name, model.SHA1); err != nil {
+					t.Fatalf("create %s: %v", name, err)
+				}
+				if i == 0 {
+					continue
+				}
+				err := m.SetRepoParent(ctx, name, fmt.Sprintf("d%02d", i-1))
+				if i == MaxRepoDepth && !errors.Is(err, ErrRepoDepth) {
+					t.Fatalf("chain of %d must be refused, got %v", MaxRepoDepth+1, err)
+				} else if i < MaxRepoDepth && err != nil {
+					t.Fatalf("link d%02d: %v", i, err)
+				}
+			}
+
+			// Rename retargets children (the link is name-keyed).
+			if err := m.RenameRepo(ctx, "mid", "middle"); err != nil {
+				t.Fatalf("rename mid: %v", err)
+			}
+			if info, err := m.GetRepo(ctx, "leaf"); err != nil || info.Parent != "middle" {
+				t.Fatalf("child after rename = %+v, %v", info, err)
+			}
+
+			// Delete re-homes orphans one level up.
+			if err := m.DeleteRepo(ctx, "middle"); err != nil {
+				t.Fatalf("delete middle: %v", err)
+			}
+			if info, err := m.GetRepo(ctx, "leaf"); err != nil || info.Parent != "root" {
+				t.Fatalf("orphan after delete = %+v, %v", info, err)
+			}
+		})
+	}
+}

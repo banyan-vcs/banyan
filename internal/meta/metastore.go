@@ -153,6 +153,12 @@ type RepoRegistry interface {
 	// SetDefaultBranch changes the advertised HEAD symref target (gitaly
 	// CreateRepository default-branch semantics).
 	SetDefaultBranch(ctx context.Context, repo string, branch string) error
+	// SetRepoParent re-homes a repo in the project hierarchy (docs/design/data-model.md §14):
+	// parent "" detaches to a root, otherwise parent must exist and the
+	// link must neither cycle (repo at or above parent) nor push the chain
+	// past MaxRepoDepth levels. Pure registry metadata — names stay
+	// single-segment, so git URLs never change.
+	SetRepoParent(ctx context.Context, repo string, parent string) error
 }
 
 // PackRegistry is the central pack table: pack → replica nodes. Packs are
@@ -237,6 +243,11 @@ type RepoInfo struct {
 	// (default) keeps the subtree rollback guard; on, rewind-shaped subtree
 	// updates land and rebuild the woven views.
 	ForcePush bool `json:"force_push,omitempty"`
+	// Parent is the project-hierarchy link (docs/design/data-model.md §14): the parent
+	// repo's name, empty for a root. Organizational metadata only — a child
+	// is a full repository at its own single-segment name, not a namespaced
+	// path, so clone URLs and refnames are untouched by the tree.
+	Parent string `json:"parent,omitempty"`
 }
 
 // ErrNonFastForward mirrors git push non-fast-forward (docs/design/data-model.md §4.3).
@@ -256,7 +267,52 @@ var (
 	// disconnected repository. The name recycles when the renamed-to repo is
 	// deleted.
 	ErrRepoRenamedAway = fmt.Errorf("repo name retired by rename")
+	// ErrRepoCycle: the prospective parent link would loop (the repo sits at
+	// or above its own parent) — refused before the write.
+	ErrRepoCycle = fmt.Errorf("repo parent cycle")
+	// ErrRepoDepth: linking under that parent would push the chain past
+	// MaxRepoDepth levels.
+	ErrRepoDepth = fmt.Errorf("repo nesting too deep")
 )
+
+// MaxRepoDepth bounds the project-hierarchy chain (roots sit at level 0, a
+// child one deeper). Organizational trees in practice stay single-digit;
+// the bound keeps cycle checks and path rendering cheap and deterministic.
+const MaxRepoDepth = 16
+
+// ValidateReparent checks a prospective hierarchy link repo→parent before
+// the write: parent "" is always legal (detach to root), otherwise parent
+// must exist, must not be repo itself, must not sit below repo (cycle), and
+// the resulting chain must stay within MaxRepoDepth. parentOf resolves a
+// repo's current parent (ok=false: no such repo) — callers hold whatever
+// lock or transaction makes the walk consistent with the write.
+func ValidateReparent(repo, parent string, parentOf func(name string) (string, bool)) error {
+	if parent == "" {
+		return nil
+	}
+	if parent == repo {
+		return fmt.Errorf("%w: %s under itself", ErrRepoCycle, repo)
+	}
+	seen := map[string]bool{repo: true}
+	depth := 0
+	for cur := parent; cur != ""; {
+		if seen[cur] {
+			return fmt.Errorf("%w: %s is below %s", ErrRepoCycle, parent, repo)
+		}
+		seen[cur] = true
+		depth++ // cur is one level deeper than its own parent
+		next, ok := parentOf(cur)
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrRepoNotFound, cur)
+		}
+		cur = next
+	}
+	// parent sits at level `depth`; repo as its child would be depth+1.
+	if depth+1 > MaxRepoDepth {
+		return fmt.Errorf("%w: more than %d levels under a root", ErrRepoDepth, MaxRepoDepth)
+	}
+	return nil
+}
 
 // MemoryMetaStore is the single-node in-memory implementation (M1). WAL semantics
 // = atomic reads/writes under one mutex; object writes skip the WAL (CAS idempotent); only head/index commits enter it.
@@ -418,6 +474,14 @@ func (m *MemoryMetaStore) RenameRepo(_ context.Context, from, to string) error {
 		m.repoBlobs[to] = b
 		delete(m.repoBlobs, from)
 	}
+	// Children follow the renamed parent: the hierarchy link is name-keyed,
+	// so the flip retargets it in the same critical section.
+	for name, info := range m.repos {
+		if info.Parent == from {
+			info.Parent = to
+			m.repos[name] = info
+		}
+	}
 	if p, ok := m.pools[from]; ok {
 		p.Member = to
 		m.pools[to] = p
@@ -445,7 +509,20 @@ func (m *MemoryMetaStore) DeleteRepo(_ context.Context, repo string) error {
 	if m.fenceHit(repo) {
 		return fenceErr(repo)
 	}
+	// Deleting a parent re-homes its children one level up (to the deleted
+	// repo's own parent) — directory semantics, the tree stays connected
+	// instead of sprouting roots that point at a vanished name.
+	orphanTo := ""
+	if info, ok := m.repos[repo]; ok {
+		orphanTo = info.Parent
+	}
 	delete(m.repos, repo)
+	for name, info := range m.repos {
+		if info.Parent == repo {
+			info.Parent = orphanTo
+			m.repos[name] = info
+		}
+	}
 	delete(m.packs, repo)
 	delete(m.packObjs, repo)
 	delete(m.index, repo)
@@ -510,6 +587,30 @@ func (m *MemoryMetaStore) SetDefaultBranch(_ context.Context, repo string, branc
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
 	info.DefaultBranch = branch
+	m.repos[repo] = info
+	return nil
+}
+
+// SetRepoParent re-homes a repo in the hierarchy (docs/design/data-model.md §14): cycle and
+// depth checks run under the same lock as the write, so a concurrent link
+// can't slip a loop between validation and commit.
+func (m *MemoryMetaStore) SetRepoParent(_ context.Context, repo string, parent string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
+	if _, ok := m.repos[repo]; !ok {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	if err := ValidateReparent(repo, parent, func(name string) (string, bool) {
+		info, ok := m.repos[name]
+		return info.Parent, ok
+	}); err != nil {
+		return err
+	}
+	info := m.repos[repo]
+	info.Parent = parent
 	m.repos[repo] = info
 	return nil
 }

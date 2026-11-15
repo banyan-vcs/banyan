@@ -111,6 +111,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/abort-rename", s.hAbortRename)
 	meta.HandleFunc("/internal/meta/delete-repo", s.hDeleteRepo)
 	meta.HandleFunc("/internal/meta/set-force-push", s.hSetForcePush)
+	meta.HandleFunc("/internal/meta/set-repo-parent", s.hSetRepoParent)
 	meta.HandleFunc("/internal/meta/set-default-branch", s.hSetDefaultBranch)
 	meta.HandleFunc("/internal/meta/hooks", s.hHooks)
 	meta.HandleFunc("/internal/meta/hooks/delete", s.hDeleteHook)
@@ -458,6 +459,23 @@ func (s *Server) hSetForcePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Meta.SetForcePush(r.Context(), req.Repo, req.Enabled); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// hSetRepoParent re-homes a repo in the project hierarchy
+// (docs/design/data-model.md §14); the store owns the cycle/depth checks.
+func (s *Server) hSetRepoParent(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Repo   string `json:"repo"`
+		Parent string `json:"parent"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.SetRepoParent(r.Context(), req.Repo, req.Parent); err != nil {
 		writeErr(w, err)
 		return
 	}

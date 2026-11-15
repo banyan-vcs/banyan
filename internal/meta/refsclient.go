@@ -149,6 +149,14 @@ func (m *RemoteMeta) CreateRepo(ctx context.Context, repo string, algo model.Has
 		map[string]any{"repo": repo, "algo": int(algo)}, nil)
 }
 
+// SetRepoParent re-homes a repo in the hierarchy on the refs service
+// (docs/design/data-model.md §14) — cycle and depth checks live in the
+// authoritative store, like every other registry invariant.
+func (m *RemoteMeta) SetRepoParent(ctx context.Context, repo string, parent string) error {
+	return m.Refs.call(ctx, "/internal/meta/set-repo-parent",
+		map[string]string{"repo": repo, "parent": parent}, nil)
+}
+
 func (m *RemoteMeta) GetRepo(ctx context.Context, repo string) (RepoInfo, error) {
 	var out struct {
 		Repo RepoInfo `json:"repo"`
