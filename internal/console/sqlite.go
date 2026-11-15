@@ -159,7 +159,9 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("console db: gorm: %w", err)
 	}
-	if err := ddl.New(orm, "console_migrations").Run(consoleSteps); err != nil {
+	if err := ddl.New(orm, "console_migrations").Baseline(func(q ddl.Q) error {
+		return q.Exec(schemaV1) // schemaV1 carries tables AND its indexes
+	}, "users").Run(consoleSteps); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("console db: schema: %w", err)
 	}

@@ -339,7 +339,7 @@ func NewSQLMetaStore(backend, target string) (*SQLMetaStore, error) {
 // ledger). The ctx parameter is historical: the runner is boot-time and
 // synchronous.
 func (s *SQLMetaStore) applySchema(_ context.Context) error {
-	return ddl.New(s.orm, "meta_migrations").Run(metaSteps)
+	return ddl.New(s.orm, "meta_migrations").Baseline(metaBaseline, "repos").Run(metaSteps)
 }
 
 // subtreeRulesDDL is the runtime directory-access-rule table (docs/gateway/authorization.md §8)

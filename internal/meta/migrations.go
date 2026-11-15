@@ -14,16 +14,46 @@ import (
 	"github.com/banyan-vcs/banyan/internal/ddl"
 )
 
+// metaTablesUp is step 0001 (and the table half of the baseline snapshot).
+func metaTablesUp(q ddl.Q) error {
+	for _, stmt := range tableDDL(q.Dialect()) {
+		if err := q.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// metaIndexesUp is step 0006 (and the index half of the baseline snapshot).
+func metaIndexesUp(q ddl.Q) error {
+	if err := q.EnsureIndex("idx_objects_pack",
+		"CREATE INDEX idx_objects_pack ON objects(repo, pack_oid)"); err != nil {
+		return err
+	}
+	// DeletePoolRecords / the pool side of DeleteRepo delete by pool.
+	if err := q.EnsureIndex("idx_repo_pools_pool",
+		"CREATE INDEX idx_repo_pools_pool ON repo_pools(pool)"); err != nil {
+		return err
+	}
+	// ListTokens(user) filters owner and sorts by created_at.
+	return q.EnsureIndex("idx_tokens_owner",
+		"CREATE INDEX idx_tokens_owner ON tokens(owner, created_at)")
+}
+
+// metaBaseline is the authoritative full shape for FRESH databases — tables
+// AND indexes, stamped with the whole history, never replayed. It shares
+// the step closures so the two tracks cannot drift (pinned by
+// TestBaselineEqualsIncremental).
+func metaBaseline(q ddl.Q) error {
+	if err := metaTablesUp(q); err != nil {
+		return err
+	}
+	return metaIndexesUp(q)
+}
+
 // metaSteps is the migration history (ledger: meta_migrations).
 var metaSteps = []ddl.Step{
-	{Name: "0001-tables", Up: func(q ddl.Q) error {
-		for _, stmt := range tableDDL(q.Dialect()) {
-			if err := q.Exec(stmt); err != nil {
-				return err
-			}
-		}
-		return nil
-	}},
+	{Name: "0001-tables", Up: metaTablesUp},
 	// The historical column additions (formerly migrateColumn calls): fresh
 	// databases already carry these in 0001's shape; the guards make replay
 	// a no-op for them and a real ALTER for pre-existing deployments.
@@ -59,20 +89,7 @@ var metaSteps = []ddl.Step{
 	}},
 	// Query-driven indexes (see docs/storage/storage.md §2.4 for the
 	// rationale, including the deliberately un-indexed small tables).
-	{Name: "0006-indexes", Up: func(q ddl.Q) error {
-		if err := q.EnsureIndex("idx_objects_pack",
-			"CREATE INDEX idx_objects_pack ON objects(repo, pack_oid)"); err != nil {
-			return err
-		}
-		// DeletePoolRecords / the pool side of DeleteRepo delete by pool.
-		if err := q.EnsureIndex("idx_repo_pools_pool",
-			"CREATE INDEX idx_repo_pools_pool ON repo_pools(pool)"); err != nil {
-			return err
-		}
-		// ListTokens(user) filters owner and sorts by created_at.
-		return q.EnsureIndex("idx_tokens_owner",
-			"CREATE INDEX idx_tokens_owner ON tokens(owner, created_at)")
-	}},
+	{Name: "0006-indexes", Up: metaIndexesUp},
 }
 
 // addColumn is the guarded ALTER every column step is written against.

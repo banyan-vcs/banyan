@@ -114,6 +114,7 @@ type MetaStore      interface { 上述全部 }                              // c
 
 - 驱动 `github.com/glebarez/go-sqlite`（modernc 引擎 fork，纯 Go、无 cgo——OS 无关，见 AGENTS.md；单一驱动注册，与 GORM 的 glebarez/sqlite 同源）。
 - 数据访问层（2026-11-15 起 GORM）：所有数据操作走 `internal/meta/gormstore.go`——GORM 以 Conn 挂载在**同一个连接池**上（DSN 的 PRAGMA 与 `_txlock=immediate` 对两层同时生效）；方言分歧收进 OnConflict 子句（INSERT IGNORE / ON DUPLICATE KEY / ON CONFLICT 由 GORM 按方言渲染）、TranslateError（唯一冲突统一 `gorm.ErrDuplicatedKey`）与 clause.Locking（MVCC 的 SELECT...FOR UPDATE）。**schema 仍显式**：AutoMigrate 表达不了 WITHOUT ROWID 与 InnoDB VARCHAR 字宽限制，DDL 继续由 applySchema/migrateColumn 直管；布尔列一律以 int 建模（PG 的 INTEGER 列不接受 bool 字面量）。同一挂载纪律经导出的 `meta.GormOpen` 复用到 web 层与 console（web_sessions/web_imports 等与产品库 users/nodes/members 全部行模型化，自制 rebind/placeholders 退役）——全仓数据操作仅剩 GORM，raw 仅存 schema 管理。两个已登记的命名坑：模型字段 `OID` 蛇形化为 `o_id`（非 `oid`）、复用 gorm 链会累积 Where 条件——显式列标签 + 每语句起新链。
+- **GORM 隐式约定纪律**（对照 bytebase 的"约定外置成文档+测试"模式，2026-11-15 起）：①**模型↔schema 一致性由测试钉死**——三店各有 TestRowModelsMatchSchema（ddl.AssertModelColumns）：每个行模型字段经命名策略解析出的列名必须存在于真实表，缩写字段（OID/ID/URL…）错位在此失败而非查询期；②**CreatedAt 是魔法名**——GORM 对零值的 CreatedAt（int/unix）自动填创建时间；行模型必须总是显式赋值（现状即如此），禁止依赖自动填充（它会掩盖忘赋值 bug）；③**禁止 gorm.DeletedAt**——引入即全局改写全部查询（soft delete），banyan 无此语义；④**错误词汇双轨是已知税**——Take/First 返回 gorm.ErrRecordNotFound、Raw+Row().Scan 返回 sql.ErrNoRows，新代码按调用形态就近选择、不要混判。
 - 方言层（2026-10-27，HA-2，GORM 迁移后仅存 schema 面）：DDL 类型与索引长度/占位符 rebind（?→$N，迁移语句用）/hasColumn 探测；CAS 在 MVCC 后端为 SELECT...FOR UPDATE + 插入竞态按 PK 冲突归 ErrNonFastForward（SQLite 靠 DSN `_txlock=immediate` 使每个事务 BEGIN 即持写锁）；conformance 矩阵四后端同一套（env 门控 BANYAN_TEST_{MYSQL,POSTGRES}_DSN）——GORM 迁移即以它为等价性门禁。
 - PRAGMA：`journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=5000`。
 - `objects` 表 `WITHOUT ROWID`（主键聚簇，点查即索引扫描）；插入按 500 行/事务分块。
@@ -125,7 +126,7 @@ type MetaStore      interface { 上述全部 }                              // c
 三个 SQL 店（meta / web 层 / console）共用有序迁移 runner：**步进表 + 账本**（店各自命名——meta_migrations / web_migrations / console_migrations，web 层与 gateway 共用 sqlite 文件也不撞表）。四条契约：
 
 - **步进可重放**：IF NOT EXISTS 建表、hasColumn 守卫的 ALTER、存在性探针守卫的索引（MySQL 无 CREATE INDEX IF NOT EXISTS）。老库重放历史步全 no-op 后追平新尾巴——不需要 baseline 戳记；失败步不入账、下次 boot 重试，重放安全性就是恢复契约。
-- **步进只增不改**：历史步（storage_id 回填、force_push、fence.done、repos.parent）原样保留，新增能力=追加步。新库由 0001 直接建最新形状。
+- **步进只增不改**：历史步（storage_id 回填、force_push、fence.done、repos.parent）原样保留，新增能力=追加步。**双轨（LATEST.sql 姿态，bytebase 借鉴）**：fresh 环境（哨兵表缺失且无账本）由 Baseline 快照一次性建全量（表+索引）并给全史盖章——零历史重放；legacy 环境（哨兵在、账本无）保持重放路径——快照的 IF NOT EXISTS 改不了旧形状，两条轨共享步闭包并由 TestBaselineEqualsIncremental 钉死等价（加步不并入快照，该测试先红）。
 - **事务边界**：sqlite/pg 的 DDL 可回滚（步进包在事务里）；MySQL DDL 自动提交，步中失败可能留半步——靠重放而非事务恢复。并发 boot 良性收敛：步重放 + 账本插入 ignore-duplicate。
 - **当前步表**：meta 0001 表集 / 0002–0005 历史列 / 0006 索引；web 0001 web_ 表 / 0002 imports 索引；console 0001 产品库（schemaV1 原样）。
 

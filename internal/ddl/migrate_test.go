@@ -92,3 +92,47 @@ func TestRunnerFailedStepUnrecorded(t *testing.T) {
 	require.NoError(t, New(orm, "t_migrations").Run([]Step{ok}))
 	assert.Equal(t, 1, ledgerCount(t, orm))
 }
+
+type pinRow struct {
+	K   string `gorm:"column:k;primaryKey"`
+	X   string `gorm:"column:x"`
+	OID string // deliberately untagged: the naming strategy resolves o_id
+}
+
+func (pinRow) TableName() string { return "pin" }
+
+func TestAssertModelColumnsCatchesMismatch(t *testing.T) {
+	orm := openORM(t)
+	require.NoError(t, orm.Exec("CREATE TABLE pin(k TEXT PRIMARY KEY, x TEXT, oid TEXT)").Error)
+	// The table HAS the intended column — the model's resolution is what's
+	// wrong (o_id vs oid), and the guard must say so by name.
+	err := AssertModelColumns(orm, pinRow{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "o_id", "the failure names the mis-resolved column")
+}
+
+func TestBaselineFreshVsLegacy(t *testing.T) {
+	// FRESH: no ledger, no sentinel → the snapshot runs once, every step is
+	// stamped, and the step bodies never execute.
+	ormA := openORM(t)
+	ran := 0
+	steps := []Step{
+		{Name: "s1", Up: func(q Q) error { ran++; return q.Exec("CREATE TABLE IF NOT EXISTS sentinel_t(x TEXT)") }},
+		{Name: "s2", Up: func(q Q) error { ran++; return nil }},
+	}
+	snapshot := func(q Q) error { return q.Exec("CREATE TABLE IF NOT EXISTS sentinel_t(x TEXT)") }
+	require.NoError(t, New(ormA, "t_migrations").Baseline(snapshot, "sentinel_t").Run(steps))
+	assert.Equal(t, 0, ran, "fresh databases never replay step bodies")
+	assert.Equal(t, 2, ledgerCount(t, ormA))
+	ok, err := qOf(ormA).tableExists("sentinel_t")
+	require.NoError(t, err)
+	assert.True(t, ok, "the snapshot shaped the database")
+
+	// LEGACY: the sentinel exists but no ledger (a database predating the
+	// runner) → the incremental path replays, guarded steps no-op cleanly.
+	ormB := openORM(t)
+	require.NoError(t, ormB.Exec("CREATE TABLE sentinel_t(x TEXT)").Error)
+	require.NoError(t, New(ormB, "t_migrations").Baseline(snapshot, "sentinel_t").Run(steps))
+	assert.Equal(t, 2, ran, "the legacy database replayed both steps")
+	assert.Equal(t, 2, ledgerCount(t, ormB))
+}

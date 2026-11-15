@@ -157,20 +157,39 @@ func (w *DB) Close() error { return w.db.Close() }
 // its own table because this database may be the SAME file as the
 // metadata plane's). Same posture as the metadata plane: replayable steps,
 // fresh databases get the latest shape in 0001.
-var webSteps = []ddl.Step{
-	{Name: "0001-web-tables", Up: func(q ddl.Q) error {
-		for _, stmt := range webTableDDL() {
-			if err := q.Exec(stmt); err != nil {
-				return err
-			}
+// webTablesUp is step 0001 (and the table half of the baseline snapshot).
+func webTablesUp(q ddl.Q) error {
+	for _, stmt := range webTableDDL() {
+		if err := q.Exec(stmt); err != nil {
+			return err
 		}
-		return nil
-	}},
-	// ListImports filters initiator and sorts started_at DESC.
-	{Name: "0002-imports-initiator-idx", Up: func(q ddl.Q) error {
-		return q.EnsureIndex("idx_web_imports_initiator",
-			"CREATE INDEX idx_web_imports_initiator ON web_imports(initiator, started_at)")
-	}},
+	}
+	return nil
+}
+
+// webImportsIdxUp is step 0002 (the index half of the baseline snapshot) —
+// ListImports filters initiator and sorts started_at DESC.
+func webImportsIdxUp(q ddl.Q) error {
+	return q.EnsureIndex("idx_web_imports_initiator",
+		"CREATE INDEX idx_web_imports_initiator ON web_imports(initiator, started_at)")
+}
+
+// webBaseline is the authoritative full shape for FRESH databases — the
+// step closures shared, so the two tracks cannot drift.
+func webBaseline(q ddl.Q) error {
+	if err := webTablesUp(q); err != nil {
+		return err
+	}
+	return webImportsIdxUp(q)
+}
+
+// webSteps is the web tier's migration history (ledger: web_migrations —
+// its own table because this database may be the SAME file as the
+// metadata plane's). Same posture as the metadata plane: replayable steps,
+// fresh databases take the baseline snapshot instead.
+var webSteps = []ddl.Step{
+	{Name: "0001-web-tables", Up: webTablesUp},
+	{Name: "0002-imports-initiator-idx", Up: webImportsIdxUp},
 }
 
 func webTableDDL() []string {
@@ -211,7 +230,7 @@ CREATE TABLE IF NOT EXISTS web_cli_grants (
 }
 
 func (w *DB) migrate() error {
-	if err := ddl.New(w.orm, "web_migrations").Run(webSteps); err != nil {
+	if err := ddl.New(w.orm, "web_migrations").Baseline(webBaseline, "web_sessions").Run(webSteps); err != nil {
 		return fmt.Errorf("web db schema: %w", err)
 	}
 	return nil

@@ -18,9 +18,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 // Q is the surface a step sees: the dialect name, statement execution, and
@@ -49,16 +51,46 @@ type Step struct {
 // (per-store named — the web tier shares a sqlite file with the metadata
 // plane, so ledgers must not collide).
 type Runner struct {
-	orm    *gorm.DB
-	ledger string
+	orm      *gorm.DB
+	ledger   string
+	snapshot func(q Q) error // full-schema snapshot for FRESH databases
+	sentinel string          // table whose absence marks a database fresh
 }
 
 func New(orm *gorm.DB, ledger string) *Runner { return &Runner{orm: orm, ledger: ledger} }
 
+// Baseline installs the authoritative full-schema snapshot for FRESH
+// databases — the LATEST.sql posture: the sentinel table missing AND no
+// ledger means the database was never shaped, so it takes the snapshot in
+// one shot and stamps every step applied; history is never replayed. A
+// database with the sentinel but no ledger is LEGACY (predates the
+// runner): it keeps the incremental path — the snapshot's IF NOT EXISTS
+// cannot ALTER old shapes into the current one.
+func (r *Runner) Baseline(snapshot func(q Q) error, sentinel string) *Runner {
+	r.snapshot, r.sentinel = snapshot, sentinel
+	return r
+}
+
 // Run creates the ledger if needed and applies every unrecorded step in
 // order. Concurrent boots converge benignly: steps replay, and ledger
-// inserts are ignore-duplicate (OnConflict DoNothing renders per dialect).
+// inserts are ignore-duplicate (spelled per dialect — GORM's OnConflict
+// DoNothing renders a broken empty ON DUPLICATE KEY UPDATE on MySQL).
 func (r *Runner) Run(steps []Step) error {
+	if r.snapshot != nil {
+		ledgerThere, err := qOf(r.orm).tableExists(r.ledger)
+		if err != nil {
+			return err
+		}
+		if !ledgerThere {
+			sentinelThere, err := qOf(r.orm).tableExists(r.sentinel)
+			if err != nil {
+				return err
+			}
+			if !sentinelThere {
+				return r.runBaseline(steps)
+			}
+		}
+	}
 	if err := r.orm.Exec(
 		"CREATE TABLE IF NOT EXISTS " + r.ledger + " (name VARCHAR(190) PRIMARY KEY, applied_at BIGINT NOT NULL DEFAULT 0)",
 	).Error; err != nil {
@@ -76,24 +108,47 @@ func (r *Runner) Run(steps []Step) error {
 			if err := s.Up(qOf(tx)); err != nil {
 				return fmt.Errorf("ddl: step %s: %w", s.Name, err)
 			}
-			// Insert-ignore, spelled per dialect: GORM's OnConflict DoNothing
-			// renders a broken empty ON DUPLICATE KEY UPDATE on MySQL.
-			stmt := "INSERT INTO " + r.ledger + " (name, applied_at) VALUES (?, ?)"
-			switch r.orm.Dialector.Name() {
-			case "mysql":
-				stmt = "INSERT IGNORE" + stmt[len("INSERT"):]
-			case "sqlite":
-				stmt = "INSERT OR IGNORE" + stmt[len("INSERT"):]
-			default: // postgres
-				stmt += " ON CONFLICT DO NOTHING"
-			}
-			return tx.Exec(stmt, s.Name, time.Now().Unix()).Error
+			return tx.Exec(r.insertIgnoreStmt(), s.Name, time.Now().Unix()).Error
 		})
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// runBaseline shapes a fresh database from the snapshot and stamps the
+// whole history in one transaction.
+func (r *Runner) runBaseline(steps []Step) error {
+	if err := r.orm.Exec(
+		"CREATE TABLE IF NOT EXISTS " + r.ledger + " (name VARCHAR(190) PRIMARY KEY, applied_at BIGINT NOT NULL DEFAULT 0)",
+	).Error; err != nil {
+		return fmt.Errorf("ddl: ledger %s: %w", r.ledger, err)
+	}
+	return r.orm.Transaction(func(tx *gorm.DB) error {
+		if err := r.snapshot(qOf(tx)); err != nil {
+			return fmt.Errorf("ddl: baseline snapshot: %w", err)
+		}
+		for _, s := range steps {
+			if err := tx.Exec(r.insertIgnoreStmt(), s.Name, time.Now().Unix()).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// insertIgnoreStmt is the dialect-spelled ledger insert.
+func (r *Runner) insertIgnoreStmt() string {
+	stmt := "INSERT INTO " + r.ledger + " (name, applied_at) VALUES (?, ?)"
+	switch r.orm.Dialector.Name() {
+	case "mysql":
+		return "INSERT IGNORE" + stmt[len("INSERT"):]
+	case "sqlite":
+		return "INSERT OR IGNORE" + stmt[len("INSERT"):]
+	default: // postgres
+		return stmt + " ON CONFLICT DO NOTHING"
+	}
 }
 
 func (r *Runner) applied() (map[string]bool, error) {
@@ -120,7 +175,9 @@ type q struct {
 	dialect string
 }
 
-func qOf(tx *gorm.DB) Q { return q{tx: tx, dialect: tx.Dialector.Name()} }
+// qOf returns the concrete probe (it implements Q and carries the
+// unexported tableExists for the runner's fresh/legacy discriminator).
+func qOf(tx *gorm.DB) q { return q{tx: tx, dialect: tx.Dialector.Name()} }
 
 func (q q) Dialect() string { return q.dialect }
 
@@ -199,4 +256,51 @@ func (q q) Names(stmt string, args ...any) ([]string, error) {
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// tableExists is the fresh/legacy discriminator for the baseline path.
+func (q q) tableExists(name string) (bool, error) {
+	var n int
+	var stmt string
+	switch q.dialect {
+	case "sqlite":
+		stmt = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?"
+	case "mysql":
+		stmt = "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?"
+	default: // postgres
+		stmt = "SELECT COUNT(*) FROM information_schema.tables WHERE table_name=?"
+	}
+	if err := q.tx.Raw(stmt, name).Row().Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// AssertModelColumns pins every row model's RESOLVED column names to the
+// live schema: GORM's naming strategy is an implicit convention (the
+// registered trap: OID snake-cases to "o_id", not "oid"), and a mismatch
+// surfaces only at query time. This turns it into an open-time test
+// failure: each field's dialect-resolved DBName must exist as a column of
+// the model's table. Every store runs it over its models.
+func AssertModelColumns(orm *gorm.DB, models ...any) error {
+	for _, m := range models {
+		sch, err := schema.Parse(m, &sync.Map{}, orm.Config.NamingStrategy)
+		if err != nil {
+			return fmt.Errorf("ddl: parse %T: %w", m, err)
+		}
+		probe := qOf(orm.Session(&gorm.Session{NewDB: true}))
+		for _, f := range sch.Fields {
+			if f.DBName == "" {
+				continue // non-column fields (ignored, associations)
+			}
+			ok, err := probe.HasColumn(sch.Table, f.DBName)
+			if err != nil {
+				return fmt.Errorf("ddl: probe %s.%s: %w", sch.Table, f.DBName, err)
+			}
+			if !ok {
+				return fmt.Errorf("ddl: model %T field %s resolves to %s.%s — no such column (naming-strategy mismatch? explicit gorm:\"column:...\" tag fixes it)", m, f.Name, sch.Table, f.DBName)
+			}
+		}
+	}
+	return nil
 }
