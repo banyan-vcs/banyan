@@ -105,7 +105,12 @@ func (wh *miniWorkhorse) serveSidechannel(stream net.Conn) {
 	cb := wh.callbacks[id]
 	done := wh.waiters[id]
 	delete(wh.callbacks, id)
-	delete(wh.waiters, id)
+	// wh.waiters[id] must survive this critical section: the sidechannel
+	// dispatch can run BEFORE the gRPC response returns to the caller, and
+	// a missing waiter made sidechannelWait return nil while the callback
+	// was still io.Copy-ing into the (then retired) ResponseWriter — a
+	// use-after-handler-return SIGSEGV that CI's scheduling hit once. The
+	// waiter deletes itself after receiving.
 	wh.mu.Unlock()
 	if cb == nil {
 		_ = stream.Close()
