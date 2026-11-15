@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -193,6 +194,14 @@ func (s *Server) proxyToGateway(w http.ResponseWriter, r *http.Request, path, qu
 
 // streamCopy pumps body chunks with a flush after each — sideband progress
 // frames must not queue up behind a buffering writer.
+//
+// An upstream body that breaks mid-stream (connection reset, gateway panic,
+// any transport failure) must NOT be relayed as a well-formed short
+// response: git would parse a truncated pack inside a cleanly terminated
+// stream and report "N bytes of body are still expected" while nothing on
+// this side says why. Kill the connection instead — the client gets a hard,
+// retryable transport error. Stdlib precedent: ReverseProxy panics with
+// http.ErrAbortHandler on mid-body copy errors (Go issue 23643).
 func streamCopy(w http.ResponseWriter, body io.Reader) {
 	rc := http.NewResponseController(w)
 	buf := make([]byte, 64<<10)
@@ -200,11 +209,15 @@ func streamCopy(w http.ResponseWriter, body io.Reader) {
 		n, err := body.Read(buf)
 		if n > 0 {
 			if _, werr := w.Write(buf[:n]); werr != nil {
-				return
+				return // the client is gone; nothing left to protect
 			}
 			_ = rc.Flush()
 		}
 		if err != nil {
+			if err != io.EOF {
+				log.Printf("console proxy: upstream body broke mid-stream: %v", err)
+				panic(http.ErrAbortHandler)
+			}
 			return
 		}
 	}
