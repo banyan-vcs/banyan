@@ -220,31 +220,47 @@ func (c *haCluster) shutdown() {
 	}
 }
 
-// killNode stops one live storage node deterministically and waits for the
-// health table to mark it dead.
-func (c *haCluster) killNode() string {
+// killNode stops the NAMED live storage node and waits for the health
+// table to mark it dead.
+func (c *haCluster) killNode(id string) string {
 	c.t.Helper()
-	for id, ts := range c.Storage {
-		if ts == nil {
-			continue
+	ts := c.Storage[id]
+	if ts == nil {
+		c.t.Fatalf("node %s is not live", id)
+	}
+	ts.CloseClientConnections()
+	ts.Close()
+	c.Storage[id] = nil
+	if ncancel, ok := c.beats[id]; ok {
+		ncancel()
+		delete(c.beats, id)
+	}
+	time.Sleep(1500 * time.Millisecond) // > dead threshold with heartbeats stopped
+	c.RefsSrv.Health.Tick()
+	for _, st := range c.RefsSrv.Health.Snapshot() {
+		if st.ID == id {
+			require.Equal(c.t, refs.StateDead, st.State, "节点 %s 应在阈值后标记 dead", id)
 		}
-		ts.CloseClientConnections()
-		ts.Close()
-		c.Storage[id] = nil
-		if ncancel, ok := c.beats[id]; ok {
-			ncancel()
-			delete(c.beats, id)
-		}
-		time.Sleep(1500 * time.Millisecond) // > dead threshold with heartbeats stopped
-		c.RefsSrv.Health.Tick()
-		for _, st := range c.RefsSrv.Health.Snapshot() {
-			if st.ID == id {
-				require.Equal(c.t, refs.StateDead, st.State, "节点 %s 应在阈值后标记 dead", id)
+	}
+	return id
+}
+
+// killPackHolder kills a node that actually holds at least one pack of
+// repo. Placement is pickRandom (docs/storage/ha.md §3): every pack misses
+// a given node with real probability (3-of-4 holders ⇒ 1/4 per pack,
+// independent), so killing an arbitrary victim can leave it holding
+// NOTHING — and then the recovery assertions turn vacuous
+// (UnderReplicated=0, Copied=0), a ~6% false red the runner hit for real.
+func (c *haCluster) killPackHolder(repo string) string {
+	c.t.Helper()
+	for _, holders := range c.everyPackHolders(c.t, repo) {
+		for _, h := range holders {
+			if c.Storage[h] != nil {
+				return c.killNode(h)
 			}
 		}
-		return id
 	}
-	c.t.Fatal("no live storage node to kill")
+	c.t.Fatalf("no live node holds any pack of %s — placement dice rolled a degenerate cluster", repo)
 	return ""
 }
 
@@ -348,7 +364,7 @@ func TestHANodeFailureAndRecovery(t *testing.T) {
 	support.Git(t, seed, "commit", "-qm", "ha2: second")
 	support.Git(t, seed, "push", "-q", c.gwURL()+"/r/ha2.git", "main")
 
-	deadID := c.killNode()
+	deadID := c.killPackHolder("ha2")
 
 	// Writes continue: a new push avoids (or quorum-masks) the dead node.
 	support.Write(t, filepath.Join(seed, "lib", "a.txt"), "a-v3\n")
