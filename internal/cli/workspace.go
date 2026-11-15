@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 )
@@ -387,19 +389,62 @@ func (w *workspace) writeTracked(t *treeSource, rel string, fs fileState) (fileS
 	return out, nil
 }
 
-// materializeAll writes every collected file (clone path).
+// materializeAll writes every collected file (clone path) through the
+// bounded worker pool — a big clone's wall clock stops being one
+// goroutine's serial small writes (docs/operations/performance.md §9 E).
 func (w *workspace) materializeAll(t *treeSource, files map[string]fileState) error {
 	names := make([]string, 0, len(files))
 	for rel := range files {
 		names = append(names, rel)
 	}
 	sort.Strings(names)
-	for _, rel := range names {
-		fs, err := w.writeTracked(t, rel, files[rel])
-		if err != nil {
-			return err
-		}
-		files[rel] = fs
+	return w.writeParallel(t, names, files)
+}
+
+// writeParallel materializes names through a bounded pool. treeSource is
+// safe for concurrent use: the response maps are read-only past fetch,
+// cacheGet is a file read, and the HTTP client is a connection pool.
+// First error wins; the pool drains before returning.
+func (w *workspace) writeParallel(t *treeSource, names []string, files map[string]fileState) error {
+	workers := runtime.NumCPU()
+	if workers > 8 {
+		workers = 8
 	}
-	return nil
+	if workers < 2 {
+		workers = 2
+	}
+	var mu sync.Mutex
+	var firstErr error
+	var wg sync.WaitGroup
+	jobs := make(chan string)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for rel := range jobs {
+				mu.Lock()
+				stop := firstErr != nil
+				mu.Unlock()
+				if stop {
+					continue
+				}
+				fs, err := w.writeTracked(t, rel, files[rel])
+				mu.Lock()
+				if err != nil {
+					if firstErr == nil {
+						firstErr = err
+					}
+				} else {
+					files[rel] = fs
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, n := range names {
+		jobs <- n
+	}
+	close(jobs)
+	wg.Wait()
+	return firstErr
 }

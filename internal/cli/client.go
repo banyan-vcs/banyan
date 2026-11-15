@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,9 +17,16 @@ import (
 // client is the thin workspace's transport (docs/client/cli.md §4): plain JSON RPC to
 // the httpd frontend. Error envelopes (docs/gateway/service-api.md §3.2) become *apiError so
 // Run can map codes to exit codes (1 conflict / 2 server / 3 network).
+//
+// Two HTTP clients share one transport: `http` keeps a 60s wall clock for
+// small JSON calls, `raw` has NO overall timeout for streams (fetch-trees
+// frames, blob GETs, batch frames) — a big clone over a slow link must
+// not die mid-body at an arbitrary second mark; dial/TLS/header timeouts
+// still bound a dead peer (docs/operations/performance.md §9 D).
 type client struct {
 	base string
 	http *http.Client
+	raw  *http.Client
 }
 
 type apiError struct {
@@ -44,9 +52,17 @@ func isConflictErr(err error) bool {
 }
 
 func newClient(base string) *client {
+	tr := &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConnsPerHost:   8, // the batch/parallel lanes keep several streams hot
+	}
 	return &client{
 		base: strings.TrimSuffix(base, "/"),
-		http: &http.Client{Timeout: 60 * time.Second},
+		http: &http.Client{Timeout: 60 * time.Second, Transport: tr},
+		raw:  &http.Client{Transport: tr},
 	}
 }
 
@@ -83,9 +99,13 @@ func (c *client) post(path string, in, out any) error {
 	return decodeResp(resp, out)
 }
 
-// postRaw sends a JSON request and returns the raw response (callers inspect
-// Content-Type and parse accordingly).
+// postRaw sends a JSON request and returns the raw STREAM response on the
+// no-wall-clock client (callers inspect Content-Type and parse frames).
 func (c *client) postRaw(path string, in any) (*http.Response, error) {
+	return c.postRawOn(c.raw, path, in)
+}
+
+func (c *client) postRawOn(hc *http.Client, path string, in any) (*http.Response, error) {
 	var body io.Reader
 	if in != nil {
 		raw, err := json.Marshal(in)
@@ -94,9 +114,14 @@ func (c *client) postRaw(path string, in any) (*http.Response, error) {
 		}
 		body = bytes.NewReader(raw)
 	}
-	resp, err := c.do(http.MethodPost, path, body, "application/json")
+	req, err := http.NewRequest(http.MethodPost, c.base+path, body)
 	if err != nil {
-		return nil, err
+		return nil, &netError{err}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, &netError{err}
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
@@ -115,7 +140,7 @@ func (c *client) getJSON(path string, out any) error {
 }
 
 func (c *client) getBytes(path string) ([]byte, error) {
-	resp, err := c.do(http.MethodGet, path, nil, "")
+	resp, err := c.rawGet(path)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +149,44 @@ func (c *client) getBytes(path string) ([]byte, error) {
 		return nil, envelopeErr(resp)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// rawGet issues a GET on the no-wall-clock client — object bytes may be
+// arbitrarily large on arbitrarily slow links.
+func (c *client) rawGet(path string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return nil, &netError{err}
+	}
+	resp, err := c.raw.Do(req)
+	if err != nil {
+		return nil, &netError{err}
+	}
+	return resp, nil
+}
+
+// getObjectsBatch fetches a chunk of objects over ONE connection as the
+// CLI protocol's zlib frame (docs/operations/performance.md §9 D). A
+// server without the endpoint answers a JSON error envelope — the caller
+// falls back to per-oid GETs, so old servers keep working.
+func (c *client) getObjectsBatch(repo string, oids []string) (map[string][]byte, error) {
+	resp, err := c.postRaw("/api/v1/objects/batch", map[string]any{"repo": repo, "oids": oids})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if !strings.HasPrefix(resp.Header.Get("Content-Type"), cliproto.ContentTypeObjects) {
+		return nil, fmt.Errorf("objects/batch: unexpected content-type %q", resp.Header.Get("Content-Type"))
+	}
+	_, records, err := cliproto.ParseObjectsFrame(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]byte, len(records))
+	for _, o := range records {
+		out[o.OID] = o.Data
+	}
+	return out, nil
 }
 
 func decodeResp(resp *http.Response, out any) error {
@@ -187,11 +250,39 @@ func (c *client) fetchTrees(repo, sub, rev, haveTree string, paths []string) (*f
 	return &out, nil
 }
 
-// putObjects uploads a commit's blobs: binary frames with per-record zlib
-// by default (docs/operations/performance.md §9 A2); an older server that
+// putObjects uploads a commit's blobs in ≤64MiB chunks (docs/operations/
+// performance.md §9 E): a huge commit neither builds one giant request
+// body nor leans on any single POST succeeding. Each chunk rides the
+// binary frames with per-record zlib (§9 A2); an older server that
 // answers 400 on the unknown Content-Type gets the JSON body once — the
 // multi-version ladder, cheap because it only ever fires on old servers.
+var putChunkBytes = 64 << 20 // var: the chunking test shrinks it
+
 func (c *client) putObjects(repo string, objs []cliproto.ObjectRecord) error {
+	var chunk []cliproto.ObjectRecord
+	var carried int
+	flush := func() error {
+		if len(chunk) == 0 {
+			return nil
+		}
+		err := c.putObjectsOnce(repo, chunk)
+		chunk = chunk[:0]
+		carried = 0
+		return err
+	}
+	for _, o := range objs {
+		if len(chunk) > 0 && carried+len(o.Data) > putChunkBytes {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		chunk = append(chunk, o)
+		carried += len(o.Data)
+	}
+	return flush()
+}
+
+func (c *client) putObjectsOnce(repo string, objs []cliproto.ObjectRecord) error {
 	var buf bytes.Buffer
 	if err := cliproto.WriteObjectsFrame(&buf, repo, "sha1", objs); err != nil {
 		return err

@@ -49,6 +49,7 @@ func NewServer(meta meta.MetaStore, objects *storage.ObjectService, algo model.H
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/objects", s.authn(s.handleObjects))
 	mux.HandleFunc("/api/v1/objects/content", s.authn(s.handleObjectsContent))
+	mux.HandleFunc("/api/v1/objects/batch", s.authn(s.handleObjectsBatch)) // blob backfill downlink (docs/operations/performance.md §9 D)
 	mux.HandleFunc("/api/v1/timelines", s.authn(s.handleTimelines))
 	mux.HandleFunc("/api/v1/subtrees", s.authn(s.handleSubtrees)) // subtree listing (docs/gateway/authorization.md §8)
 	mux.HandleFunc("/api/v1/log", s.authn(s.handleLog))
@@ -278,6 +279,33 @@ func putObjectsFromFrame(objs []cliproto.ObjectRecord) []service.PutObject {
 		out = append(out, service.PutObject{OID: model.OID(o.OID), Type: o.Type, Data: o.Data})
 	}
 	return out
+}
+
+// handleObjectsBatch: POST /api/v1/objects/batch {repo, oids} — the blob
+// backfill downlink (docs/operations/performance.md §9 D): the thin
+// client's pending blobs (>inlineLimit) stop being one serial GET each —
+// a chunk rides ONE connection as a zlib-framed stream. Missing oids are
+// simply absent from the frame; the caller's per-oid fallback reports
+// them with context. The client bounds each chunk, so the gathered slice
+// stays inside one request's memory window.
+func (s *Server) handleObjectsBatch(w http.ResponseWriter, r *http.Request) {
+	var req objectsRequest
+	if !decodeBody(w, r, &req) || req.Repo == "" || len(req.OIDs) == 0 {
+		return
+	}
+	var records []cliproto.ObjectRecord
+	for _, oid := range req.OIDs {
+		t, data, err := s.Svc.GetObject(r.Context(), req.Repo, oid)
+		if err != nil {
+			continue // absent from the frame: the client falls back per-oid
+		}
+		records = append(records, cliproto.ObjectRecord{OID: string(oid), Type: string(t), Data: data})
+	}
+	w.Header().Set("Content-Type", cliproto.ContentTypeObjects)
+	w.WriteHeader(http.StatusOK)
+	if err := cliproto.WriteObjectsFrame(w, req.Repo, cliproto.AlgoName(s.Algo), records); err != nil {
+		log.Printf("objects/batch %s: frame encode: %v", req.Repo, err)
+	}
 }
 
 // --- GET /api/v1/timelines: anchor/timeline enumeration ---

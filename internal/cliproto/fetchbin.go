@@ -64,12 +64,15 @@ type Delta struct {
 	Delta []byte // the delta program (storage.ApplyDelta applies it)
 }
 
-func algoName(algo model.HashAlgo) string {
+// AlgoName renders the wire name of a hash algorithm (frame headers).
+func AlgoName(algo model.HashAlgo) string {
 	if algo == model.SHA256 {
 		return "sha256"
 	}
 	return "sha1"
 }
+
+func algoName(algo model.HashAlgo) string { return AlgoName(algo) }
 
 func algoWidth(algo model.HashAlgo) int {
 	return storage.RawOIDWidth(algo)

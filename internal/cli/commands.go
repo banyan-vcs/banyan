@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/cliproto"
 	"github.com/banyan-vcs/banyan/internal/model"
@@ -126,6 +127,7 @@ func runClone(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
+	backfillPending(&workspace{root: dir}, c, repo, res.Pending)
 	// clone carries no haveTree — the server never deltifies a first fetch;
 	// deltas are the pull lane's win.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -342,7 +344,8 @@ func pullCore(ws *workspace, st *status, c *client, stdout, stderr io.Writer) in
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
-	resolveDeltas(ws, c, ws.cfg.Repo, res) // bases live in the previous checkout's cache
+	resolveDeltas(ws, c, ws.cfg.Repo, res)  // bases live in the previous checkout's cache
+	backfillPending(ws, c, ws.cfg.Repo, res.Pending) // big changed blobs ride batch frames
 	if res.Head == ws.man.Commit && res.Tree == ws.man.Tree {
 		fmt.Fprintln(stdout, "Already up to date.")
 		return 0
@@ -394,19 +397,11 @@ func pullCore(ws *workspace, st *status, c *client, stdout, stderr io.Writer) in
 		}
 	}
 
-	for _, p := range changed {
-		fs, err := ws.writeTracked(src, p, newFiles[p])
-		if err != nil {
+	if len(changed)+len(added) > 0 {
+		writes := append(append([]string{}, changed...), added...)
+		if err := ws.writeParallel(src, writes, newFiles); err != nil {
 			return cmdErr(stderr, err)
 		}
-		newFiles[p] = fs
-	}
-	for _, p := range added {
-		fs, err := ws.writeTracked(src, p, newFiles[p])
-		if err != nil {
-			return cmdErr(stderr, err)
-		}
-		newFiles[p] = fs
 	}
 	for _, p := range deleted {
 		if err := os.Remove(filepath.Join(ws.root, filepath.FromSlash(p))); err != nil && !os.IsNotExist(err) {
@@ -568,14 +563,25 @@ func runFetchObjects(wsRoot string, args []string, stdout, stderr io.Writer) int
 		return cmdErr(stderr, err)
 	}
 	c := newClient(ws.cfg.Server)
-	for _, oid := range args {
+	fetched := 0
+	if got, err := c.getObjectsBatch(ws.cfg.Repo, args); err == nil {
+		for oid, data := range got {
+			ws.cachePut(oid, data)
+			fetched++
+		}
+	}
+	for _, oid := range args { // whatever the batch missed (or an old server)
+		if _, ok := ws.cacheGet(oid); ok {
+			continue
+		}
 		data, err := c.getObject(ws.cfg.Repo, oid)
 		if err != nil {
 			return cmdErr(stderr, err)
 		}
 		ws.cachePut(oid, data)
+		fetched++
 	}
-	fmt.Fprintf(stdout, "fetched %d objects\n", len(args))
+	fmt.Fprintf(stdout, "fetched %d objects\n", fetched)
 	return 0
 }
 
@@ -636,6 +642,42 @@ func short(oid string) string {
 		return oid[:8]
 	}
 	return oid
+}
+
+// backfillPending batch-fetches a fetch response's pending blobs (the
+// >inlineLimit ones, docs/operations/performance.md §9 D) into the
+// workspace cache BEFORE the materialization walk: chunks of oids ride
+// parallel connections as zlib frames instead of one serial GET each.
+// Best-effort by design — anything missing here still flows through the
+// treeSource per-oid path, which reports failures with context.
+func backfillPending(ws *workspace, c *client, repo string, pending []string) {
+	const workers = 4
+	const chunk = 256
+	if len(pending) == 0 {
+		return
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < len(pending); i += chunk * workers {
+		for w := 0; w < workers && i+w*chunk < len(pending); w++ {
+			lo := i + w*chunk
+			hi := lo + chunk
+			if hi > len(pending) {
+				hi = len(pending)
+			}
+			wg.Add(1)
+			go func(oids []string) {
+				defer wg.Done()
+				got, err := c.getObjectsBatch(repo, oids)
+				if err != nil {
+					return // the per-oid path takes over
+				}
+				for oid, data := range got {
+					ws.cachePut(oid, data)
+				}
+			}(pending[lo:hi])
+		}
+		wg.Wait()
+	}
 }
 
 // resolveDeltas folds v2 delta records into plain blobs before any

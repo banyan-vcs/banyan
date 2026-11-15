@@ -61,3 +61,27 @@ func TestPutObjectsFallsBackToJSON(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), calls.Load(), "binary attempt + JSON retry")
 }
+
+// The upload chunking (§9 E): a batch past the chunk threshold splits
+// across POSTs — each request bounded, none giant.
+func TestPutObjectsChunks(t *testing.T) {
+	var posts atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		io.Copy(io.Discard, r.Body)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+	old := putChunkBytes
+	putChunkBytes = 1024
+	t.Cleanup(func() { putChunkBytes = old })
+
+	c := newClient(srv.URL)
+	err := c.putObjects("r1", []cliproto.ObjectRecord{
+		{OID: strings.Repeat("1", 40), Type: "blob", Data: make([]byte, 700)},
+		{OID: strings.Repeat("2", 40), Type: "blob", Data: make([]byte, 700)},
+		{OID: strings.Repeat("3", 40), Type: "blob", Data: make([]byte, 100)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), posts.Load(), "two chunks: [700B] flushes on overflow, [700B+100B] rides together")
+}
