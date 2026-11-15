@@ -178,13 +178,22 @@ func TestLoginStatusAcrossHosts(t *testing.T) {
 	assert.Contains(t, out.String(), "not logged in")
 
 	// --json carries the probed states (same rows as `host ls --json`).
+	// The rows are keyed BY SERVER, not index: the two stub servers' random
+	// ports decide their byte order.
 	out.Reset()
 	assert.Equal(t, 0, loginStatus("", false, true, &out, &errb))
 	var jrows []hostRow
 	require.NoError(t, json.Unmarshal([]byte(out.String()), &jrows))
 	require.Len(t, jrows, 3)
-	assert.Equal(t, "valid", jrows[0].State)
-	assert.True(t, jrows[0].Default)
+	var liveRow *hostRow
+	for i := range jrows {
+		if jrows[i].Server == live.URL {
+			liveRow = &jrows[i]
+		}
+	}
+	require.NotNil(t, liveRow, "the live stub must be listed")
+	assert.Equal(t, "valid", liveRow.State)
+	assert.True(t, liveRow.Default)
 }
 
 func TestLoadSSHKeyPassphrase(t *testing.T) {
