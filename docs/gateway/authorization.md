@@ -124,6 +124,24 @@ auth 必须开启（无钥匙表可认证任何人——拒绝启动而非裸监
 必须匹配 token 属主（与 console 约定一致，docs/web/console.md §4）。过期与吊销在
 **读取时**判定——吊销即刻生效，无缓存窗口。
 
+### 8a. CLI 短时会话（2026-11-15，docs/client/cli.md §4.5）
+
+薄 CLI **不走永久 PAT**：登录只换 **12h、write 域** 的会话凭证——同一张
+tokens 表（`name="cli-session"`、`expires` 必填），读取时过期/吊销语义复用。
+铸造只有两条程序化路径，运维无法经 CLI 铸永久凭证：
+
+1. **SSH 公钥**：gitwire SSH 传输新增 `banyan-auth` exec——握手期的
+   IdentifyKey 已完成认证，服务端就地铸造（`auth.MintSession`），stdout 一行
+   JSON。CLI 端 TOFU 钉主机指纹，会话过期后 401 → **经 SSH 静默续签**；
+2. **web 控制台批准**：`POST /api/v1/auth/cli-session`（登录身份 → 为**自己**
+   铸会话，scope 上限 write）。web 层 `/cli-auth` 页（GitHub/GitLab OAuth 或
+   本地登录后批准）以登录用户凭证调用它，会话经 web 库 `web_cli_grants`
+   一次性中继（5 分钟窗、领取即焚）回到 CLI 轮询。
+
+服务器经 `/api/v1/proto` 广播 `ssh`（`ssh.advertise`）与 `web`（`web_url`）
+地址——两个都是可选配置，未广告即该路径不可用。CLI 另接受克隆 URL 的
+userinfo 作为 Basic 凭证（静态表/既有 PAT 形态）。
+
 **scope 是上限不是旁路**：`Identity.Scope`（read < write < admin）由
 凭证携带；TokenPolicy 装饰器在任何决策前先压 scope 上限（read 永不能
 push，write 永不能管理），其余规则全部委托内层策略（静态密码表/上游

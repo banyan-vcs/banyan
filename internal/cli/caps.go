@@ -29,6 +29,8 @@ const capsTTL = 24 * time.Hour
 type serverCaps struct {
 	Proto    int      `json:"proto"`
 	Features []string `json:"features"`
+	SSH      string   `json:"ssh"` // advertised SSH address — `banyan login`'s preferred path
+	Web      string   `json:"web"` // advertised web console — the /cli-auth approval fallback
 	Checked  int64    `json:"checked"` // unix seconds
 }
 

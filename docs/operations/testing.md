@@ -14,7 +14,7 @@
 | `subtree/` | subtree_collaboration、projection_refs、subtrees_api、weave_{consistency,provenance} | 子树协作语义与织入一致性（T5/T7/T8/T10/T18/T52/T78/T84/T88/T89/T90） |
 | `ha/` | ha_cluster、refs_and_repack、persistence、storage_modes、memory_chain | HA 集群/存储模式/持久化/小内存链（T17/T20/T21/T23–T26/T31/T36/T40/T46） |
 | `authz/` | auth、auth_tokens、ssh | 授权矩阵、token 细粒度、SSH 传输（T38/T38b/T39/T79–T81） |
-| `cli/` | cli_workspace、cli_snapshot、cli_stack、bigblob、sync | 薄工作区 CLI 全家（T22*/T91/T92/T93/T97） |
+| `cli/` | cli_workspace、cli_snapshot、cli_stack、bigblob、login、sync | 薄工作区 CLI 全家（T22*/T91/T92/T93/T97/T98） |
 | `gitalyrpc/` | 17 个 gitaly_*_test.go | gitaly gRPC 兼容面（T60–T76） |
 | `gitlab/` | gitlab_demo、gitlab_hook、gitlab_pushopts | GitLab 活体集成（T83/T85/T86/T87） |
 | `ops/` | rpc_log、console、ops_plane、metrics | RPC 读面/控制面/可观测（T11/T50/T54 + metrics） |
@@ -81,6 +81,7 @@
 | T95 | `TestT95ImportAPI` | **导入 API 契约**（`POST /api/v1/imports`，docs/gateway/authorization.md §8d）：匿名 401、URL 末段推导目标名、显式 name、采用远端 HEAD、clone 回比对；二次导入 409；ssh remote 为 invalid argument（非上游失败）；不可达源 502 且**回滚后名字可复用** |
 | T96 | `TestFetchMemBudget` | **单请求下载内存预算**（`fetch_mem_budget`，docs/operations/performance.md §8.2）：路由两态——28MiB 双包仓默认（200MiB 预算→32MiB 门槛）走闭包梯（encoded 计数器+1）、挤压到 100MiB（门槛 25MiB）同形态改走流式梯（streamed+1），字节均回验；极限档——120MiB 三包仓在 100MiB 预算+100MiB 软限下真 git 克隆，`fsck --strict` 净、逐轮字节回验、采样堆峰值在窗内（实测 39.2MiB） |
 | T97 | `TestCLIBigBlobLanes` | **CLI 原生协议大 blob 全链**（cliproto，docs/operations/performance.md §9）：真 CLI 对真服务器——两个 >256KiB blob 的仓 clone（Pending→objects/batch 帧回填→并行物化，字节回验）→大文件小改 commit（二进制 zlib 上行）→第二工作区 pull（v2 帧 `d` 差量记录 ApplyDelta 后字节逐一相符、未动大 blob 原样）→git 面 `fsck --strict` 净 |
+| T98 | `TestCLILoginSSHSessions` | **CLI 登录短时会话**（无永久 token，docs/gateway/authorization.md §8a）：真栈（StaticPolicy+TokenPolicy、SSH 监听、HTTP 面）——`banyan login` SSH 公钥换 12h/write 会话（credentials.json+TOFU known_hosts 落盘）→会话携带 clone+commit →服务端吊销 → 下一次 pull 401 **经 SSH 静默续签**后完成 → `login --status`/`logout`。附带 rpc/webapp 单测：铸造端点（匿名 401、scope=write、~12h）、proto 广播 ssh/web 匿名可读、web 批准→一次性轮询中继 |
 | T52 | `TestSubtreeViewCrossScopeIsolation` | **跨作用域隔离契约 + 混合作用域语义**（feat/review 上 D1 误诊复盘的沉淀）：A 推送→A 重物化→B 推送→B 重物化→A 不变——T5/T7/T8 从不覆盖"own-scope 推送后重物化兄弟视图"时序；断言用**精确文件名/内容**（计数断言无法区分 `token.go` 与 `services/auth/token.go`，正是 D1 漏网原因）；根视图每子树恰一次于自身路径；**混合作用域推送钉为内容**（客户端在作用域化克隆里创建锚点同名目录——xviewTree 的 mixed-scope 规则）：子树视图原样服务（`b/y.txt`+`y.txt` 同检出）、根织入嵌套于 `b/b/y.txt`、兄弟作用域零泄漏。D1 本体（"视图污染"）经 feat/review 2cea648 定位为评审测试 helper 的嵌套写入路径，引擎无缺陷 |
 | T53 | `TestCloneShapedServing` | **clone 形态服务契约**（T50 复盘，docs/storage/storage.md §3 ⓪/④、docs/web/console.md §7）：① **gitlink 安全**——树条目 mode 160000 指向外部仓提交（本仓 pack 永不包含），类型导向枚举跳过之；旧探针式遍历对缺失对象 Raw 报错使**含子模块的仓库 clone 直接失败**（`remote did not send all necessary objects`，stash 对照实证）；② **零整包读**——计数后端（包装 LocalBackend）断言 exact-pack 命中的 clone 服务全程 `GetPack` 调用数为 0：枚举类型导向（blob 字节不触碰）、翻转仅集群线（`PrefersWholePack`），all-in-one 形态 20MiB 仓 clone 峰值 52.0MiB → 3.9MiB（T50 重测） |
 | T54（ops 单测） | debug `TestOpsPlaneEndpoints` + config `TestDebugSection`/`TestDebugRatesRequireAddr` | **运维面端点与配置**（docs/gateway/service-api.md §5a、docs/operations/performance.md §7）：pprof 索引全家在列、heap profile 以 gzip'd protobuf 到达（magic 字节端到端）、`/debug/stats` JSON 携带 go_version/GOMEMLIMIT 读数、`/debug/vars` 应答；config——debug 节解析 + Describe 透出 + 采样率无 pprof_addr 严格拒绝 |

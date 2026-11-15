@@ -80,6 +80,16 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 # fsck 净、峰值在窗内）；-1 关闭收紧。
 # fetch_mem_budget: 209715200
 
+# --- CLI 登录路径（docs/gateway/authorization.md §8a；可选广告） ---
+
+# CLI 登录不用永久 token：SSH 公钥（banyan-auth exec，首选）或 web 控制台
+# 批准（/cli-auth 页）换取 12 小时会话。两个地址经 /api/v1/proto 广告给
+# `banyan login`；不配即该路径不可用。
+# ssh:
+#   listen: "0.0.0.0:8022"
+#   advertise: "ssh.example.com:8022"   # 客户端实际拨的地址（经 LB/端口映射时必配）
+# web_url: "https://banyan-web.example.com"
+
 # --- 开发/生产姿态（secure by default） ---
 # 生产缺省：面向客户端的角色（all-in-one/gateway）无认证配置（auth.upstream 或 auth.users）
 # 时拒绝启动；gitaly 前端监听但无 token 同样拒绝。以下显式放开为本地/演示形态：

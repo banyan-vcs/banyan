@@ -156,8 +156,8 @@ CLI 是 banyan 自己的客户端，走**专用 API 车道**（`internal/cliprot
 
 **多版本兼容契约**（三层，全部自动降级、无锁步升级要求）：
 
-1. **能力广播**：`GET /api/v1/proto` → `{"proto":2,"features":[...]}`；无此端点
-   的老服务器 = proto 1。客户端把答案缓存在 `.banyan/server.json`（24h TTL），
+1. **能力广播**：`GET /api/v1/proto` → `{"proto":2,"features":[...],"ssh":...,"web":...}`；
+   无此端点的老服务器 = proto 1。客户端把答案缓存在 `.banyan/server.json`（24h TTL），
    proto-2 快路径先查缓存再启用——老服务器永远不付试错往返（大 clone 也不会
    被降级成 1.33x 的 JSON 框架两次）；
 2. **帧内版本魔数**：每条线格式自带版本（`banyan-fetch-2` 等），解析器按魔数
@@ -167,6 +167,28 @@ CLI 是 banyan 自己的客户端，走**专用 API 车道**（`internal/cliprot
 
 服务端兼容窗：JSON 框架与 v1 帧无限期保留；proto-2 特性按 features 列表增
 量广播，客户端必须把未知 feature 视为可忽略。
+
+### 4.5 认证：短时会话，无永久 token（2026-11-15 落地）
+
+**没有永久 PAT。** CLI 登录只换取**12 小时、write 域、可吊销**的会话凭证
+（docs/gateway/authorization.md §6a），按服务器能力广播（`/api/v1/proto` 的
+`ssh`/`web` 地址）择路：
+
+1. **SSH（首选）**：`banyan login <server> -u <user>` 用 agent 或默认钥匙
+   （`BANYAN_SSH_KEY` 可指定）连服务器广告的 SSH 地址执行 `banyan-auth`
+   exec——公钥完成认证，服务端就地铸造会话。主机指纹 TOFU 钉在
+   `~/.banyan/known_hosts.json`，**变更即拒**。会话过期/被吊销后的下一次请求
+   401 → **经 SSH 静默续签**，用户零感知；
+2. **web/GitLab OAuth（无 SSH 时）**：服务器广告 web 控制台地址时，
+   `banyan login` 打印 `<web>/cli-auth#<一次性握手 id>` 并轮询——用户在控制台
+   用既有会话或 GitHub/GitLab OAuth 登录后点批准，短时会话经一次性授予中继
+   回 CLI（5 分钟窗口、领取即焚）。此路径**不刷新**：过期重跑 `login`。
+
+凭证存 `~/.banyan/credentials.json`（0600，`BANYAN_HOME` 可迁移）；每个请求
+带 `Authorization: Basic <user>:banyan_…`；`login --status` 查看状态；
+`logout` 丢弃本地凭证（服务端会话自然过期，管理员可吊销）。另：克隆 URL 的
+userinfo（`http://alice:demo@host/…`）现在直接作为 Basic 凭证生效（原先被
+丢弃）。
 
 ## 5. 输出约定（Agent 友好）
 
