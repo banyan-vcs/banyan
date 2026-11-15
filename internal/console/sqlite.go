@@ -1,11 +1,18 @@
 package console
 
+// The console's own sqlite store (docs/web/console.md §3). Data access goes
+// through GORM mounted on the pool Open created (meta.GormOpen — the same
+// mount discipline as the metadata plane and the web tier: one pool, raw
+// schema DDL, every data operation on the ORM). Deliberately portable SQL —
+// the HA-2 graduation path is Postgres, so no sqlite-specific behavior
+// beyond the driver pragmas.
 import (
 	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,14 +20,74 @@ import (
 	"time"
 
 	_ "github.com/glebarez/go-sqlite" // pure-Go SQLite driver (modernc engine), no cgo
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
-// DB is the console's own sqlite store (docs/web/console.md §3). It is deliberately
-// portable SQL — the HA-2 graduation path is Postgres, so no
-// sqlite-specific behavior beyond the driver pragmas.
+// DB is the console's database handle: db holds the pool (schema DDL,
+// Close), orm carries the data operations.
 type DB struct {
-	sql *sql.DB
+	db  *sql.DB
+	orm *gorm.DB
 }
+
+// --- row models (mirror of schemaV1; table names are the historical ones) ---
+
+type userRow struct {
+	ID        int64 `gorm:"column:id;primaryKey"`
+	Username  string
+	Admin     int
+	CreatedAt int64 `gorm:"column:created_at"`
+}
+
+func (userRow) TableName() string { return "users" }
+
+func (r userRow) user() User {
+	return User{ID: r.ID, Username: r.Username, Admin: r.Admin != 0, CreatedAt: r.CreatedAt}
+}
+
+type tokenRow struct {
+	ID        int64 `gorm:"column:id;primaryKey"`
+	UserID    int64 `gorm:"column:user_id"`
+	Name      string
+	TokenHash string `gorm:"column:token_hash"`
+	ExpiresAt int64  `gorm:"column:expires_at"`
+	Revoked   int
+	CreatedAt int64 `gorm:"column:created_at"`
+}
+
+func (tokenRow) TableName() string { return "tokens" }
+
+type nodeRow struct {
+	ID         int64 `gorm:"column:id;primaryKey"`
+	Kind       Kind
+	ParentID   int64  `gorm:"column:parent_id"`
+	Segment    string
+	RepoUID    string `gorm:"column:repo_uid"`
+	Visibility string
+	Protected  string
+	Archived   int
+	CreatedAt  int64 `gorm:"column:created_at"`
+}
+
+func (nodeRow) TableName() string { return "nodes" }
+
+func (r nodeRow) node() Node {
+	return Node{ID: r.ID, Kind: r.Kind, ParentID: r.ParentID, Segment: r.Segment,
+		RepoUID: r.RepoUID, Visibility: r.Visibility, Protected: r.Protected,
+		Archived: r.Archived != 0, CreatedAt: r.CreatedAt}
+}
+
+type memberRow struct {
+	NodeID    int64 `gorm:"column:node_id;primaryKey"`
+	UserID    int64 `gorm:"column:user_id;primaryKey"`
+	Role      Role
+	CreatedAt int64 `gorm:"column:created_at"`
+}
+
+func (memberRow) TableName() string { return "members" }
 
 const schemaV1 = `
 CREATE TABLE IF NOT EXISTS users (
@@ -81,10 +148,15 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("console db: schema: %w", err)
 	}
-	return &DB{sql: db}, nil
+	orm, err := meta.GormOpen("sqlite", db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("console db: gorm: %w", err)
+	}
+	return &DB{db: db, orm: orm}, nil
 }
 
-func (d *DB) Close() error { return d.sql.Close() }
+func (d *DB) Close() error { return d.db.Close() }
 
 // --- users ---
 
@@ -92,51 +164,38 @@ func (d *DB) CreateUser(ctx context.Context, username string, admin bool) (User,
 	if !ValidUsername(username) {
 		return User{}, fmt.Errorf("%w: username charset is [A-Za-z0-9_-], 1..32 chars", ErrInvalid)
 	}
-	u := User{Username: username, Admin: admin, CreatedAt: time.Now().Unix()}
-	res, err := d.sql.ExecContext(ctx,
-		`INSERT INTO users(username, admin, created_at) VALUES (?,?,?)`,
-		username, boolInt(admin), u.CreatedAt)
-	if err != nil {
-		return User{}, mapDup(err, "users.username", username)
+	row := userRow{Username: username, Admin: boolInt(admin), CreatedAt: time.Now().Unix()}
+	if err := d.orm.WithContext(ctx).Create(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return User{}, fmt.Errorf("%w: users.username %q", ErrExists, username)
+		}
+		return User{}, err
 	}
-	u.ID, _ = res.LastInsertId()
-	return u, nil
+	return row.user(), nil
 }
 
 func (d *DB) UserByName(ctx context.Context, username string) (User, error) {
-	var u User
-	var admin int
-	err := d.sql.QueryRowContext(ctx,
-		`SELECT id, username, admin, created_at FROM users WHERE username=?`, username).
-		Scan(&u.ID, &u.Username, &admin, &u.CreatedAt)
-	if err == sql.ErrNoRows {
+	var row userRow
+	err := d.orm.WithContext(ctx).Where("username = ?", username).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return User{}, ErrNotFound
 	}
 	if err != nil {
 		return User{}, err
 	}
-	u.Admin = admin != 0
-	return u, nil
+	return row.user(), nil
 }
 
 func (d *DB) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, username, admin, created_at FROM users ORDER BY username`)
-	if err != nil {
+	var rows []userRow
+	if err := d.orm.WithContext(ctx).Order("username").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []User
-	for rows.Next() {
-		var u User
-		var admin int
-		if err := rows.Scan(&u.ID, &u.Username, &admin, &u.CreatedAt); err != nil {
-			return nil, err
-		}
-		u.Admin = admin != 0
-		out = append(out, u)
+	out := make([]User, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.user())
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // --- tokens ---
@@ -150,63 +209,50 @@ func NewTokenSecret() string {
 }
 
 func (d *DB) CreateToken(ctx context.Context, userID int64, name, tokenHash string, expiresAt int64) (Token, error) {
-	t := Token{UserID: userID, Name: name, TokenHash: tokenHash, ExpiresAt: expiresAt, CreatedAt: time.Now().Unix()}
-	res, err := d.sql.ExecContext(ctx,
-		`INSERT INTO tokens(user_id, name, token_hash, expires_at, created_at) VALUES (?,?,?,?,?)`,
-		userID, name, tokenHash, expiresAt, t.CreatedAt)
-	if err != nil {
+	row := tokenRow{UserID: userID, Name: name, TokenHash: tokenHash, ExpiresAt: expiresAt, CreatedAt: time.Now().Unix()}
+	if err := d.orm.WithContext(ctx).Create(&row).Error; err != nil {
 		return Token{}, err
 	}
-	t.ID, _ = res.LastInsertId()
-	return t, nil
+	return Token{ID: row.ID, UserID: userID, Name: name, TokenHash: tokenHash,
+		ExpiresAt: expiresAt, CreatedAt: row.CreatedAt}, nil
 }
 
 // LookupToken resolves a token hash to its (live) user. Revoked or expired
 // tokens are not found — the caller treats that as anonymous.
 func (d *DB) LookupToken(ctx context.Context, tokenHash string) (User, error) {
-	var u User
-	var admin int
-	err := d.sql.QueryRowContext(ctx, `
+	// The join is a projection of users through a live token — one row, read
+	// through the ORM's rebinding with classic row semantics.
+	row := d.orm.WithContext(ctx).Raw(`
 		SELECT u.id, u.username, u.admin, u.created_at
 		FROM tokens t JOIN users u ON u.id = t.user_id
-		WHERE t.token_hash=? AND t.revoked=0
-		  AND (t.expires_at=0 OR t.expires_at>?)`,
-		tokenHash, time.Now().Unix()).
-		Scan(&u.ID, &u.Username, &admin, &u.CreatedAt)
-	if err == sql.ErrNoRows {
+		WHERE t.token_hash = ? AND t.revoked = 0
+		  AND (t.expires_at = 0 OR t.expires_at > ?)`, tokenHash, time.Now().Unix()).Row()
+	var u userRow
+	switch err := row.Scan(&u.ID, &u.Username, &u.Admin, &u.CreatedAt); {
+	case errors.Is(err, sql.ErrNoRows):
 		return User{}, ErrNotFound
-	}
-	if err != nil {
+	case err != nil:
 		return User{}, err
 	}
-	u.Admin = admin != 0
-	return u, nil
+	return u.user(), nil
 }
 
 func (d *DB) RevokeToken(ctx context.Context, id, userID int64) error {
-	_, err := d.sql.ExecContext(ctx, `UPDATE tokens SET revoked=1 WHERE id=? AND user_id=?`, id, userID)
-	return err
+	return d.orm.WithContext(ctx).Model(&tokenRow{}).
+		Where("id = ? AND user_id = ?", id, userID).Update("revoked", 1).Error
 }
 
 func (d *DB) ListTokens(ctx context.Context, userID int64) ([]Token, error) {
-	rows, err := d.sql.QueryContext(ctx,
-		`SELECT id, name, expires_at, revoked, created_at FROM tokens WHERE user_id=? ORDER BY id`, userID)
-	if err != nil {
+	var rows []tokenRow
+	if err := d.orm.WithContext(ctx).Where("user_id = ?", userID).Order("id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Token
-	for rows.Next() {
-		var t Token
-		var revoked int
-		if err := rows.Scan(&t.ID, &t.Name, &t.ExpiresAt, &revoked, &t.CreatedAt); err != nil {
-			return nil, err
-		}
-		t.Revoked = revoked != 0
-		t.UserID = userID
-		out = append(out, t)
+	out := make([]Token, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Token{ID: r.ID, UserID: userID, Name: r.Name,
+			ExpiresAt: r.ExpiresAt, Revoked: r.Revoked != 0, CreatedAt: r.CreatedAt})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // --- nodes ---
@@ -247,40 +293,31 @@ func (d *DB) CreateSubproject(ctx context.Context, projectID int64, path string)
 }
 
 func (d *DB) insertNode(ctx context.Context, kind Kind, parent int64, segment, repoUID, vis, protected string) (Node, error) {
-	n := Node{Kind: kind, ParentID: parent, Segment: segment, RepoUID: repoUID,
+	row := nodeRow{Kind: kind, ParentID: parent, Segment: segment, RepoUID: repoUID,
 		Visibility: vis, Protected: protected, CreatedAt: time.Now().Unix()}
-	res, err := d.sql.ExecContext(ctx, `
-		INSERT INTO nodes(kind, parent_id, segment, repo_uid, visibility, protected, created_at)
-		VALUES (?,?,?,?,?,?,?)`,
-		string(kind), parent, segment, repoUID, vis, protected, n.CreatedAt)
-	if err != nil {
-		return Node{}, mapDup(err, string(kind), segment)
-	}
-	n.ID, _ = res.LastInsertId()
-	return n, nil
-}
-
-func scanNode(scan func(...any) error) (Node, error) {
-	var n Node
-	var kind string
-	var archived int
-	if err := scan(&n.ID, &kind, &n.ParentID, &n.Segment, &n.RepoUID, &n.Visibility, &n.Protected, &archived, &n.CreatedAt); err != nil {
+	if err := d.orm.WithContext(ctx).Create(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return Node{}, fmt.Errorf("%w: %s %q", ErrExists, string(kind), segment)
+		}
 		return Node{}, err
 	}
-	n.Kind = Kind(kind)
-	n.Archived = archived != 0
-	return n, nil
+	return row.node(), nil
 }
 
-const nodeCols = `id, kind, parent_id, segment, repo_uid, visibility, protected, archived, created_at`
+func (d *DB) nodeBy(ctx context.Context, where string, args ...any) (Node, error) {
+	var row nodeRow
+	err := d.orm.WithContext(ctx).Where(where, args...).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return Node{}, ErrNotFound
+	}
+	if err != nil {
+		return Node{}, err
+	}
+	return row.node(), nil
+}
 
 func (d *DB) GroupByName(ctx context.Context, name string) (Node, error) {
-	n, err := scanNode(func(dst ...any) error {
-		return d.sql.QueryRowContext(ctx,
-			`SELECT `+nodeCols+` FROM nodes WHERE kind='group' AND parent_id=0 AND segment=?`, name).
-			Scan(dst...)
-	})
-	return n, normNodeErr(err)
+	return d.nodeBy(ctx, "kind = ? AND parent_id = 0 AND segment = ?", "group", name)
 }
 
 func (d *DB) ProjectByNames(ctx context.Context, group, project string) (Node, Node, error) {
@@ -288,64 +325,52 @@ func (d *DB) ProjectByNames(ctx context.Context, group, project string) (Node, N
 	if err != nil {
 		return Node{}, Node{}, err
 	}
-	n, err := scanNode(func(dst ...any) error {
-		return d.sql.QueryRowContext(ctx,
-			`SELECT `+nodeCols+` FROM nodes WHERE kind='project' AND parent_id=? AND segment=?`, g.ID, project).
-			Scan(dst...)
-	})
-	return g, n, normNodeErr(err)
+	n, err := d.nodeBy(ctx, "kind = ? AND parent_id = ? AND segment = ?", "project", g.ID, project)
+	return g, n, err
 }
 
 // ProjectDirs lists the project's registered subprojects (all depths; dirs
 // carry their full repo-relative path in Segment).
 func (d *DB) ProjectDirs(ctx context.Context, projectID int64) ([]Node, error) {
-	rows, err := d.sql.QueryContext(ctx,
-		`SELECT `+nodeCols+` FROM nodes WHERE kind='dir' AND parent_id=? AND archived=0 ORDER BY segment`, projectID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Node
-	for rows.Next() {
-		n, err := scanNode(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, n)
-	}
-	return out, rows.Err()
+	return d.findNodes(ctx, "segment", "kind = ? AND parent_id = ? AND archived = 0", "dir", projectID)
 }
 
 func (d *DB) ListGroups(ctx context.Context) ([]Node, error) {
-	return d.listNodes(ctx, `kind='group' AND archived=0`)
+	return d.findNodes(ctx, "id", "kind = ? AND archived = 0", "group")
 }
 
 func (d *DB) ListProjects(ctx context.Context) ([]Node, error) {
-	return d.listNodes(ctx, `kind='project' AND archived=0`)
+	return d.findNodes(ctx, "id", "kind = ? AND archived = 0", "project")
 }
 
-func (d *DB) listNodes(ctx context.Context, where string) ([]Node, error) {
-	rows, err := d.sql.QueryContext(ctx, `SELECT `+nodeCols+` FROM nodes WHERE `+where+` ORDER BY id`)
-	if err != nil {
+// findNodes is the list form: filtered rows, ordered, mapped to Node.
+func (d *DB) findNodes(ctx context.Context, order, where string, args ...any) ([]Node, error) {
+	var rows []nodeRow
+	if err := d.orm.WithContext(ctx).Where(where, args...).Order(order).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Node
-	for rows.Next() {
-		n, err := scanNode(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, n)
+	out := make([]Node, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.node())
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+// updateNode is the single-column update with the unique-violation mapping
+// a rename onto a live sibling would trip.
+func (d *DB) updateNode(ctx context.Context, id int64, column string, value any) error {
+	err := d.orm.WithContext(ctx).Model(&nodeRow{}).Where("id = ?", id).Update(column, value).Error
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return ErrExists
+	}
+	return err
 }
 
 func (d *DB) RenameNode(ctx context.Context, id int64, segment string) error {
 	if !ValidSegment(segment) {
 		return fmt.Errorf("%w: bad name %q", ErrInvalid, segment)
 	}
-	return d.execNode(ctx, `UPDATE nodes SET segment=? WHERE id=?`, segment, id)
+	return d.updateNode(ctx, id, "segment", segment)
 }
 
 // SetVisibility flips a project between private and public.
@@ -353,7 +378,7 @@ func (d *DB) SetVisibility(ctx context.Context, id int64, vis string) error {
 	if vis != Private && vis != Public {
 		return fmt.Errorf("%w: visibility %q", ErrInvalid, vis)
 	}
-	return d.execNode(ctx, `UPDATE nodes SET visibility=? WHERE id=?`, vis, id)
+	return d.updateNode(ctx, id, "visibility", vis)
 }
 
 // SetProtected stores the protected-branch list (JSON array).
@@ -367,7 +392,7 @@ func (d *DB) SetProtected(ctx context.Context, id int64, branches []string) erro
 	if err != nil {
 		return err
 	}
-	return d.execNode(ctx, `UPDATE nodes SET protected=? WHERE id=?`, string(raw), id)
+	return d.updateNode(ctx, id, "protected", string(raw))
 }
 
 // ProtectedBranches decodes the project's protected list.
@@ -380,19 +405,9 @@ func (n *Node) ProtectedBranches() []string {
 // Archive soft-deletes a project (and its subprojects): routing stops
 // resolving it, the physical repo is left untouched (docs/web/console.md §6).
 func (d *DB) ArchiveProject(ctx context.Context, id int64) error {
-	if _, err := d.sql.ExecContext(ctx,
-		`UPDATE nodes SET archived=1 WHERE id=? OR (kind='dir' AND parent_id=?)`, id, id); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (d *DB) execNode(ctx context.Context, q string, args ...any) error {
-	_, err := d.sql.ExecContext(ctx, q, args...)
-	if err != nil && err.Error() != "" && isDup(err) {
-		return ErrExists
-	}
-	return err
+	return d.orm.WithContext(ctx).Model(&nodeRow{}).
+		Where("id = ? OR (kind = ? AND parent_id = ?)", id, "dir", id).
+		Update("archived", 1).Error
 }
 
 // --- members ---
@@ -401,39 +416,39 @@ func (d *DB) SetMember(ctx context.Context, nodeID, userID int64, role Role) err
 	if !role.Valid() {
 		return fmt.Errorf("%w: unknown role %q", ErrInvalid, role)
 	}
-	_, err := d.sql.ExecContext(ctx, `
-		INSERT INTO members(node_id, user_id, role, created_at) VALUES (?,?,?,?)
-		ON CONFLICT(node_id, user_id) DO UPDATE SET role=excluded.role`,
-		nodeID, userID, string(role), time.Now().Unix())
-	return err
+	// Upsert by (node_id, user_id): a role change re-roles the membership.
+	return d.orm.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "node_id"}, {Name: "user_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"role"}),
+	}).Create(&memberRow{NodeID: nodeID, UserID: userID, Role: role, CreatedAt: time.Now().Unix()}).Error
 }
 
 func (d *DB) RemoveMember(ctx context.Context, nodeID, userID int64) error {
-	_, err := d.sql.ExecContext(ctx, `DELETE FROM members WHERE node_id=? AND user_id=?`, nodeID, userID)
-	return err
+	return d.orm.WithContext(ctx).
+		Where("node_id = ? AND user_id = ?", nodeID, userID).Delete(&memberRow{}).Error
 }
 
 // MembersOf lists the direct members of one node (management view).
 func (d *DB) MembersOf(ctx context.Context, nodeID int64) ([]Member, error) {
-	rows, err := d.sql.QueryContext(ctx, `
+	var rows []struct {
+		NodeID    int64
+		UserID    int64
+		Username  string
+		Role      Role
+		CreatedAt int64 `gorm:"column:created_at"`
+	}
+	err := d.orm.WithContext(ctx).Raw(`
 		SELECT m.node_id, m.user_id, u.username, m.role, m.created_at
-		FROM members m JOIN users u ON u.id=m.user_id
-		WHERE m.node_id=? ORDER BY u.username`, nodeID)
+		FROM members m JOIN users u ON u.id = m.user_id
+		WHERE m.node_id = ? ORDER BY u.username`, nodeID).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Member
-	for rows.Next() {
-		var m Member
-		var role string
-		if err := rows.Scan(&m.NodeID, &m.UserID, &m.Username, &role, &m.CreatedAt); err != nil {
-			return nil, err
-		}
-		m.Role = Role(role)
-		out = append(out, m)
+	out := make([]Member, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Member{NodeID: r.NodeID, UserID: r.UserID, Username: r.Username, Role: r.Role, CreatedAt: r.CreatedAt})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // RolesAt returns role-by-node for one user over the given node ids (one
@@ -442,28 +457,16 @@ func (d *DB) RolesAt(ctx context.Context, userID int64, nodeIDs []int64) (map[in
 	if len(nodeIDs) == 0 {
 		return map[int64]Role{}, nil
 	}
-	q := `SELECT node_id, role FROM members WHERE user_id=? AND node_id IN (` +
-		placeholders(len(nodeIDs)) + `)`
-	args := make([]any, 0, len(nodeIDs)+1)
-	args = append(args, userID)
-	for _, id := range nodeIDs {
-		args = append(args, id)
-	}
-	rows, err := d.sql.QueryContext(ctx, q, args...)
-	if err != nil {
+	var rows []memberRow
+	if err := d.orm.WithContext(ctx).
+		Where("user_id = ? AND node_id IN ?", userID, nodeIDs).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make(map[int64]Role, len(nodeIDs))
-	for rows.Next() {
-		var id int64
-		var role string
-		if err := rows.Scan(&id, &role); err != nil {
-			return nil, err
-		}
-		out[id] = Role(role)
+	out := make(map[int64]Role, len(rows))
+	for _, r := range rows {
+		out[r.NodeID] = r.Role
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // --- small helpers ---
@@ -473,33 +476,4 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
-}
-
-func placeholders(n int) string {
-	s := ""
-	for i := 0; i < n; i++ {
-		if i > 0 {
-			s += ","
-		}
-		s += "?"
-	}
-	return s
-}
-
-func normNodeErr(err error) error {
-	if err == sql.ErrNoRows {
-		return ErrNotFound
-	}
-	return err
-}
-
-func mapDup(err error, what, name string) error {
-	if isDup(err) {
-		return fmt.Errorf("%w: %s %q", ErrExists, what, name)
-	}
-	return err
-}
-
-func isDup(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }

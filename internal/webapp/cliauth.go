@@ -22,27 +22,25 @@ import (
 const cliGrantTTL = 5 * time.Minute
 
 func (w *DB) putCLIGrant(id, token, user string, tokenExpires int64) error {
-	_, err := w.db.Exec(w.q(`INSERT INTO web_cli_grants(handshake_id, token, user_name, token_expires, expires_at) VALUES(?,?,?,?,?)`),
-		id, token, user, tokenExpires, unix(time.Now().Add(cliGrantTTL)))
-	return err
+	return w.orm.Create(&webCLIGrantRow{
+		HandshakeID: id, Token: token, UserName: user,
+		TokenExpires: tokenExpires, ExpiresAt: unix(time.Now().Add(cliGrantTTL)),
+	}).Error
 }
 
 // claimCLIGrant hands the token out exactly once and deletes the row.
 func (w *DB) claimCLIGrant(id string) (token, user string, expires int64, ok bool) {
-	var exp, tokExp int64
-	var tok, usr string
-	err := w.db.QueryRow(w.q(`SELECT token, user_name, token_expires, expires_at FROM web_cli_grants WHERE handshake_id=?`), id).
-		Scan(&tok, &usr, &tokExp, &exp)
-	if err != nil || exp < unix(time.Now()) {
-		w.db.Exec(w.q(`DELETE FROM web_cli_grants WHERE handshake_id=?`), id)
+	var row webCLIGrantRow
+	if err := w.orm.Where("handshake_id = ?", id).Take(&row).Error; err != nil || row.ExpiresAt < unix(time.Now()) {
+		_ = w.orm.Where("handshake_id = ?", id).Delete(&webCLIGrantRow{}).Error
 		return "", "", 0, false
 	}
-	w.db.Exec(w.q(`DELETE FROM web_cli_grants WHERE handshake_id=?`), id)
-	return tok, usr, tokExp, true
+	_ = w.orm.Where("handshake_id = ?", id).Delete(&webCLIGrantRow{}).Error
+	return row.Token, row.UserName, row.TokenExpires, true
 }
 
 func (w *DB) sweepCLIGrants() {
-	w.db.Exec(w.q(`DELETE FROM web_cli_grants WHERE expires_at < ?`), unix(time.Now()))
+	_ = w.orm.Where("expires_at < ?", unix(time.Now())).Delete(&webCLIGrantRow{}).Error
 }
 
 // handleCLIAuthPage: GET /cli-auth — a self-contained approval page (no SPA

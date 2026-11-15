@@ -4,9 +4,10 @@
 // sqlite file; WAL plus busy_timeout plus immediate transactions — the
 // pragma set meta.SQLiteDSN pins — are the multi-process contract).
 //
-// The schema is deliberately portable SQL: ? placeholders everywhere (the
-// postgres driver path rebinds to $N), no dialect-specific types. Migration
-// posture matches the rest of banyan: CREATE TABLE IF NOT EXISTS at boot.
+// Data access goes through GORM mounted on the same pool the caller opens
+// (meta.GormOpen — the metadata plane's mount discipline: one pool, schema
+// management raw, every data operation on the ORM). The schema is
+// deliberately portable SQL, CREATE TABLE IF NOT EXISTS at boot.
 package webapp
 
 import (
@@ -14,13 +15,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
+	_ "github.com/glebarez/go-sqlite" // pure-Go SQLite driver (modernc engine), no cgo
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "github.com/glebarez/go-sqlite" // pure-Go SQLite driver (modernc engine), no cgo
+	"gorm.io/gorm"
 
 	"github.com/banyan-vcs/banyan/internal/meta"
 )
@@ -39,9 +40,66 @@ type Session struct {
 
 // DB is the web tier's database handle.
 type DB struct {
-	db     *sql.DB
-	rebind func(string) string
+	db  *sql.DB   // the shared pool: schema DDL + Close
+	orm *gorm.DB  // every data operation (same mount as the metadata plane)
 }
+
+// --- row models (mirror of the DDL below; table names are the historical ones) ---
+
+type webSessionRow struct {
+	ID            string `gorm:"column:id;primaryKey"`
+	Username      string `gorm:"column:username"`
+	Credential    string `gorm:"column:credential"`
+	ProviderID    string `gorm:"column:provider_id"`
+	ProviderKind  string `gorm:"column:provider_kind"`
+	CreatedAt     int64  `gorm:"column:created_at"`
+	ExpiresAt     int64  `gorm:"column:expires_at"`
+}
+
+func (webSessionRow) TableName() string { return "web_sessions" }
+
+func (r webSessionRow) session() Session {
+	return Session{ID: r.ID, Username: r.Username, Credential: r.Credential, ProviderID: r.ProviderID, ProviderKind: r.ProviderKind}
+}
+
+type webOAuthStateRow struct {
+	State      string `gorm:"column:state;primaryKey"`
+	ProviderID string `gorm:"column:provider_id"`
+	ExpiresAt  int64  `gorm:"column:expires_at"`
+}
+
+func (webOAuthStateRow) TableName() string { return "web_oauth_states" }
+
+type webImportRow struct {
+	ID            string `gorm:"column:id;primaryKey"`
+	Repo          string `gorm:"column:repo"`
+	SourceURL     string `gorm:"column:source_url"`
+	Initiator     string `gorm:"column:initiator"`
+	Status        string `gorm:"column:status"`
+	Error         string `gorm:"column:error"`
+	Refs          int64  `gorm:"column:refs"`
+	DefaultBranch string `gorm:"column:default_branch"`
+	StartedAt     int64  `gorm:"column:started_at"`
+	FinishedAt    int64  `gorm:"column:finished_at"`
+}
+
+func (webImportRow) TableName() string { return "web_imports" }
+
+func (r webImportRow) job() ImportJob {
+	return ImportJob{ID: r.ID, Repo: r.Repo, SourceURL: r.SourceURL, Initiator: r.Initiator,
+		Status: r.Status, Error: r.Error, Refs: r.Refs, DefaultBranch: r.DefaultBranch,
+		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt}
+}
+
+type webCLIGrantRow struct {
+	HandshakeID  string `gorm:"column:handshake_id;primaryKey"`
+	Token        string `gorm:"column:token"`
+	UserName     string `gorm:"column:user_name"`
+	TokenExpires int64  `gorm:"column:token_expires"`
+	ExpiresAt    int64  `gorm:"column:expires_at"`
+}
+
+func (webCLIGrantRow) TableName() string { return "web_cli_grants" }
 
 // OpenDB opens the web database. spec forms: "sqlite:<path>", "mysql:<dsn>",
 // "postgres:<dsn>"; a bare path is sqlite (the <root>/web.db default).
@@ -56,7 +114,6 @@ func OpenDB(spec string) (*DB, error) {
 	var (
 		driver string
 		dsn    string
-		rebind = func(q string) string { return q }
 	)
 	switch backend {
 	case "sqlite":
@@ -68,7 +125,7 @@ func OpenDB(spec string) (*DB, error) {
 	case "mysql":
 		driver, dsn = "mysql", target
 	case "postgres":
-		driver, dsn, rebind = "pgx", target, rebindPG
+		driver, dsn = "pgx", target
 	default:
 		return nil, fmt.Errorf("web db: unknown backend %q", backend)
 	}
@@ -80,7 +137,12 @@ func OpenDB(spec string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("web db: %w", err)
 	}
-	w := &DB{db: db, rebind: rebind}
+	orm, err := meta.GormOpen(backend, db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("web db: gorm: %w", err)
+	}
+	w := &DB{db: db, orm: orm}
 	if err := w.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -89,30 +151,6 @@ func OpenDB(spec string) (*DB, error) {
 }
 
 func (w *DB) Close() error { return w.db.Close() }
-
-func (w *DB) q(query string) string { return w.rebind(query) }
-
-// rebindPG rewrites ? placeholders to $N outside single-quoted strings —
-// the same walk the metadata plane performs.
-func rebindPG(q string) string {
-	var b strings.Builder
-	n := 0
-	inStr := false
-	for i := 0; i < len(q); i++ {
-		c := q[i]
-		switch {
-		case c == '\'':
-			inStr = !inStr
-			b.WriteByte(c)
-		case c == '?' && !inStr:
-			n++
-			b.WriteString("$" + strconv.Itoa(n))
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
 
 func (w *DB) migrate() error {
 	const schema = `
@@ -149,8 +187,7 @@ CREATE TABLE IF NOT EXISTS web_cli_grants (
   token_expires BIGINT      NOT NULL DEFAULT 0,
   expires_at   BIGINT       NOT NULL
 );`
-	_, err := w.db.Exec(schema)
-	if err != nil {
+	if _, err := w.db.Exec(schema); err != nil {
 		return fmt.Errorf("web db schema: %w", err)
 	}
 	return nil
@@ -163,41 +200,35 @@ func unix(t time.Time) int64 { return t.Unix() }
 // CreateSession stores a new session row.
 func (w *DB) CreateSession(s Session, ttl time.Duration) error {
 	now := unix(time.Now())
-	_, err := w.db.Exec(w.q(`INSERT INTO web_sessions
-		(id, username, credential, provider_id, provider_kind, created_at, expires_at)
-		VALUES (?,?,?,?,?,?,?)`),
-		s.ID, s.Username, s.Credential, s.ProviderID, s.ProviderKind, now, now+int64(ttl.Seconds()))
-	return err
+	return w.orm.Create(&webSessionRow{
+		ID: s.ID, Username: s.Username, Credential: s.Credential,
+		ProviderID: s.ProviderID, ProviderKind: s.ProviderKind,
+		CreatedAt: now, ExpiresAt: now + int64(ttl.Seconds()),
+	}).Error
 }
 
 // SessionByID answers the session when present and unexpired; expired rows
 // are removed on sight (lazy sweep — plus SweepExpired on boot).
 func (w *DB) SessionByID(id string) (Session, bool) {
-	var s Session
-	var created, expires int64
-	err := w.db.QueryRow(w.q(`SELECT id, username, credential, provider_id, provider_kind, created_at, expires_at
-		FROM web_sessions WHERE id=?`), id).
-		Scan(&s.ID, &s.Username, &s.Credential, &s.ProviderID, &s.ProviderKind, &created, &expires)
-	if err != nil {
+	var row webSessionRow
+	if err := w.orm.Where("id = ?", id).Take(&row).Error; err != nil {
 		return Session{}, false
 	}
-	if expires < unix(time.Now()) {
-		_, _ = w.db.Exec(w.q(`DELETE FROM web_sessions WHERE id=?`), id)
+	if row.ExpiresAt < unix(time.Now()) {
+		_ = w.orm.Where("id = ?", id).Delete(&webSessionRow{}).Error
 		return Session{}, false
 	}
-	return s, true
+	return row.session(), true
 }
 
 // DeleteSession removes one session (logout).
 func (w *DB) DeleteSession(id string) error {
-	_, err := w.db.Exec(w.q(`DELETE FROM web_sessions WHERE id=?`), id)
-	return err
+	return w.orm.Where("id = ?", id).Delete(&webSessionRow{}).Error
 }
 
 // SweepExpired drops every expired session row.
 func (w *DB) SweepExpired() error {
-	_, err := w.db.Exec(w.q(`DELETE FROM web_sessions WHERE expires_at < ?`), unix(time.Now()))
-	return err
+	return w.orm.Where("expires_at < ?", unix(time.Now())).Delete(&webSessionRow{}).Error
 }
 
 // --- oauth states (anti-CSRF; DB-backed so any instance of the web tier
@@ -205,28 +236,25 @@ func (w *DB) SweepExpired() error {
 
 // PutOAuthState records a state for one provider with an expiry.
 func (w *DB) PutOAuthState(state, providerID string, ttl time.Duration) error {
-	_, err := w.db.Exec(w.q(`INSERT INTO web_oauth_states (state, provider_id, expires_at) VALUES (?,?,?)`),
-		state, providerID, unix(time.Now())+int64(ttl.Seconds()))
-	return err
+	return w.orm.Create(&webOAuthStateRow{
+		State: state, ProviderID: providerID, ExpiresAt: unix(time.Now()) + int64(ttl.Seconds()),
+	}).Error
 }
 
 // TakeOAuthState consumes a state (single use); "" when absent or expired.
 func (w *DB) TakeOAuthState(state string) string {
-	var providerID string
-	var expires int64
-	err := w.db.QueryRow(w.q(`SELECT provider_id, expires_at FROM web_oauth_states WHERE state=?`), state).
-		Scan(&providerID, &expires)
-	if err != nil || expires < unix(time.Now()) {
+	var row webOAuthStateRow
+	if err := w.orm.Where("state = ?", state).Take(&row).Error; err != nil || row.ExpiresAt < unix(time.Now()) {
+		_ = w.orm.Where("state = ?", state).Delete(&webOAuthStateRow{}).Error
 		return ""
 	}
-	_, _ = w.db.Exec(w.q(`DELETE FROM web_oauth_states WHERE state=?`), state)
-	return providerID
+	_ = w.orm.Where("state = ?", state).Delete(&webOAuthStateRow{}).Error
+	return row.ProviderID
 }
 
 // SweepOAuthStates drops expired states.
 func (w *DB) SweepOAuthStates() error {
-	_, err := w.db.Exec(w.q(`DELETE FROM web_oauth_states WHERE expires_at < ?`), unix(time.Now()))
-	return err
+	return w.orm.Where("expires_at < ?", unix(time.Now())).Delete(&webOAuthStateRow{}).Error
 }
 
 // Basic returns the gateway-facing Authorization value for the session:
@@ -262,40 +290,29 @@ type ImportJob struct {
 
 // CreateImport records a job as running.
 func (w *DB) CreateImport(j ImportJob) error {
-	_, err := w.db.Exec(w.q(`INSERT INTO web_imports
-		(id, repo, source_url, initiator, status, error, refs, default_branch, started_at, finished_at)
-		VALUES (?,?,?,?,?,'',0,'',?,0)`),
-		j.ID, j.Repo, j.SourceURL, j.Initiator, "running", j.StartedAt)
-	return err
+	return w.orm.Create(&webImportRow{
+		ID: j.ID, Repo: j.Repo, SourceURL: j.SourceURL, Initiator: j.Initiator,
+		Status: "running", StartedAt: j.StartedAt,
+	}).Error
 }
 
 // FinishImport closes a job either way.
 func (w *DB) FinishImport(id, status, errMsg string, refs int64, defaultBranch string) error {
-	_, err := w.db.Exec(w.q(`UPDATE web_imports
-		SET status=?, error=?, refs=?, default_branch=?, finished_at=? WHERE id=?`),
-		status, errMsg, refs, defaultBranch, unix(time.Now()), id)
-	return err
+	return w.orm.Model(&webImportRow{}).Where("id = ?", id).Updates(map[string]any{
+		"status": status, "error": errMsg, "refs": refs,
+		"default_branch": defaultBranch, "finished_at": unix(time.Now()),
+	}).Error
 }
 
 // ListImports answers the initiator's jobs, newest first.
 func (w *DB) ListImports(initiator string) ([]ImportJob, error) {
-	rows, err := w.db.Query(w.q(`SELECT id, repo, source_url, initiator, status, error, refs, default_branch, started_at, finished_at
-		FROM web_imports WHERE initiator=? ORDER BY started_at DESC`), initiator)
-	if err != nil {
+	var rows []webImportRow
+	if err := w.orm.Where("initiator = ?", initiator).Order("started_at DESC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []ImportJob
-	for rows.Next() {
-		var j ImportJob
-		if err := rows.Scan(&j.ID, &j.Repo, &j.SourceURL, &j.Initiator, &j.Status, &j.Error,
-			&j.Refs, &j.DefaultBranch, &j.StartedAt, &j.FinishedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, j)
-	}
-	if out == nil {
-		out = []ImportJob{}
+	out := make([]ImportJob, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.job())
 	}
 	return out, nil
 }
@@ -303,8 +320,9 @@ func (w *DB) ListImports(initiator string) ([]ImportJob, error) {
 // FailInterruptedImports marks every still-running job as failed — called
 // at boot; a restart kills the goroutines those rows belonged to.
 func (w *DB) FailInterruptedImports() error {
-	_, err := w.db.Exec(w.q(`UPDATE web_imports
-		SET status='failed', error='interrupted by a web-tier restart', finished_at=? WHERE status='running'`),
-		unix(time.Now()))
-	return err
+	return w.orm.Model(&webImportRow{}).
+		Where("status = ?", "running").
+		Updates(map[string]any{
+			"status": "failed", "error": "interrupted by a web-tier restart", "finished_at": unix(time.Now()),
+		}).Error
 }

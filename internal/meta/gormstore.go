@@ -195,6 +195,11 @@ func gormOpen(backend string, db *sql.DB) (*gorm.DB, error) {
 // from here so probe/walk/update sequences never bleed into each other.
 func txq(tx *gorm.DB) *gorm.DB { return tx.Session(&gorm.Session{NewDB: true}) }
 
+// GormOpen is gormOpen exported for the other SQL-backed stores (the web
+// tier, the console) — the same mount discipline: GORM on the pool the
+// caller opened, schema management stays the caller's raw DDL.
+func GormOpen(backend string, db *sql.DB) (*gorm.DB, error) { return gormOpen(backend, db) }
+
 // ormFenceHit is the GORM-side fence probe for mutating transactions: run as
 // the first statement of the transaction it takes a locking read (rowLock on
 // the MVCC backends; SQLite serializes writers wholesale — _txlock=immediate
