@@ -125,6 +125,7 @@ changeset 语义（"相对首父的变更清单 + 内容寻址指针"）直接�
 |---|---|
 | `/api/v1/objects` `/api/v1/timelines` `/api/v1/log` `/api/v1/repack` | **已有** |
 | `/api/v1/fetch-trees` `/api/v1/commit` `/api/v1/objects/content`（上传）/ `GET /api/v1/objects`（单取）/ `/api/v1/refs`（GET ls + POST CAS）/ `/api/v1/resolve` / `GET /api/v1/repos` | **已落地**（2026-10-23，T22 钉住） |
+| `/api/v1/objects/batch`（blob 批量下行）/ `/api/v1/proto`（能力广播） | **已落地**（2026-11-15，§4.4） |
 | `/api/v1/diff` `/api/v1/file-history` | M2 |
 | `/api/v1/blame` | M3 |
 
@@ -132,6 +133,40 @@ changeset 语义（"相对首父的变更清单 + 内容寻址指针"）直接�
 `ETag: <视图 head OID>`——不可变 ⇒ 浏览器/CDN/Agent 工具链可缓存。
 端点 schema 与服务层归属（httpd / Gitaly 双前端共核心）详见
 [service-api.md](../gateway/service-api.md)。
+
+### 4.4 CLI 原生协议（cliproto，2026-11-15 落地）与多版本兼容契约
+
+CLI 是 banyan 自己的客户端，走**专用 API 车道**（`internal/cliproto` 双端共享
+编解码），不受 git 兼容协议语义约束——git 面仍是通用 git 客户端的边界，两者
+互不污染。已落地的 proto-2 特性：
+
+- **fetch-trees v2 帧**（`"format":"binz"`）：记录级 zlib（文本负载 ~1/3-1/5
+  原始字节）+ `d` 差量记录——pull 时 ≥64KiB 的变更 blob 对客户端持有的旧版出
+  REF_DELTA 式差量（客户端 `ApplyDelta` 后**再过一次内容哈希**，失配即整只回取）；
+- **上行二进制帧**（`Content-Type: application/x-banyan-objects-1`）：commit
+  上传去 base64 去 JSON，记录级 zlib，>64MiB 自动分批；
+- **objects/batch 下行**：pending 大 blob（>256KiB 内联线）按 256 oid/批 × 4
+  并发连接回填，替代逐 oid 串行 GET；
+- **传输层**：流式请求（fetch-trees/对象取）无整体墙钟超时（拨号/TLS/响应头
+  仍有界）——慢链路上的大 clone 不再 60s 中途夭折；物化写盘走有界 worker 池；
+- **本地**：manifest 携带 size+mtime stat 缓存（status/commit 扫描从
+  O(总字节) 降为 O(文件数)，git index 同款）；cache 按 oid 前两位分片（读时
+  自动迁移旧平铺条目）、mtime 顺序淘汰到 1GiB 上限（`banyan gc -max-mb N` 显
+  式清扫，clone 完成时自动过线即清）。
+
+**多版本兼容契约**（三层，全部自动降级、无锁步升级要求）：
+
+1. **能力广播**：`GET /api/v1/proto` → `{"proto":2,"features":[...]}`；无此端点
+   的老服务器 = proto 1。客户端把答案缓存在 `.banyan/server.json`（24h TTL），
+   proto-2 快路径先查缓存再启用——老服务器永远不付试错往返（大 clone 也不会
+   被降级成 1.33x 的 JSON 框架两次）；
+2. **帧内版本魔数**：每条线格式自带版本（`banyan-fetch-2` 等），解析器按魔数
+   自适应——新客户端对老服务器拿到 v1/JSON 照常解析；
+3. **失配自愈**：被缓存背书的快路径失败（如上行 400）→ 丢弃缓存、就地降级
+   （JSON 重试/逐 oid 取），下次命令重新发现能力。
+
+服务端兼容窗：JSON 框架与 v1 帧无限期保留；proto-2 特性按 features 列表增
+量广播，客户端必须把未知 feature 视为可忽略。
 
 ## 5. 输出约定（Agent 友好）
 

@@ -2,7 +2,8 @@
 
 > 依据：与同类目录锚定系统的对比分析（2026-10-24）中与性能直接
 > 相关的三条硬教训 + banyan 代码现状逐条审计。主体已全部落地（治理状态
-> 见 §2 注，实测见 §3/§3a/§3b）；一页总结与缓存治理原则见 §8。
+> 见 §2 注，实测见 §3/§3a/§3b）；一页总结与缓存治理原则见 §8；CLI 原生
+> 协议车道（cliproto）见 §9。
 
 ## 0. 现状盘点
 
@@ -698,3 +699,28 @@ banyan 的结构优势是**存储节点天然分布**：pack 不可变、内容�
   即可，不跨请求。
 - **filtered/partial fetch 走 closure() 全物化** → 传输层改造（按 filter
   裁剪枚举集），与缓存无关。
+
+## 9. CLI 车道优化（2026-11-15，cliproto 原生协议）
+
+> 薄 CLI 走 banyan 专用 API 车道（`internal/cliproto` 双端共享编解码），不受
+> git 兼容协议约束；多版本兼容三层契约见 docs/client/cli.md §4.4（能力广播
+> `/api/v1/proto` + 工作区缓存 + 帧内魔数 + 失配自愈）。七项落地：
+
+| # | 项 | 机制 | 收益 |
+|---|---|---|---|
+| B | 扫描 stat 缓存 | manifest 记 {size,mtime}，命中免读免哈希（git index 语义；内容未变仅 stat 陈旧时回填学习） | status/commit/pull 前置扫描 O(总字节)→O(文件数)，纯本地零一致性风险 |
+| A1 | fetch-trees v2 帧 | 记录级 zlib（v1 帧/JSON 是裸字节）；oid 序排列字节稳定 | 文本负载下行 ~1/3-1/5（单测：重复负载 <v1 1/4；T33 断言 binz<bin<JSON） |
+| C | blob 差量下行 | pull 的 tree-diff 已知旧 blob → ≥64KiB 变更 blob 出 REF_DELTA 式 `d` 记录；客户端 ApplyDelta 后**再过内容哈希**，失配整只回取 | 大文件小改动：10MB 级 blob 的下行降为 KB 级差量 |
+| A2 | 上行二进制帧 | objects/content 按 Content-Type 收 zlib 帧（JSON 体保留）；>64MiB 自动分批 | commit 上传去 base64(+33%)去零压缩；大提交不再单发巨体 |
+| D | 传输层 | 流式请求无整体墙钟（拨号/TLS/响应头有界）；objects/batch 批量下行 256 oid/批 × 4 并发回填 pending | 慢链路大 clone 不再 60s 夭折；pending 大 blob 从 N 次串行 GET 变并发批量 |
+| E | 并行物化 | clone/pull 写盘有界 worker 池（≤8） | 大 clone 墙钟不再由单线程小写入支配 |
+| F | 缓存卫生 | cache 按 oid[:2] 分片（旧平铺条目读时迁移）；mtime 淘汰到 1GiB（`banyan gc`，clone 完成自动过线即清） | 10 万+对象工作区目录查找不退化；缓存不再无限增长 |
+
+验证：cliproto/service/cli 三层单测（帧往返/压缩比/差量契约/回退/分批/缓存）
++ T97 真 CLI 大 blob 全链（pending→batch→并行物化→二进制上行→差量 pull→
+fsck 净）+ T33 扩 binz 断言。
+
+**仍登记**：①服务端 fetch-trees 边走查边写帧（现在 O(inline 检出集) 每请求
+驻留后写帧——需要 v3 帧把 pending 尾部化，与 §8.2 预算线合流）；②untracked
+扫描无 .gitignore（噪音+范围）；③大 clone 进度输出；④CLI 哈希仅 SHA-1
+（SHA-256 仓需对齐）；⑤blobHash 流式化（超大文件 commit 内存 O(文件)）。
