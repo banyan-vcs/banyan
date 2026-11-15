@@ -1,10 +1,7 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/banyan-vcs/banyan/internal/cliproto"
 )
 
 // client is the thin workspace's transport (docs/client/cli.md §4): plain JSON RPC to
@@ -152,18 +151,13 @@ func envelopeErr(resp *http.Response) error {
 
 // --- typed API wrappers ---
 
-type fetchTreesResponse struct {
-	Branch  string            `json:"branch"`
-	Head    string            `json:"head"`
-	Tree    string            `json:"tree"`
-	Full    bool              `json:"full"`
-	Trees   map[string][]byte `json:"trees"`
-	Blobs   map[string][]byte `json:"blobs"`
-	Pending []string          `json:"pending"`
-}
+// fetchTreesResponse is the shared CLI-protocol shape (internal/cliproto
+// owns the framing both ends speak — v2 zlib records + deltas, v1 and
+// JSON as the downgrade ladder).
+type fetchTreesResponse = cliproto.FetchResult
 
 func (c *client) fetchTrees(repo, sub, rev, haveTree string, paths []string) (*fetchTreesResponse, error) {
-	req := map[string]any{"repo": repo, "format": "bin"} // binary framing (docs/gateway/service-api.md §3.3)
+	req := map[string]any{"repo": repo, "format": "binz"} // v2: zlib records + deltas (docs/gateway/service-api.md §3.3)
 	if sub != "" {
 		req["sub"] = sub
 	}
@@ -181,78 +175,16 @@ func (c *client) fetchTrees(repo, sub, rev, haveTree string, paths []string) (*f
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/x-banyan-fetch-trees") {
-		return parseFetchTreesBinary(resp.Body)
+	switch ct := resp.Header.Get("Content-Type"); {
+	case strings.HasPrefix(ct, cliproto.ContentTypeV2), strings.HasPrefix(ct, cliproto.ContentTypeV1):
+		return cliproto.Parse(resp.Body) // magic sniff picks v1/v2 — older servers degrade silently
 	}
-	// Older server: JSON response (content negotiation by response type).
+	// Oldest server: JSON response (content negotiation by response type).
 	var out fetchTreesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
 	return &out, nil
-}
-
-// parseFetchTreesBinary decodes the binary framing:
-// magic line, JSON header line, then records [kind][raw oid][uvarint size][content].
-func parseFetchTreesBinary(r io.Reader) (*fetchTreesResponse, error) {
-	br := bufio.NewReaderSize(r, 64*1024)
-	magic, err := br.ReadString('\n')
-	if err != nil || magic != "banyan-fetch-1\n" {
-		return nil, fmt.Errorf("fetch-trees: bad binary magic %q", magic)
-	}
-	hdrLine, err := br.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	var hdr struct {
-		Branch  string   `json:"branch"`
-		Head    string   `json:"head"`
-		Tree    string   `json:"tree"`
-		Full    bool     `json:"full"`
-		Pending []string `json:"pending"`
-		Algo    string   `json:"algo"`
-	}
-	if err := json.Unmarshal([]byte(hdrLine), &hdr); err != nil {
-		return nil, fmt.Errorf("fetch-trees: binary header: %w", err)
-	}
-	oidWidth := 20
-	if hdr.Algo == "sha256" {
-		oidWidth = 32
-	}
-	out := &fetchTreesResponse{
-		Branch: hdr.Branch, Head: hdr.Head, Tree: hdr.Tree, Full: hdr.Full,
-		Pending: hdr.Pending, Trees: map[string][]byte{}, Blobs: map[string][]byte{},
-	}
-	oidBuf := make([]byte, oidWidth)
-	for {
-		kind, err := br.ReadByte()
-		if err == io.EOF {
-			return out, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		if _, err := io.ReadFull(br, oidBuf); err != nil {
-			return nil, err
-		}
-		size, err := binary.ReadUvarint(br)
-		if err != nil {
-			return nil, err
-		}
-		content := make([]byte, size)
-		if _, err := io.ReadFull(br, content); err != nil {
-			return nil, err
-		}
-		oid := hex.EncodeToString(oidBuf)
-		switch kind {
-		case 't':
-			out.Trees[oid] = content
-		case 'b':
-			out.Blobs[oid] = content
-		default:
-			return nil, fmt.Errorf("fetch-trees: bad record kind %q", kind)
-		}
-	}
 }
 
 func (c *client) putObjects(repo string, objs []map[string]any) error {

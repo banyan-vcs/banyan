@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
 // TreeService.Fetch: the thin client's one-shot materialization primitive
@@ -21,23 +22,40 @@ import (
 // per-object GETs (resumable, cache-friendly).
 const inlineLimit = 256 * 1024
 
+// deltaMinBytes is the payload threshold at which a pull's changed blob is
+// worth delta-encoding against the version the client provably holds (the
+// haveTree diff saw the old entry) — git's serve-delta threshold in spirit;
+// below it the v2 frame's zlib already carries the win (docs/operations/
+// performance.md §9 C).
+const deltaMinBytes = 64 << 10 // 64 KiB
+
 type FetchRequest struct {
 	Repo     string    `json:"repo"`
 	Sub      string    `json:"sub,omitempty"`      // subtree view (clone URL /tree/<path>)
 	Rev      string    `json:"rev,omitempty"`      // branch; "" = repo default
 	HaveTree model.OID `json:"haveTree,omitempty"` // client's cached view tree (pull)
 	Paths    []string  `json:"paths,omitempty"`    // sparse: top-level names to include
-	Format   string    `json:"format,omitempty"`   // "bin": binary framing response (docs/gateway/service-api.md §3.3)
+	Format   string    `json:"format,omitempty"`   // "bin": binary framing response (docs/gateway/service-api.md §3.3); "binz": v2 — zlib records + delta records
+}
+
+// DeltaRecord is one REF_DELTA-style downlink record: the changed blob's
+// delta against a base the client provably holds. Only the v2 binary
+// framing carries them; JSON/v1 consumers always get whole blobs.
+type DeltaRecord struct {
+	Base  model.OID `json:"base"`
+	Size  int       `json:"size"`
+	Delta []byte    `json:"delta"`
 }
 
 type FetchResult struct {
-	Branch  string            `json:"branch"`
-	Head    model.OID         `json:"head"`
-	Tree    model.OID         `json:"tree"` // the view's root tree (manifest anchor)
-	Full    bool              `json:"full"` // true when the diff degraded to a full walk
-	Trees   map[string][]byte `json:"trees"`
-	Blobs   map[string][]byte `json:"blobs"`
-	Pending []string          `json:"pending"`
+	Branch  string                    `json:"branch"`
+	Head    model.OID                 `json:"head"`
+	Tree    model.OID                 `json:"tree"` // the view's root tree (manifest anchor)
+	Full    bool                      `json:"full"` // true when the diff degraded to a full walk
+	Trees   map[string][]byte         `json:"trees"`
+	Blobs   map[string][]byte         `json:"blobs"`
+	Deltas  map[string]DeltaRecord    `json:"deltas,omitempty"` // format "binz" only
+	Pending []string                  `json:"pending"`
 }
 
 func (s *Service) FetchTrees(ctx context.Context, req FetchRequest) (*FetchResult, error) {
@@ -61,6 +79,9 @@ func (s *Service) FetchTrees(ctx context.Context, req FetchRequest) (*FetchResul
 		Tree:   tree,
 		Trees:  map[string][]byte{},
 		Blobs:  map[string][]byte{},
+	}
+	if req.Format == "binz" {
+		res.Deltas = map[string]DeltaRecord{}
 	}
 	if tree.IsZero() {
 		return res, nil // empty repo: nothing to materialize
@@ -172,6 +193,12 @@ func (s *Service) FetchTrees(ctx context.Context, req FetchRequest) (*FetchResul
 				continue
 			}
 			if !had || old.Target != e.Target {
+				// Changed (not merely new): the client provably holds the old
+				// blob — answer big edits as a delta against it before falling
+				// back to the whole blob (docs/operations/performance.md §9 C).
+				if had && old.Target != e.Target && s.tryDelta(ctx, req, res, old.Target, e.Target) {
+					continue
+				}
 				needBlob(e.Target)
 			}
 		}
@@ -183,4 +210,29 @@ func (s *Service) FetchTrees(ctx context.Context, req FetchRequest) (*FetchResul
 		diff(req.HaveTree, tree)
 	}
 	return res, nil
+}
+
+// tryDelta answers a changed blob as a REF_DELTA-style record against the
+// version the client provably holds. Worth it only past deltaMinBytes (the
+// v2 frame's zlib already carries smaller payloads) and only when the delta
+// genuinely shrinks the transfer (≤ 3/4 of the whole, the thin-pack rule);
+// every miss falls back to the inline/pending whole-blob path unchanged.
+func (s *Service) tryDelta(ctx context.Context, req FetchRequest, res *FetchResult, baseOID, newOID model.OID) bool {
+	if res.Deltas == nil {
+		return false
+	}
+	t, fresh, err := s.Objects.Raw(ctx, req.Repo, newOID)
+	if err != nil || t != model.BlobType || len(fresh) < deltaMinBytes {
+		return false
+	}
+	_, old, err := s.Objects.Raw(ctx, req.Repo, baseOID)
+	if err != nil {
+		return false
+	}
+	d := storage.DiffDelta(old, fresh)
+	if d == nil || len(d)*4 >= len(fresh)*3 {
+		return false
+	}
+	res.Deltas[string(newOID)] = DeltaRecord{Base: baseOID, Size: len(fresh), Delta: d}
+	return true
 }

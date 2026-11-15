@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
+	"github.com/banyan-vcs/banyan/internal/cliproto"
 	"github.com/banyan-vcs/banyan/internal/gitaly"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
@@ -339,15 +340,50 @@ func (s *Server) handleFetchTrees(w http.ResponseWriter, r *http.Request) {
 	}
 	// Binary framing on request ("format":"bin") — the thin CLI's dominant
 	// transfer drops JSON's base64 +33% (docs/operations/performance.md P1-2). JSON stays default.
-	if req.Format == "bin" {
-		w.Header().Set("Content-Type", "application/x-banyan-fetch-trees")
+	// "binz" is the v2 framing: per-record zlib + delta records (§9 A1+C) —
+	// the response Content-Type tells the client which one it got, so an
+	// older server silently degrades to v1/JSON and a newer one upgrades.
+	switch req.Format {
+	case "binz":
+		w.Header().Set("Content-Type", cliproto.ContentTypeV2)
 		w.WriteHeader(http.StatusOK)
-		if err := writeFetchBinary(w, res, s.Algo); err != nil {
+		if err := cliproto.WriteV2(w, cliproFetch(res), s.Algo); err != nil {
+			log.Printf("fetch-trees %s: binary v2 encode: %v", req.Repo, err)
+		}
+	case "bin":
+		w.Header().Set("Content-Type", cliproto.ContentTypeV1)
+		w.WriteHeader(http.StatusOK)
+		if err := cliproto.WriteV1(w, cliproFetch(res), s.Algo); err != nil {
 			log.Printf("fetch-trees %s: binary encode: %v", req.Repo, err)
 		}
-		return
+	default:
+		writeJSON(w, http.StatusOK, res)
 	}
-	writeJSON(w, http.StatusOK, res)
+}
+
+// cliproFetch converts the service-layer result into the shared CLI
+// protocol shape (string OIDs; internal/cliproto owns the framing both
+// ends speak).
+func cliproFetch(res *service.FetchResult) *cliproto.FetchResult {
+	out := &cliproto.FetchResult{
+		Branch: res.Branch, Head: string(res.Head), Tree: string(res.Tree), Full: res.Full,
+		Trees:   make(map[string][]byte, len(res.Trees)),
+		Blobs:   make(map[string][]byte, len(res.Blobs)),
+		Pending: res.Pending,
+	}
+	for k, v := range res.Trees {
+		out.Trees[k] = v
+	}
+	for k, v := range res.Blobs {
+		out.Blobs[k] = v
+	}
+	if res.Deltas != nil {
+		out.Deltas = make(map[string]cliproto.Delta, len(res.Deltas))
+		for k, d := range res.Deltas {
+			out.Deltas[k] = cliproto.Delta{Base: string(d.Base), Size: d.Size, Delta: d.Delta}
+		}
+	}
+	return out
 }
 
 // --- POST /api/v1/commit: server-side changeset assembly (docs/client/cli.md §4.2) ---

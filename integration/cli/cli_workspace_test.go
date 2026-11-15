@@ -21,7 +21,7 @@ import (
 
 	"github.com/banyan-vcs/banyan/integration/support"
 	"github.com/banyan-vcs/banyan/internal/cli"
-	"github.com/banyan-vcs/banyan/internal/rpc"
+	"github.com/banyan-vcs/banyan/internal/cliproto"
 )
 
 // runCLI runs the thin client in-process; returns stdout, stderr and the exit code.
@@ -209,17 +209,20 @@ func TestFetchTreesBinary(t *testing.T) {
 		return len(raw), resp.Header.Get("Content-Type")
 	}
 	binLen, binCT := fetch("bin")
+	binzLen, binzCT := fetch("binz")
 	jsonLen, _ := fetch("")
 
 	require.Contains(t, binCT, "application/x-banyan-fetch-trees", "bin 请求应返回二进制 content-type")
+	require.Contains(t, binzCT, "application/x-banyan-fetch-trees-2", "binz 请求应返回 v2 content-type")
 	assert.Less(t, binLen, jsonLen, "二进制帧应小于 JSON base64（%d vs %d）", binLen, jsonLen)
+	assert.Less(t, binzLen, binLen, "v2 zlib 帧应小于 v1 裸帧（%d vs %d）", binzLen, binLen)
 
-	// Semantics: parse both, compare the object sets.
+	// Semantics: parse the v2 framing, compare against the JSON object sets.
 	resp, err := http.Post(s.URL+"/api/v1/fetch-trees", "application/json",
-		strings.NewReader(`{"repo":"t33","format":"bin"}`))
+		strings.NewReader(`{"repo":"t33","format":"binz"}`))
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	branch, head, treeOID, full, pending, trees, blobs, perr := rpc.ParseFetchBinary(resp.Body)
+	fr, perr := cliproto.Parse(resp.Body)
 	require.NoError(t, perr)
 
 	var jr struct {
@@ -236,14 +239,14 @@ func TestFetchTreesBinary(t *testing.T) {
 	defer jresp.Body.Close()
 	require.NoError(t, json.NewDecoder(jresp.Body).Decode(&jr))
 
-	assert.Equal(t, jr.Branch, branch)
-	assert.Equal(t, jr.Head, head)
-	assert.Equal(t, jr.Tree, treeOID)
-	assert.Equal(t, jr.Full, full)
-	assert.Equal(t, jr.Pending, pending)
-	assert.Equal(t, jr.Trees, trees, "树集合应与 JSON 完全一致")
-	assert.Equal(t, jr.Blobs, blobs, "blob 集合应与 JSON 完全一致")
-	assert.NotEmpty(t, trees)
+	assert.Equal(t, jr.Branch, fr.Branch)
+	assert.Equal(t, jr.Head, fr.Head)
+	assert.Equal(t, jr.Tree, fr.Tree)
+	assert.Equal(t, jr.Full, fr.Full)
+	assert.Equal(t, jr.Pending, fr.Pending)
+	assert.Equal(t, jr.Trees, fr.Trees, "树集合应与 JSON 完全一致")
+	assert.Equal(t, jr.Blobs, fr.Blobs, "blob 集合应与 JSON 完全一致")
+	assert.NotEmpty(t, fr.Trees)
 
 	// The real CLI consumes the binary path end to end: clone materializes
 	// through fetchTrees with format=bin (in-process runner, same as T22).

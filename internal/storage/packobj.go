@@ -157,7 +157,7 @@ func readObjectAt(src packSource, idx *PackIndex, off int64, algo model.HashAlgo
 		if err != nil {
 			return "", nil, fmt.Errorf("extract: inflate delta: %w", err)
 		}
-		out, err := applyDelta(base, delta)
+		out, err := ApplyDelta(base, delta)
 		if err != nil {
 			return "", nil, err
 		}
@@ -182,7 +182,7 @@ func readObjectAt(src packSource, idx *PackIndex, off int64, algo model.HashAlgo
 		if err != nil {
 			return "", nil, fmt.Errorf("extract: inflate delta: %w", err)
 		}
-		out, err := applyDelta(base, delta)
+		out, err := ApplyDelta(base, delta)
 		if err != nil {
 			return "", nil, err
 		}
@@ -213,11 +213,13 @@ func inflateAt(src packSource, pos int64, size int64) ([]byte, error) {
 	return out, nil
 }
 
-// applyDelta applies a git delta buffer to its base (pack-format.txt "The
+// ApplyDelta applies a git delta buffer to its base (pack-format.txt "The
 // delta data format"): two size varints, then a program of copy-from-base
 // (opcode MSB set; present bits select offset/size bytes) and
-// insert-literal opcodes.
-func applyDelta(base, delta []byte) ([]byte, error) {
+// insert-literal opcodes. Exported for the thin CLI's downlink delta
+// records (docs/operations/performance.md §9 C) — the same program the
+// pack extractor runs.
+func ApplyDelta(base, delta []byte) ([]byte, error) {
 	pos := 0
 	need := func(n int) error {
 		if pos+n > len(delta) {

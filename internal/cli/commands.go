@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/banyan-vcs/banyan/internal/model"
+	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
 // Exit codes (docs/client/cli.md §5): 0 ok / 1 conflict / 2 server or usage error / 3 network.
@@ -124,6 +125,8 @@ func runClone(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
+	// clone carries no haveTree — the server never deltifies a first fetch;
+	// deltas are the pull lane's win.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return cmdErr(stderr, err)
 	}
@@ -338,6 +341,7 @@ func pullCore(ws *workspace, st *status, c *client, stdout, stderr io.Writer) in
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
+	resolveDeltas(ws, c, ws.cfg.Repo, res) // bases live in the previous checkout's cache
 	if res.Head == ws.man.Commit && res.Tree == ws.man.Tree {
 		fmt.Fprintln(stdout, "Already up to date.")
 		return 0
@@ -631,4 +635,39 @@ func short(oid string) string {
 		return oid[:8]
 	}
 	return oid
+}
+
+// resolveDeltas folds v2 delta records into plain blobs before any
+// consumer reads res: the base comes from the response itself or the
+// workspace cache (the client provably held it — that's why the server
+// deltified), the result is hash-verified against the target oid, and any
+// miss falls back to fetching the whole blob. Content addressing stays
+// the contract; the delta is purely a transfer optimization.
+func resolveDeltas(ws *workspace, c *client, repo string, res *fetchTreesResponse) {
+	for oid, d := range res.Deltas {
+		base, ok := res.Blobs[d.Base]
+		if !ok {
+			base, ok = ws.cacheGet(d.Base)
+		}
+		if !ok {
+			if fetched, ferr := c.getObject(repo, d.Base); ferr == nil {
+				base = fetched
+			}
+		}
+		content := []byte(nil)
+		if base != nil {
+			if applied, aerr := storage.ApplyDelta(base, d.Delta); aerr == nil && len(applied) == d.Size {
+				content = applied
+			}
+		}
+		if content == nil || blobHash(content) != oid {
+			if whole, werr := c.getObject(repo, oid); werr == nil {
+				content = whole
+			} else {
+				continue // the treeSource walk surfaces the miss with context
+			}
+		}
+		res.Blobs[oid] = content
+	}
+	res.Deltas = nil
 }

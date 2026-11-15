@@ -46,7 +46,7 @@ func TestDiffDeltaRoundTrip(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			delta := DiffDelta(tc.base, tc.target)
 			require.NotNil(t, delta, "%s: 应产出 delta", tc.name)
-			got, err := applyDelta(tc.base, delta)
+			got, err := ApplyDelta(tc.base, delta)
 			require.NoError(t, err)
 			assert.Equal(t, tc.target, got, "%s: 往返应字节一致", tc.name)
 		})
@@ -110,7 +110,7 @@ func decodeThinPack(raw []byte, baseFor func(model.OID) []byte) (map[model.OID][
 }
 
 func applyDeltaTest(base, delta []byte) []byte {
-	out, err := applyDelta(base, delta)
+	out, err := ApplyDelta(base, delta)
 	if err != nil {
 		panic(err)
 	}
