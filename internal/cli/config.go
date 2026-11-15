@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -41,7 +42,7 @@ type hostEntry struct {
 	Token   string `yaml:"token,omitempty"`
 	Expires int64  `yaml:"expires,omitempty"`
 	Method  string `yaml:"method,omitempty"` // "ssh" | "web" — ssh refreshes silently
-	SSHAddr string `yaml:"ssh,omitempty"`   // advertised SSH address (re-mint)
+	SSHAddr string `yaml:"ssh,omitempty"`    // advertised SSH address (re-mint)
 	WebURL  string `yaml:"web,omitempty"`
 }
 
@@ -147,15 +148,33 @@ func migrateLegacy(cfg *cliConfig) {
 }
 
 // saveConfig persists atomically (temp file + same-dir rename): a killed
-// CLI never leaves a half-written config behind.
+// CLI never leaves a half-written config behind. Concurrent CLI processes
+// serialize on a best-effort lockfile — a stuck lock older than 5s is
+// stolen, so a crashed writer never wedges every future one; the residual
+// race (two writers, one lock timeout) degrades to last-writer-wins, which
+// the SSH re-mint path self-heals.
 func saveConfig(cfg *cliConfig) {
 	path := configPath()
-	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	dir := filepath.Dir(path)
+	_ = os.MkdirAll(dir, 0o700)
+	lock := path + ".lock"
+	for i := 0; i < 10; i++ {
+		f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			defer func() { _ = f.Close(); _ = os.Remove(lock) }()
+			break
+		}
+		if st, serr := os.Stat(lock); serr == nil && time.Since(st.ModTime()) > 5*time.Second {
+			_ = os.Remove(lock) // stale: the previous holder is gone
+			continue
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	raw, err := yaml.Marshal(cfg)
 	if err != nil {
 		return
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*")
+	tmp, err := os.CreateTemp(dir, ".config-*")
 	if err != nil {
 		return
 	}

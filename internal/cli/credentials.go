@@ -18,6 +18,7 @@ type credential struct {
 	Expires int64  // unix seconds; the CLI re-authenticates past it
 	Method  string // "ssh" | "web" — ssh refreshes silently
 	SSHAddr string // advertised SSH address (the 401 re-mint path)
+	WebURL  string // advertised web console (shown in host listings)
 }
 
 // homeDir is the legacy store directory (pre-config generations: ~/.banyan;
@@ -47,7 +48,7 @@ func pinHostKey(addr, blobB64 string) {
 func credForHost(server string) *credential {
 	cfg := loadConfig()
 	if e, ok := cfg.Hosts[serverKey(server)]; ok && e != nil {
-		return &credential{User: e.User, Token: e.Token, Expires: e.Expires, Method: e.Method, SSHAddr: e.SSHAddr}
+		return &credential{User: e.User, Token: e.Token, Expires: e.Expires, Method: e.Method, SSHAddr: e.SSHAddr, WebURL: e.WebURL}
 	}
 	return nil
 }
@@ -57,7 +58,7 @@ func credForHost(server string) *credential {
 func putCred(server string, c credential) {
 	cfg := loadConfig()
 	key := serverKey(server)
-	cfg.Hosts[key] = &hostEntry{User: c.User, Token: c.Token, Expires: c.Expires, Method: c.Method, SSHAddr: c.SSHAddr}
+	cfg.Hosts[key] = &hostEntry{User: c.User, Token: c.Token, Expires: c.Expires, Method: c.Method, SSHAddr: c.SSHAddr, WebURL: c.WebURL}
 	if cfg.DefaultHost == "" {
 		cfg.DefaultHost = key
 	}

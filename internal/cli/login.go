@@ -18,24 +18,29 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/term"
 
 	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	var server, user string
-	status := false
+	status, jsonOut := false, false
 	for i := 0; i < len(args); i++ {
 		switch {
 		case (args[i] == "--user" || args[i] == "-u") && i+1 < len(args):
@@ -43,6 +48,8 @@ func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
 			user = args[i]
 		case args[i] == "--status":
 			status = true
+		case args[i] == "--json":
+			jsonOut = true
 		case strings.HasPrefix(args[i], "-") && args[i] != "-":
 			return usageErr(stderr, "login: unknown flag %q", args[i])
 		case server == "":
@@ -62,7 +69,7 @@ func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if status {
-		return loginStatus(srv, explicit, stdout, stderr)
+		return loginStatus(srv, explicit, jsonOut, stdout, stderr)
 	}
 	if user == "" {
 		user = os.Getenv("USER")
@@ -81,7 +88,7 @@ func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
 			printDefaultIfMarked(srv, stdout)
 			return 0
 		}
-		fmt.Fprintf(stderr, "ssh login unavailable (%v)", err)
+		fmt.Fprintf(stderr, "ssh login unavailable as %q (%v)", user, err)
 		if caps.Web == "" {
 			fmt.Fprintln(stderr)
 			return cmdErr(stderr, fmt.Errorf("login: server advertises no web fallback"))
@@ -95,7 +102,7 @@ func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
-	putCred(srv, credential{User: granted.User, Token: granted.Token, Expires: granted.Expires, Method: "web"})
+	putCred(srv, credential{User: granted.User, Token: granted.Token, Expires: granted.Expires, Method: "web", WebURL: caps.Web})
 	fmt.Fprintf(stdout, "logged in %s as %s via web approval (session expires %s)\n", srv, granted.User, timeFmt(granted.Expires))
 	printDefaultIfMarked(srv, stdout)
 	return 0
@@ -137,9 +144,11 @@ func pickServerInteractive(stdout io.Writer) (string, error) {
 }
 
 // loginStatus reports sessions across hosts (gh auth status parity): one
-// line per configured server, network-verified. An explicit server narrows
-// to that host; the listing form covers every island the machine knows.
-func loginStatus(srv string, explicit bool, stdout, stderr io.Writer) int {
+// line per configured server, network-verified — the probes run CONCURRENTLY
+// (a dead island costs its own 5s budget, not the sum of all). An explicit
+// server narrows to that host; --json emits the same rows as `host ls`
+// with probed states.
+func loginStatus(srv string, explicit, jsonOut bool, stdout, stderr io.Writer) int {
 	cfg := loadConfig()
 	keys := sortedHostKeys(cfg)
 	if explicit {
@@ -149,20 +158,44 @@ func loginStatus(srv string, explicit bool, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "not logged in to %s\n", srv)
 			return 1
 		}
-		fmt.Fprintf(stdout, "%s as %s via %s, expires %s (%s)\n", srv, e.User, e.Method, timeFmt(e.Expires), probeSession(key, e))
+		state := probeSession(key, e)
+		if jsonOut {
+			writeHostRows(stdout, []hostRow{{Server: srv, User: e.User, Method: e.Method, Expires: e.Expires, Default: key == cfg.DefaultHost, State: state}})
+		} else {
+			fmt.Fprintf(stdout, "%s as %s via %s, expires %s (%s)\n", srv, e.User, e.Method, timeFmt(e.Expires), state)
+		}
 		return 0
 	}
 	if len(keys) == 0 {
 		fmt.Fprintln(stdout, "not logged in anywhere (banyan login <server>)")
 		return 1
 	}
-	for _, k := range keys {
+	states := make([]string, len(keys))
+	var wg sync.WaitGroup
+	for i := range keys {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			states[i] = probeSession(keys[i], cfg.Hosts[keys[i]])
+		}(i)
+	}
+	wg.Wait()
+	if jsonOut {
+		rows := make([]hostRow, len(keys))
+		for i, k := range keys {
+			e := cfg.Hosts[k]
+			rows[i] = hostRow{Server: k, User: e.User, Method: e.Method, Expires: e.Expires, Default: k == cfg.DefaultHost, State: states[i]}
+		}
+		writeHostRows(stdout, rows)
+		return 0
+	}
+	for i, k := range keys {
 		e := cfg.Hosts[k]
 		mark := " "
 		if k == cfg.DefaultHost {
 			mark = "*"
 		}
-		fmt.Fprintf(stdout, "%s %s as %s via %s, expires %s (%s)\n", mark, k, e.User, e.Method, timeFmt(e.Expires), probeSession(k, e))
+		fmt.Fprintf(stdout, "%s %s as %s via %s, expires %s (%s)\n", mark, k, e.User, e.Method, timeFmt(e.Expires), states[i])
 	}
 	if cfg.DefaultHost != "" {
 		fmt.Fprintln(stdout, "default: "+cfg.DefaultHost+" — switch with: banyan host use <server>")
@@ -277,14 +310,28 @@ func tofuCallback(addr string, pinned *string) ssh.HostKeyCallback {
 
 // sshAuthMethods collects agent signers plus the default key files;
 // BANYAN_SSH_KEY points at one explicit key first (CI, agents, tests).
+// Passphrase-protected keys prompt once on the terminal (echo off; a
+// non-interactive run takes BANYAN_SSH_PASSPHRASE instead), and on Windows
+// the OpenSSH agent's named pipe is tried when no SSH_AUTH_SOCK exists.
 func sshAuthMethods() ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
+	addAgent := func(rw io.ReadWriteCloser) {
+		defer rw.Close()
+		ag := agent.NewClient(rw)
+		if signers, err := ag.Signers(); err == nil && len(signers) > 0 {
+			methods = append(methods, ssh.PublicKeysCallback(ag.Signers))
+		}
+	}
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		if c, err := net.Dial("unix", sock); err == nil {
-			ag := agent.NewClient(c)
-			if signers, err := ag.Signers(); err == nil && len(signers) > 0 {
-				methods = append(methods, ssh.PublicKeysCallback(ag.Signers))
-			}
+			addAgent(c)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		// Windows OpenSSH agent: a named pipe with no SSH_AUTH_SOCK
+		// convention — os.OpenFile dials byte-mode pipes fine.
+		if f, err := os.OpenFile(`\\.\pipe\openssh-ssh-agent`, os.O_RDWR, 0); err == nil {
+			addAgent(f)
 		}
 	}
 	candidates := []string{}
@@ -297,24 +344,54 @@ func sshAuthMethods() ([]ssh.AuthMethod, error) {
 		}
 	}
 	for _, p := range candidates {
-		if raw, rerr := os.ReadFile(p); rerr == nil {
-			if signer, perr := ssh.ParsePrivateKey(raw); perr == nil {
-				methods = append(methods, ssh.PublicKeys(signer))
-			}
+		if signer, err := loadSSHKey(p); err == nil && signer != nil {
+			methods = append(methods, ssh.PublicKeys(signer))
 		}
 	}
 	return methods, nil
 }
 
-// webLogin drives the console approval flow: print the /cli-auth URL, poll
-// the one-shot grant (5 minutes).
+// loadSSHKey reads one private key, unlocking passphrase-protected ones
+// via BANYAN_SSH_PASSPHRASE or a one-time terminal prompt.
+func loadSSHKey(path string) (ssh.Signer, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	signer, err := ssh.ParsePrivateKey(raw)
+	if err == nil {
+		return signer, nil
+	}
+	var missing *ssh.PassphraseMissingError
+	if !errors.As(err, &missing) {
+		return nil, err
+	}
+	if pass := os.Getenv("BANYAN_SSH_PASSPHRASE"); pass != "" {
+		return ssh.ParsePrivateKeyWithPassphrase(raw, []byte(pass))
+	}
+	fmt.Fprintf(os.Stderr, "passphrase for %s: ", path)
+	pass, perr := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if perr != nil {
+		return nil, fmt.Errorf("encrypted key %s (no terminal — set BANYAN_SSH_PASSPHRASE)", path)
+	}
+	return ssh.ParsePrivateKeyWithPassphrase(raw, pass)
+}
+
+// webLogin drives the console approval flow: print the /cli-auth URL (and
+// open the default browser when one can be started — BANYAN_NO_BROWSER
+// disables), poll the one-shot grant (5 minutes).
 func webLogin(web string, stdout io.Writer) (*mintedSession, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return nil, err
 	}
 	id := base64.RawURLEncoding.EncodeToString(raw)
-	fmt.Fprintf(stdout, "open in a browser to approve this CLI:\n  %s/cli-auth#id=%s\n", web, id)
+	url := web + "/cli-auth#id=" + id
+	fmt.Fprintf(stdout, "open in a browser to approve this CLI:\n  %s\n", url)
+	if openBrowser(url) {
+		fmt.Fprintln(stdout, "(opened in your default browser)")
+	}
 	deadline := time.Now().Add(5 * time.Minute)
 	hc := &http.Client{Timeout: 10 * time.Second}
 	for time.Now().Before(deadline) {
@@ -340,6 +417,26 @@ func webLogin(web string, stdout io.Writer) (*mintedSession, error) {
 		time.Sleep(2 * time.Second)
 	}
 	return nil, fmt.Errorf("login: approval window timed out")
+}
+
+// openBrowser starts the platform's default browser at url — best-effort:
+// failures are silent (the URL is printed right above), BANYAN_NO_BROWSER
+// opts out (SSH-remote sessions where the URL must travel to another
+// machine anyway).
+func openBrowser(url string) bool {
+	if os.Getenv("BANYAN_NO_BROWSER") != "" {
+		return false
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	return cmd.Start() == nil
 }
 
 // revokeSession self-revokes a stored session credential at the token

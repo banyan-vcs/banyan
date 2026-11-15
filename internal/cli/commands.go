@@ -355,7 +355,7 @@ func pullCore(ws *workspace, st *status, c *client, stdout, stderr io.Writer) in
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
-	resolveDeltas(ws, c, ws.cfg.Repo, res)  // bases live in the previous checkout's cache
+	resolveDeltas(ws, c, ws.cfg.Repo, res)           // bases live in the previous checkout's cache
 	backfillPending(ws, c, ws.cfg.Repo, res.Pending) // big changed blobs ride batch frames
 	if res.Head == ws.man.Commit && res.Tree == ws.man.Tree {
 		fmt.Fprintln(stdout, "Already up to date.")

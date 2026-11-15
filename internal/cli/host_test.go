@@ -6,15 +6,21 @@ package cli
 // exercised through pickFromList directly (the os.Stdin paths only
 // degrade to their non-interactive hints in tests).
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/banyan-vcs/banyan/internal/meta"
 )
@@ -156,7 +162,7 @@ func TestLoginStatusAcrossHosts(t *testing.T) {
 	putCred("http://expired.io", credential{User: "dave", Token: "banyan_old", Method: "web", Expires: time.Now().Add(-time.Minute).Unix()})
 
 	var out, errb strings.Builder
-	assert.Equal(t, 0, loginStatus("", false, &out, &errb))
+	assert.Equal(t, 0, loginStatus("", false, false, &out, &errb))
 	assert.Contains(t, out.String(), live.URL+" as alice via ssh")
 	assert.Contains(t, out.String(), "(valid)")   // the live session, network-verified
 	assert.Contains(t, out.String(), "(rejected") // a stored but refused token
@@ -165,9 +171,49 @@ func TestLoginStatusAcrossHosts(t *testing.T) {
 
 	// The explicit form narrows to one host and exits 1 when absent.
 	out.Reset()
-	assert.Equal(t, 0, loginStatus(live.URL, true, &out, &errb))
+	assert.Equal(t, 0, loginStatus(live.URL, true, false, &out, &errb))
 	assert.Contains(t, out.String(), "as alice")
 	out.Reset()
-	assert.Equal(t, 1, loginStatus("http://never.io", true, &out, &errb))
+	assert.Equal(t, 1, loginStatus("http://never.io", true, false, &out, &errb))
 	assert.Contains(t, out.String(), "not logged in")
+
+	// --json carries the probed states (same rows as `host ls --json`).
+	out.Reset()
+	assert.Equal(t, 0, loginStatus("", false, true, &out, &errb))
+	var jrows []hostRow
+	require.NoError(t, json.Unmarshal([]byte(out.String()), &jrows))
+	require.Len(t, jrows, 3)
+	assert.Equal(t, "valid", jrows[0].State)
+	assert.True(t, jrows[0].Default)
+}
+
+func TestLoadSSHKeyPassphrase(t *testing.T) {
+	// In-process keypair → OpenSSH PEM, plain and passphrase-protected
+	// (MarshalPrivateKeyWithPassphrase) — the env-var unlock path, no
+	// terminal needed.
+	_, plain, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	dir := t.TempDir()
+
+	plainPEM, err := ssh.MarshalPrivateKey(plain, "t")
+	require.NoError(t, err)
+	p := filepath.Join(dir, "id_plain")
+	require.NoError(t, os.WriteFile(p, pem.EncodeToMemory(plainPEM), 0o600))
+	signer, err := loadSSHKey(p)
+	require.NoError(t, err)
+	require.NotNil(t, signer)
+
+	encPEM, err := ssh.MarshalPrivateKeyWithPassphrase(plain, "t", []byte("seekrit"))
+	require.NoError(t, err)
+	p = filepath.Join(dir, "id_enc")
+	require.NoError(t, os.WriteFile(p, pem.EncodeToMemory(encPEM), 0o600))
+	_, err = loadSSHKey(p)
+	require.Error(t, err, "without the passphrase the key is unusable (and skipped)")
+	t.Setenv("BANYAN_SSH_PASSPHRASE", "seekrit")
+	signer, err = loadSSHKey(p)
+	require.NoError(t, err)
+	require.NotNil(t, signer)
+	t.Setenv("BANYAN_SSH_PASSPHRASE", "wrong")
+	_, err = loadSSHKey(p)
+	require.Error(t, err, "a wrong passphrase fails the parse, not silently skips")
 }

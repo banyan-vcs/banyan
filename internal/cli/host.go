@@ -29,6 +29,21 @@ func runHost(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+// hostRow is one line of `host ls`/`login --status` output, text or JSON.
+type hostRow struct {
+	Server  string `json:"server"`
+	User    string `json:"user"`
+	Method  string `json:"method"`
+	Expires int64  `json:"expires"`
+	Default bool   `json:"default"`
+	State   string `json:"state"`
+}
+
+func writeHostRows(stdout io.Writer, rows []hostRow) {
+	raw, _ := json.MarshalIndent(rows, "", "  ")
+	fmt.Fprintln(stdout, string(raw))
+}
+
 func hostList(args []string, stdout, stderr io.Writer) int {
 	jsonOut := false
 	for _, a := range args {
@@ -41,21 +56,12 @@ func hostList(args []string, stdout, stderr io.Writer) int {
 	cfg := loadConfig()
 	keys := sortedHostKeys(cfg)
 	if jsonOut {
-		type row struct {
-			Server  string `json:"server"`
-			User    string `json:"user"`
-			Method  string `json:"method"`
-			Expires int64  `json:"expires"`
-			Default bool   `json:"default"`
-			State   string `json:"state"`
-		}
-		rows := make([]row, 0, len(keys))
+		rows := make([]hostRow, 0, len(keys))
 		for _, k := range keys {
 			e := cfg.Hosts[k]
-			rows = append(rows, row{Server: k, User: e.User, Method: e.Method, Expires: e.Expires, Default: k == cfg.DefaultHost, State: hostClockState(e)})
+			rows = append(rows, hostRow{Server: k, User: e.User, Method: e.Method, Expires: e.Expires, Default: k == cfg.DefaultHost, State: hostClockState(e)})
 		}
-		raw, _ := json.MarshalIndent(rows, "", "  ")
-		fmt.Fprintln(stdout, string(raw))
+		writeHostRows(stdout, rows)
 		return 0
 	}
 	if len(keys) == 0 {
