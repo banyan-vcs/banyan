@@ -84,6 +84,10 @@ type TokenRegistry interface {
 	ListTokens(ctx context.Context, user string) ([]TokenInfo, error)
 	// RevokeToken marks one token revoked (idempotent).
 	RevokeToken(ctx context.Context, hash string) error
+	// DeleteExpiredTokens drops rows past their Expires (0 = never); it
+	// answers the number removed. Sessions mint every re-auth, so the
+	// mint paths sweep lazily — the table must not grow forever.
+	DeleteExpiredTokens(ctx context.Context, now int64) (int64, error)
 }
 
 // --- memory implementation ---
@@ -137,6 +141,19 @@ func (m *MemoryMetaStore) RevokeToken(_ context.Context, hash string) error {
 		m.tokens[hash] = t
 	}
 	return nil
+}
+
+func (m *MemoryMetaStore) DeleteExpiredTokens(_ context.Context, now int64) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for h, t := range m.tokens {
+		if t.Expires != 0 && t.Expires < now {
+			delete(m.tokens, h)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // --- SQL implementation (sqlite / mysql / postgres share it) ---
@@ -199,6 +216,15 @@ func (s *SQLMetaStore) ListTokens(ctx context.Context, user string) ([]TokenInfo
 func (s *SQLMetaStore) RevokeToken(ctx context.Context, hash string) error {
 	_, err := s.db.ExecContext(ctx, s.q("UPDATE tokens SET revoked=1 WHERE token_hash=?"), hash)
 	return err
+}
+
+func (s *SQLMetaStore) DeleteExpiredTokens(ctx context.Context, now int64) (int64, error) {
+	res, err := s.db.ExecContext(ctx, s.q("DELETE FROM tokens WHERE expires_at != 0 AND expires_at < ?"), now)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // HashToken is the at-rest form of a token plaintext (sha256 hex).

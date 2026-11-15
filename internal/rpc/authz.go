@@ -132,6 +132,7 @@ func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, errEnvelope{Error: errBody{Code: "INTERNAL", Message: err.Error()}})
 			return
 		}
+		_, _ = tr.DeleteExpiredTokens(r.Context(), time.Now().Unix()) // lazy hygiene: sessions mint on every re-auth
 		// The plaintext exists only in this response (docs/gateway/authorization.md §6).
 		writeJSON(w, http.StatusOK, map[string]any{"token": plaintext, "hash": info.Hash, "scope": info.Scope, "expires": info.Expires})
 	case r.Method == http.MethodGet && rest == "":

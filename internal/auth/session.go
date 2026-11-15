@@ -17,18 +17,27 @@ import (
 // working day, short enough that a leaked credential is a bounded incident.
 const SessionTTL = 12 * time.Hour
 
-// MintSession issues one short-lived session credential for user. The
-// plaintext exists exactly once at mint (the registry stores its sha256);
-// scope is write — sessions fetch, push and commit, but never administer.
-func MintSession(ctx context.Context, tokens meta.TokenRegistry, user string, ttl time.Duration, now time.Time) (string, meta.TokenInfo, error) {
+// MintSession issues one short-lived session credential for user. label
+// ("" = none) names the device — "cli-session:laptop42" instead of an
+// anonymous "cli-session" — so an admin can revoke ONE lost machine, not
+// the user's every session. The plaintext exists exactly once at mint (the
+// registry stores its sha256); scope is write — sessions fetch, push and
+// commit, but never administer. Every mint also sweeps the registry's
+// expired rows (sessions mint on every re-auth; without a sweep the table
+// grows forever).
+func MintSession(ctx context.Context, tokens meta.TokenRegistry, user string, ttl time.Duration, now time.Time, label string) (string, meta.TokenInfo, error) {
 	plain, err := meta.NewTokenPlaintext()
 	if err != nil {
 		return "", meta.TokenInfo{}, err
 	}
+	name := "cli-session"
+	if l := sanitizeLabel(label); l != "" {
+		name = "cli-session:" + l
+	}
 	info := meta.TokenInfo{
 		Hash:    meta.HashToken(plain),
 		User:    user,
-		Name:    "cli-session",
+		Name:    name,
 		Scope:   meta.ScopeWrite,
 		Expires: now.Add(ttl).Unix(),
 		Created: now.Unix(),
@@ -36,5 +45,22 @@ func MintSession(ctx context.Context, tokens meta.TokenRegistry, user string, tt
 	if err := tokens.PutToken(ctx, info); err != nil {
 		return "", meta.TokenInfo{}, err
 	}
+	_, _ = tokens.DeleteExpiredTokens(ctx, now.Unix()) // best-effort hygiene
 	return plain, info, nil
+}
+
+// sanitizeLabel keeps device labels to the file-name-safe alphabet (they
+// surface in token listings and the web console) and caps their length.
+func sanitizeLabel(label string) string {
+	out := make([]rune, 0, 32)
+	for _, r := range label {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			out = append(out, r)
+		}
+		if len(out) == 32 {
+			break
+		}
+	}
+	return string(out)
 }

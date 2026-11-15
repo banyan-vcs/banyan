@@ -114,8 +114,12 @@ func (s *Server) serveSSHSession(conn *ssh.ServerConn, ch ssh.Channel, requests 
 				return
 			}
 			var code int
-			if strings.TrimSpace(command) == "banyan-auth" {
-				code = s.serveSSHAuth(ch, id)
+			if fields := strings.Fields(strings.TrimSpace(command)); len(fields) > 0 && fields[0] == "banyan-auth" {
+				label := ""
+				if len(fields) == 2 { // `banyan-auth <device-label>` — names the session per machine
+					label = fields[1]
+				}
+				code = s.serveSSHAuth(ch, id, label)
 			} else {
 				code = s.serveGitExec(ch, id, protocol, command)
 			}
@@ -165,7 +169,9 @@ func parseSSHEnv(payload []byte) (name, value string, ok bool) {
 // handshake) — this exchanges it for a short-lived session credential, one
 // JSON line on stdout, no permanent token anywhere. This is the CLI login's
 // preferred path: `banyan login` runs it with the user's agent/default keys.
-func (s *Server) serveSSHAuth(ch ssh.Channel, id auth.Identity) int {
+// label (optional exec argument) names the device, so the minted session is
+// revocable per machine.
+func (s *Server) serveSSHAuth(ch ssh.Channel, id auth.Identity, label string) int {
 	if id.User == "" {
 		fmt.Fprintln(ch, `{"error":"anonymous key"}`)
 		return 1
@@ -175,7 +181,7 @@ func (s *Server) serveSSHAuth(ch ssh.Channel, id auth.Identity) int {
 		fmt.Fprintln(ch, `{"error":"no token registry on this deployment"}`)
 		return 1
 	}
-	plain, info, err := auth.MintSession(context.Background(), reg, id.User, auth.SessionTTL, time.Now())
+	plain, info, err := auth.MintSession(context.Background(), reg, id.User, auth.SessionTTL, time.Now(), label)
 	if err != nil {
 		fmt.Fprintf(ch, "{\"error\":%q}\n", err.Error())
 		return 1

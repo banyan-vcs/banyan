@@ -272,7 +272,11 @@ func sshMint(addr, user string) (*mintedSession, error) {
 	defer sess.Close()
 	var out bytes.Buffer
 	sess.Stdout = &out
-	if err := sess.Run("banyan-auth"); err != nil {
+	exec := "banyan-auth"
+	if l := deviceLabel(); l != "" { // names the session per machine — revocable device-wise
+		exec += " " + l
+	}
+	if err := sess.Run(exec); err != nil {
 		return nil, fmt.Errorf("banyan-auth: %w (%s)", err, strings_oneLine(out.String()))
 	}
 	var m mintedSession
@@ -280,6 +284,17 @@ func sshMint(addr, user string) (*mintedSession, error) {
 		return nil, fmt.Errorf("banyan-auth: unreadable answer")
 	}
 	return &m, nil
+}
+
+// deviceLabel names this machine in minted sessions ("cli-session:<host>")
+// so an admin can revoke one lost device instead of every session. The
+// server sanitizes again — this is just a sane default.
+func deviceLabel() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return strings.Trim(h, ".")
 }
 
 func strings_oneLine(s string) string {
@@ -388,6 +403,9 @@ func webLogin(web string, stdout io.Writer) (*mintedSession, error) {
 	}
 	id := base64.RawURLEncoding.EncodeToString(raw)
 	url := web + "/cli-auth#id=" + id
+	if l := deviceLabel(); l != "" { // the fragment never leaves the browser — label rides along
+		url += "&l=" + l
+	}
 	fmt.Fprintf(stdout, "open in a browser to approve this CLI:\n  %s\n", url)
 	if openBrowser(url) {
 		fmt.Fprintln(stdout, "(opened in your default browser)")

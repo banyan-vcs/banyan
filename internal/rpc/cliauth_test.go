@@ -79,6 +79,23 @@ func TestCLISessionMint(t *testing.T) {
 	require.NoError(t, err)
 	resp2.Body.Close()
 	require.Equal(t, http.StatusOK, resp2.StatusCode, "the session rides Basic owner:token")
+
+	// A labeled mint names the device — revocable per machine, and the
+	// label is sanitized server-side (an hostile label cannot smuggle
+	// punctuation into token listings).
+	reqL, _ := http.NewRequest(http.MethodPost, hs.URL+"/api/v1/auth/cli-session",
+		strings.NewReader(`{"label":"laptop42; DROP"}`))
+	reqL.SetBasicAuth("alice", "pw")
+	respL, err := http.DefaultClient.Do(reqL)
+	require.NoError(t, err)
+	var labeled struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.NewDecoder(respL.Body).Decode(&labeled))
+	respL.Body.Close()
+	tokL, err := ms.TokenByHash(context.Background(), meta.HashToken(labeled.Token))
+	require.NoError(t, err)
+	require.Equal(t, "cli-session:laptop42DROP", tokL.Name)
 }
 
 // mintAs mints a PAT for user with the given scope and returns its plaintext.

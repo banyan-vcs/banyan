@@ -17,9 +17,9 @@ import (
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/cliproto"
 	"github.com/banyan-vcs/banyan/internal/gitaly"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/service"
-	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/view"
 )
@@ -58,8 +58,8 @@ func NewServer(meta meta.MetaStore, objects *storage.ObjectService, algo model.H
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/objects", s.authn(s.handleObjects))
 	mux.HandleFunc("/api/v1/objects/content", s.authn(s.handleObjectsContent))
-	mux.HandleFunc("/api/v1/objects/batch", s.authn(s.handleObjectsBatch)) // blob backfill downlink (docs/operations/performance.md §9 D)
-	mux.HandleFunc("/api/v1/proto", s.handleProto)                         // CLI capability broadcast — anonymous by design (login itself needs it)
+	mux.HandleFunc("/api/v1/objects/batch", s.authn(s.handleObjectsBatch))  // blob backfill downlink (docs/operations/performance.md §9 D)
+	mux.HandleFunc("/api/v1/proto", s.handleProto)                          // CLI capability broadcast — anonymous by design (login itself needs it)
 	mux.HandleFunc("/api/v1/auth/cli-session", s.authn(s.handleCLISession)) // short-lived session mint (docs/gateway/authorization.md §6a)
 	mux.HandleFunc("/api/v1/timelines", s.authn(s.handleTimelines))
 	mux.HandleFunc("/api/v1/subtrees", s.authn(s.handleSubtrees)) // subtree listing (docs/gateway/authorization.md §8)
@@ -72,7 +72,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
 	mux.HandleFunc("/api/v1/imports", s.authn(s.handleImports)) // server-side repo import (docs/web/web-layer.md §4)
-	mux.HandleFunc("/api/v1/repos/", s.authn(s.handleRepoSub)) // /api/v1/repos/<repo>/placement
+	mux.HandleFunc("/api/v1/repos/", s.authn(s.handleRepoSub))  // /api/v1/repos/<repo>/placement
 	mux.HandleFunc("/api/v1/cluster/nodes", s.authn(s.handleClusterNodes))
 	mux.HandleFunc("/api/v1/meta/backup", s.authn(s.handleMetaBackup))
 	mux.HandleFunc("/api/v1/resolve", s.authn(s.handleResolve))
@@ -341,7 +341,13 @@ func (s *Server) handleCLISession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, errEnvelope{Error: errBody{Code: "NO_TOKEN_REGISTRY", Message: "this deployment owns no token registry"}})
 		return
 	}
-	plain, info, err := auth.MintSession(r.Context(), reg, id.User, auth.SessionTTL, time.Now())
+	var req struct {
+		Label string `json:"label"` // optional device name — revocable per machine
+	}
+	if r.Body != nil { // decodeBody would 400 an empty body; unlabeled stays legal
+		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	}
+	plain, info, err := auth.MintSession(r.Context(), reg, id.User, auth.SessionTTL, time.Now(), req.Label)
 	if err != nil {
 		writeServiceErr(w, err)
 		return

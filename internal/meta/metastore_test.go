@@ -392,6 +392,24 @@ func runMetaConformance(t *testing.T, m MetaStore) {
 		t.Fatal("revoked flag must persist")
 	}
 
+	// Expired rows sweep away; permanent (Expires=0) and still-live rows stay.
+	if err := tr.PutToken(ctx, TokenInfo{Hash: HashToken("banyan_dead"), User: "alice", Scope: ScopeRead, Expires: 100, Created: 1}); err != nil {
+		t.Fatalf("put expired: %v", err)
+	}
+	n, err := tr.DeleteExpiredTokens(ctx, 200)
+	if err != nil || n != 1 {
+		t.Fatalf("sweep = %d, %v (want 1)", n, err)
+	}
+	if _, err := tr.TokenByHash(ctx, HashToken("banyan_dead")); !errors.Is(err, ErrTokenUnknown) {
+		t.Fatalf("expired token must be gone, got %v", err)
+	}
+	if n, err = tr.DeleteExpiredTokens(ctx, 200); err != nil || n != 0 {
+		t.Fatalf("re-sweep = %d, %v (want 0)", n, err)
+	}
+	if got, _ := tr.TokenByHash(ctx, HashToken("banyan_second")); got.User != "bob" {
+		t.Fatal("the still-live token must survive the sweep")
+	}
+
 	// --- subtree rule store (docs/gateway/authorization.md §8): every metadata-owning store ---
 	rs, ok := m.(SubtreeRuleStore)
 	if !ok {

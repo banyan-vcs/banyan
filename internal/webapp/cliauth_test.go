@@ -7,6 +7,7 @@ package webapp
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestCLIApprovePollRelay(t *testing.T) {
-	var mintAuth string
+	var mintAuth, mintBody string
 	gw := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/auth/login":
@@ -24,6 +25,8 @@ func TestCLIApprovePollRelay(t *testing.T) {
 			fmt.Fprint(w, `{"ok":true}`)
 		case r.URL.Path == "/api/v1/auth/cli-session" && r.Method == http.MethodPost:
 			mintAuth = r.Header.Get("Authorization")
+			raw, _ := io.ReadAll(r.Body)
+			mintBody = string(raw)
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"token":"banyan_shortlived","user":"alice","expires":%d}`, time.Now().Add(12*time.Hour).Unix())
 		default:
@@ -39,10 +42,12 @@ func TestCLIApprovePollRelay(t *testing.T) {
 	require.NotEmpty(t, cookie)
 
 	// Approve a handshake as alice: the gateway mint MUST ride alice's
-	// own credentials (Basic of the web session).
-	resp = postJSONCookie(t, hs.URL+"/api/cli/approve", cookie, map[string]string{"id": "handshake-0123456789abcdef"})
+	// own credentials (Basic of the web session), and the CLI's device
+	// label travels from the URL fragment through to the mint body.
+	resp = postJSONCookie(t, hs.URL+"/api/cli/approve", cookie, map[string]string{"id": "handshake-0123456789abcdef", "label": "laptop42"})
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.True(t, strings.HasPrefix(mintAuth, "Basic "), "mint went out with the session's credentials")
+	require.JSONEq(t, `{"label":"laptop42"}`, mintBody, "the device label names the minted session")
 
 	// The CLI poll claims the token exactly once. The id rides the BODY —
 	// the request line (query included) is what access logs capture.

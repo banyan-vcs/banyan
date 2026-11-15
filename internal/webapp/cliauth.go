@@ -9,6 +9,7 @@
 package webapp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -67,13 +68,14 @@ button{font:inherit;padding:.5em 1.2em;cursor:pointer}#out{margin-top:1em;white-
 <b>`+htmlEscape(s.sessionUser(r))+`</b>.</p>
 <p><button id="ok">Approve</button></p><p id="out"></p>
 <script>
-const id = (location.hash.match(/#id=([A-Za-z0-9_-]{16,128})/)||[])[1];
+const id = (location.hash.match(/[#&]id=([A-Za-z0-9_-]{16,128})/)||[])[1];
+const label = (location.hash.match(/[#&]l=([A-Za-z0-9._-]{1,32})/)||[])[1]||'';
 const out = document.getElementById('out');
 if (!id) { out.textContent = 'no handshake id in the URL — rerun "banyan login"'; }
 else document.getElementById('ok').onclick = async () => {
   out.textContent = 'approving…';
   const resp = await fetch('`+s.opts.BasePath+`/api/cli/approve', {method:'POST',
-    headers:{'Content-Type':'application/json'}, body: JSON.stringify({id})});
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, label})});
   out.textContent = resp.ok ? 'approved — the CLI will pick it up shortly (this page can be closed)'
                             : 'denied: ' + (await resp.text());
 };
@@ -102,17 +104,20 @@ func (s *Server) handleCLIApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ID string `json:"id"`
+		ID    string `json:"id"`
+		Label string `json:"label"` // device name from the CLI's URL fragment — names the minted session
 	}
 	if !readJSONBody(w, r, &req) || len(req.ID) < 16 || len(req.ID) > 128 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad handshake id"})
 		return
 	}
-	mintReq, err := http.NewRequest(http.MethodPost, s.opts.Gateway+"/api/v1/auth/cli-session", nil)
+	mintPayload, _ := json.Marshal(map[string]string{"label": req.Label})
+	mintReq, err := http.NewRequest(http.MethodPost, s.opts.Gateway+"/api/v1/auth/cli-session", bytes.NewReader(mintPayload))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	mintReq.Header.Set("Content-Type", "application/json")
 	mintReq.Header.Set("Authorization", sess.Basic())
 	mint, err := s.client.Do(mintReq)
 	if err != nil {
