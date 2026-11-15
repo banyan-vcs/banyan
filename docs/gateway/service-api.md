@@ -111,7 +111,8 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | blame | `GET /api/v1/blame?repo&rev&path` | History.Blame | **已落地**（2026-11-06；`--line-porcelain` 字节对齐 `git blame`，T81） |
 | cat（非 HEAD rev / 缓存脱靶） | `POST /api/v1/resolve` | Resolve | **已落地**（计划外增补：rev:path → 对象指针） |
 | branch / tag | `GET /api/v1/refs` / `POST /api/v1/refs` | Ref.List / Ref.CAS | **已落地**（POST 限根仓库） |
-| repo create/ls | `GET /api/v1/repos` | Repo.List | GET **已落地**；create 配合 M5 |
+| repo create/ls | `GET/POST /api/v1/repos` | Repo.List/Create | **已落地**（GET 列表含层级 `parent` 字段；POST body `{name, parent?}`——带 parent 即建子项目，link 失败回滚建仓、write-rank 门）|
+| 项目层级 | `GET/PUT /api/v1/repos/<repo>/parent` | Repo.Parent | **已落地**（2026-11-15，docs/design/data-model.md §14：GET `{repo,parent}`；PUT body `{parent}`——空串摘根；环/深度（≤16 级）由存储校验，INVALID_ARG；改挂为 admin 门）|
 | repo rename | `POST /api/v1/repos/<repo>/rename` | Repo.Rename | **已落地**（docs/storage/storage.md §6） |
 | 副本数 | `GET/PUT /api/v1/repos/<repo>/placement` | Admin.Placement | **已落地**（docs/storage/ha.md §6） |
 | force-push 开关 | `GET/PUT /api/v1/repos/<repo>/force-push` | Repo.ForcePush | **已落地**（docs/gateway/git-compat.md §6a；PUT body `{"enabled":bool}`，运行时生效无需重启） |

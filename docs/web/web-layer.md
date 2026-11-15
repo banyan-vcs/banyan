@@ -93,6 +93,10 @@ gateway 侧：requireWriteRank、目标名必须不存在（409）、失败回�
 导入引擎（`internal/importer`）与 gitaly FetchRemote 共用，pack 流式落盘
 （大仓内存与 小仓同价）。SSH remote 不支持（docs/integration/gitaly-compat.md 登记项）。
 
+## 4a. 项目层级（子项目树）
+
+仓库列表渲染为可折叠的项目树（注册表 `parent` 链接，docs/design/data-model.md §14）：子项目缩进 + 数量角标；建仓表单带父选择器（选项以全祖先路径标注）。仓库首页带祖先面包屑、sub-projects 区（直达子项目 + 内嵌 create sub-project 表单）。全部走既有 `GET /api/v1/repos` 缓存（零额外请求）与 `POST /api/v1/repos {name, parent}`；改挂/摘根属管理面，走 `PUT /api/v1/repos/<repo>/parent`（admin）。createRepos 能力门控——gitlab 档不显示。
+
 ## 5. 部署形态
 
 | 栈 | 形态 |

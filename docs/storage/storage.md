@@ -112,8 +112,9 @@ type MetaStore      interface { 上述全部 }                              // c
 
 ### 2.3 SQL 后端实现要点（SQLite 单机 / MySQL、PostgreSQL 集群）
 
-- 驱动 `modernc.org/sqlite`（纯 Go、无 cgo——OS 无关，见 AGENTS.md）。
-- 方言层（2026-10-27，HA-2）：MySQL（go-sql-driver）/PG（pgx）共享一套 schema 与全部语句，分歧点=DLL 类型与索引长度/OR IGNORE 与 UPSERT 拼写/占位符 rebind（?→$N）/唯一冲突判定（1062/23505）；CAS 在 MVCC 后端改为 SELECT...FOR UPDATE + 插入竞态按 PK 冲突归 ErrNonFastForward；conformance 矩阵四后端同一套（env 门控 BANYAN_TEST_{MYSQL,POSTGRES}_DSN）。
+- 驱动 `github.com/glebarez/go-sqlite`（modernc 引擎 fork，纯 Go、无 cgo——OS 无关，见 AGENTS.md；单一驱动注册，与 GORM 的 glebarez/sqlite 同源）。
+- 数据访问层（2026-11-15 起 GORM）：所有数据操作走 `internal/meta/gormstore.go`——GORM 以 Conn 挂载在**同一个连接池**上（DSN 的 PRAGMA 与 `_txlock=immediate` 对两层同时生效）；方言分歧收进 OnConflict 子句（INSERT IGNORE / ON DUPLICATE KEY / ON CONFLICT 由 GORM 按方言渲染）、TranslateError（唯一冲突统一 `gorm.ErrDuplicatedKey`）与 clause.Locking（MVCC 的 SELECT...FOR UPDATE）。**schema 仍显式**：AutoMigrate 表达不了 WITHOUT ROWID 与 InnoDB VARCHAR 字宽限制，DDL 继续由 applySchema/migrateColumn 直管；布尔列一律以 int 建模（PG 的 INTEGER 列不接受 bool 字面量）。两个已登记的命名坑：模型字段 `OID` 蛇形化为 `o_id`（非 `oid`）、复用 gorm 链会累积 Where 条件——显式列标签 + 每语句起新链。
+- 方言层（2026-10-27，HA-2，GORM 迁移后仅存 schema 面）：DDL 类型与索引长度/占位符 rebind（?→$N，迁移语句用）/hasColumn 探测；CAS 在 MVCC 后端为 SELECT...FOR UPDATE + 插入竞态按 PK 冲突归 ErrNonFastForward（SQLite 靠 DSN `_txlock=immediate` 使每个事务 BEGIN 即持写锁）；conformance 矩阵四后端同一套（env 门控 BANYAN_TEST_{MYSQL,POSTGRES}_DSN）——GORM 迁移即以它为等价性门禁。
 - PRAGMA：`journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=5000`。
 - `objects` 表 `WITHOUT ROWID`（主键聚簇，点查即索引扫描）；插入按 500 行/事务分块。
 - CAS：`BEGIN IMMEDIATE` 内 SELECT-比-UPDATE/DELETE，失败回滚映射 `ErrNonFastForward`（与 git push 语义一致，docs/design/data-model.md §4.3）。
@@ -343,6 +344,7 @@ rename 移动期间并发 push——字节落旧名、注册/CAS 也落旧名，
 | pack/idx 读写封装 | `internal/storage/packfile.go` |
 | MetaStore 接口（四角色组合）+ 内存实现 | `internal/meta/metastore.go` |
 | MetaStore SQL 三方言（含 SQLite WAL + IMMEDIATE CAS） | `internal/meta/metastore_sql.go` / `internal/meta/metastore_sqlite.go` |
+| MetaStore GORM 数据访问层（行模型/挂载/fence 探针，2026-11-15） | `internal/meta/gormstore.go` |
 | 元数据远端（refs 角色客户端） | `internal/meta/refsclient.go` |
 | 仓库寻址（named/hashed 映射） | `internal/meta/addressing.go` |
 | repack 骨架 | `internal/storage/repack.go` |

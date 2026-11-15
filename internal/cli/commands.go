@@ -663,13 +663,38 @@ func runRepo(wsRoot string, args []string, stdout, stderr io.Writer) int {
 			ID            string `json:"id"`
 			DefaultBranch string `json:"defaultBranch"`
 			Algorithm     string `json:"algorithm"`
+			Parent        string `json:"parent"`
 		} `json:"repos"`
 	}
 	if err := newClient(server).getJSON("/api/v1/repos", &out); err != nil {
 		return cmdErr(stderr, err)
 	}
+	// The project tree (docs/design/data-model.md §14): children indent two spaces
+	// per level under their parent. The server lists name-ordered; rows whose
+	// parent is missing from the listing fall back to roots (defensive).
+	known := map[string]bool{}
 	for _, r := range out.Repos {
-		fmt.Fprintf(stdout, "%s\t%s (%s)\n", r.ID, r.DefaultBranch, r.Algorithm)
+		known[r.ID] = true
+	}
+	children := map[string][]int{}
+	var roots []int
+	for i, r := range out.Repos {
+		if r.Parent != "" && r.Parent != r.ID && known[r.Parent] {
+			children[r.Parent] = append(children[r.Parent], i)
+		} else {
+			roots = append(roots, i)
+		}
+	}
+	var emit func(i, depth int)
+	emit = func(i, depth int) {
+		r := out.Repos[i]
+		fmt.Fprintf(stdout, "%s%s\t%s (%s)\n", strings.Repeat("  ", depth), r.ID, r.DefaultBranch, r.Algorithm)
+		for _, c := range children[r.ID] {
+			emit(c, depth+1)
+		}
+	}
+	for _, i := range roots {
+		emit(i, 0)
 	}
 	return 0
 }
