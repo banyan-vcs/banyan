@@ -3,6 +3,7 @@
 export interface RepoInfo {
   id: string;
   defaultBranch: string;
+  parent?: string;
 }
 
 export interface RefEntry {

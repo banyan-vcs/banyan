@@ -1,26 +1,57 @@
 // RepoHomePage.tsx — one repo's landing page: the branch list (THE USER'S
-// filtered view, parsed from the same ref advertisement git sees) and the
-// default branch's recent history.
-import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+// filtered view, parsed from the same ref advertisement git sees), the
+// default branch's recent history, and — when the repo sits in a project
+// hierarchy (docs/design/data-model.md §14) — a breadcrumb of its ancestors and its
+// direct sub-projects with an inline "create sub-project" form.
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, qs } from "../api/client";
+import { repoPath } from "../api/repos";
 import { branchesOf, listRefs } from "../api/gitrefs";
-import type { LogResponse } from "../api/types";
-import { ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
+import type { LogResponse, RepoInfo } from "../api/types";
+import { can, useMode } from "../mode";
+import { Empty, ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 
 export function RepoHomePage(): ReactNode {
   const { repo = "" } = useParams();
   const [params] = useSearchParams();
+  const mode = useMode();
+  const nav = useNavigate();
+  const qc = useQueryClient();
+  const [subName, setSubName] = useState("");
+  const [subError, setSubError] = useState("");
   const refs = useQuery({ queryKey: ["refs", repo], queryFn: () => listRefs(repo), retry: false });
   const branches = branchesOf(refs.data || { refs: [], capabilities: "", defaultBranch: "" });
   const defaultBranch = refs.data?.defaultBranch || branches[0]?.name || "";
+
+  // The registry list rides the same cache as ReposPage — the hierarchy
+  // view (breadcrumb + children) costs no extra request.
+  const registry = useQuery({
+    queryKey: ["repos"],
+    queryFn: () => api<{ repos: RepoInfo[] }>("/api/v1/repos"),
+  });
+  const list = registry.data?.repos ?? [];
+  const ancestors = repoPath(list, repo).slice(0, -1); // root … parent
+  const children = list.filter((r) => r.parent === repo);
 
   const log = useQuery({
     queryKey: ["log", repo, defaultBranch, ""],
     queryFn: () => api<LogResponse>(`/api/v1/log${qs({ repo, rev: defaultBranch, limit: 10 })}`),
     enabled: defaultBranch !== "",
     retry: false,
+  });
+
+  const createSub = useMutation({
+    mutationFn: (name: string) =>
+      api("/api/v1/repos", { method: "POST", body: JSON.stringify({ name, parent: repo }) }),
+    onSuccess: (_d, name) => {
+      setSubName("");
+      setSubError("");
+      qc.invalidateQueries({ queryKey: ["repos"] });
+      nav(`/r/${name}`);
+    },
+    onError: (e) => setSubError(e instanceof Error ? e.message : String(e)),
   });
 
   const cloneBase = params.get("clone") || "";
@@ -31,6 +62,16 @@ export function RepoHomePage(): ReactNode {
         <code>{repo}</code>
         {defaultBranch && <Pill>default: {defaultBranch}</Pill>}
       </h1>
+      {ancestors.length > 0 && (
+        <p className="muted breadcrumb">
+          {ancestors.map((a) => (
+            <span key={a.id}>
+              <Link to={`/r/${a.id}`}>{a.id}</Link> /{" "}
+            </span>
+          ))}
+          <code>{repo}</code>
+        </p>
+      )}
       {cloneBase === "" && null}
       <div className="two-col">
         <section>
@@ -94,6 +135,46 @@ export function RepoHomePage(): ReactNode {
           )}
         </section>
       </div>
+      <section>
+        <h2>sub-projects</h2>
+        {children.length === 0 ? (
+          <Empty>this project has no sub-projects yet.</Empty>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>sub-project</th>
+                <th>default branch</th>
+              </tr>
+            </thead>
+            <tbody>
+              {children.map((c) => (
+                <tr key={c.id}>
+                  <td>
+                    <Link to={`/r/${c.id}`}>{c.id}</Link>
+                  </td>
+                  <td className="muted">{c.defaultBranch || "main"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {can(mode, "createRepos") && (
+          <form
+            className="create-repo"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (subName.trim()) createSub.mutate(subName.trim());
+            }}
+          >
+            <input placeholder="new sub-project under this repo" value={subName} onChange={(e) => setSubName(e.target.value)} />
+            <button className="btn" type="submit" disabled={createSub.isPending}>
+              create sub-project
+            </button>
+            {subError && <span className="muted">{subError}</span>}
+          </form>
+        )}
+      </section>
     </>
   );
 }

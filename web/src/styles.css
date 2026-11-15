@@ -447,3 +447,15 @@ input.days { width: 70px; }
 form.import-form { display: flex; gap: 8px; margin: 14px 0; flex-wrap: wrap; }
 form.import-form .import-url { flex: 1; min-width: 260px; }
 .import-error { font-size: 12px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+
+/* The tree caret in the repository list: a text-shaped toggle, not a
+   control-shaped button. */
+button.link {
+  border: none;
+  background: none;
+  padding: 0 4px 0 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.breadcrumb { margin-top: -8px; }
