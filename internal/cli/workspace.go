@@ -162,13 +162,18 @@ func wsClient(ws *workspace) *client {
 }
 
 // --- object cache (blobs + trees, content-addressed, freely prunable) ---
+//
+// Layout: sharded by the oid's first two hex chars (.banyan/cache/ab/ab…)
+// — a 100K-object workspace keeps every directory small and lookups fast
+// (the original flat layout degraded, painfully so on NTFS). Reads fall
+// back to the legacy flat path once and migrate the entry on hit.
 
 func (w *workspace) cachePath(oid string) string {
-	return filepath.Join(w.root, cacheDir, oid)
+	return filepath.Join(w.root, cacheDir, oid[:2], oid)
 }
 
 func (w *workspace) cachePut(oid string, data []byte) {
-	if oid == "" {
+	if oid == "" || len(oid) < 2 {
 		return
 	}
 	p := w.cachePath(oid)
@@ -181,7 +186,62 @@ func (w *workspace) cachePut(oid string, data []byte) {
 
 func (w *workspace) cacheGet(oid string) ([]byte, bool) {
 	b, err := os.ReadFile(w.cachePath(oid))
-	return b, err == nil
+	if err == nil {
+		return b, true
+	}
+	// Legacy flat entry: read it once, migrate it to the sharded layout.
+	if flat, ferr := os.ReadFile(filepath.Join(w.root, cacheDir, oid)); ferr == nil {
+		w.cachePut(oid, flat)
+		_ = os.Remove(filepath.Join(w.root, cacheDir, oid))
+		return flat, true
+	}
+	return nil, false
+}
+
+// defaultCacheMaxBytes bounds the cache: correctness NEVER depends on it
+// (every entry re-fetches on demand), but an unbounded "freely prunable"
+// cache nobody prunes just grows — clone sweeps past this line.
+const defaultCacheMaxBytes = 1 << 30
+
+// pruneCache evicts oldest-mtime entries until the cache fits maxBytes.
+// Returns the bytes removed. Live-set safety: eviction only costs a
+// re-fetch — the stat cache and the manifest never reference cache state.
+func (w *workspace) pruneCache(maxBytes int64) int64 {
+	root := filepath.Join(w.root, cacheDir)
+	type entry struct {
+		path  string
+		size  int64
+		mtime int64
+	}
+	var total int64
+	var entries []entry
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		total += info.Size()
+		entries = append(entries, entry{p, info.Size(), info.ModTime().UnixNano()})
+		return nil
+	})
+	if total <= maxBytes {
+		return 0
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].mtime < entries[j].mtime })
+	var removed int64
+	for _, e := range entries {
+		if total <= maxBytes {
+			break
+		}
+		if os.Remove(e.path) == nil {
+			removed += e.size
+			total -= e.size
+		}
+	}
+	return removed
 }
 
 // blobHash is the git blob OID (content addressing is the workspace's

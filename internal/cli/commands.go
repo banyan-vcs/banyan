@@ -154,6 +154,9 @@ func runClone(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		return cmdErr(stderr, err)
 	}
 	c.attachCaps(dir) // persist the capability cache for every later command
+	if removed := ws.pruneCache(defaultCacheMaxBytes); removed > 0 {
+		fmt.Fprintf(stderr, "cache pruned %.1f MiB (cap 1 GiB)\n", float64(removed)/(1<<20))
+	}
 	fmt.Fprintf(stdout, "cloned %s%s (branch %s, %d files, head %s)\n", repo, sub, res.Branch, len(files), short(res.Head))
 	return 0
 }
@@ -583,6 +586,30 @@ func runFetchObjects(wsRoot string, args []string, stdout, stderr io.Writer) int
 		fetched++
 	}
 	fmt.Fprintf(stdout, "fetched %d objects\n", fetched)
+	return 0
+}
+
+// --- gc: prune the object cache to a byte cap ---
+
+func runGC(wsRoot string, args []string, stdout, stderr io.Writer) int {
+	maxMB := 1024
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "-max-mb" && i+1 < len(args):
+			i++
+			if _, err := fmt.Sscanf(args[i], "%d", &maxMB); err != nil || maxMB < 0 {
+				return usageErr(stderr, "gc: -max-mb wants a non-negative number")
+			}
+		default:
+			return usageErr(stderr, "gc: unknown argument %q", args[i])
+		}
+	}
+	ws, err := loadWorkspace(wsRoot)
+	if err != nil {
+		return cmdErr(stderr, err)
+	}
+	removed := ws.pruneCache(int64(maxMB) << 20)
+	fmt.Fprintf(stdout, "pruned %.1f MiB (cap %d MiB)\n", float64(removed)/(1<<20), maxMB)
 	return 0
 }
 
