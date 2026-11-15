@@ -162,6 +162,7 @@ func runStatus(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
+	ws.flushStat() // learn content-clean stats so the next scan skips them
 	for _, p := range st.Modified {
 		fmt.Fprintf(stdout, "M  %s\n", p)
 	}
@@ -285,7 +286,15 @@ func runCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
 			delete(ws.man.Files, path)
 			continue
 		}
-		ws.man.Files[path] = fileState{OID: ch["blob"].(string), Mode: ch["mode"].(string)}
+		oid, mode := ch["blob"].(string), ch["mode"].(string)
+		nfs := fileState{OID: oid, Mode: mode}
+		if data, derr := os.ReadFile(filepath.Join(ws.root, filepath.FromSlash(path))); derr == nil && blobHash(data) == oid {
+			nfs.Size = int64(len(data))
+			if info, serr := os.Stat(filepath.Join(ws.root, filepath.FromSlash(path))); serr == nil {
+				nfs.Mtime = info.ModTime().UnixNano()
+			}
+		}
+		ws.man.Files[path] = nfs
 	}
 	ws.man.Commit, ws.man.Tree = res.Head, res.Tree
 	if err := ws.save(); err != nil {
@@ -344,6 +353,13 @@ func pullCore(ws *workspace, st *status, c *client, stdout, stderr io.Writer) in
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
+	// Unchanged files keep their learned stat — the scan cache survives
+	// pulls instead of re-hashing the whole tree next time.
+	for p, nf := range newFiles {
+		if of, ok := ws.man.Files[p]; ok && of.OID == nf.OID && of.Mode == nf.Mode {
+			newFiles[p] = of
+		}
+	}
 
 	untracked := map[string]bool{}
 	for _, p := range st.Untracked {
@@ -374,14 +390,18 @@ func pullCore(ws *workspace, st *status, c *client, stdout, stderr io.Writer) in
 	}
 
 	for _, p := range changed {
-		if err := ws.writeTracked(src, p, newFiles[p]); err != nil {
+		fs, err := ws.writeTracked(src, p, newFiles[p])
+		if err != nil {
 			return cmdErr(stderr, err)
 		}
+		newFiles[p] = fs
 	}
 	for _, p := range added {
-		if err := ws.writeTracked(src, p, newFiles[p]); err != nil {
+		fs, err := ws.writeTracked(src, p, newFiles[p])
+		if err != nil {
 			return cmdErr(stderr, err)
 		}
+		newFiles[p] = fs
 	}
 	for _, p := range deleted {
 		if err := os.Remove(filepath.Join(ws.root, filepath.FromSlash(p))); err != nil && !os.IsNotExist(err) {

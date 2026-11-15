@@ -31,6 +31,12 @@ type wsConfig struct {
 type fileState struct {
 	OID  string `json:"oid"`
 	Mode string `json:"mode"`
+	// Size+Mtime are the stat cache (git index semantics): a tracked file
+	// whose size and mtime both match is assumed current — no read, no
+	// hash. Stale stats (content unchanged) refresh on the next scan;
+	// manifests without them (older CLI) hash once and backfill.
+	Size  int64 `json:"size,omitempty"`
+	Mtime int64 `json:"mtime,omitempty"`
 }
 
 type manifest struct {
@@ -43,6 +49,9 @@ type workspace struct {
 	root string
 	cfg  wsConfig
 	man  manifest
+	// statTouched: a scan refreshed stale stat entries (content clean);
+	// flushStat persists them so the NEXT scan skips those files entirely.
+	statTouched bool
 }
 
 // findWorkspace walks up from dir (inclusive) to the enclosing workspace —
@@ -105,11 +114,40 @@ func (w *workspace) save() error {
 	if err := os.WriteFile(filepath.Join(w.root, configF), cfgRaw, 0o644); err != nil {
 		return err
 	}
+	w.statTouched = false
+	return w.saveManifest()
+}
+
+// saveManifest writes the manifest alone — the stat cache refresh path
+// (flushStat) persists scan-learned size/mtime without touching config.
+func (w *workspace) saveManifest() error {
+	if err := os.MkdirAll(filepath.Join(w.root, filepath.Dir(manifestF)), 0o755); err != nil {
+		return err
+	}
 	manRaw, err := json.MarshalIndent(w.man, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(w.root, manifestF), manRaw, 0o644)
+}
+
+// flushStat persists refreshed stat entries after a scan found them
+// content-clean (best-effort: a failed write only costs a re-hash).
+func (w *workspace) flushStat() {
+	if !w.statTouched {
+		return
+	}
+	if err := w.saveManifest(); err == nil {
+		w.statTouched = false
+	}
+}
+
+// statCurrent: size and mtime both match the manifest's cached stat —
+// the file is assumed current, no read and no hash (git's racily-clean
+// tradeoff: a same-size write landing inside the FS mtime granularity
+// reads as clean; content addressing catches it on the next real change).
+func statCurrent(fs fileState, info os.FileInfo) bool {
+	return fs.Size == info.Size() && fs.Mtime == info.ModTime().UnixNano()
 }
 
 // --- object cache (blobs + trees, content-addressed, freely prunable) ---
@@ -154,7 +192,14 @@ func (s *status) dirty() bool { return len(s.Modified)+len(s.Deleted) > 0 }
 func (w *workspace) scan() (*status, error) {
 	st := &status{}
 	for path, fs := range w.man.Files {
-		data, err := os.ReadFile(filepath.Join(w.root, filepath.FromSlash(path)))
+		full := filepath.Join(w.root, filepath.FromSlash(path))
+		// Stat-cache fast path: unchanged size+mtime skips the read and
+		// the hash — status/commit/pull preambles drop from O(total
+		// bytes) to O(tracked files) once the manifest carries stats.
+		if info, serr := os.Stat(full); serr == nil && statCurrent(fs, info) {
+			continue
+		}
+		data, err := os.ReadFile(full)
 		if err != nil {
 			if os.IsNotExist(err) {
 				st.Deleted = append(st.Deleted, path)
@@ -163,7 +208,16 @@ func (w *workspace) scan() (*status, error) {
 		}
 		if blobHash(data) != fs.OID {
 			st.Modified = append(st.Modified, path)
+			continue
 		}
+		// Content clean, stat stale (a touch, or a first scan against an
+		// older stat-less manifest): learn the fresh stat.
+		info, ierr := os.Stat(full)
+		if ierr != nil {
+			continue
+		}
+		w.man.Files[path] = fileState{OID: fs.OID, Mode: fs.Mode, Size: info.Size(), Mtime: info.ModTime().UnixNano()}
+		w.statTouched = true
 	}
 	trackedScope := func(rel string) bool {
 		if len(w.cfg.Sparse) == 0 {
@@ -307,21 +361,30 @@ func (w *workspace) collectFiles(t *treeSource, treeOID string, sparse []string)
 	return files, nil
 }
 
-// writeTracked materializes one tracked file (mkdir + fetch blob + write).
-func (w *workspace) writeTracked(t *treeSource, rel string, fs fileState) error {
+// writeTracked materializes one tracked file (mkdir + fetch blob + write)
+// and returns the fileState with the fresh stat — the caller stores it so
+// the next scan's stat cache starts warm.
+func (w *workspace) writeTracked(t *treeSource, rel string, fs fileState) (fileState, error) {
 	data, err := t.blob(fs.OID)
 	if err != nil {
-		return err
+		return fs, err
 	}
 	dst := filepath.Join(w.root, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return fs, err
 	}
 	mode := os.FileMode(0o644)
 	if fs.Mode == "100755" {
 		mode = 0o755
 	}
-	return os.WriteFile(dst, data, mode)
+	if err := os.WriteFile(dst, data, mode); err != nil {
+		return fs, err
+	}
+	out := fileState{OID: fs.OID, Mode: fs.Mode, Size: int64(len(data))}
+	if info, serr := os.Stat(dst); serr == nil {
+		out.Mtime = info.ModTime().UnixNano()
+	}
+	return out, nil
 }
 
 // materializeAll writes every collected file (clone path).
@@ -332,9 +395,11 @@ func (w *workspace) materializeAll(t *treeSource, files map[string]fileState) er
 	}
 	sort.Strings(names)
 	for _, rel := range names {
-		if err := w.writeTracked(t, rel, files[rel]); err != nil {
+		fs, err := w.writeTracked(t, rel, files[rel])
+		if err != nil {
 			return err
 		}
+		files[rel] = fs
 	}
 	return nil
 }
