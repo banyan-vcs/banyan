@@ -20,7 +20,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "modernc.org/sqlite"
+	_ "github.com/glebarez/go-sqlite" // pure-Go SQLite driver (modernc engine), no cgo
 
 	"github.com/banyan-vcs/banyan/internal/meta"
 )

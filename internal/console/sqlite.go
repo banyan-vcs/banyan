@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // pure-Go driver, no cgo (AGENTS.md)
+	_ "github.com/glebarez/go-sqlite" // pure-Go SQLite driver (modernc engine), no cgo
 )
 
 // DB is the console's own sqlite store (docs/web/console.md §3). It is deliberately

@@ -26,7 +26,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // pure-Go PostgreSQL driver (database/sql)
-	_ "modernc.org/sqlite"             // pure-Go SQLite driver, no cgo (OS-neutral, AGENTS.md)
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	_ "github.com/glebarez/go-sqlite" // pure-Go SQLite driver (modernc engine), no cgo
 )
 
 const sqlChunk = 500 // rows per batched statement (safe under every driver's param limit)
@@ -403,9 +405,14 @@ func ddlPostgres() []string {
 // §2.3). Immutable tables (packs, objects) insert-ignore — first writer
 // wins; the head CAS runs on a dedicated connection inside a write
 // transaction, the linearization point for ref updates.
+//
+// Data operations go through orm (GORM mounted on the same pool as db —
+// gormstore.go); db stays the handle for raw DDL (applySchema,
+// migrateColumn) and Backup.
 type SQLMetaStore struct {
-	db *sql.DB
-	d  sqlDialect
+	db  *sql.DB
+	orm *gorm.DB
+	d   sqlDialect
 }
 
 // q rebinds placeholders through the dialect.
@@ -491,7 +498,12 @@ func NewSQLMetaStore(backend, target string) (*SQLMetaStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("%s meta: ping: %w", d.name, err)
 	}
-	s := &SQLMetaStore{db: db, d: d}
+	orm, err := gormOpen(backend, db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("%s meta: gorm: %w", d.name, err)
+	}
+	s := &SQLMetaStore{db: db, orm: orm, d: d}
 	if err := s.applySchema(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("%s meta: schema: %w", d.name, err)
@@ -666,22 +678,21 @@ func (s *SQLMetaStore) CreateRepo(ctx context.Context, repo string, algo model.H
 	if err := s.fenceReject(ctx, repo); err != nil {
 		return err
 	}
+	orm := s.orm.WithContext(ctx)
 	// Rename tombstone (docs/storage/storage.md §6b): a name retired by a rename must not
 	// be resurrected — a late push or auto-create under the dead name would
-	// ack into a fresh, disconnected repository (confirmed-but-invisible).
+	// ack into a fresh, disconnected repository.
 	var dst string
-	err := s.db.QueryRowContext(ctx, s.q(
-		"SELECT dst FROM rename_fence WHERE frm=? AND done=1"), repo).Scan(&dst)
-	if err == nil {
+	err := orm.Model(&renameFenceRow{}).Select("dst").
+		Where("frm = ? AND done = 1", repo).Limit(1).Row().Scan(&dst)
+	switch {
+	case err == nil:
 		return fmt.Errorf("%w: %s was renamed to %s", ErrRepoRenamedAway, repo, dst)
-	}
-	if err != sql.ErrNoRows {
+	case !errors.Is(err, sql.ErrNoRows):
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, s.q(
-		"INSERT INTO repos(name, algo, default_branch, storage_id) VALUES(?, ?, 'main', ?)"),
-		repo, int(algo), NewStorageID())
-	if s.d.isUnique(err) {
+	err = orm.Create(&repoRow{Name: repo, Algo: int(algo), DefaultBranch: "main", StorageID: NewStorageID()}).Error
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return fmt.Errorf("repo %s already exists", repo)
 	}
 	return err
@@ -691,82 +702,80 @@ func (s *SQLMetaStore) CreateRepo(ctx context.Context, repo string, algo model.H
 // source exists, target free, no overlapping fence — run here so a doomed
 // rename never blocks the repo.
 func (s *SQLMetaStore) BeginRename(ctx context.Context, from, to string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var one int
-	if err := tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), from).Scan(&one); err == sql.ErrNoRows {
-		return fmt.Errorf("%w: %s", ErrRepoNotFound, from)
-	} else if err != nil {
-		return err
-	}
-	if err := tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), to).Scan(&one); err == nil {
-		return fmt.Errorf("repo %s already exists", to)
-	} else if err != sql.ErrNoRows {
-		return err
-	}
-	// Idempotent re-install of the SAME fence (rename re-run after a crash);
-	// only a DIFFERENT overlapping rename is refused. Completed renames
-	// (tombstones) never match: their source repo no longer exists.
-	var dst string
-	err = tx.QueryRowContext(ctx, s.q("SELECT dst FROM rename_fence WHERE frm=? AND done=0"+s.d.rowLock), from).Scan(&dst)
-	if err == nil {
-		if dst == to {
-			return tx.Commit() // already fenced for this exact rename
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var one int
+		switch err := txq(tx).Model(&repoRow{}).Select("1").Where("name = ?", from).Limit(1).Row().Scan(&one); {
+		case errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("%w: %s", ErrRepoNotFound, from)
+		case err != nil:
+			return err
 		}
-		return fmt.Errorf("%w: %s->%s", ErrRepoRenaming, from, to)
-	}
-	if err != sql.ErrNoRows {
-		return err
-	}
-	if hit, err := s.fenceHitTx(ctx, tx, from, to); err != nil {
-		return err
-	} else if hit {
-		return fmt.Errorf("%w: %s->%s", ErrRepoRenaming, from, to)
-	}
-	if _, err := tx.ExecContext(ctx, s.q(
-		"INSERT INTO rename_fence(frm, dst) VALUES(?, ?)"), from, to); err != nil {
-		return err
-	}
-	return tx.Commit()
+		switch err := txq(tx).Model(&repoRow{}).Select("1").Where("name = ?", to).Limit(1).Row().Scan(&one); {
+		case err == nil:
+			return fmt.Errorf("repo %s already exists", to)
+		case errors.Is(err, sql.ErrNoRows):
+			// target free
+		default:
+			return err
+		}
+		// Idempotent re-install of the SAME fence (rename re-run after a crash);
+		// only a DIFFERENT overlapping rename is refused. Completed renames
+		// (tombstones) never match: their source repo no longer exists.
+		q := txq(tx).Model(&renameFenceRow{}).Select("dst").Where("frm = ? AND done = 0", from).Limit(1)
+		if s.d.rowLock != "" {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var dst string
+		switch err := q.Row().Scan(&dst); {
+		case err == nil:
+			if dst == to {
+				return nil // already fenced for this exact rename (commits)
+			}
+			return fmt.Errorf("%w: %s->%s", ErrRepoRenaming, from, to)
+		case errors.Is(err, sql.ErrNoRows):
+			// no fence row — continue
+		default:
+			return err
+		}
+		if hit, err := s.ormFenceHit(tx, from, to); err != nil {
+			return err
+		} else if hit {
+			return fmt.Errorf("%w: %s->%s", ErrRepoRenaming, from, to)
+		}
+		return txq(tx).Create(&renameFenceRow{Frm: from, Dst: to}).Error
+	})
 }
 
 func (s *SQLMetaStore) AbortRename(ctx context.Context, from, to string) error {
 	// Active fence only — a completed rename's tombstone is not abortable
 	// (the rename happened; AbortRename only cleans up interrupted ones).
-	_, err := s.db.ExecContext(ctx, s.q("DELETE FROM rename_fence WHERE frm=? AND dst=? AND done=0"), from, to)
-	return err
+	return s.orm.WithContext(ctx).
+		Where("frm = ? AND dst = ? AND done = 0", from, to).
+		Delete(&renameFenceRow{}).Error
 }
 
 func (s *SQLMetaStore) GetRepo(ctx context.Context, repo string) (RepoInfo, error) {
-	var info RepoInfo
-	var algo int
-	var force int
-	err := s.db.QueryRowContext(ctx, s.q(
-		"SELECT name, algo, default_branch, storage_id, force_push, parent FROM repos WHERE name=?"), repo).
-		Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID, &force, &info.Parent)
-	if err == sql.ErrNoRows {
+	var r repoRow
+	err := s.orm.WithContext(ctx).Where("name = ?", repo).Take(&r).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return RepoInfo{}, fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
 	if err != nil {
 		return RepoInfo{}, err
 	}
-	info.Algo = model.HashAlgo(algo)
-	info.ForcePush = force != 0
-	return info, nil
+	return r.info(), nil
 }
 
 func (s *SQLMetaStore) SetForcePush(ctx context.Context, repo string, enabled bool) error {
 	if err := s.fenceReject(ctx, repo); err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, s.q("UPDATE repos SET force_push=? WHERE name=?"), boolInt(enabled), repo)
-	if err != nil {
-		return err
+	res := s.orm.WithContext(ctx).Model(&repoRow{}).
+		Where("name = ?", repo).Update("force_push", boolInt(enabled))
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
 	}
 	return nil
@@ -779,11 +788,16 @@ func (s *SQLMetaStore) SetDefaultBranch(ctx context.Context, repo string, branch
 	// MySQL reports an unchanged UPDATE as 0 affected rows, so existence is
 	// probed explicitly rather than inferred from the write.
 	var one int
-	if err := s.db.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), repo).Scan(&one); err != nil {
+	err := s.orm.WithContext(ctx).Model(&repoRow{}).Select("1").
+		Where("name = ?", repo).Limit(1).Row().Scan(&one)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	case err != nil:
+		return err
 	}
-	_, err := s.db.ExecContext(ctx, s.q("UPDATE repos SET default_branch=? WHERE name=?"), branch, repo)
-	return err
+	return s.orm.WithContext(ctx).Model(&repoRow{}).
+		Where("name = ?", repo).Update("default_branch", branch).Error
 }
 
 // SetRepoParent re-homes a repo in the hierarchy (docs/design/data-model.md §14). The
@@ -793,42 +807,50 @@ func (s *SQLMetaStore) SetDefaultBranch(ctx context.Context, repo string, branch
 // aborts with the error). SQLite serializes writers on the file lock, so a
 // deferred tx is equally safe there.
 func (s *SQLMetaStore) SetRepoParent(ctx context.Context, repo string, parent string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := s.fenceRejectTx(ctx, tx, repo); err != nil {
-		return err
-	}
-	var one int
-	if err := tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"+s.d.rowLock), repo).Scan(&one); err == sql.ErrNoRows {
-		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
-	} else if err != nil {
-		return err
-	}
-	var walkErr error
-	if err := ValidateReparent(repo, parent, func(name string) (string, bool) {
-		var p string
-		switch err := tx.QueryRowContext(ctx, s.q("SELECT parent FROM repos WHERE name=?"+s.d.rowLock), name).Scan(&p); {
-		case err == nil:
-			return p, true
-		case errors.Is(err, sql.ErrNoRows):
-			return "", false
-		default:
-			walkErr = err // a real query failure must not read as "no such repo"
-			return "", false
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ormFenceReject(tx, repo); err != nil {
+			return err
 		}
-	}); err != nil {
-		if walkErr != nil {
-			return walkErr
+		exists := func(name string) error {
+			q := txq(tx).Model(&repoRow{}).Select("1").Where("name = ?", name).Limit(1)
+			if s.d.rowLock != "" {
+				q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+			}
+			var one int
+			switch err := q.Row().Scan(&one); {
+			case errors.Is(err, sql.ErrNoRows):
+				return fmt.Errorf("%w: %s", ErrRepoNotFound, name)
+			default:
+				return err
+			}
 		}
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET parent=? WHERE name=?"), parent, repo); err != nil {
-		return err
-	}
-	return tx.Commit()
+		if err := exists(repo); err != nil {
+			return err
+		}
+		var walkErr error
+		if err := ValidateReparent(repo, parent, func(name string) (string, bool) {
+			q := txq(tx).Model(&repoRow{}).Select("parent").Where("name = ?", name).Limit(1)
+			if s.d.rowLock != "" {
+				q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+			}
+			var p string
+			switch err := q.Row().Scan(&p); {
+			case err == nil:
+				return p, true
+			case errors.Is(err, sql.ErrNoRows):
+				return "", false
+			default:
+				walkErr = err // a real query failure must not read as "no such repo"
+				return "", false
+			}
+		}); err != nil {
+			if walkErr != nil {
+				return walkErr
+			}
+			return err
+		}
+		return txq(tx).Model(&repoRow{}).Where("name = ?", repo).Update("parent", parent).Error
+	})
 }
 
 func boolInt(b bool) int {
@@ -986,124 +1008,113 @@ func (s *SQLMetaStore) DeletePoolRecords(ctx context.Context, pool string) error
 }
 
 func (s *SQLMetaStore) ListRepos(ctx context.Context) ([]RepoInfo, error) {
-	rows, err := s.db.QueryContext(ctx, s.q(
-		"SELECT name, algo, default_branch, storage_id, force_push, parent FROM repos ORDER BY name"))
-	if err != nil {
+	var rows []repoRow
+	if err := s.orm.WithContext(ctx).Order("name").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []RepoInfo
-	for rows.Next() {
-		var info RepoInfo
-		var algo int
-		var force int
-		if err := rows.Scan(&info.ID, &algo, &info.DefaultBranch, &info.StorageID, &force, &info.Parent); err != nil {
-			return nil, err
-		}
-		info.Algo = model.HashAlgo(algo)
-		info.ForcePush = force != 0
-		out = append(out, info)
+	out := make([]RepoInfo, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.info())
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // RenameRepo moves every repo-keyed row in one transaction (docs/storage/storage.md §6).
 // The storage_id column rides along untouched — hashed addressing keys stay
 // stable across renames by construction.
 func (s *SQLMetaStore) RenameRepo(ctx context.Context, from, to string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var one int
-	if err := tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), from).Scan(&one); err == sql.ErrNoRows {
-		return fmt.Errorf("%w: %s", ErrRepoNotFound, from)
-	} else if err != nil {
-		return err
-	}
-	if err := tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), to).Scan(&one); err == nil {
-		return fmt.Errorf("repo %s already exists", to)
-	} else if err != sql.ErrNoRows {
-		return err
-	}
-	for _, table := range []string{"timelines", "packs", "pack_nodes", "objects", "placement", "hooks", "repo_blobs", "subtree_rules"} {
-		if _, err := tx.ExecContext(ctx, s.q("UPDATE "+table+" SET repo=? WHERE repo=?"), to, from); err != nil {
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var one int
+		switch err := txq(tx).Model(&repoRow{}).Select("1").Where("name = ?", from).Limit(1).Row().Scan(&one); {
+		case errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("%w: %s", ErrRepoNotFound, from)
+		case err != nil:
 			return err
 		}
-	}
-	// repo_pools keys by member, not repo: rename the membership side; the
-	// pool side keeps pointing at the (unchanged) pool repository.
-	if _, err := tx.ExecContext(ctx, s.q("UPDATE repo_pools SET member=? WHERE member=?"), to, from); err != nil {
-		return err
-	}
-	// Children follow the renamed parent — the hierarchy link is name-keyed,
-	// and `to` was just confirmed absent, so no child can already point at it.
-	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET parent=? WHERE parent=?"), to, from); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET name=? WHERE name=?"), to, from); err != nil {
-		return err
-	}
-	// The flip retires the fence into a tombstone inside the same
-	// transaction: mutations under `to` are legal the moment the rename
-	// commits, while re-creating `from` stays refused (a late push under the
-	// dead name must not ack into a disconnected fresh repo). Tombstones
-	// pointing at the old name retarget to the new one — the hazard chain
-	// follows the data.
-	if _, err := tx.ExecContext(ctx, s.q(
-		"UPDATE rename_fence SET done=1 WHERE frm=?"), from); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, s.q(
-		"UPDATE rename_fence SET dst=? WHERE dst=? AND done=1"), to, from); err != nil {
-		return err
-	}
-	return tx.Commit()
+		switch err := txq(tx).Model(&repoRow{}).Select("1").Where("name = ?", to).Limit(1).Row().Scan(&one); {
+		case err == nil:
+			return fmt.Errorf("repo %s already exists", to)
+		case errors.Is(err, sql.ErrNoRows):
+			// target free
+		default:
+			return err
+		}
+		// The per-table moves are bulk statements over admin-paced tables —
+		// plain Exec through the transaction; builder-shaped SQL adds nothing.
+		for _, table := range []string{"timelines", "packs", "pack_nodes", "objects", "placement", "hooks", "repo_blobs", "subtree_rules"} {
+			if err := txq(tx).Exec("UPDATE "+table+" SET repo = ? WHERE repo = ?", to, from).Error; err != nil {
+				return err
+			}
+		}
+		// repo_pools keys by member, not repo: rename the membership side; the
+		// pool side keeps pointing at the (unchanged) pool repository.
+		if err := txq(tx).Model(&repoPoolRow{}).
+			Where("member = ?", from).Update("member", to).Error; err != nil {
+			return err
+		}
+		// Children follow the renamed parent — the hierarchy link is name-keyed,
+		// and `to` was just confirmed absent, so no child can already point at it.
+		if err := txq(tx).Model(&repoRow{}).
+			Where("parent = ?", from).Update("parent", to).Error; err != nil {
+			return err
+		}
+		if err := txq(tx).Model(&repoRow{}).
+			Where("name = ?", from).Update("name", to).Error; err != nil {
+			return err
+		}
+		// The flip retires the fence into a tombstone inside the same
+		// transaction: mutations under `to` are legal the moment the rename
+		// commits, while re-creating `from` stays refused (a late push under the
+		// dead name must not ack into a disconnected fresh repo). Tombstones
+		// pointing at the old name retarget to the new one — the hazard chain
+		// follows the data.
+		if err := txq(tx).Model(&renameFenceRow{}).
+			Where("frm = ?", from).Update("done", 1).Error; err != nil {
+			return err
+		}
+		return txq(tx).Model(&renameFenceRow{}).
+			Where("dst = ? AND done = 1", from).Update("dst", to).Error
+	})
 }
 
 // DeleteRepo drops every repo-keyed row in one transaction. Missing = no-op
 // (idempotent). Storage bytes are reclaimed via ObjectService.DeleteRepo.
 func (s *SQLMetaStore) DeleteRepo(ctx context.Context, repo string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := s.fenceRejectTx(ctx, tx, repo); err != nil {
-		return err
-	}
-	// Deleting a parent re-homes its children one level up (to the deleted
-	// repo's own parent) — directory semantics, the tree stays connected
-	// instead of sprouting roots that point at a vanished name. A missing
-	// repo keeps deletion idempotent: the deletes below are no-ops anyway.
-	orphanTo := ""
-	err = tx.QueryRowContext(ctx, s.q("SELECT parent FROM repos WHERE name=?"), repo).Scan(&orphanTo)
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	for _, table := range []string{"objects", "pack_nodes", "packs", "timelines", "placement", "hooks", "repo_blobs", "subtree_rules"} {
-		if _, err := tx.ExecContext(ctx, s.q("DELETE FROM "+table+" WHERE repo=?"), repo); err != nil {
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ormFenceReject(tx, repo); err != nil {
 			return err
 		}
-	}
-	// The repo leaves its pool (member row) and, when it was a pool, every
-	// membership record pointing at it goes too.
-	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM repo_pools WHERE member=? OR pool=?"), repo, repo); err != nil {
-		return err
-	}
-	// Deletion retires the name for real: tombstones blocking older names
-	// (retired into this repo) lift — the recycled name is creatable again.
-	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM rename_fence WHERE frm=? OR dst=?"), repo, repo); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM repos WHERE name=?"), repo); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, s.q("UPDATE repos SET parent=? WHERE parent=?"), orphanTo, repo); err != nil {
-		return err
-	}
-	return tx.Commit()
+		// Deleting a parent re-homes its children one level up (to the deleted
+		// repo's own parent) — directory semantics, the tree stays connected
+		// instead of sprouting roots that point at a vanished name. A missing
+		// repo keeps deletion idempotent: the deletes below are no-ops anyway.
+		var orphanTo string
+		if err := txq(tx).Model(&repoRow{}).Select("parent").
+			Where("name = ?", repo).Limit(1).Row().Scan(&orphanTo); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		for _, table := range []string{"objects", "pack_nodes", "packs", "timelines", "placement", "hooks", "repo_blobs", "subtree_rules"} {
+			if err := txq(tx).Exec("DELETE FROM "+table+" WHERE repo = ?", repo).Error; err != nil {
+				return err
+			}
+		}
+		// The repo leaves its pool (member row) and, when it was a pool, every
+		// membership record pointing at it goes too.
+		if err := txq(tx).Exec("DELETE FROM repo_pools WHERE member = ? OR pool = ?", repo, repo).Error; err != nil {
+			return err
+		}
+		// Deletion retires the name for real: tombstones blocking older names
+		// (retired into this repo) lift — the recycled name is creatable again.
+		if err := txq(tx).Exec("DELETE FROM rename_fence WHERE frm = ? OR dst = ?", repo, repo).Error; err != nil {
+			return err
+		}
+		if err := txq(tx).Where("name = ?", repo).Delete(&repoRow{}).Error; err != nil {
+			return err
+		}
+		// Children re-home to the deleted repo's parent.
+		return txq(tx).Model(&repoRow{}).
+			Where("parent = ?", repo).Update("parent", orphanTo).Error
+	})
 }
 
 func (s *SQLMetaStore) PutPack(ctx context.Context, repo string, packOID model.OID, objects []model.OID, nodes []string) error {
