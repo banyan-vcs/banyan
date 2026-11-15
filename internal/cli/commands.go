@@ -653,8 +653,10 @@ func runRepo(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		server = ws.cfg.Server
 	} else if s := os.Getenv("BANYAN_SERVER"); s != "" {
 		server = s
+	} else if cfg := loadConfig(); cfg.DefaultHost != "" {
+		server = cfg.DefaultHost // the switched-to default (banyan host use)
 	} else {
-		return usageErr(stderr, "repo ls: run inside a workspace or set BANYAN_SERVER")
+		return usageErr(stderr, "repo ls: run inside a workspace, set BANYAN_SERVER, or log in and pick a default host")
 	}
 	var out struct {
 		Repos []struct {

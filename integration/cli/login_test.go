@@ -10,7 +10,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
+	"gopkg.in/yaml.v3"
 
 	"github.com/banyan-vcs/banyan/integration/support"
 	"github.com/banyan-vcs/banyan/internal/auth"
@@ -94,29 +94,28 @@ func TestCLILoginSSHSessions(t *testing.T) {
 	support.Git(t, src, "push", "-q",
 		strings.Replace(hs.URL, "http://", "http://alice:pw@", 1)+"/r/t98.git", "main")
 
-	// ① login: SSH key → 12h session.
+	// ① login: SSH key → 12h session, recorded in the multi-host config.
 	stdout, stderr, code := runCLI(t, "login", hs.URL, "-u", "alice")
 	require.Zero(t, code, "login failed: %s %s", stdout, stderr)
 	assert.Contains(t, stdout, "via SSH")
-	credRaw, err := os.ReadFile(filepath.Join(home, "credentials.json"))
+	cfgRaw, err := os.ReadFile(filepath.Join(home, "config.yaml"))
 	require.NoError(t, err)
-	var creds struct {
-		Servers map[string]struct {
-			User   string `json:"user"`
-			Token  string `json:"token"`
-			Method string `json:"method"`
-		} `json:"servers"`
+	var cfg struct {
+		DefaultHost string `yaml:"default_host"`
+		Hosts       map[string]struct {
+			User   string `yaml:"user"`
+			Token  string `yaml:"token"`
+			Method string `yaml:"method"`
+		} `yaml:"hosts"`
+		SSHHostKeys map[string]string `yaml:"ssh_host_keys"`
 	}
-	require.NoError(t, json.Unmarshal(credRaw, &creds))
-	var stored struct{ User, Token, Method string }
-	for _, c := range creds.Servers {
-		stored.User, stored.Token, stored.Method = c.User, c.Token, c.Method
-	}
+	require.NoError(t, yaml.Unmarshal(cfgRaw, &cfg))
+	stored := cfg.Hosts[hs.URL]
 	require.Equal(t, "alice", stored.User)
 	require.Equal(t, "ssh", stored.Method)
 	require.True(t, strings.HasPrefix(stored.Token, "banyan_"))
-	_, err = os.Stat(filepath.Join(home, "known_hosts.json"))
-	require.NoError(t, err, "the host key was TOFU-pinned")
+	require.Equal(t, hs.URL, cfg.DefaultHost, "the first login becomes the default host")
+	require.NotEmpty(t, cfg.SSHHostKeys, "the host key was TOFU-pinned")
 
 	// ② the session rides every request: clone + commit against the
 	// authenticated API face.
@@ -134,10 +133,18 @@ func TestCLILoginSSHSessions(t *testing.T) {
 	require.Zero(t, code, "pull after revocation should silently re-mint: %s %s", stdout, stderr)
 	assert.Contains(t, stdout, "Already up to date")
 
-	// ④ status reports the refreshed session.
+	// ④ status reports the refreshed session (network-verified), and the
+	// host subcommand manages the multi-host view: ls marks the default.
 	stdout, stderr, code = runCLI(t, "login", hs.URL, "--status")
 	require.Zero(t, code, "%s %s", stdout, stderr)
 	assert.Contains(t, stdout, "via ssh")
+	assert.Contains(t, stdout, "(valid)")
+	stdout, stderr, code = runCLI(t, "host", "ls")
+	require.Zero(t, code, "%s %s", stdout, stderr)
+	assert.Contains(t, stdout, "* "+hs.URL)
+	stdout, stderr, code = runCLI(t, "host", "use", hs.URL)
+	require.Zero(t, code, "%s %s", stdout, stderr)
+	assert.Contains(t, stdout, "default server: "+hs.URL)
 
 	// ⑤ logout drops the stored credential.
 	stdout, stderr, code = runCLI(t, "logout", hs.URL)

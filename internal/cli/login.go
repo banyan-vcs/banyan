@@ -49,12 +49,18 @@ func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
 			return usageErr(stderr, "login: unexpected argument %q", args[i])
 		}
 	}
+	explicit := server != ""
 	srv, err := serverArgFrom(wsRoot, server)
 	if err != nil {
-		return cmdErr(stderr, err)
+		// No resolvable server: offer the configured hosts (plus a new-URL
+		// entry) before giving up — the gh-style first-run experience.
+		srv, err = pickServerInteractive(stdout)
+		if err != nil {
+			return cmdErr(stderr, err)
+		}
 	}
 	if status {
-		return loginStatus(srv, stdout, stderr)
+		return loginStatus(srv, explicit, stdout, stderr)
 	}
 	if user == "" {
 		user = os.Getenv("USER")
@@ -70,6 +76,7 @@ func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		if err == nil {
 			putCred(srv, credential{User: minted.User, Token: minted.Token, Expires: minted.Expires, Method: "ssh", SSHAddr: caps.SSH})
 			fmt.Fprintf(stdout, "logged in %s as %s via SSH (session expires %s)\n", srv, minted.User, timeFmt(minted.Expires))
+			printDefaultIfMarked(srv, stdout)
 			return 0
 		}
 		fmt.Fprintf(stderr, "ssh login unavailable (%v)", err)
@@ -88,21 +95,104 @@ func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	}
 	putCred(srv, credential{User: granted.User, Token: granted.Token, Expires: granted.Expires, Method: "web"})
 	fmt.Fprintf(stdout, "logged in %s as %s via web approval (session expires %s)\n", srv, granted.User, timeFmt(granted.Expires))
+	printDefaultIfMarked(srv, stdout)
 	return 0
 }
 
-func loginStatus(srv string, stdout, stderr io.Writer) int {
-	cred := credForHost(srv)
-	if cred == nil || cred.Token == "" {
-		fmt.Fprintf(stdout, "not logged in to %s\n", srv)
+// printDefaultIfMarked notes the default host after a login when more than
+// one server is configured (the first login already became the default —
+// putCred; this tells multi-host users which one is active).
+func printDefaultIfMarked(srv string, stdout io.Writer) {
+	if cfg := loadConfig(); cfg.DefaultHost == serverKey(srv) && len(cfg.Hosts) > 1 {
+		fmt.Fprintf(stdout, "default server: %s (switch: banyan host use)\n", cfg.DefaultHost)
+	}
+}
+
+// pickServerInteractive offers the configured hosts plus a new-URL entry —
+// the no-argument `banyan login` on a multi-host machine. Errors when there
+// is nothing configured (the classic pass-the-URL hint).
+func pickServerInteractive(stdout io.Writer) (string, error) {
+	cfg := loadConfig()
+	keys := sortedHostKeys(cfg)
+	if len(keys) == 0 {
+		return "", errNoServer
+	}
+	items := make([]string, len(keys), len(keys)+1)
+	copy(items, keys)
+	items = append(items, "another server…")
+	i, err := pickFromList(stdout, os.Stdin, "log in to:", items)
+	if err != nil {
+		return "", fmt.Errorf("login: no selection — pass the server URL")
+	}
+	if i < len(keys) {
+		return keys[i], nil
+	}
+	url, err := promptLine(stdout, os.Stdin, "server URL: ")
+	if err != nil {
+		return "", fmt.Errorf("login: %w", err)
+	}
+	return url, nil
+}
+
+// loginStatus reports sessions across hosts (gh auth status parity): one
+// line per configured server, network-verified. An explicit server narrows
+// to that host; the listing form covers every island the machine knows.
+func loginStatus(srv string, explicit bool, stdout, stderr io.Writer) int {
+	cfg := loadConfig()
+	keys := sortedHostKeys(cfg)
+	if explicit {
+		key := serverKey(srv)
+		e, ok := cfg.Hosts[key]
+		if !ok || e.Token == "" {
+			fmt.Fprintf(stdout, "not logged in to %s\n", srv)
+			return 1
+		}
+		fmt.Fprintf(stdout, "%s as %s via %s, expires %s (%s)\n", srv, e.User, e.Method, timeFmt(e.Expires), probeSession(key, e))
+		return 0
+	}
+	if len(keys) == 0 {
+		fmt.Fprintln(stdout, "not logged in anywhere (banyan login <server>)")
 		return 1
 	}
-	state := "valid"
-	if cred.Expires != 0 && cred.Expires < time.Now().Unix() {
-		state = "EXPIRED (re-authenticate: banyan login)"
+	for _, k := range keys {
+		e := cfg.Hosts[k]
+		mark := " "
+		if k == cfg.DefaultHost {
+			mark = "*"
+		}
+		fmt.Fprintf(stdout, "%s %s as %s via %s, expires %s (%s)\n", mark, k, e.User, e.Method, timeFmt(e.Expires), probeSession(k, e))
 	}
-	fmt.Fprintf(stdout, "%s as %s via %s, expires %s (%s)\n", srv, cred.User, cred.Method, timeFmt(cred.Expires), state)
+	if cfg.DefaultHost != "" {
+		fmt.Fprintln(stdout, "default: "+cfg.DefaultHost+" — switch with: banyan host use <server>")
+	}
 	return 0
+}
+
+// probeSession verifies a stored session against its server (one auth'd
+// GET, 5s budget — the same single source of truth every command rides).
+// Deliberately NOT the workspace client: probing must never re-mint.
+func probeSession(server string, e *hostEntry) string {
+	if e.Token == "" {
+		return "logged out"
+	}
+	if e.Expires != 0 && e.Expires < time.Now().Unix() {
+		return "EXPIRED (re-authenticate: banyan login)"
+	}
+	req, err := http.NewRequest("GET", strings.TrimSuffix(server, "/")+"/api/v1/repos", nil)
+	if err != nil {
+		return "unreachable"
+	}
+	req.Header.Set("Authorization", basicHeaderValue(e.User, e.Token))
+	hc := &http.Client{Timeout: 5 * time.Second}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return "server unreachable"
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "rejected (re-authenticate: banyan login)"
+	}
+	return "valid"
 }
 
 func timeFmt(unix int64) string {
@@ -249,7 +339,20 @@ func webLogin(web string, stdout io.Writer) (*mintedSession, error) {
 func runLogout(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	var server string
 	if len(args) > 0 {
+		if strings.HasPrefix(args[0], "-") {
+			return usageErr(stderr, "logout: unexpected flag %q", args[0])
+		}
 		server = args[0]
+	}
+	if server == "" && len(sortedHostKeys(loadConfig())) > 1 {
+		// Multiple islands and no target: pick one rather than silently
+		// dropping the workspace/default host.
+		keys := sortedHostKeys(loadConfig())
+		i, err := pickFromList(stdout, os.Stdin, "log out of:", keys)
+		if err != nil {
+			return cmdErr(stderr, fmt.Errorf("logout: no selection — pass the server: banyan logout <url>"))
+		}
+		server = keys[i]
 	}
 	srv, err := serverArgFrom(wsRoot, server)
 	if err != nil {
@@ -257,5 +360,8 @@ func runLogout(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	}
 	dropCred(srv)
 	fmt.Fprintf(stdout, "logged out of %s (the server-side session lives until it expires — revocable by an admin)\n", srv)
+	if cfg := loadConfig(); cfg.DefaultHost == "" && len(cfg.Hosts) > 0 {
+		fmt.Fprintln(stdout, "no default server — set one with: banyan host use <server>")
+	}
 	return 0
 }

@@ -10,11 +10,14 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 const usageText = `banyan — thin client for a banyan server (docs/client/cli.md)
 
-usage: banyan [-C <dir>] <command> [args]
+usage: banyan [-C <dir>] [--config <file>] <command> [args]
+       the credential/config store defaults to ~/conf/banyan.yaml (BANYAN_CONFIG
+       overrides; --config wins) — every logged-in host plus the default host
 
 workspace commands (run inside a clone — any subdirectory — or with -C):
   clone <url>[/tree/<dir>] [dir] [--sparse a,b] [-b branch]   minimal clone
@@ -28,6 +31,8 @@ workspace commands (run inside a clone — any subdirectory — or with -C):
   gc [-max-mb N]                                              prune the object cache to a byte cap (default 1024)
   login [server] [-u user] [--status]                         SSH key → 12h session (web approval fallback; no permanent tokens)
   logout [server]                                             drop the stored session credential
+  host ls [--json]                                            configured servers (the default marked *)
+  host use [server]                                           switch the default server (numbered menu when omitted)
   snapshot [save] [-m msg] [-n name]                          checkpoint the working state (offline)
   snapshot ls | apply <name> [--force] | drop <name>          inspect / restore / remove checkpoints
   stack push -m <msg> [path...]                               capture dirty paths as a queued changeset
@@ -43,12 +48,28 @@ exit codes: 0 ok · 1 conflict · 2 server/usage error · 3 network`
 func Run(argv []string, stdout, stderr io.Writer) int {
 	args := argv
 	wsRoot := "."
-	if len(args) > 0 && args[0] == "-C" {
-		if len(args) < 2 {
-			fmt.Fprintln(stderr, "error: -C needs a directory")
-			return 2
+	for len(args) > 0 {
+		if args[0] == "-C" {
+			if len(args) < 2 {
+				fmt.Fprintln(stderr, "error: -C needs a directory")
+				return 2
+			}
+			wsRoot, args = args[1], args[2:]
+			continue
 		}
-		wsRoot, args = args[1], args[2:]
+		if args[0] == "--config" {
+			if len(args) < 2 {
+				fmt.Fprintln(stderr, "error: --config needs a file")
+				return 2
+			}
+			configOverride, args = args[1], args[2:]
+			continue
+		}
+		if strings.HasPrefix(args[0], "--config=") {
+			configOverride, args = strings.TrimPrefix(args[0], "--config="), args[1:]
+			continue
+		}
+		break
 	}
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usageText)
@@ -82,6 +103,8 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return runLogin(wsRoot, rest, stdout, stderr)
 	case "logout":
 		return runLogout(wsRoot, rest, stdout, stderr)
+	case "host":
+		return runHost(rest, stdout, stderr)
 	case "branch":
 		return runRefsList(wsRoot, rest, stdout, stderr, "refs/heads/")
 	case "tag":

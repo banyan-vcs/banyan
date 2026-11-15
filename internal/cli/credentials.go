@@ -2,30 +2,26 @@ package cli
 
 // Login credentials (docs/client/cli.md §4.5): SHORT-LIVED session tokens
 // only — minted over SSH public-key auth or a web-console approval, never
-// operator-created permanent PATs. Store shape: ~/.banyan/credentials.json
-// (0600) keyed by server host, plus ~/.banyan/known_hosts for SSH
-// trust-on-first-use. BANYAN_HOME overrides the directory (tests).
+// operator-created permanent PATs. The store is the multi-host config
+// (config.go): every logged-in server plus the default host in ONE yaml.
 import (
 	"encoding/base64"
-	"encoding/json"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+// credential is one server's session, handed to the transport (client.go).
 type credential struct {
-	User    string `json:"user"`
-	Token   string `json:"token"`
-	Expires int64  `json:"expires"` // unix seconds; the CLI re-authenticates past it
-	Method  string `json:"method"`  // "ssh" | "web" — ssh refreshes silently
-	SSHAddr string `json:"ssh,omitempty"`
+	User    string
+	Token   string
+	Expires int64  // unix seconds; the CLI re-authenticates past it
+	Method  string // "ssh" | "web" — ssh refreshes silently
+	SSHAddr string // advertised SSH address (the 401 re-mint path)
 }
 
-type credStore struct {
-	Servers map[string]credential `json:"servers"`
-}
-
+// homeDir is the legacy store directory (pre-config generations: ~/.banyan;
+// BANYAN_HOME overrides — also where tests isolate).
 func homeDir() string {
 	if v := os.Getenv("BANYAN_HOME"); v != "" {
 		return v
@@ -36,93 +32,59 @@ func homeDir() string {
 	return ".banyan"
 }
 
-func loadCreds() credStore {
-	var s credStore
-	raw, err := os.ReadFile(filepath.Join(homeDir(), "credentials.json"))
-	if err == nil {
-		_ = json.Unmarshal(raw, &s)
-	}
-	if s.Servers == nil {
-		s.Servers = map[string]credential{}
-	}
-	return s
-}
-
-func saveCreds(s credStore) {
-	if err := os.MkdirAll(homeDir(), 0o700); err != nil {
-		return
-	}
-	raw, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(filepath.Join(homeDir(), "credentials.json"), raw, 0o600)
-}
-
 // hostKeyOf returns the pinned SSH host key blob for addr ("" = unseen).
 func hostKeyOf(addr string) string {
-	raw, err := os.ReadFile(filepath.Join(homeDir(), "known_hosts.json"))
-	if err != nil {
-		return ""
-	}
-	var m map[string]string
-	if json.Unmarshal(raw, &m) == nil {
-		return m[addr]
-	}
-	return ""
+	return loadConfig().SSHHostKeys[addr]
 }
 
 func pinHostKey(addr, blobB64 string) {
-	m := map[string]string{}
-	if raw, err := os.ReadFile(filepath.Join(homeDir(), "known_hosts.json")); err == nil {
-		_ = json.Unmarshal(raw, &m)
-	}
-	m[addr] = blobB64
-	if out, err := json.MarshalIndent(m, "", "  "); err == nil {
-		_ = os.MkdirAll(homeDir(), 0o700)
-		_ = os.WriteFile(filepath.Join(homeDir(), "known_hosts.json"), out, 0o600)
-	}
+	cfg := loadConfig()
+	cfg.SSHHostKeys[addr] = blobB64
+	saveConfig(cfg)
 }
 
-// credForHost loads the credential for a server URL (matched by host).
+// credForHost loads the session for a server URL (matched by config key).
 func credForHost(server string) *credential {
-	u, err := url.Parse(server)
-	if err != nil {
-		return nil
-	}
-	s := loadCreds()
-	if c, ok := s.Servers[u.Host]; ok {
-		return &c
+	cfg := loadConfig()
+	if e, ok := cfg.Hosts[serverKey(server)]; ok && e != nil {
+		return &credential{User: e.User, Token: e.Token, Expires: e.Expires, Method: e.Method, SSHAddr: e.SSHAddr}
 	}
 	return nil
 }
 
+// putCred stores a session; the FIRST host in the store becomes the default
+// (gh parity — switching is explicit: `banyan host use`).
 func putCred(server string, c credential) {
-	u, err := url.Parse(server)
-	if err != nil {
-		return
+	cfg := loadConfig()
+	key := serverKey(server)
+	cfg.Hosts[key] = &hostEntry{User: c.User, Token: c.Token, Expires: c.Expires, Method: c.Method, SSHAddr: c.SSHAddr}
+	if cfg.DefaultHost == "" {
+		cfg.DefaultHost = key
 	}
-	s := loadCreds()
-	s.Servers[u.Host] = c
-	saveCreds(s)
+	saveConfig(cfg)
 }
 
+// dropCred removes a session; dropping the default clears the default (no
+// silent re-pointing — the user picks the next default explicitly).
 func dropCred(server string) {
-	u, err := url.Parse(server)
-	if err != nil {
+	cfg := loadConfig()
+	key := serverKey(server)
+	if _, ok := cfg.Hosts[key]; !ok {
 		return
 	}
-	s := loadCreds()
-	delete(s.Servers, u.Host)
-	saveCreds(s)
+	delete(cfg.Hosts, key)
+	if cfg.DefaultHost == key {
+		cfg.DefaultHost = ""
+	}
+	saveConfig(cfg)
 }
 
 func basicHeaderValue(user, secret string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+secret))
 }
 
-// serverArgFrom resolves the server URL for login/logout: explicit arg,
-// the workspace's server, or BANYAN_SERVER.
+// serverArgFrom resolves the server URL: explicit arg, the workspace's
+// server, BANYAN_SERVER, then the config's default host.
 func serverArgFrom(wsRoot string, arg string) (string, error) {
 	if arg != "" {
 		return strings.TrimSuffix(arg, "/"), nil
@@ -133,10 +95,13 @@ func serverArgFrom(wsRoot string, arg string) (string, error) {
 	if s := os.Getenv("BANYAN_SERVER"); s != "" {
 		return strings.TrimSuffix(s, "/"), nil
 	}
+	if cfg := loadConfig(); cfg.DefaultHost != "" {
+		return cfg.DefaultHost, nil
+	}
 	return "", errNoServer
 }
 
-var errNoServer = &usageError{"login: pass the server URL (or run inside a workspace, or set BANYAN_SERVER)"}
+var errNoServer = &usageError{"login: pass the server URL (or run inside a workspace, set BANYAN_SERVER, or banyan host use a logged-in server)"}
 
 type usageError struct{ msg string }
 
