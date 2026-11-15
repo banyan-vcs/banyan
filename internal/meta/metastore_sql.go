@@ -18,9 +18,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
+	"github.com/banyan-vcs/banyan/internal/ddl"
 	"github.com/banyan-vcs/banyan/internal/model"
 
 	_ "github.com/glebarez/go-sqlite"  // pure-Go SQLite driver (modernc engine), no cgo
@@ -32,105 +32,25 @@ import (
 const sqlChunk = 500 // rows per batched statement (safe under every driver's param limit)
 
 type sqlDialect struct {
-	name        string
-	driver      string
-	rowLock     string // appended to locking reads on the MVCC backends (" FOR UPDATE")
-	rebind      func(string) string
-	hasColumn   func(ctx context.Context, db *sql.DB, table, column string) (bool, error)
-	indexExists func(ctx context.Context, db *sql.DB, index string) (bool, error)
-}
-
-// rebindPG rewrites ? placeholders to $N outside single-quoted strings.
-func rebindPG(q string) string {
-	var b strings.Builder
-	n := 0
-	inStr := false
-	for i := 0; i < len(q); i++ {
-		c := q[i]
-		switch {
-		case c == '\'':
-			inStr = !inStr
-			b.WriteByte(c)
-		case c == '?' && !inStr:
-			n++
-			b.WriteString("$" + strconv.Itoa(n))
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
-
-func hasColumnSQL(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
-	var n int
-	err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM pragma_table_info('"+table+"') WHERE name=?", column).Scan(&n)
-	return n > 0, err
-}
-
-func indexExistsSQL(ctx context.Context, db *sql.DB, index string) (bool, error) {
-	var n int
-	err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?", index).Scan(&n)
-	return n > 0, err
-}
-
-func hasColumnMySQL(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
-	var n int
-	err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?",
-		table, column).Scan(&n)
-	return n > 0, err
-}
-
-func indexExistsMySQL(ctx context.Context, db *sql.DB, index string) (bool, error) {
-	// STATISTICS carries one row per indexed COLUMN (a two-column index
-	// counts twice) — presence, not equality.
-	var n int
-	err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND INDEX_NAME=?",
-		index).Scan(&n)
-	return n > 0, err
-}
-
-func hasColumnPG(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
-	var n int
-	err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_NAME=$1 AND COLUMN_NAME=$2",
-		table, column).Scan(&n)
-	return n > 0, err
-}
-
-func indexExistsPG(ctx context.Context, db *sql.DB, index string) (bool, error) {
-	var n int
-	err := db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM pg_indexes WHERE indexname=$1", index).Scan(&n)
-	return n > 0, err
+	name    string
+	driver  string
+	rowLock string // appended to locking reads on the MVCC backends (" FOR UPDATE")
 }
 
 var (
 	sqliteDialect = sqlDialect{
-		name:        "sqlite",
-		driver:      "sqlite",
-		rebind:      func(q string) string { return q },
-		hasColumn:   hasColumnSQL,
-		indexExists: indexExistsSQL,
+		name:   "sqlite",
+		driver: "sqlite",
 	}
 	mysqlDialect = sqlDialect{
-		name:        "mysql",
-		driver:      "mysql",
-		rowLock:     " FOR UPDATE",
-		rebind:      func(q string) string { return q },
-		hasColumn:   hasColumnMySQL,
-		indexExists: indexExistsMySQL,
+		name:    "mysql",
+		driver:  "mysql",
+		rowLock: " FOR UPDATE",
 	}
 	postgresDialect = sqlDialect{
-		name:        "postgres",
-		driver:      "pgx",
-		rowLock:     " FOR UPDATE",
-		rebind:      rebindPG,
-		hasColumn:   hasColumnPG,
-		indexExists: indexExistsPG,
+		name:    "postgres",
+		driver:  "pgx",
+		rowLock: " FOR UPDATE",
 	}
 )
 
@@ -180,8 +100,7 @@ func ddlSQLite() []string {
 	node_id  TEXT NOT NULL,
 	offset   INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY(repo, oid)
-) WITHOUT ROWID`,
-		`CREATE INDEX IF NOT EXISTS idx_objects_pack ON objects(repo, pack_oid)`,
+	) WITHOUT ROWID`,
 		`CREATE TABLE IF NOT EXISTS placement(
 	repo     TEXT PRIMARY KEY,
 	replicas INTEGER NOT NULL DEFAULT 0
@@ -369,9 +288,6 @@ type SQLMetaStore struct {
 	d   sqlDialect
 }
 
-// q rebinds placeholders through the dialect.
-func (s *SQLMetaStore) q(sql string) string { return s.d.rebind(sql) }
-
 // NewSQLMetaStore opens (creating if needed) the metadata database on the
 // given backend ("sqlite" | "mysql" | "postgres") and applies the schema.
 // SQLite expects a file path; MySQL/PostgreSQL expect a driver DSN (the
@@ -418,59 +334,18 @@ func NewSQLMetaStore(backend, target string) (*SQLMetaStore, error) {
 	return s, nil
 }
 
-func (s *SQLMetaStore) applySchema(ctx context.Context) error {
-	for _, stmt := range s.ddl() {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("%s: %w", firstLine(stmt), err)
-		}
-	}
-	if s.d.name == "mysql" {
-		// MySQL has no CREATE INDEX IF NOT EXISTS; check, then create.
-		ok, err := s.d.indexExists(ctx, s.db, "idx_objects_pack")
-		if err != nil {
-			return err
-		}
-		if !ok {
-			if _, err := s.db.ExecContext(ctx, "CREATE INDEX idx_objects_pack ON objects(repo, pack_oid)"); err != nil {
-				return err
-			}
-		}
-	}
-	if err := s.migrateColumn(ctx, "repos", "storage_id", "TEXT NOT NULL DEFAULT ''", "sqlite"); err != nil {
-		return err
-	}
-	if err := s.migrateColumn(ctx, "repos", "force_push", "INTEGER NOT NULL DEFAULT 0", ""); err != nil {
-		return err
-	}
-	// The hierarchy link: MySQL can't DEFAULT a TEXT column, so the ALTER
-	// spells a VARCHAR like the schema (the column is repo names, not blobs).
-	parentType := "TEXT NOT NULL DEFAULT ''"
-	if s.d.name == "mysql" {
-		parentType = "VARCHAR(190) NOT NULL DEFAULT ''"
-	}
-	if err := s.migrateColumn(ctx, "repos", "parent", parentType, ""); err != nil {
-		return err
-	}
-	return s.migrateColumn(ctx, "rename_fence", "done", "INTEGER NOT NULL DEFAULT 0", "")
-}
-
-func (s *SQLMetaStore) ddl() []string {
-	var base []string
-	switch s.d.name {
-	case "mysql":
-		base = ddlMySQL()
-	case "postgres":
-		base = ddlPostgres()
-	default:
-		base = ddlSQLite()
-	}
-	return append(base, s.tokensDDL(), s.subtreeRulesDDL())
+// applySchema runs the ordered migrations on the shared ddl.Runner
+// (metaSteps in migrations.go — replayable steps, the meta_migrations
+// ledger). The ctx parameter is historical: the runner is boot-time and
+// synchronous.
+func (s *SQLMetaStore) applySchema(_ context.Context) error {
+	return ddl.New(s.orm, "meta_migrations").Run(metaSteps)
 }
 
 // subtreeRulesDDL is the runtime directory-access-rule table (docs/gateway/authorization.md §8)
 // in this backend's dialect — column names avoid MySQL reserved words.
-func (s *SQLMetaStore) subtreeRulesDDL() string {
-	switch s.d.name {
+func subtreeRulesDDL(dialect string) string {
+	switch dialect {
 	case "mysql":
 		return `CREATE TABLE IF NOT EXISTS subtree_rules(
 	repo  VARCHAR(190) NOT NULL,
@@ -497,8 +372,8 @@ func (s *SQLMetaStore) subtreeRulesDDL() string {
 
 // tokensDDL is the personal-access-token table (docs/gateway/authorization.md §6) in this
 // backend's dialect — column names avoid MySQL reserved words.
-func (s *SQLMetaStore) tokensDDL() string {
-	switch s.d.name {
+func tokensDDL(dialect string) string {
+	switch dialect {
 	case "mysql":
 		return `CREATE TABLE IF NOT EXISTS tokens(
 	token_hash CHAR(64) NOT NULL PRIMARY KEY,
@@ -531,45 +406,6 @@ func (s *SQLMetaStore) tokensDDL() string {
 	created_at INTEGER NOT NULL
 ) WITHOUT ROWID`
 	}
-}
-
-// migrateColumn adds a column for databases predating it. The extraDSN
-// argument is SQLite's PRAGMA-formatted storage_id backfill trigger (empty
-// skips backfill); on the MVCC backends fresh databases carry the column
-// from the schema, so this is future-proofing only.
-func (s *SQLMetaStore) migrateColumn(ctx context.Context, table, column, colType, backfill string) error {
-	ok, err := s.d.hasColumn(ctx, s.db, table, column)
-	if err != nil {
-		return err
-	}
-	if ok {
-		return nil
-	}
-	if _, err := s.db.ExecContext(ctx, s.q("ALTER TABLE "+table+" ADD COLUMN "+column+" "+colType)); err != nil {
-		return err
-	}
-	if backfill == "sqlite" && column == "storage_id" {
-		rows, err := s.db.QueryContext(ctx, s.q("SELECT name FROM repos WHERE storage_id=''"))
-		if err != nil {
-			return err
-		}
-		var names []string
-		for rows.Next() {
-			var n string
-			if err := rows.Scan(&n); err != nil {
-				rows.Close()
-				return err
-			}
-			names = append(names, n)
-		}
-		rows.Close()
-		for _, n := range names {
-			if _, err := s.db.ExecContext(ctx, s.q("UPDATE repos SET storage_id=? WHERE name=?"), NewStorageID(), n); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func firstLine(s string) string {

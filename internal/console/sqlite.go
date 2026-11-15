@@ -23,6 +23,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/banyan-vcs/banyan/internal/ddl"
 	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
@@ -129,6 +130,15 @@ CREATE TABLE IF NOT EXISTS members (
 CREATE INDEX IF NOT EXISTS idx_members_user ON members(user_id);
 `
 
+// consoleSteps is the console's migration history (ledger:
+// console_migrations) — schemaV1 is the shipped shape, kept verbatim; the
+// same replayable-steps posture as the metadata plane and the web tier.
+var consoleSteps = []ddl.Step{
+	{Name: "0001-console-tables", Up: func(q ddl.Q) error {
+		return q.Exec(schemaV1)
+	}},
+}
+
 // Open creates or opens the console database at path.
 func Open(path string) (*DB, error) {
 	if dir := filepath.Dir(path); dir != "" {
@@ -144,14 +154,14 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("console db: open: %w", err)
 	}
-	if _, err := db.Exec(schemaV1); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("console db: schema: %w", err)
-	}
 	orm, err := meta.GormOpen("sqlite", db)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("console db: gorm: %w", err)
+	}
+	if err := ddl.New(orm, "console_migrations").Run(consoleSteps); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("console db: schema: %w", err)
 	}
 	return &DB{db: db, orm: orm}, nil
 }

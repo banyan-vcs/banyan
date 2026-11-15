@@ -120,6 +120,26 @@ type MetaStore      interface { 上述全部 }                              // c
 - CAS：`BEGIN IMMEDIATE` 内 SELECT-比-UPDATE/DELETE，失败回滚映射 `ErrNonFastForward`（与 git push 语义一致，docs/design/data-model.md §4.3）。
 - 幂等：packs/objects 一律 `INSERT OR IGNORE`（首写者胜；pack 不可变 ⇒ 无冲突语义）。
 
+### 2.4 DDL 初始化与增量迁移（2026-11-15，internal/ddl）
+
+三个 SQL 店（meta / web 层 / console）共用有序迁移 runner：**步进表 + 账本**（店各自命名——meta_migrations / web_migrations / console_migrations，web 层与 gateway 共用 sqlite 文件也不撞表）。四条契约：
+
+- **步进可重放**：IF NOT EXISTS 建表、hasColumn 守卫的 ALTER、存在性探针守卫的索引（MySQL 无 CREATE INDEX IF NOT EXISTS）。老库重放历史步全 no-op 后追平新尾巴——不需要 baseline 戳记；失败步不入账、下次 boot 重试，重放安全性就是恢复契约。
+- **步进只增不改**：历史步（storage_id 回填、force_push、fence.done、repos.parent）原样保留，新增能力=追加步。新库由 0001 直接建最新形状。
+- **事务边界**：sqlite/pg 的 DDL 可回滚（步进包在事务里）；MySQL DDL 自动提交，步中失败可能留半步——靠重放而非事务恢复。并发 boot 良性收敛：步重放 + 账本插入 ignore-duplicate。
+- **当前步表**：meta 0001 表集 / 0002–0005 历史列 / 0006 索引；web 0001 web_ 表 / 0002 imports 索引；console 0001 产品库（schemaV1 原样）。
+
+**索引是查询驱动的**（三级走查：热路径全部被主键前缀覆盖——objects(repo,oid) 服务 LocateObjects 的 IN 探测、pack_nodes/timelines/hooks 的 (repo,…) 复合主键即查询前缀；缺口补三枚）：
+
+| 索引 | 服务的查询 |
+|---|---|
+| objects(repo, pack_oid)（既有） | DropPack/PackObjects 的 pack 侧删除与枚举 |
+| repo_pools(pool) | DeletePoolRecords 与 DeleteRepo 的 pool 侧删除（原全表扫） |
+| tokens(owner, created_at) | ListTokens(user) 过滤 + 排序 |
+| web_imports(initiator, started_at) | ListImports 过滤 + 逆序 |
+
+**刻意不索引**（表有界、扫不涨）：rename_fence（admin 节奏、常驻行个位数；dst 侧删除走小扫）、web_sessions/web_oauth_states/web_cli_grants 的过期清扫（登录在飞规模，boot/惰性扫一次）；console 既有四枚（idx_tokens_user、idx_nodes_identity 唯一、idx_nodes_parent、idx_members_user）已覆盖其全部查询面。升级语义见 T：legacy 形状（无 storage_id 的 repos、无 done 的 fence）重放路径有测试钉住（TestLegacyShapeUpgradesOnOpen）。
+
 ## 3. 读路径（服务一次 fetch，2026-10-25 起窗口化）
 
 ```

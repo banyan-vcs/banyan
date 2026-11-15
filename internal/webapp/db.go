@@ -23,6 +23,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/gorm"
 
+	"github.com/banyan-vcs/banyan/internal/ddl"
 	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
@@ -152,8 +153,28 @@ func OpenDB(spec string) (*DB, error) {
 
 func (w *DB) Close() error { return w.db.Close() }
 
-func (w *DB) migrate() error {
-	const schema = `
+// webSteps is the web tier's migration history (ledger: web_migrations —
+// its own table because this database may be the SAME file as the
+// metadata plane's). Same posture as the metadata plane: replayable steps,
+// fresh databases get the latest shape in 0001.
+var webSteps = []ddl.Step{
+	{Name: "0001-web-tables", Up: func(q ddl.Q) error {
+		for _, stmt := range webTableDDL() {
+			if err := q.Exec(stmt); err != nil {
+				return err
+			}
+		}
+		return nil
+	}},
+	// ListImports filters initiator and sorts started_at DESC.
+	{Name: "0002-imports-initiator-idx", Up: func(q ddl.Q) error {
+		return q.EnsureIndex("idx_web_imports_initiator",
+			"CREATE INDEX idx_web_imports_initiator ON web_imports(initiator, started_at)")
+	}},
+}
+
+func webTableDDL() []string {
+	return []string{`
 CREATE TABLE IF NOT EXISTS web_sessions (
   id            VARCHAR(64)  NOT NULL PRIMARY KEY,
   username      VARCHAR(190) NOT NULL,
@@ -162,12 +183,12 @@ CREATE TABLE IF NOT EXISTS web_sessions (
   provider_kind VARCHAR(16)  NOT NULL DEFAULT '',
   created_at    BIGINT       NOT NULL,
   expires_at    BIGINT       NOT NULL
-);
+)`, `
 CREATE TABLE IF NOT EXISTS web_oauth_states (
   state       VARCHAR(64) NOT NULL PRIMARY KEY,
   provider_id VARCHAR(64) NOT NULL,
   expires_at  BIGINT      NOT NULL
-);
+)`, `
 CREATE TABLE IF NOT EXISTS web_imports (
   id             VARCHAR(32)   NOT NULL PRIMARY KEY,
   repo           VARCHAR(190)  NOT NULL,
@@ -179,15 +200,18 @@ CREATE TABLE IF NOT EXISTS web_imports (
   default_branch VARCHAR(190)  NOT NULL DEFAULT '',
   started_at     BIGINT        NOT NULL,
   finished_at    BIGINT        NOT NULL DEFAULT 0
-);
+)`, `
 CREATE TABLE IF NOT EXISTS web_cli_grants (
   handshake_id VARCHAR(64)  NOT NULL PRIMARY KEY,
   token        VARCHAR(128) NOT NULL,
   user_name    VARCHAR(190) NOT NULL,
   token_expires BIGINT      NOT NULL DEFAULT 0,
   expires_at   BIGINT       NOT NULL
-);`
-	if _, err := w.db.Exec(schema); err != nil {
+)`}
+}
+
+func (w *DB) migrate() error {
+	if err := ddl.New(w.orm, "web_migrations").Run(webSteps); err != nil {
 		return fmt.Errorf("web db schema: %w", err)
 	}
 	return nil

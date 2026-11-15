@@ -78,7 +78,7 @@ func TestMetaStoreConformance(t *testing.T) {
 // and turns the shared-DB suites order-dependent.
 func dropAllTables(t *testing.T, s *SQLMetaStore) {
 	t.Helper()
-	for _, table := range []string{"rename_fence", "repo_pools", "repo_blobs", "hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos", "tokens", "subtree_rules"} {
+	for _, table := range []string{"rename_fence", "repo_pools", "repo_blobs", "hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos", "tokens", "subtree_rules", "meta_migrations"} {
 		if _, err := s.db.Exec("DROP TABLE IF EXISTS " + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
