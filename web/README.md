@@ -1,14 +1,13 @@
 # banyan web
 
-The banyan web console: a **React SPA** (Vite + TypeScript + react-router +
-TanStack Query + highlight.js) served by **`banyand web`** — the web tier
-of the three-layer standalone deployment (web → gateway → storage,
-`internal/webapp`). The browser never talks to the gateway directly and
-never sees a credential: the web tier keeps **sessions in its own
-database** (sqlite / mysql / postgres) and attaches the session's
-Authorization header to every proxied call, so the pages see exactly what
-the same user's git client sees — branch visibility, directory access,
-everything.
+The banyan web console: a React SPA (Vite + TypeScript + react-router +
+TanStack Query + highlight.js) served by `banyand web` — the web tier of
+the three-layer deployment (web → gateway → storage, `internal/webapp`).
+The browser never talks to the gateway directly and never sees a
+credential: the web tier keeps sessions in its own database
+(sqlite / mysql / postgres) and attaches the session's Authorization
+header to every proxied call — pages see exactly what the same user's
+git client sees.
 
 ```bash
 # frontend
