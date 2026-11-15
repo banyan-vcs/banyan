@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/banyan-vcs/banyan/internal/model"
 )
@@ -48,7 +49,20 @@ func metaOpeners() map[string]func(*testing.T) (MetaStore, func()) {
 			continue
 		}
 		open[backend] = func(t *testing.T) (MetaStore, func()) {
-			s, err := NewSQLMetaStore(backend, dsn)
+			// Service-container readiness hedge: mysql:8's init phase answers
+			// mysqladmin ping from its TEMP server, so the job may start while
+			// the final server is still taking over — the first connect's EOF
+			// surfaces as 'ping: invalid connection'. Retry the open briefly
+			// (test infrastructure; the product path stays fail-fast).
+			var s *SQLMetaStore
+			var err error
+			for i := 0; i < 4; i++ {
+				s, err = NewSQLMetaStore(backend, dsn)
+				if err == nil {
+					break
+				}
+				time.Sleep(2 * time.Second)
+			}
 			if err != nil {
 				t.Fatalf("open %s: %v", backend, err)
 			}

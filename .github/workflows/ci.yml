@@ -30,10 +30,10 @@ jobs:
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -proot -pbanyan"
+          --health-cmd="mysql -h 127.0.0.1 -uroot -pbanyan -e 'SELECT 1'"
           --health-interval=5s
           --health-timeout=5s
-          --health-retries=20
+          --health-retries=30
       postgres:
         image: postgres:16
         env:
@@ -42,10 +42,10 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd=pg_isready
+          --health-cmd="pg_isready -h 127.0.0.1 -U postgres"
           --health-interval=5s
           --health-timeout=5s
-          --health-retries=20
+          --health-retries=30
     env:
       BANYAN_TEST_MYSQL_DSN: root:banyan@tcp(127.0.0.1:3306)/banyan?charset=utf8mb4
       BANYAN_TEST_POSTGRES_DSN: postgres://postgres:banyan@127.0.0.1:5432/banyan?sslmode=disable
