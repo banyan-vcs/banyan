@@ -19,7 +19,7 @@ banyand web（:3000，internal/webapp）
    │ Authorization: Basic（local 密码 / oauth2:token / x-access-token:token）
 banyand serve（gateway / all-in-one）
    · gitwire（smart HTTP/SSH）+ rpc（/api/v1）
-   · auth：静态表 | auth.gitlab_sso | auth.oauth 多 provider（§docs/gateway/authorization.md 8d）
+   · auth：静态表 | auth.gitlab_sso | auth.oauth 多 provider（docs/gateway/authorization.md §8d）
    · POST /api/v1/imports（internal/importer，go-git 服务端 fetch）
    ▼
 存储（demo: LocalShardStore；集群: store 节点 + refs 服务）
@@ -91,7 +91,7 @@ web 层把任务写库后由 goroutine 调 gateway 的**同步**
 gateway 侧：requireWriteRank、目标名必须不存在（409）、失败回滚建仓、
 成功采用远端 HEAD 为默认分支；导入器跳过 `refs/banyan/*` 派生投影 ref。
 导入引擎（`internal/importer`）与 gitaly FetchRemote 共用，pack 流式落盘
-（大仓内存与 小仓同价）。SSH remote 不支持（docs/integration/gitaly-compat.md 登记项）。
+（大仓内存与小仓同价）。SSH remote 不支持（docs/integration/gitaly-compat.md 登记项）。
 
 ## 4a. 项目层级（子项目树）
 
