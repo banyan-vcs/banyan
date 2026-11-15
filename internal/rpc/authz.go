@@ -104,6 +104,16 @@ func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
 		if req.Scope == "" {
 			req.Scope = meta.ScopeWrite
 		}
+		// Minting is a write-rank act, and the requested scope may never
+		// exceed what the caller holds: a read PAT minting itself a write
+		// or admin PAT (or a plain user minting admin) is the textbook
+		// escalation — credentials only ever narrow.
+		if !s.requireWriteRank(w, r) {
+			return
+		}
+		if meta.ScopeRank(req.Scope) >= meta.ScopeRank(meta.ScopeAdmin) && !s.requireAdmin(w, r, "") {
+			return
+		}
 		info := meta.TokenInfo{User: id.User, Name: req.Name, Scope: req.Scope, Created: time.Now().Unix()}
 		if req.ExpiresDays > 0 {
 			info.Expires = time.Now().Add(time.Duration(req.ExpiresDays) * 24 * time.Hour).Unix()

@@ -319,7 +319,9 @@ func (s *Server) handleProto(w http.ResponseWriter, r *http.Request) {
 // session credential for the CALLER's identity (docs/gateway/authorization.md
 // §6a). The web console's /cli-auth approval calls this with the logged-in
 // user's injected credentials; the SSH path mints server-side instead
-// (gitwire's banyan-auth exec). Scope is write — sessions never administer.
+// (gitwire's banyan-auth exec). Scope is write — sessions never administer,
+// and minting one is a write-rank act: a read-scoped credential must not be
+// able to upgrade itself here (credentials only ever narrow).
 func (s *Server) handleCLISession(w http.ResponseWriter, r *http.Request) {
 	if s.Auth == nil {
 		writeJSON(w, http.StatusNotImplemented, errEnvelope{Error: errBody{Code: "NO_AUTH", Message: "no auth service configured"}})
@@ -329,6 +331,9 @@ func (s *Server) handleCLISession(w http.ResponseWriter, r *http.Request) {
 	if id.Anonymous() {
 		w.Header().Set("WWW-Authenticate", `Basic realm="banyan"`)
 		writeJSON(w, http.StatusUnauthorized, errEnvelope{Error: errBody{Code: "UNAUTHENTICATED", Message: "login first"}})
+		return
+	}
+	if !s.requireWriteRank(w, r) {
 		return
 	}
 	reg, ok := s.Meta.(meta.TokenRegistry)
