@@ -140,11 +140,24 @@ func (s *Server) handleCLIApprove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": granted.User, "expires": granted.Expires})
 }
 
-// handleCLIPoll: GET /api/cli/poll?id= — the CLI's side. Unknown or
-// unapproved ids answer "pending" (no oracle: the id is a 128-bit random
-// capability); an approved id answers the token exactly once.
+// handleCLIPoll: POST /api/cli/poll {id} — the CLI's side. The handshake
+// id is the grant's ONLY capability, so it travels in the request BODY:
+// request lines (method+path+query) land in reverse-proxy and access logs,
+// bodies do not — a logged id used to be raceable against the claim. GET
+// with a query id remains for one CLI generation of compatibility. Unknown
+// or unapproved ids answer "pending" (no oracle: the id is a 256-bit
+// random capability); an approved id answers the token exactly once.
 func (s *Server) handleCLIPoll(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
+	id := r.URL.Query().Get("id") // legacy GET form
+	if id == "" && r.Method == http.MethodPost {
+		var req struct {
+			ID string `json:"id"`
+		}
+		if !readJSONBody(w, r, &req) {
+			return
+		}
+		id = req.ID
+	}
 	if len(id) < 16 || len(id) > 128 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad handshake id"})
 		return

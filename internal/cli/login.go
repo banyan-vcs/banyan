@@ -29,6 +29,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
@@ -316,7 +318,11 @@ func webLogin(web string, stdout io.Writer) (*mintedSession, error) {
 	deadline := time.Now().Add(5 * time.Minute)
 	hc := &http.Client{Timeout: 10 * time.Second}
 	for time.Now().Before(deadline) {
-		resp, err := hc.Get(web + "/api/cli/poll?id=" + id)
+		// The id IS the grant capability — it rides the request body, not
+		// the query string: request lines land in access/reverse-proxy
+		// logs, bodies do not.
+		resp, err := hc.Post(web+"/api/cli/poll", "application/json",
+			strings.NewReader(`{"id":"`+id+`"}`))
 		if err == nil {
 			var out struct {
 				Status  string `json:"status"`
@@ -334,6 +340,22 @@ func webLogin(web string, stdout io.Writer) (*mintedSession, error) {
 		time.Sleep(2 * time.Second)
 	}
 	return nil, fmt.Errorf("login: approval window timed out")
+}
+
+// revokeSession self-revokes a stored session credential at the token
+// endpoint; false (best-effort) on any failure.
+func revokeSession(server string, cred *credential) bool {
+	req, err := http.NewRequest(http.MethodDelete, strings.TrimSuffix(server, "/")+"/api/v1/auth/tokens/"+meta.HashToken(cred.Token), nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", basicHeaderValue(cred.User, cred.Token))
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 func runLogout(wsRoot string, args []string, stdout, stderr io.Writer) int {
@@ -357,6 +379,14 @@ func runLogout(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	srv, err := serverArgFrom(wsRoot, server)
 	if err != nil {
 		return cmdErr(stderr, err)
+	}
+	// Best-effort self-revocation BEFORE dropping the local copy: logout
+	// must not leave a live write credential behind when the plaintext is
+	// right here (DELETE /api/v1/auth/tokens/<sha256>, own tokens only).
+	// A dead network must not block local logout — the session expires on
+	// its own within the 12h window.
+	if cred := credForHost(srv); cred != nil && strings.HasPrefix(cred.Token, "banyan_") && revokeSession(srv, cred) {
+		fmt.Fprintln(stdout, "revoked the server-side session")
 	}
 	dropCred(srv)
 	fmt.Fprintf(stdout, "logged out of %s (the server-side session lives until it expires — revocable by an admin)\n", srv)

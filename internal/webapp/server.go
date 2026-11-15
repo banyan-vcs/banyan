@@ -144,8 +144,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleImportList(w, r)
 	case pathname == "/api/cli/approve" && r.Method == http.MethodPost:
 		s.handleCLIApprove(w, r) // CLI login approval (docs/gateway/authorization.md §6a)
-	case pathname == "/api/cli/poll" && r.Method == http.MethodGet:
-		s.handleCLIPoll(w, r)
+	case pathname == "/api/cli/poll" && (r.Method == http.MethodPost || r.Method == http.MethodGet):
+		s.handleCLIPoll(w, r) // POST carries the handshake id in the BODY (query strings land in access logs)
 	case pathname == "/cli-auth" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
 		s.handleCLIAuthPage(w, r)
 	case shouldProxy(r, pathname):

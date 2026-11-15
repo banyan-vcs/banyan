@@ -44,9 +44,11 @@ func TestCLIApprovePollRelay(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.True(t, strings.HasPrefix(mintAuth, "Basic "), "mint went out with the session's credentials")
 
-	// The CLI poll claims the token exactly once.
+	// The CLI poll claims the token exactly once. The id rides the BODY —
+	// the request line (query included) is what access logs capture.
 	get := func() string {
-		r, err := http.Get(hs.URL + "/api/cli/poll?id=handshake-0123456789abcdef")
+		r, err := http.Post(hs.URL+"/api/cli/poll", "application/json",
+			strings.NewReader(`{"id":"handshake-0123456789abcdef"}`))
 		require.NoError(t, err)
 		defer r.Body.Close()
 		var out struct {
@@ -67,11 +69,17 @@ func TestCLIApprovePollRelay(t *testing.T) {
 	require.Equal(t, "granted", get(), "an approved handshake answers the token")
 	require.Equal(t, "pending", get(), "the grant is one-shot: the second poll sees nothing")
 
-	// Approvals need a session; the poll needs a well-formed id.
+	// Approvals need a session; the poll needs a well-formed id (both the
+	// POST body form and the legacy GET query form are validated).
 	resp = postJSON(t, hs.URL+"/api/cli/approve", map[string]string{"id": "handshake-0123456789abcdef"})
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	r2, _ := http.Get(hs.URL + "/api/cli/poll?id=short")
+	r2, err := http.Post(hs.URL+"/api/cli/poll", "application/json", strings.NewReader(`{"id":"short"}`))
+	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, r2.StatusCode)
 	r2.Body.Close()
+	r3, err := http.Get(hs.URL + "/api/cli/poll?id=handshake-0123456789abcdef")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, r3.StatusCode, "legacy GET still answers (one CLI generation of compatibility)")
+	r3.Body.Close()
 	_ = db
 }

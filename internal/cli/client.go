@@ -157,6 +157,16 @@ func (c *client) do(method, path string, body io.Reader, contentType string) (*h
 	return resp, err
 }
 
+// hint401 decorates a final 401 with the re-login line when the stored
+// credential cannot refresh (the web path — SSH sessions re-mint silently,
+// so they never surface here). The raw envelope gives the user no direction.
+func (c *client) hint401(err error) error {
+	if api, ok := err.(*apiError); ok && api.Status == http.StatusUnauthorized && c.refreshSSH == "" && c.authHeader != "" {
+		api.Message += " — re-login: banyan login " + c.base
+	}
+	return err
+}
+
 // post sends a JSON request; a 2xx response is decoded into out (when non-nil).
 func (c *client) post(path string, in, out any) error {
 	var body io.Reader
@@ -172,7 +182,7 @@ func (c *client) post(path string, in, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	return decodeResp(resp, out)
+	return c.hint401(decodeResp(resp, out))
 }
 
 // postRaw sends a JSON request and returns the raw STREAM response on the
@@ -216,7 +226,7 @@ func (c *client) postRawOn(hc *http.Client, path string, in any) (*http.Response
 	if api, ok := err.(*apiError); ok && api.Status == http.StatusUnauthorized && c.reauth() {
 		return send() // fresh session, one silent retry
 	}
-	return resp, err
+	return resp, c.hint401(err)
 }
 
 func (c *client) getJSON(path string, out any) error {
@@ -225,7 +235,7 @@ func (c *client) getJSON(path string, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	return decodeResp(resp, out)
+	return c.hint401(decodeResp(resp, out))
 }
 
 func (c *client) getBytes(path string) ([]byte, error) {

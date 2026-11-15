@@ -1,9 +1,10 @@
 package cli
 
-// host ls/use and the login --status report: the multi-host UX on top of
-// the config store. Network probes run against stub servers; the
-// interactive menus are exercised through pickFromList directly (the
-// os.Stdin paths only degrade to their non-interactive hints in tests).
+// host ls/use, the login --status report, and the logout/401 UX: the
+// multi-host flows on top of the config store. Network probes and
+// revocations run against stub servers; the interactive menus are
+// exercised through pickFromList directly (the os.Stdin paths only
+// degrade to their non-interactive hints in tests).
 import (
 	"encoding/json"
 	"net/http"
@@ -14,7 +15,58 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
+
+func TestLogoutRevokesServerSide(t *testing.T) {
+	isolateConfig(t)
+
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	putCred(srv.URL, credential{User: "alice", Token: "banyan_live", Method: "web", Expires: time.Now().Add(time.Hour).Unix()})
+	var out, errb strings.Builder
+	require.Equal(t, 0, runLogout("/nonexistent", []string{srv.URL}, &out, &errb))
+	assert.Contains(t, out.String(), "revoked the server-side session")
+	assert.Equal(t, "/api/v1/auth/tokens/"+meta.HashToken("banyan_live"), gotPath,
+		"logout self-revokes via the token's sha256 (own tokens only)")
+	assert.Contains(t, gotAuth, "Basic ")
+	assert.Nil(t, credForHost(srv.URL), "the local credential is gone too")
+
+	// An unreachable server must not block local logout (best-effort).
+	putCred("http://127.0.0.1:1", credential{User: "bob", Token: "banyan_dead", Method: "web", Expires: time.Now().Add(time.Hour).Unix()})
+	out.Reset()
+	assert.Equal(t, 0, runLogout("/nonexistent", []string{"http://127.0.0.1:1"}, &out, &errb))
+	assert.NotContains(t, out.String(), "revoked")
+	assert.Nil(t, credForHost("http://127.0.0.1:1"))
+}
+
+func TestExpiredWebSessionHint(t *testing.T) {
+	isolateConfig(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"UNAUTHENTICATED","message":"login first"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	putCred(srv.URL, credential{User: "alice", Token: "banyan_stale", Method: "web", Expires: time.Now().Add(-time.Minute).Unix()})
+	c := newClient(srv.URL)
+	err := c.post("/api/v1/repos", nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "re-login: banyan login "+srv.URL,
+		"a web-path 401 (no silent refresh) points at the way out")
+}
 
 func TestPickFromList(t *testing.T) {
 	var out strings.Builder
