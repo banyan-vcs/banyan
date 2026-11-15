@@ -152,6 +152,15 @@ func statCurrent(fs fileState, info os.FileInfo) bool {
 	return fs.Size == info.Size() && fs.Mtime == info.ModTime().UnixNano()
 }
 
+// wsClient builds a client with the workspace's cached server
+// capabilities attached (the multi-version contract, docs/client/cli.md
+// §4.4): proto-2 fast paths check it before using themselves.
+func wsClient(ws *workspace) *client {
+	c := newClient(ws.cfg.Server)
+	c.attachCaps(ws.root)
+	return c
+}
+
 // --- object cache (blobs + trees, content-addressed, freely prunable) ---
 
 func (w *workspace) cachePath(oid string) string {

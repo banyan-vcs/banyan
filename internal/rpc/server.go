@@ -50,6 +50,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/objects", s.authn(s.handleObjects))
 	mux.HandleFunc("/api/v1/objects/content", s.authn(s.handleObjectsContent))
 	mux.HandleFunc("/api/v1/objects/batch", s.authn(s.handleObjectsBatch)) // blob backfill downlink (docs/operations/performance.md §9 D)
+	mux.HandleFunc("/api/v1/proto", s.authn(s.handleProto))                // CLI protocol capability broadcast (§9 多版本兼容)
 	mux.HandleFunc("/api/v1/timelines", s.authn(s.handleTimelines))
 	mux.HandleFunc("/api/v1/subtrees", s.authn(s.handleSubtrees)) // subtree listing (docs/gateway/authorization.md §8)
 	mux.HandleFunc("/api/v1/log", s.authn(s.handleLog))
@@ -279,6 +280,20 @@ func putObjectsFromFrame(objs []cliproto.ObjectRecord) []service.PutObject {
 		out = append(out, service.PutObject{OID: model.OID(o.OID), Type: o.Type, Data: o.Data})
 	}
 	return out
+}
+
+// handleProto: GET /api/v1/proto — the CLI protocol capability broadcast
+// (docs/client/cli.md §4.4, the multi-version contract). A banyand that
+// predates the endpoint answers 404 = proto 1 (JSON + v1 frames only);
+// this server advertises proto 2 and its feature set so clients cache the
+// negotiation and never pay version trial round trips. Features are
+// additive strings; clients must treat unknown ones as ignorable.
+func (s *Server) handleProto(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"proto":    2,
+		"server":   "banyand",
+		"features": []string{"fetch-trees-bin2", "objects-frame", "objects-batch"},
+	})
 }
 
 // handleObjectsBatch: POST /api/v1/objects/batch {repo, oids} — the blob

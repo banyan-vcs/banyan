@@ -295,7 +295,7 @@ func snapApply(wsRoot string, args []string, stdout, stderr io.Writer) int {
 			data = cached
 		} else {
 			if client == nil {
-				client = newClient(ws.cfg.Server)
+				client = wsClient(ws)
 			}
 			if data, err = client.getObject(ws.cfg.Repo, fs.OID); err != nil {
 				return cmdErr(stderr, err)

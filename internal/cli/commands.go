@@ -153,6 +153,7 @@ func runClone(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	if err := ws.save(); err != nil {
 		return cmdErr(stderr, err)
 	}
+	c.attachCaps(dir) // persist the capability cache for every later command
 	fmt.Fprintf(stdout, "cloned %s%s (branch %s, %d files, head %s)\n", repo, sub, res.Branch, len(files), short(res.Head))
 	return 0
 }
@@ -262,7 +263,7 @@ func runCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		changes = append(changes, map[string]any{"path": p, "delete": true})
 	}
 
-	c := newClient(ws.cfg.Server)
+	c := wsClient(ws)
 	if len(uploads) > 0 {
 		if err := c.putObjects(ws.cfg.Repo, uploads); err != nil {
 			return cmdErr(stderr, err)
@@ -331,7 +332,7 @@ func runPull(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	return pullCore(ws, st, newClient(ws.cfg.Server), stdout, stderr)
+	return pullCore(ws, st, wsClient(ws), stdout, stderr)
 }
 
 // pullCore materializes the current view head over the manifest tree
@@ -451,7 +452,7 @@ func runLog(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	case ws.cfg.Sub != "":
 		query = ws.cfg.Sub
 	}
-	entries, err := newClient(ws.cfg.Server).log(ws.cfg.Repo, query, limit)
+	entries, err := wsClient(ws).log(ws.cfg.Repo, query, limit)
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
@@ -478,7 +479,7 @@ func runCat(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
-	c := newClient(ws.cfg.Server)
+	c := wsClient(ws)
 	data, err := catLocal(ws, c, rev, path)
 	if err != nil {
 		// Fall back to the server-side resolve for non-HEAD revs or cache
@@ -562,7 +563,7 @@ func runFetchObjects(wsRoot string, args []string, stdout, stderr io.Writer) int
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
-	c := newClient(ws.cfg.Server)
+	c := wsClient(ws)
 	fetched := 0
 	if got, err := c.getObjectsBatch(ws.cfg.Repo, args); err == nil {
 		for oid, data := range got {
@@ -592,7 +593,7 @@ func runRefsList(wsRoot string, args []string, stdout, stderr io.Writer, prefix 
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
-	refs, err := newClient(ws.cfg.Server).listRefs(ws.cfg.Repo, ws.cfg.Sub)
+	refs, err := wsClient(ws).listRefs(ws.cfg.Repo, ws.cfg.Sub)
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
@@ -653,8 +654,8 @@ func short(oid string) string {
 func backfillPending(ws *workspace, c *client, repo string, pending []string) {
 	const workers = 4
 	const chunk = 256
-	if len(pending) == 0 {
-		return
+	if len(pending) == 0 || (c.caps != nil && !c.caps.has("objects-batch")) {
+		return // a known-old server: skip straight to the per-oid path
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < len(pending); i += chunk * workers {

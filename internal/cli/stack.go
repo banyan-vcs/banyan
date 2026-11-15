@@ -285,7 +285,7 @@ func stackPush(wsRoot string, args []string, stdout, stderr io.Writer) int {
 			data = cached
 		} else {
 			if client == nil {
-				client = newClient(ws.cfg.Server)
+				client = wsClient(ws)
 			}
 			if data, err = client.getObject(ws.cfg.Repo, fs.OID); err != nil {
 				return cmdErr(stderr, err)
@@ -470,7 +470,7 @@ func stackCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		land = append([]stackEntry(nil), doc.Entries...)
 	}
 
-	c := newClient(ws.cfg.Server)
+	c := wsClient(ws)
 	name, email := defaultAuthor()
 	landed := 0
 	flush := func() int {

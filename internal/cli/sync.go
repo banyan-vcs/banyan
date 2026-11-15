@@ -33,7 +33,7 @@ func runSync(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "conflict: working tree has local changes (commit or revert first)")
 		return 1
 	}
-	c := newClient(ws.cfg.Server)
+	c := wsClient(ws)
 	res, err := c.sync(ws.cfg.Repo, ws.cfg.Sub, ws.cfg.Branch)
 	if err != nil {
 		if isConflictErr(err) {

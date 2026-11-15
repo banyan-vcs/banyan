@@ -27,6 +27,11 @@ type client struct {
 	base string
 	http *http.Client
 	raw  *http.Client
+	// caps/capsRoot: the cached server capabilities (multi-version
+	// contract, docs/client/cli.md §4.4) — nil caps = unknown server, the
+	// in-protocol fallbacks carry those.
+	caps     *serverCaps
+	capsRoot string
 }
 
 type apiError struct {
@@ -219,8 +224,18 @@ func envelopeErr(resp *http.Response) error {
 // JSON as the downgrade ladder).
 type fetchTreesResponse = cliproto.FetchResult
 
+// fetchFormat picks the framing hint: v2 unless the capability cache
+// knows this server predates it (an old server would otherwise downgrade
+// the whole clone to JSON framing — correct but 1.33x the bytes).
+func (c *client) fetchFormat() string {
+	if !c.caps.has("fetch-trees-bin2") {
+		return "bin"
+	}
+	return "binz"
+}
+
 func (c *client) fetchTrees(repo, sub, rev, haveTree string, paths []string) (*fetchTreesResponse, error) {
-	req := map[string]any{"repo": repo, "format": "binz"} // v2: zlib records + deltas (docs/gateway/service-api.md §3.3)
+	req := map[string]any{"repo": repo, "format": c.fetchFormat()}
 	if sub != "" {
 		req["sub"] = sub
 	}
@@ -283,6 +298,10 @@ func (c *client) putObjects(repo string, objs []cliproto.ObjectRecord) error {
 }
 
 func (c *client) putObjectsOnce(repo string, objs []cliproto.ObjectRecord) error {
+	if !c.caps.has("objects-frame") {
+		// The cache knows: JSON only (no trial POST to burn).
+		return c.putObjectsJSON(repo, objs)
+	}
 	var buf bytes.Buffer
 	if err := cliproto.WriteObjectsFrame(&buf, repo, "sha1", objs); err != nil {
 		return err
@@ -297,14 +316,19 @@ func (c *client) putObjectsOnce(repo string, objs []cliproto.ObjectRecord) error
 	}
 	if resp.StatusCode == http.StatusBadRequest {
 		resp.Body.Close() // an older server: release the connection before the JSON retry
-		var jsonObjs []map[string]any
-		for _, o := range objs {
-			jsonObjs = append(jsonObjs, map[string]any{"oid": o.OID, "type": o.Type, "data": o.Data})
-		}
-		return c.post("/api/v1/objects/content", map[string]any{"repo": repo, "objects": jsonObjs}, nil)
+		c.capsStale()     // the cache was wrong or absent — next command rediscovers
+		return c.putObjectsJSON(repo, objs)
 	}
 	defer resp.Body.Close()
 	return envelopeErr(resp)
+}
+
+func (c *client) putObjectsJSON(repo string, objs []cliproto.ObjectRecord) error {
+	var jsonObjs []map[string]any
+	for _, o := range objs {
+		jsonObjs = append(jsonObjs, map[string]any{"oid": o.OID, "type": o.Type, "data": o.Data})
+	}
+	return c.post("/api/v1/objects/content", map[string]any{"repo": repo, "objects": jsonObjs}, nil)
 }
 
 type commitResponse struct {
