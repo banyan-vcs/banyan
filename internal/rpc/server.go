@@ -245,6 +245,22 @@ type contentRequest struct {
 }
 
 func (s *Server) handleObjectsContent(w http.ResponseWriter, r *http.Request) {
+	// Binary frames (Content-Type negotiation, docs/operations/performance.md
+	// §9 A2): per-record zlib, no base64 — the CLI's default uplink. The JSON
+	// body stays for older clients and non-CLI consumers.
+	if strings.HasPrefix(r.Header.Get("Content-Type"), cliproto.ContentTypeObjects) {
+		repo, objs, err := cliproto.ParseObjectsFrame(r.Body)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_BODY", Message: err.Error()}})
+			return
+		}
+		if err := s.Svc.PutObjects(r.Context(), repo, putObjectsFromFrame(objs)); err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
 	var req contentRequest
 	if !decodeBody(w, r, &req) {
 		return
@@ -254,6 +270,14 @@ func (s *Server) handleObjectsContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func putObjectsFromFrame(objs []cliproto.ObjectRecord) []service.PutObject {
+	out := make([]service.PutObject, 0, len(objs))
+	for _, o := range objs {
+		out = append(out, service.PutObject{OID: model.OID(o.OID), Type: o.Type, Data: o.Data})
+	}
+	return out
 }
 
 // --- GET /api/v1/timelines: anchor/timeline enumeration ---

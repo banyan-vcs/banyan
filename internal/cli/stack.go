@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/banyan-vcs/banyan/internal/cliproto"
 )
 
 const (
@@ -483,7 +485,7 @@ func stackCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	}
 	for _, e := range land {
 		var changes []map[string]any
-		var uploads []map[string]any
+		var uploads []cliproto.ObjectRecord
 		uploaded := map[string]bool{}
 		blobs := map[string][]byte{}
 		for _, ch := range e.Changes {
@@ -499,7 +501,7 @@ func stackCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
 					return cmdErr(stderr, rerr)
 				}
 				blobs[ch.Blob] = data
-				uploads = append(uploads, map[string]any{"oid": ch.Blob, "type": "blob", "data": data})
+				uploads = append(uploads, cliproto.ObjectRecord{OID: ch.Blob, Type: "blob", Data: data})
 			}
 		}
 		if len(uploads) > 0 {

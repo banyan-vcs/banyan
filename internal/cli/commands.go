@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/banyan-vcs/banyan/internal/cliproto"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
@@ -222,14 +223,14 @@ func runCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	}
 
 	var changes []map[string]any
-	var uploads []map[string]any
+	var uploads []cliproto.ObjectRecord
 	uploaded := map[string]bool{}
 	upload := func(path string, data []byte, mode string) {
 		oid := blobHash(data)
 		changes = append(changes, map[string]any{"path": path, "blob": oid, "mode": mode})
 		if !uploaded[oid] {
 			uploaded[oid] = true
-			uploads = append(uploads, map[string]any{"oid": oid, "type": "blob", "data": data})
+			uploads = append(uploads, cliproto.ObjectRecord{OID: oid, Type: "blob", Data: data})
 		}
 	}
 	for _, p := range st.Modified {

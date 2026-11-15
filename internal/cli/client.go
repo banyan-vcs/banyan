@@ -56,7 +56,7 @@ func (c *client) do(method, path string, body io.Reader, contentType string) (*h
 		return nil, &netError{err}
 	}
 	if contentType != "" {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -187,8 +187,33 @@ func (c *client) fetchTrees(repo, sub, rev, haveTree string, paths []string) (*f
 	return &out, nil
 }
 
-func (c *client) putObjects(repo string, objs []map[string]any) error {
-	return c.post("/api/v1/objects/content", map[string]any{"repo": repo, "objects": objs}, nil)
+// putObjects uploads a commit's blobs: binary frames with per-record zlib
+// by default (docs/operations/performance.md §9 A2); an older server that
+// answers 400 on the unknown Content-Type gets the JSON body once — the
+// multi-version ladder, cheap because it only ever fires on old servers.
+func (c *client) putObjects(repo string, objs []cliproto.ObjectRecord) error {
+	var buf bytes.Buffer
+	if err := cliproto.WriteObjectsFrame(&buf, repo, "sha1", objs); err != nil {
+		return err
+	}
+	resp, err := c.do(http.MethodPost, "/api/v1/objects/content", &buf, cliproto.ContentTypeObjects)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode == http.StatusOK {
+		resp.Body.Close()
+		return nil
+	}
+	if resp.StatusCode == http.StatusBadRequest {
+		resp.Body.Close() // an older server: release the connection before the JSON retry
+		var jsonObjs []map[string]any
+		for _, o := range objs {
+			jsonObjs = append(jsonObjs, map[string]any{"oid": o.OID, "type": o.Type, "data": o.Data})
+		}
+		return c.post("/api/v1/objects/content", map[string]any{"repo": repo, "objects": jsonObjs}, nil)
+	}
+	defer resp.Body.Close()
+	return envelopeErr(resp)
 }
 
 type commitResponse struct {
