@@ -92,7 +92,16 @@ type Config struct {
 	SSH struct {
 		Listen  string `yaml:"listen"`   // e.g. "0.0.0.0:8022"
 		HostKey string `yaml:"host_key"` // PEM private key; default: <root>/ssh_host_ed25519_key (generated on first boot)
+		// Advertise is the host:port clients should SSH to (the `banyan-auth`
+		// login path, docs/gateway/authorization.md §6a) — published on
+		// /api/v1/proto. Empty = the SSH login path is not advertised.
+		Advertise string `yaml:"advertise"`
 	} `yaml:"ssh"`
+
+	// WebURL is the web console's externally reachable base URL — published
+	// on /api/v1/proto so `banyan login` can point the user at its /cli-auth
+	// approval page (the no-SSH login path). Empty = not advertised.
+	WebURL string `yaml:"web_url"`
 
 	// Storage configures storage addressing (docs/storage/storage.md §6).
 	Storage struct {

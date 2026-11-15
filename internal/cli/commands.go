@@ -39,13 +39,19 @@ func usageErr(stderr io.Writer, format string, args ...any) int {
 
 // parseCloneURL splits a git-style /r/... URL into server base, repo and
 // subtree path (both /tree/<p> and legacy //<p> forms, docs/gateway/git-compat.md §1).
-func parseCloneURL(raw string) (base, repo, sub string, err error) {
+// The URL's userinfo (http://alice:demo@host/...) comes back too — the
+// client authenticates with it instead of dropping it (docs/client/cli.md §4.5).
+func parseCloneURL(raw string) (base, repo, sub, user, pass string, err error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", "", "", fmt.Errorf("bad URL %q: %w", raw, err)
+		return "", "", "", "", "", fmt.Errorf("bad URL %q: %w", raw, err)
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return "", "", "", fmt.Errorf("bad URL %q: want http(s)://host/r/<repo>[/tree/<path>]", raw)
+		return "", "", "", "", "", fmt.Errorf("bad URL %q: want http(s)://host/r/<repo>[/tree/<path>]", raw)
+	}
+	if u.User != nil {
+		user = u.User.Username()
+		pass, _ = u.User.Password()
 	}
 	p := strings.TrimPrefix(u.Path, "/r/")
 	switch {
@@ -61,9 +67,9 @@ func parseCloneURL(raw string) (base, repo, sub string, err error) {
 		repo = strings.TrimSuffix(p, ".git")
 	}
 	if repo == "" || strings.Contains(repo, "/") {
-		return "", "", "", fmt.Errorf("bad repo in URL %q", raw)
+		return "", "", "", "", "", fmt.Errorf("bad repo in URL %q", raw)
 	}
-	return u.Scheme + "://" + u.Host, repo, sub, nil
+	return u.Scheme + "://" + u.Host, repo, sub, user, pass, nil
 }
 
 func defaultAuthor() (name, email string) {
@@ -103,7 +109,7 @@ func runClone(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	if rawurl == "" {
 		return usageErr(stderr, "clone: URL required (http://host/r/<repo>[/tree/<path>])")
 	}
-	base, repo, sub, err := parseCloneURL(rawurl)
+	base, repo, sub, user, pass, err := parseCloneURL(rawurl)
 	if err != nil {
 		return usageErr(stderr, "%v", err)
 	}
@@ -123,6 +129,7 @@ func runClone(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	}
 
 	c := newClient(base)
+	c.setBasic(user, pass) // URL credentials ride when present (login sessions otherwise)
 	res, err := c.fetchTrees(repo, sub, branch, "", sparse)
 	if err != nil {
 		return cmdErr(stderr, err)

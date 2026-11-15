@@ -142,6 +142,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleImportCreate(w, r)
 	case pathname == "/api/imports" && r.Method == http.MethodGet:
 		s.handleImportList(w, r)
+	case pathname == "/api/cli/approve" && r.Method == http.MethodPost:
+		s.handleCLIApprove(w, r) // CLI login approval (docs/gateway/authorization.md §6a)
+	case pathname == "/api/cli/poll" && r.Method == http.MethodGet:
+		s.handleCLIPoll(w, r)
+	case pathname == "/cli-auth" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
+		s.handleCLIAuthPage(w, r)
 	case shouldProxy(r, pathname):
 		// /api/v1/* and the git ref advertisement: session-authenticated
 		// gateway calls — the SPA's ref listing rides the same

@@ -27,6 +27,12 @@ type client struct {
 	base string
 	http *http.Client
 	raw  *http.Client
+	// authHeader rides every request when a session credential (or a URL
+	// userinfo override) exists for this server — docs/client/cli.md §4.5.
+	authHeader string
+	// refreshSSH: the server's SSH address when the credential came from
+	// the banyan-auth exec — a 401 re-mints silently.
+	refreshSSH string
 	// caps/capsRoot: the cached server capabilities (multi-version
 	// contract, docs/client/cli.md §4.4) — nil caps = unknown server, the
 	// in-protocol fallbacks carry those.
@@ -64,26 +70,91 @@ func newClient(base string) *client {
 		IdleConnTimeout:       90 * time.Second,
 		MaxIdleConnsPerHost:   8, // the batch/parallel lanes keep several streams hot
 	}
-	return &client{
+	c := &client{
 		base: strings.TrimSuffix(base, "/"),
 		http: &http.Client{Timeout: 60 * time.Second, Transport: tr},
 		raw:  &http.Client{Transport: tr},
 	}
+	// Session credential for this server (banyan login; docs/client/cli.md
+	// §4.5) — short-lived, attached to every request. Expired ones still
+	// ride: the 401 path re-mints over SSH when that's how they arrived.
+	if cred := credForHost(c.base); cred != nil && cred.Token != "" {
+		c.authHeader = basicHeaderValue(cred.User, cred.Token)
+		if cred.Method == "ssh" {
+			c.refreshSSH = cred.SSHAddr
+		}
+	}
+	return c
+}
+
+// setBasic overrides the credential from a URL's userinfo
+// (http://alice:demo@host/... now authenticates instead of being dropped).
+func (c *client) setBasic(user, pass string) {
+	if user == "" {
+		return
+	}
+	c.authHeader = basicHeaderValue(user, pass)
+	c.refreshSSH = ""
+}
+
+// reauth mints a fresh session over SSH after a 401; false when this
+// credential can't refresh (web path: the user re-runs banyan login).
+func (c *client) reauth() bool {
+	if c.refreshSSH == "" {
+		return false
+	}
+	cred := credForHost(c.base)
+	if cred == nil || cred.Token == "" {
+		return false
+	}
+	minted, err := sshMint(c.refreshSSH, cred.User)
+	if err != nil {
+		return false
+	}
+	putCred(c.base, credential{User: minted.User, Token: minted.Token, Expires: minted.Expires, Method: "ssh", SSHAddr: c.refreshSSH})
+	c.authHeader = basicHeaderValue(minted.User, minted.Token)
+	return true
+}
+
+// authorize stamps the session header when present.
+func (c *client) authorize(req *http.Request) {
+	if c.authHeader != "" {
+		req.Header.Set("Authorization", c.authHeader)
+	}
 }
 
 func (c *client) do(method, path string, body io.Reader, contentType string) (*http.Response, error) {
-	req, err := http.NewRequest(method, c.base+path, body)
-	if err != nil {
-		return nil, &netError{err}
+	// Snapshot the body: the 401 reauth retry must re-send it whole
+	// (callers pass in-memory readers — uploads are pre-chunked).
+	var bodyBytes []byte
+	if body != nil {
+		bodyBytes, _ = io.ReadAll(body)
 	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
+	send := func() (*http.Response, error) {
+		var r io.Reader
+		if bodyBytes != nil {
+			r = bytes.NewReader(bodyBytes)
+		}
+		req, err := http.NewRequest(method, c.base+path, r)
+		if err != nil {
+			return nil, &netError{err}
+		}
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		c.authorize(req)
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, &netError{err}
+		}
+		return resp, nil
 	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, &netError{err}
+	resp, err := send()
+	if err == nil && resp.StatusCode == http.StatusUnauthorized && c.reauth() {
+		resp.Body.Close()
+		return send() // fresh session, one silent retry
 	}
-	return resp, nil
+	return resp, err
 }
 
 // post sends a JSON request; a 2xx response is decoded into out (when non-nil).
@@ -111,28 +182,41 @@ func (c *client) postRaw(path string, in any) (*http.Response, error) {
 }
 
 func (c *client) postRawOn(hc *http.Client, path string, in any) (*http.Response, error) {
-	var body io.Reader
+	var bodyBytes []byte
 	if in != nil {
 		raw, err := json.Marshal(in)
 		if err != nil {
 			return nil, err
 		}
-		body = bytes.NewReader(raw)
+		bodyBytes = raw
 	}
-	req, err := http.NewRequest(http.MethodPost, c.base+path, body)
-	if err != nil {
-		return nil, &netError{err}
+	send := func() (*http.Response, error) {
+		var body io.Reader
+		if bodyBytes != nil {
+			body = bytes.NewReader(bodyBytes) // fresh reader per attempt: the 401 retry re-sends
+		}
+		req, err := http.NewRequest(http.MethodPost, c.base+path, body)
+		if err != nil {
+			return nil, &netError{err}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		c.authorize(req)
+		resp, err := hc.Do(req)
+		if err != nil {
+			return nil, &netError{err}
+		}
+		if resp.StatusCode != http.StatusOK {
+			apiErr := envelopeErr(resp) // reads the body BEFORE the close
+			resp.Body.Close()
+			return nil, apiErr
+		}
+		return resp, nil
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := hc.Do(req)
-	if err != nil {
-		return nil, &netError{err}
+	resp, err := send()
+	if api, ok := err.(*apiError); ok && api.Status == http.StatusUnauthorized && c.reauth() {
+		return send() // fresh session, one silent retry
 	}
-	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		return nil, envelopeErr(resp)
-	}
-	return resp, nil
+	return resp, err
 }
 
 func (c *client) getJSON(path string, out any) error {
@@ -159,15 +243,24 @@ func (c *client) getBytes(path string) ([]byte, error) {
 // rawGet issues a GET on the no-wall-clock client — object bytes may be
 // arbitrarily large on arbitrarily slow links.
 func (c *client) rawGet(path string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
-	if err != nil {
-		return nil, &netError{err}
+	send := func() (*http.Response, error) {
+		req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
+		if err != nil {
+			return nil, &netError{err}
+		}
+		c.authorize(req)
+		resp, err := c.raw.Do(req)
+		if err != nil {
+			return nil, &netError{err}
+		}
+		return resp, nil
 	}
-	resp, err := c.raw.Do(req)
-	if err != nil {
-		return nil, &netError{err}
+	resp, err := send()
+	if err == nil && resp.StatusCode == http.StatusUnauthorized && c.reauth() {
+		resp.Body.Close()
+		return send()
 	}
-	return resp, nil
+	return resp, err
 }
 
 // getObjectsBatch fetches a chunk of objects over ONE connection as the

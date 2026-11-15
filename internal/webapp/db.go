@@ -141,6 +141,13 @@ CREATE TABLE IF NOT EXISTS web_imports (
   default_branch VARCHAR(190)  NOT NULL DEFAULT '',
   started_at     BIGINT        NOT NULL,
   finished_at    BIGINT        NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS web_cli_grants (
+  handshake_id VARCHAR(64)  NOT NULL PRIMARY KEY,
+  token        VARCHAR(128) NOT NULL,
+  user_name    VARCHAR(190) NOT NULL,
+  token_expires BIGINT      NOT NULL DEFAULT 0,
+  expires_at   BIGINT       NOT NULL
 );`
 	_, err := w.db.Exec(schema)
 	if err != nil {

@@ -23,6 +23,7 @@ package gitwire
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -33,6 +34,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 // ServeSSH accepts SSH connections on ln until it closes, serving each on
@@ -111,7 +113,12 @@ func (s *Server) serveSSHSession(conn *ssh.ServerConn, ch ssh.Channel, requests 
 			if !ok {
 				return
 			}
-			code := s.serveGitExec(ch, id, protocol, command)
+			var code int
+			if strings.TrimSpace(command) == "banyan-auth" {
+				code = s.serveSSHAuth(ch, id)
+			} else {
+				code = s.serveGitExec(ch, id, protocol, command)
+			}
 			// exit-status: uint32 network order (RFC 4254 §6.10) — the
 			// client maps nonzero to "Could not read from remote repository".
 			var status [4]byte
@@ -151,6 +158,31 @@ func parseSSHEnv(payload []byte) (name, value string, ok bool) {
 		return "", "", false
 	}
 	return name, value, true
+}
+
+// serveSSHAuth answers the `banyan-auth` exec (docs/gateway/authorization.md
+// §6a): the SSH public key already did the authenticating (IdentifyKey at
+// handshake) — this exchanges it for a short-lived session credential, one
+// JSON line on stdout, no permanent token anywhere. This is the CLI login's
+// preferred path: `banyan login` runs it with the user's agent/default keys.
+func (s *Server) serveSSHAuth(ch ssh.Channel, id auth.Identity) int {
+	if id.User == "" {
+		fmt.Fprintln(ch, `{"error":"anonymous key"}`)
+		return 1
+	}
+	reg, ok := s.Meta.(meta.TokenRegistry)
+	if !ok {
+		fmt.Fprintln(ch, `{"error":"no token registry on this deployment"}`)
+		return 1
+	}
+	plain, info, err := auth.MintSession(context.Background(), reg, id.User, auth.SessionTTL, time.Now())
+	if err != nil {
+		fmt.Fprintf(ch, "{\"error\":%q}\n", err.Error())
+		return 1
+	}
+	out, _ := json.Marshal(map[string]any{"token": plain, "user": info.User, "expires": info.Expires})
+	_, _ = ch.Write(append(out, '\n'))
+	return 0
 }
 
 // serveGitExec runs one exec'd git service over the channel. Returns the

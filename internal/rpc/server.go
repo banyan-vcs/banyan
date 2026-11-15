@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/cliproto"
@@ -36,6 +37,14 @@ type Server struct {
 	// service enforces page-level visibility through it.
 	Auth auth.Service
 
+	// SSHAddr/WebURL feed the CLI capability broadcast (/api/v1/proto):
+	// where a client can SSH-authenticate (the `banyan-auth` exec mints
+	// session credentials, docs/gateway/authorization.md §6a) and where the
+	// web console lives (its /cli-auth page approves CLI handshakes). Either
+	// may be empty — the CLI then knows that login path is unavailable.
+	SSHAddr string
+	WebURL  string
+
 	// The diff/blame engine facade (lazy; diffblame.go).
 	engMu sync.Mutex
 	eng   *gitaly.Server
@@ -50,7 +59,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/objects", s.authn(s.handleObjects))
 	mux.HandleFunc("/api/v1/objects/content", s.authn(s.handleObjectsContent))
 	mux.HandleFunc("/api/v1/objects/batch", s.authn(s.handleObjectsBatch)) // blob backfill downlink (docs/operations/performance.md §9 D)
-	mux.HandleFunc("/api/v1/proto", s.authn(s.handleProto))                // CLI protocol capability broadcast (§9 多版本兼容)
+	mux.HandleFunc("/api/v1/proto", s.handleProto)                         // CLI capability broadcast — anonymous by design (login itself needs it)
+	mux.HandleFunc("/api/v1/auth/cli-session", s.authn(s.handleCLISession)) // short-lived session mint (docs/gateway/authorization.md §6a)
 	mux.HandleFunc("/api/v1/timelines", s.authn(s.handleTimelines))
 	mux.HandleFunc("/api/v1/subtrees", s.authn(s.handleSubtrees)) // subtree listing (docs/gateway/authorization.md §8)
 	mux.HandleFunc("/api/v1/log", s.authn(s.handleLog))
@@ -288,12 +298,50 @@ func putObjectsFromFrame(objs []cliproto.ObjectRecord) []service.PutObject {
 // this server advertises proto 2 and its feature set so clients cache the
 // negotiation and never pay version trial round trips. Features are
 // additive strings; clients must treat unknown ones as ignorable.
+// Anonymous BY DESIGN: login itself needs the broadcast (which SSH address,
+// which web console) before any credential exists.
 func (s *Server) handleProto(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"proto":    2,
 		"server":   "banyand",
 		"features": []string{"fetch-trees-bin2", "objects-frame", "objects-batch"},
-	})
+	}
+	if s.SSHAddr != "" {
+		out["ssh"] = s.SSHAddr
+	}
+	if s.WebURL != "" {
+		out["web"] = s.WebURL
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleCLISession: POST /api/v1/auth/cli-session — mints a short-lived
+// session credential for the CALLER's identity (docs/gateway/authorization.md
+// §6a). The web console's /cli-auth approval calls this with the logged-in
+// user's injected credentials; the SSH path mints server-side instead
+// (gitwire's banyan-auth exec). Scope is write — sessions never administer.
+func (s *Server) handleCLISession(w http.ResponseWriter, r *http.Request) {
+	if s.Auth == nil {
+		writeJSON(w, http.StatusNotImplemented, errEnvelope{Error: errBody{Code: "NO_AUTH", Message: "no auth service configured"}})
+		return
+	}
+	id := s.Auth.Identify(r)
+	if id.Anonymous() {
+		w.Header().Set("WWW-Authenticate", `Basic realm="banyan"`)
+		writeJSON(w, http.StatusUnauthorized, errEnvelope{Error: errBody{Code: "UNAUTHENTICATED", Message: "login first"}})
+		return
+	}
+	reg, ok := s.Meta.(meta.TokenRegistry)
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, errEnvelope{Error: errBody{Code: "NO_TOKEN_REGISTRY", Message: "this deployment owns no token registry"}})
+		return
+	}
+	plain, info, err := auth.MintSession(r.Context(), reg, id.User, auth.SessionTTL, time.Now())
+	if err != nil {
+		writeServiceErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"token": plain, "user": info.User, "expires": info.Expires})
 }
 
 // handleObjectsBatch: POST /api/v1/objects/batch {repo, oids} — the blob

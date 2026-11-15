@@ -137,6 +137,7 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 	mux := http.NewServeMux()
 	gw := gitwire.NewServer(ms, objects, model.SHA1)
 	api := rpc.NewServer(ms, objects, model.SHA1)
+	api.SSHAddr, api.WebURL = cfg.SSH.Advertise, cfg.WebURL
 	objects.Addressing = meta.NewAddressing(cfg.Storage.Mode, ms)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes
@@ -322,6 +323,7 @@ func runGateway(ctx context.Context, cfg *config.Config) {
 	mux := http.NewServeMux()
 	gw := gitwire.NewServer(ms, objects, model.SHA1)
 	api := rpc.NewServer(ms, objects, model.SHA1)
+	api.SSHAddr, api.WebURL = cfg.SSH.Advertise, cfg.WebURL
 	objects.Addressing = meta.NewAddressing(cfg.Storage.Mode, ms)
 	gw.Convergence = cfg.Workflow.Convergence == "auto"
 	gw.FullCloneMaxBytes = cfg.FullCloneMaxBytes

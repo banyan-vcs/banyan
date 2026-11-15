@@ -70,6 +70,11 @@ func (p *TokenPolicy) Identify(h *http.Request) Identity {
 }
 
 func (p *TokenPolicy) identifyToken(user, plaintext string) (Identity, bool) {
+	if p.Tokens == nil {
+		// Misconfigured decorator (no registry wired): fail closed, never
+		// panic — a deployment error must not take the API face down.
+		return Identity{}, false
+	}
 	t, err := p.Tokens.TokenByHash(context.Background(), meta.HashToken(plaintext))
 	if err != nil || t.Revoked {
 		return Identity{}, false

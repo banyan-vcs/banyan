@@ -26,6 +26,8 @@ workspace commands (run inside a clone — any subdirectory — or with -C):
   cat [rev:]<path>                                            object content (HEAD resolves locally)
   fetch-objects <oid>...                                      backfill objects into the cache
   gc [-max-mb N]                                              prune the object cache to a byte cap (default 1024)
+  login [server] [-u user] [--status]                         SSH key → 12h session (web approval fallback; no permanent tokens)
+  logout [server]                                             drop the stored session credential
   snapshot [save] [-m msg] [-n name]                          checkpoint the working state (offline)
   snapshot ls | apply <name> [--force] | drop <name>          inspect / restore / remove checkpoints
   stack push -m <msg> [path...]                               capture dirty paths as a queued changeset
@@ -76,6 +78,10 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return runFetchObjects(wsRoot, rest, stdout, stderr)
 	case "gc":
 		return runGC(wsRoot, rest, stdout, stderr)
+	case "login":
+		return runLogin(wsRoot, rest, stdout, stderr)
+	case "logout":
+		return runLogout(wsRoot, rest, stdout, stderr)
 	case "branch":
 		return runRefsList(wsRoot, rest, stdout, stderr, "refs/heads/")
 	case "tag":
