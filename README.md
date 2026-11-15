@@ -91,7 +91,7 @@ The four mechanisms:
 
 ## What works today
 
-Everything below is landed and pinned by **106 top-level integration test
+Everything below is landed and pinned by **113 top-level integration test
 functions** driving the real git CLI ([docs/operations/testing.md](docs/operations/testing.md));
 GitLab-mode rows are additionally verified against a real GitLab-CE
 ([docs/integration/gitaly-compat.md](docs/integration/gitaly-compat.md) §8, [docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md)).

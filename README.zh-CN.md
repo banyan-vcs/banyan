@@ -76,7 +76,7 @@ git 是行业标准，banyan 不要求任何人离开 git；替换的是协议�
 
 ## 当前能力
 
-以下全部已落地，由 **106 个顶层集成测试函数**以真实 git CLI 钉住
+以下全部已落地，由 **113 个顶层集成测试函数**以真实 git CLI 钉住
 （[docs/operations/testing.md](docs/operations/testing.md)）；GitLab 模式各条另经真 GitLab-CE 活体验证
 （[docs/integration/gitaly-compat.md](docs/integration/gitaly-compat.md) §8、[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md)）。
 
