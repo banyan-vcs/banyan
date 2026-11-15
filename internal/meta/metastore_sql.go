@@ -23,12 +23,12 @@ import (
 
 	"github.com/banyan-vcs/banyan/internal/model"
 
+	_ "github.com/glebarez/go-sqlite" // pure-Go SQLite driver (modernc engine), no cgo
 	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // pure-Go PostgreSQL driver (database/sql)
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	_ "github.com/glebarez/go-sqlite" // pure-Go SQLite driver (modernc engine), no cgo
 )
 
 const sqlChunk = 500 // rows per batched statement (safe under every driver's param limit)
@@ -1121,107 +1121,80 @@ func (s *SQLMetaStore) PutPack(ctx context.Context, repo string, packOID model.O
 	if len(nodes) == 0 {
 		return fmt.Errorf("putpack %s/%s: no nodes", repo, packOID)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := s.fenceRejectTx(ctx, tx, repo); err != nil {
-		return err
-	}
-
-	var one string
-	err = tx.QueryRowContext(ctx, s.q("SELECT 1 FROM repos WHERE name=?"), repo).Scan(&one)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
-	}
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, s.q(s.d.insertIgnore("packs", "(repo, pack_oid) VALUES(?, ?)")),
-		repo, string(packOID)); err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		if _, err := tx.ExecContext(ctx, s.q(s.d.insertIgnore("pack_nodes", "(repo, pack_oid, node_id) VALUES(?, ?, ?)")),
-			repo, string(packOID), node); err != nil {
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ormFenceReject(tx, repo); err != nil {
 			return err
 		}
-	}
-	primary := nodes[0]
-	for start := 0; start < len(objects); start += sqlChunk {
-		end := start + sqlChunk
-		if end > len(objects) {
-			end = len(objects)
+		var one int
+		switch err := txq(tx).Model(&repoRow{}).Select("1").Where("name = ?", repo).Limit(1).Row().Scan(&one); {
+		case errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+		case err != nil:
+			return err
 		}
-		var b strings.Builder
+		// Immutable shards: registration is INSERT-ONLY and idempotent —
+		// first writer wins (OnConflict DoNothing is the dialect-neutral
+		// insert-ignore).
+		if err := txq(tx).Clauses(clause.OnConflict{DoNothing: true}).
+			Create(&packRow{Repo: repo, PackOID: string(packOID)}).Error; err != nil {
+			return err
+		}
+		holderRows := make([]packNodeRow, len(nodes))
+		for i, n := range nodes {
+			holderRows[i] = packNodeRow{Repo: repo, PackOID: string(packOID), NodeID: n}
+		}
+		if err := txq(tx).Clauses(clause.OnConflict{DoNothing: true}).
+			CreateInBatches(holderRows, sqlChunk).Error; err != nil {
+			return err
+		}
 		// UPSERT (not insert-ignore): repack registers a merged pack while
 		// object rows still point at the old shards — they must re-point to
 		// the newly registered pack, or the subsequent DropPack deletes them.
-		b.WriteString("INSERT INTO objects(repo, oid, pack_oid, node_id) VALUES")
-		args := make([]any, 0, (end-start)*4)
-		for i := start; i < end; i++ {
-			if i > start {
-				b.WriteByte(',')
-			}
-			b.WriteString("(?, ?, ?, ?)")
-			args = append(args, repo, string(objects[i]), string(packOID), primary)
+		primary := nodes[0]
+		objRows := make([]objectRow, len(objects))
+		for i, o := range objects {
+			objRows[i] = objectRow{Repo: repo, OID: string(o), PackOID: string(packOID), NodeID: primary}
 		}
-		if _, err := tx.ExecContext(ctx, s.q(b.String()+s.d.objectsUpsertSuffix()), args...); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+		return txq(tx).Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "repo"}, {Name: "oid"}},
+			DoUpdates: clause.Assignments(map[string]any{"pack_oid": string(packOID), "node_id": primary}),
+		}).CreateInBatches(objRows, sqlChunk).Error
+	})
 }
 
 func (s *SQLMetaStore) GetPack(ctx context.Context, repo string, packOID model.OID) (PackInfo, error) {
-	var one string
-	err := s.db.QueryRowContext(ctx, s.q(
-		"SELECT 1 FROM packs WHERE repo=? AND pack_oid=?"), repo, string(packOID)).Scan(&one)
-	if err == sql.ErrNoRows {
+	orm := s.orm.WithContext(ctx)
+	var one int
+	switch err := orm.Model(&packRow{}).Select("1").
+		Where("repo = ? AND pack_oid = ?", repo, string(packOID)).Limit(1).Row().Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
 		return PackInfo{}, fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
-	}
-	if err != nil {
+	case err != nil:
 		return PackInfo{}, err
 	}
-	rows, err := s.db.QueryContext(ctx, s.q(
-		"SELECT node_id FROM pack_nodes WHERE repo=? AND pack_oid=? ORDER BY node_id"), repo, string(packOID))
-	if err != nil {
-		return PackInfo{}, err
-	}
-	defer rows.Close()
 	var nodes []string
-	for rows.Next() {
-		var node string
-		if err := rows.Scan(&node); err != nil {
-			return PackInfo{}, err
-		}
-		nodes = append(nodes, node)
-	}
-	if err := rows.Err(); err != nil {
+	if err := orm.Model(&packNodeRow{}).
+		Where("repo = ? AND pack_oid = ?", repo, string(packOID)).
+		Order("node_id").Pluck("node_id", &nodes).Error; err != nil {
 		return PackInfo{}, err
 	}
 	return PackInfo{PackOID: packOID, Nodes: nodes}, nil
 }
 
 func (s *SQLMetaStore) ListPacks(ctx context.Context, repo string) ([]PackInfo, error) {
-	rows, err := s.db.QueryContext(ctx, s.q(
-		"SELECT p.pack_oid, n.node_id FROM packs p JOIN pack_nodes n ON p.repo=n.repo AND p.pack_oid=n.pack_oid WHERE p.repo=?"),
-		repo)
+	var rows []struct {
+		PackOID string `gorm:"column:pack_oid"`
+		NodeID  string `gorm:"column:node_id"`
+	}
+	err := s.orm.WithContext(ctx).Raw(
+		"SELECT p.pack_oid, n.node_id FROM packs p JOIN pack_nodes n ON p.repo = n.repo AND p.pack_oid = n.pack_oid WHERE p.repo = ?",
+		repo).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	byOID := map[model.OID][]string{}
-	for rows.Next() {
-		var packOID, node string
-		if err := rows.Scan(&packOID, &node); err != nil {
-			return nil, err
-		}
-		byOID[model.OID(packOID)] = append(byOID[model.OID(packOID)], node)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	for _, r := range rows {
+		byOID[model.OID(r.PackOID)] = append(byOID[model.OID(r.PackOID)], r.NodeID)
 	}
 	out := make([]PackInfo, 0, len(byOID))
 	for packOID, nodes := range byOID {
@@ -1232,158 +1205,121 @@ func (s *SQLMetaStore) ListPacks(ctx context.Context, repo string) ([]PackInfo, 
 }
 
 func (s *SQLMetaStore) PackObjects(ctx context.Context, repo string, packOID model.OID) ([]model.OID, error) {
-	var one string
-	err := s.db.QueryRowContext(ctx, s.q(
-		"SELECT 1 FROM packs WHERE repo=? AND pack_oid=?"), repo, string(packOID)).Scan(&one)
-	if err == sql.ErrNoRows {
+	orm := s.orm.WithContext(ctx)
+	var one int
+	switch err := orm.Model(&packRow{}).Select("1").
+		Where("repo = ? AND pack_oid = ?", repo, string(packOID)).Limit(1).Row().Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
 		return nil, fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
-	}
-	if err != nil {
+	case err != nil:
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, s.q(
-		"SELECT oid FROM objects WHERE repo=? AND pack_oid=?"), repo, string(packOID))
-	if err != nil {
+	var oids []string
+	if err := orm.Model(&objectRow{}).
+		Where("repo = ? AND pack_oid = ?", repo, string(packOID)).
+		Pluck("oid", &oids).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []model.OID
-	for rows.Next() {
-		var oid string
-		if err := rows.Scan(&oid); err != nil {
-			return nil, err
-		}
-		out = append(out, model.OID(oid))
+	out := make([]model.OID, 0, len(oids))
+	for _, o := range oids {
+		out = append(out, model.OID(o))
 	}
-	return out, rows.Err()
-}
-
-// beginWriteTx opens the write transaction on a dedicated connection (the
-// store's linearization discipline) and returns a commit/rollback pair.
-func (s *SQLMetaStore) beginWriteTx(ctx context.Context) (*sql.Conn, func(error) error, func() error, error) {
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if _, err := conn.ExecContext(ctx, s.d.beginWrite); err != nil {
-		conn.Close()
-		return nil, nil, nil, err
-	}
-	fail := func(err error) error {
-		_, _ = conn.ExecContext(context.WithoutCancel(ctx), s.d.rebind("ROLLBACK"))
-		return err
-	}
-	done := func() error {
-		_, err := conn.ExecContext(ctx, s.d.rebind("COMMIT"))
-		return err
-	}
-	return conn, fail, done, nil
+	return out, nil
 }
 
 // DropPack unregisters the pack and its object locations in one transaction.
 // Missing-object rows are tolerated (they may have been re-registered to the
 // replacement pack already); a missing pack row is ErrPackNotFound.
 func (s *SQLMetaStore) DropPack(ctx context.Context, repo string, packOID model.OID) error {
-	var one string
-	err := s.db.QueryRowContext(ctx, s.q(
-		"SELECT 1 FROM packs WHERE repo=? AND pack_oid=?"), repo, string(packOID)).Scan(&one)
-	if err == sql.ErrNoRows {
+	var one int
+	switch err := s.orm.WithContext(ctx).Model(&packRow{}).Select("1").
+		Where("repo = ? AND pack_oid = ?", repo, string(packOID)).Limit(1).Row().Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
-	}
-	if err != nil {
+	case err != nil:
 		return err
 	}
-	conn, fail, done, err := s.beginWriteTx(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if err := s.fenceRejectTx(ctx, conn, repo); err != nil {
-		return fail(err)
-	}
-	// Object rows pointing at this pack are deleted only when they still do:
-	// the replacement pack's registration may have already re-pointed them.
-	if _, err := conn.ExecContext(ctx, s.q(
-		"DELETE FROM objects WHERE repo=? AND pack_oid=?"), repo, string(packOID)); err != nil {
-		return fail(err)
-	}
-	if _, err := conn.ExecContext(ctx, s.q(
-		"DELETE FROM pack_nodes WHERE repo=? AND pack_oid=?"), repo, string(packOID)); err != nil {
-		return fail(err)
-	}
-	if _, err := conn.ExecContext(ctx, s.q(
-		"DELETE FROM packs WHERE repo=? AND pack_oid=?"), repo, string(packOID)); err != nil {
-		return fail(err)
-	}
-	return done()
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ormFenceReject(tx, repo); err != nil {
+			return err
+		}
+		// Object rows pointing at this pack are deleted only when they still do:
+		// the replacement pack's registration may have already re-pointed them.
+		for _, m := range []any{&objectRow{}, &packNodeRow{}, &packRow{}} {
+			if err := txq(tx).Where("repo = ? AND pack_oid = ?", repo, string(packOID)).Delete(m).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // SetPackNodes atomically replaces the holder set (reconciler swap, docs/storage/ha.md §8.3).
 func (s *SQLMetaStore) SetPackNodes(ctx context.Context, repo string, packOID model.OID, nodes []string) error {
-	var one string
-	err := s.db.QueryRowContext(ctx, s.q(
-		"SELECT 1 FROM packs WHERE repo=? AND pack_oid=?"), repo, string(packOID)).Scan(&one)
-	if err == sql.ErrNoRows {
+	var one int
+	switch err := s.orm.WithContext(ctx).Model(&packRow{}).Select("1").
+		Where("repo = ? AND pack_oid = ?", repo, string(packOID)).Limit(1).Row().Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("%w: %s/%s", ErrPackNotFound, repo, packOID)
-	}
-	if err != nil {
+	case err != nil:
 		return err
 	}
-	conn, fail, done, err := s.beginWriteTx(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if err := s.fenceRejectTx(ctx, conn, repo); err != nil {
-		return fail(err)
-	}
-	if _, err := conn.ExecContext(ctx, s.q(
-		"DELETE FROM pack_nodes WHERE repo=? AND pack_oid=?"), repo, string(packOID)); err != nil {
-		return fail(err)
-	}
-	for _, n := range nodes {
-		if _, err := conn.ExecContext(ctx, s.q(
-			"INSERT INTO pack_nodes(repo, pack_oid, node_id) VALUES(?,?,?)"), repo, string(packOID), n); err != nil {
-			return fail(err)
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ormFenceReject(tx, repo); err != nil {
+			return err
 		}
-	}
-	if len(nodes) > 0 {
-		if _, err := conn.ExecContext(ctx, s.q(
-			"UPDATE objects SET node_id=? WHERE repo=? AND pack_oid=?"), nodes[0], repo, string(packOID)); err != nil {
-			return fail(err)
+		if err := txq(tx).Where("repo = ? AND pack_oid = ?", repo, string(packOID)).
+			Delete(&packNodeRow{}).Error; err != nil {
+			return err
 		}
-	}
-	return done()
+		holderRows := make([]packNodeRow, len(nodes))
+		for i, n := range nodes {
+			holderRows[i] = packNodeRow{Repo: repo, PackOID: string(packOID), NodeID: n}
+		}
+		if len(holderRows) > 0 {
+			// Plain insert (not insert-ignore): a duplicate node in the
+			// replacement set is a caller bug that should surface.
+			if err := txq(tx).CreateInBatches(holderRows, sqlChunk).Error; err != nil {
+				return err
+			}
+		}
+		if len(nodes) > 0 {
+			return txq(tx).Model(&objectRow{}).
+				Where("repo = ? AND pack_oid = ?", repo, string(packOID)).
+				Update("node_id", nodes[0]).Error
+		}
+		return nil
+	})
 }
 
 func (s *SQLMetaStore) SetPlacement(ctx context.Context, repo string, replicas int) error {
-	if err := s.fenceReject(ctx, repo); err != nil {
+	if err := s.ormFenceReject(s.orm.WithContext(ctx), repo); err != nil {
 		return err
 	}
 	if _, err := s.GetRepo(ctx, repo); err != nil {
 		return err
 	}
-	stmt := "INSERT INTO placement(repo, replicas) VALUES(?,?) ON CONFLICT(repo) DO UPDATE SET replicas=excluded.replicas"
-	if s.d.name == "mysql" {
-		stmt = "INSERT INTO placement(repo, replicas) VALUES(?,?) ON DUPLICATE KEY UPDATE replicas=VALUES(replicas)"
-	}
-	_, err := s.db.ExecContext(ctx, s.q(stmt), repo, replicas)
-	return err
+	// The dialect-neutral upsert (ON CONFLICT / ON DUPLICATE KEY — GORM
+	// renders per backend) replaces the per-dialect spellings.
+	return s.orm.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "repo"}},
+		DoUpdates: clause.AssignmentColumns([]string{"replicas"}),
+	}).Create(&placementRow{Repo: repo, Replicas: replicas}).Error
 }
 
 func (s *SQLMetaStore) GetPlacement(ctx context.Context, repo string) (int, error) {
 	if _, err := s.GetRepo(ctx, repo); err != nil {
 		return 0, err
 	}
-	var replicas int
-	err := s.db.QueryRowContext(ctx, s.q("SELECT replicas FROM placement WHERE repo=?"), repo).Scan(&replicas)
-	if err == sql.ErrNoRows {
+	var p placementRow
+	err := s.orm.WithContext(ctx).Where("repo = ?", repo).Take(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return 0, nil // no row = cluster default
 	}
 	if err != nil {
 		return 0, err
 	}
-	return replicas, nil
+	return p.Replicas, nil
 }
 
 func (s *SQLMetaStore) LocateObjects(ctx context.Context, repo string, oids []model.OID) (map[model.OID]ObjectLocation, error) {
@@ -1401,216 +1337,165 @@ func (s *SQLMetaStore) LocateObjects(ctx context.Context, repo string, oids []mo
 		if end > len(keys) {
 			end = len(keys)
 		}
-		var b strings.Builder
-		b.WriteString("SELECT oid, pack_oid, node_id FROM objects WHERE repo=? AND oid IN(")
-		args := make([]any, 0, end-start+1)
-		args = append(args, repo)
-		for i := start; i < end; i++ {
-			if i > start {
-				b.WriteByte(',')
-			}
-			b.WriteByte('?')
-			args = append(args, string(keys[i]))
-		}
-		b.WriteByte(')')
-		rows, err := s.db.QueryContext(ctx, s.q(b.String()), args...)
-		if err != nil {
+		var rows []objectRow
+		// A fresh chain per chunk: a reused chain would accumulate one
+		// `oid IN` clause per iteration (the txq discipline, non-tx flavor).
+		if err := s.orm.WithContext(ctx).Model(&objectRow{}).
+			Where("repo = ?", repo).
+			Where("oid IN ?", keys[start:end]).
+			Find(&rows).Error; err != nil {
 			return nil, err
 		}
-		for rows.Next() {
-			var oid, packOID, node string
-			if err := rows.Scan(&oid, &packOID, &node); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			out[model.OID(oid)] = ObjectLocation{PackOID: model.OID(packOID), NodeID: node}
+		for _, r := range rows {
+			out[model.OID(r.OID)] = ObjectLocation{PackOID: model.OID(r.PackOID), NodeID: r.NodeID}
 		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rows.Close()
 	}
 	return out, nil
 }
 
 func (s *SQLMetaStore) Timeline(ctx context.Context, tl model.Timeline) (model.TimelineState, error) {
-	var st model.TimelineState
-	err := s.db.QueryRowContext(ctx, s.q(
-		"SELECT head, base FROM timelines WHERE repo=? AND anchor=? AND name=?"),
-		tl.Repo, string(tl.Anchor), tl.Name).Scan(&st.Head, &st.Base)
-	if err == sql.ErrNoRows {
+	var row timelineRow
+	err := s.orm.WithContext(ctx).
+		Where("repo = ? AND anchor = ? AND name = ?", tl.Repo, string(tl.Anchor), tl.Name).
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return model.TimelineState{}, ErrTimelineUnknown
 	}
 	if err != nil {
 		return model.TimelineState{}, err
 	}
-	return st, nil
+	return model.TimelineState{Head: model.OID(row.Head), Base: model.OID(row.Base)}, nil
 }
 
-// CASHead runs the compare-and-set inside one write transaction on a
-// dedicated connection — the linearization point for ref updates. SQLite:
-// BEGIN IMMEDIATE takes the write lock before the read; MySQL/PostgreSQL:
-// the row is locked with SELECT ... FOR UPDATE, and a lost insert race on a
-// timeline that did not exist surfaces as the PK unique violation it is.
+// CASHead runs the compare-and-set inside one write transaction — the
+// linearization point for ref updates. SQLite: every BEGIN is IMMEDIATE
+// (_txlock=immediate in the DSN), so the write lock precedes the read;
+// MySQL/PostgreSQL: the row is locked with SELECT ... FOR UPDATE, and a lost
+// insert race on a timeline that did not exist surfaces as the PK unique
+// violation it is (translated to gorm.ErrDuplicatedKey).
 func (s *SQLMetaStore) CASHead(ctx context.Context, tl model.Timeline, expected, next model.OID) error {
 	expected = expected.NormalizeZero()
 	next = next.NormalizeZero()
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, s.d.beginWrite); err != nil {
-		return err
-	}
-	fail := func(err error) error {
-		_, _ = conn.ExecContext(context.WithoutCancel(ctx), s.d.rebind("ROLLBACK"))
-		return err
-	}
-	// Fence probe inside the write transaction: a rename whose fence went in
-	// after this CAS began cannot slip its flip in before COMMIT.
-	if err := s.fenceRejectTx(ctx, conn, tl.Repo); err != nil {
-		return fail(err)
-	}
-	var head, base string
-	err = conn.QueryRowContext(ctx, s.q(
-		"SELECT head, base FROM timelines WHERE repo=? AND anchor=? AND name=?"+s.d.rowLock),
-		tl.Repo, string(tl.Anchor), tl.Name).Scan(&head, &base)
-	if err == sql.ErrNoRows {
-		if expected != "" {
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Fence probe inside the write transaction: a rename whose fence went in
+		// after this CAS began cannot slip its flip in before COMMIT.
+		if err := s.ormFenceReject(tx, tl.Repo); err != nil {
+			return err
+		}
+		q := txq(tx).Model(&timelineRow{}).
+			Where("repo = ? AND anchor = ? AND name = ?", tl.Repo, string(tl.Anchor), tl.Name)
+		if s.d.rowLock != "" {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var row timelineRow
+		err := q.Take(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if expected != "" {
+				mCASConflicts.With().Inc()
+				return ErrNonFastForward // creating requires expected=zero
+			}
+			if next == "" {
+				return nil // delete of a missing timeline is a no-op
+			}
+			err = txq(tx).Create(&timelineRow{
+				Repo: tl.Repo, Anchor: string(tl.Anchor), Name: tl.Name, Head: string(next),
+			}).Error
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				mCASConflicts.With().Inc()
+				return ErrNonFastForward // another writer created it first
+			}
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		if model.OID(row.Head).NormalizeZero() != expected {
 			mCASConflicts.With().Inc()
-			return fail(ErrNonFastForward) // creating requires expected=zero
+			return ErrNonFastForward
 		}
 		if next == "" {
-			return fail(nil) // delete of a missing timeline is a no-op
+			// ref deletion: zeroing the head removes the timeline entry.
+			return txq(tx).
+				Where("repo = ? AND anchor = ? AND name = ?", tl.Repo, string(tl.Anchor), tl.Name).
+				Delete(&timelineRow{}).Error
 		}
-		_, err = conn.ExecContext(ctx, s.q(
-			"INSERT INTO timelines(repo, anchor, name, head, base) VALUES(?, ?, ?, ?, '')"),
-			tl.Repo, string(tl.Anchor), tl.Name, string(next))
-		if err != nil {
-			if s.d.isUnique(err) {
-				mCASConflicts.With().Inc()
-				return fail(ErrNonFastForward) // another writer created it first
-			}
-			return fail(err)
-		}
-		_, err = conn.ExecContext(ctx, s.d.rebind("COMMIT"))
-		return err
-	}
-	if err != nil {
-		return fail(err)
-	}
-	if model.OID(head).NormalizeZero() != expected {
-		mCASConflicts.With().Inc()
-		return fail(ErrNonFastForward)
-	}
-	if next == "" {
-		// ref deletion: zeroing the head removes the timeline entry.
-		if _, err := conn.ExecContext(ctx, s.q(
-			"DELETE FROM timelines WHERE repo=? AND anchor=? AND name=?"),
-			tl.Repo, string(tl.Anchor), tl.Name); err != nil {
-			return fail(err)
-		}
-	} else if _, err := conn.ExecContext(ctx, s.q(
-		"UPDATE timelines SET head=? WHERE repo=? AND anchor=? AND name=?"),
-		string(next), tl.Repo, string(tl.Anchor), tl.Name); err != nil {
-		return fail(err)
-	}
-	_, err = conn.ExecContext(ctx, s.d.rebind("COMMIT"))
-	return err
+		return txq(tx).Model(&timelineRow{}).
+			Where("repo = ? AND anchor = ? AND name = ?", tl.Repo, string(tl.Anchor), tl.Name).
+			Update("head", string(next)).Error
+	})
 }
 
 func (s *SQLMetaStore) EnsureTimeline(ctx context.Context, tl model.Timeline, head, base model.OID) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := s.fenceRejectTx(ctx, tx, tl.Repo); err != nil {
-		return err
-	}
-	var one string
-	err = tx.QueryRowContext(ctx, s.q(
-		"SELECT 1 FROM timelines WHERE repo=? AND anchor=? AND name=?"),
-		tl.Repo, string(tl.Anchor), tl.Name).Scan(&one)
-	if err == nil {
-		return nil // already exists (incl. locally committed): don't overwrite
-	}
-	if err != sql.ErrNoRows {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, s.q(
-		"INSERT INTO timelines(repo, anchor, name, head, base) VALUES(?, ?, ?, ?, ?)"),
-		tl.Repo, string(tl.Anchor), tl.Name, string(head), string(base)); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ormFenceReject(tx, tl.Repo); err != nil {
+			return err
+		}
+		var one int
+		switch err := txq(tx).Model(&timelineRow{}).Select("1").
+			Where("repo = ? AND anchor = ? AND name = ?", tl.Repo, string(tl.Anchor), tl.Name).
+			Limit(1).Row().Scan(&one); {
+		case err == nil:
+			return nil // already exists (incl. locally committed): don't overwrite
+		case errors.Is(err, sql.ErrNoRows):
+			return txq(tx).Create(&timelineRow{
+				Repo: tl.Repo, Anchor: string(tl.Anchor), Name: tl.Name,
+				Head: string(head), Base: string(base),
+			}).Error
+		default:
+			return err
+		}
+	})
 }
 
 // SetTimelineBase advances an existing timeline's fork point (explicit-rebase
 // bookkeeping, docs/design/data-model.md §12). RowsAffected distinguishes the unknown-timeline
 // rejection across all three dialects.
 func (s *SQLMetaStore) SetTimelineBase(ctx context.Context, tl model.Timeline, base model.OID) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := s.fenceRejectTx(ctx, tx, tl.Repo); err != nil {
-		return err
-	}
-	res, err := tx.ExecContext(ctx, s.q(
-		"UPDATE timelines SET base=? WHERE repo=? AND anchor=? AND name=?"),
-		string(base), tl.Repo, string(tl.Anchor), tl.Name)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrTimelineUnknown
-	}
-	return tx.Commit()
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ormFenceReject(tx, tl.Repo); err != nil {
+			return err
+		}
+		res := txq(tx).Model(&timelineRow{}).
+			Where("repo = ? AND anchor = ? AND name = ?", tl.Repo, string(tl.Anchor), tl.Name).
+			Update("base", string(base))
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrTimelineUnknown
+		}
+		return nil
+	})
 }
 
 func (s *SQLMetaStore) ListTimelines(ctx context.Context, repo string, anchor model.AnchorPath) ([]model.Timeline, error) {
-	rows, err := s.db.QueryContext(ctx, s.q(
-		"SELECT anchor, name FROM timelines WHERE repo=? AND anchor=? ORDER BY name"),
-		repo, string(anchor))
+	var rows []timelineRow
+	err := s.orm.WithContext(ctx).
+		Where("repo = ? AND anchor = ?", repo, string(anchor)).
+		Order("name").Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []model.Timeline
-	for rows.Next() {
-		var anchorStr, name string
-		if err := rows.Scan(&anchorStr, &name); err != nil {
-			return nil, err
-		}
-		out = append(out, model.Timeline{Repo: repo, Anchor: model.AnchorPath(anchorStr), Name: name})
+	out := make([]model.Timeline, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, model.Timeline{Repo: repo, Anchor: model.AnchorPath(r.Anchor), Name: r.Name})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *SQLMetaStore) ListAllTimelines(ctx context.Context, repo string) ([]model.Timeline, error) {
-	rows, err := s.db.QueryContext(ctx, s.q(
-		"SELECT anchor, name FROM timelines WHERE repo=? ORDER BY anchor, name"), repo)
+	var rows []timelineRow
+	err := s.orm.WithContext(ctx).
+		Where("repo = ?", repo).
+		Order("anchor, name").Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []model.Timeline
-	for rows.Next() {
-		var anchor, name string
-		if err := rows.Scan(&anchor, &name); err != nil {
-			return nil, err
-		}
-		out = append(out, model.Timeline{Repo: repo, Anchor: model.AnchorPath(anchor), Name: name})
+	out := make([]model.Timeline, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, model.Timeline{Repo: repo, Anchor: model.AnchorPath(r.Anchor), Name: r.Name})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Backup writes a consistent snapshot of a SQLite metadata database to path

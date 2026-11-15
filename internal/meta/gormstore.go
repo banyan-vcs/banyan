@@ -86,7 +86,7 @@ func (packNodeRow) TableName() string { return "pack_nodes" }
 
 type objectRow struct {
 	Repo    string `gorm:"primaryKey"`
-	OID     string `gorm:"primaryKey"`
+	OID     string `gorm:"primaryKey;column:oid"` // OID would snake-case to "o_id"
 	PackOID string `gorm:"column:pack_oid"`
 	NodeID  string `gorm:"column:node_id"`
 	Offset  int
