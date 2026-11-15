@@ -127,17 +127,27 @@ auth 必须开启（无钥匙表可认证任何人——拒绝启动而非裸监
 ### 8a. CLI 短时会话（2026-11-15，docs/client/cli.md §4.5）
 
 薄 CLI **不走永久 PAT**：登录只换 **12h、write 域** 的会话凭证——同一张
-tokens 表（`name="cli-session"`、`expires` 必填），读取时过期/吊销语义复用。
-铸造只有两条程序化路径，运维无法经 CLI 铸永久凭证：
+tokens 表（`name="cli-session[:<device>]"`、`expires` 必填），读取时过期/吊销
+语义复用；**每次铸造惰性清扫过期行**（会话随每次续签增行，不清扫即无限
+增长）。铸造只有两条程序化路径，运维无法经 CLI 铸永久凭证，且**铸造本身是
+write 级行为**——read 域凭证在两个铸造端点一律 403，PAT 铸造的 scope 还
+不得高于调用方自身（read 铸 write/admin、普通用户铸 admin 全被拒；凭证只
+收窄、永不放大）：
 
-1. **SSH 公钥**：gitwire SSH 传输新增 `banyan-auth` exec——握手期的
+1. **SSH 公钥**：gitwire SSH 传输新增 `banyan-auth [<label>]` exec——握手期的
    IdentifyKey 已完成认证，服务端就地铸造（`auth.MintSession`），stdout 一行
-   JSON。CLI 端 TOFU 钉主机指纹，会话过期后 401 → **经 SSH 静默续签**；
+   JSON；label 命名设备（服务端消毒为 `[A-Za-z0-9._-]`，≤32 字符），管理员
+   可按机器吊销。CLI 端 TOFU 钉主机指纹，会话过期后 401 → **经 SSH 静默
+   续签**；
 2. **web 控制台批准**：`POST /api/v1/auth/cli-session`（登录身份 → 为**自己**
-   铸会话，scope 上限 write）。web 层 `/cli-auth` 页（GitHub/GitLab OAuth 或
-   本地登录后批准）以登录用户凭证调用它，会话经 web 库 `web_cli_grants`
-   一次性中继（5 分钟窗、领取即焚）回到 CLI 轮询。
+   铸会话，scope 上限 write，body 可带 `label`）。web 层 `/cli-auth` 页
+   （GitHub/GitLab OAuth 或本地登录后批准）以登录用户凭证调用它，会话经
+   web 库 `web_cli_grants` 一次性中继（5 分钟窗、领取即焚）回到 CLI 轮询
+   ——**握手 id 是中统能力本身，走 POST body**（请求行含查询串会进反代/
+   访问日志，日志读者可抢先领取；GET 查询形态仅留一代兼容）。
 
+`banyan logout` 在删本地凭证前 **best-effort 自吊销**（明文在手，
+`DELETE /api/v1/auth/tokens/<sha256>` 本户端点；网络失败不阻塞本地登出）。
 服务器经 `/api/v1/proto` 广播 `ssh`（`ssh.advertise`）与 `web`（`web_url`）
 地址——两个都是可选配置，未广告即该路径不可用。CLI 另接受克隆 URL 的
 userinfo 作为 Basic 凭证（静态表/既有 PAT 形态）。

@@ -174,21 +174,28 @@ CLI 是 banyan 自己的客户端，走**专用 API 车道**（`internal/cliprot
 （docs/gateway/authorization.md §6a），按服务器能力广播（`/api/v1/proto` 的
 `ssh`/`web` 地址）择路：
 
-1. **SSH（首选）**：`banyan login <server> -u <user>` 用 agent 或默认钥匙
-   （`BANYAN_SSH_KEY` 可指定）连服务器广告的 SSH 地址执行 `banyan-auth`
-   exec——公钥完成认证，服务端就地铸造会话。主机指纹 TOFU 钉在
-   `~/.banyan/known_hosts.json`，**变更即拒**。会话过期/被吊销后的下一次请求
-   401 → **经 SSH 静默续签**，用户零感知；
+1. **SSH（首选）**：`banyan login <server> -u <user>` 用 agent（Unix socket
+   或 Windows OpenSSH 命名管到）或默认钥匙（`BANYAN_SSH_KEY` 可指定）连
+   服务器广告的 SSH 地址执行 `banyan-auth <主机名>` exec——公钥完成认证，
+   服务端就地铸造**带设备标签**的会话（`cli-session:<host>`，管理员可按机器
+   吊销）。passphrase 保护的钥匙在终端解锁一次（回显关闭；非交互用
+   `BANYAN_SSH_PASSPHRASE`）。主机指纹 TOFU 钉在配置的 `ssh_host_keys`，
+   **变更即拒**。会话过期/被吊销后的下一次请求 401 → **经 SSH 静默续签**，
+   用户零感知；
 2. **web/GitLab OAuth（无 SSH 时）**：服务器广告 web 控制台地址时，
-   `banyan login` 打印 `<web>/cli-auth#<一次性握手 id>` 并轮询——用户在控制台
-   用既有会话或 GitHub/GitLab OAuth 登录后点批准，短时会话经一次性授予中继
-   回 CLI（5 分钟窗口、领取即焚）。此路径**不刷新**：过期重跑 `login`。
+   `banyan login` 打印 `<web>/cli-auth#<一次性握手 id>`（并尝试打开默认
+   浏览器，`BANYAN_NO_BROWSER` 关闭）并以 2s 周期轮询——用户在控制台用既有
+   会话或 GitHub/GitLab OAuth 登录后点批准，短时会话经一次性授予中继回 CLI
+   （5 分钟窗口、领取即焚；**握手 id 走 POST body**——查询串会进访问日志，
+   而它就是领取凭证的全部能力）。此路径**不刷新**：过期重跑 `login`（401
+   报错自带该提示）。
 
 凭证存多主机配置 `~/conf/banyan.yaml`（0600，见 §4.5a）；每个请求
-带 `Authorization: Basic <user>:banyan_…`；`login --status` 查看状态；
-`logout` 丢弃本地凭证（服务端会话自然过期，管理员可吊销）。另：克隆 URL 的
-userinfo（`http://alice:demo@host/…`）现在直接作为 Basic 凭证生效（原先被
-丢弃）。
+带 `Authorization: Basic <user>:banyan_…`；`login --status [--json]` 逐台
+**并发探活**（valid / rejected / EXPIRED / unreachable）；`logout` 先
+**best-effort 自吊销**服务端会话再删本地凭证（网络不可达不阻塞）。另：克隆
+URL 的 userinfo（`http://alice:demo@host/…`）现在直接作为 Basic 凭证生效
+（原先被丢弃）。
 
 ### 4.5a. 多主机与默认主机（gh 式，2026-11-15 落地）
 
