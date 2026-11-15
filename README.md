@@ -13,48 +13,30 @@ data model and a sharded pack-CAS + central-metadata storage architecture.
 
 ## Why banyan
 
-**Git is the inescapable industry standard.** Two decades deep, from personal
-projects to the largest enterprises — any new approach must not ask anyone
-to leave git.
+Git is the industry standard — banyan never asks anyone to leave it. What
+it replaces is the storage server behind the protocol, because:
 
-**But git does not host huge repositories well.** Android-scale monorepos
-hit its limits: tens of GB, millions of objects, hour-long clones.
-Shallow / sparse / partial clone treat the symptoms, not the "reachable
-means cloned" assumption underneath.
+- Huge repositories sit poorly on git. Android-scale monorepos mean tens
+  of GB, millions of objects, hour-long clones; shallow / sparse / partial
+  clone soften the symptoms, the "reachable means cloned" assumption
+  underneath stays.
+- Monorepos need directory-level permissions — departmental boundaries,
+  compliance isolation, vendor visibility. Git's model stops at repo
+  granularity, and splitting directories into separate repos destroys the
+  integrity a monorepo exists to provide.
+- AI agents push collaboration from human-days to agent-minutes,
+  straining git's centralized-ref model: push locks, full negotiation,
+  force-push cascades.
 
-**Monorepo is where enterprise code maintenance is heading.** On modern
-build systems (Bazel / Buck), source dependency is the most efficient way
-to keep code alive: atomic cross-package changes, no release lag, one
-commit coordinating many parties.
+Banyan's answer is two structural moves: a **sharded pack CAS + central
+metadata** (storage scales horizontally, never bound to a single machine)
+and a **directory-anchored timeline model** (every directory owns its
+commit history — any subtree is a repo, transfers are O(subtree), zero
+cross-directory locks, permission boundaries are timeline boundaries).
 
-**And monorepo inevitably needs directory-level permissions** — departmental
-boundaries, compliance isolation, vendor visibility — which native git
-cannot express; splitting directories into separate repos destroys the
-integrity a monorepo exists to provide.
-
-**AI agents multiply collaboration frequency** from human-days to
-agent-minutes, amplifying git's centralized-ref bottlenecks (push locks,
-full negotiation, force-push/rebase cascades) and the collaboration risks
-that come with them.
-
-Banyan answers by **redesigning the git-compatible storage server**:
-
-- **Distributed by construction** — sharded pack CAS + central metadata:
-  storage scales horizontally and never binds to a single machine, solving
-  the reliability problem of storing code — the core enterprise asset.
-- **A directory-anchored timeline data model** — every directory owns its
-  commit history, making directory-level collaboration (any subtree is a
-  repo, O(subdirectory) transfers, zero cross-directory locks) and
-  directory-level governance (permission boundaries are timeline
-  boundaries) **native capabilities** rather than add-ons.
-
-**Vision**: code storage becomes an independent infrastructure layer, like
-a database — any platform (GitLab / Gitea / self-hosted), any client
-(git CLI / IDE / CI / AI agents), any scale (personal project to enterprise
-monorepo), one storage layer over standard protocols. Banyan owns "where
-code lives and how it is served efficiently"; collaboration flows stay on
-the platforms, organization and permissions stay with the enterprise —
-directory timelines align both boundaries at the same granularity.
+Long term: code storage as an independent infrastructure layer, like a
+database — any platform, client, and scale over standard protocols
+([docs/design/big-picture.md](docs/design/big-picture.md)).
 
 ## Measured performance
 
@@ -78,7 +60,7 @@ Against a real `git http-backend` on the same machine, on **git.git itself**
   <img src="docs/assets/architecture-simple.svg" width="800" alt="banyan simplified architecture: browsers reach a stateless web tier (banyand web — sign-in, import, capability profiles); git, GitLab and thin-CLI clients go straight to stateless gateways; a refs service as the only serialization point beside scattered pack storage; directory timelines woven into the root repository on read" />
 </p>
 
-The four moves that make it work:
+The four mechanisms:
 
 - **Directory-anchored timelines** — every directory owns its commit
   history, so any subtree is a semantically complete repo and a permission
@@ -95,21 +77,17 @@ The four moves that make it work:
 
 ## Design goals
 
-1. **Drop-in git compatibility** — plain `git clone / fetch / push` just works
-   (Smart HTTP v1 + v2 fetch-side command set — ls-refs/fetch, docs/gateway/git-compat.md 9b).
-2. **Any subdirectory is a repo** — not sparse checkout: every directory owns
-   its commit timeline, and `/r/{repo}/tree/{subdir}` serves a semantically
-   complete repository with full projected history.
-3. **Timeline-first write path (v5)** — pushing to a directory touches only
-   that directory's timeline (a single CAS): zero cross-directory locks, and
-   the root view is woven linearly on read — no adoption-merge noise.
-4. **Sharded pack storage** — packfiles are immutable, content-addressed
-   shards with a central metadata index; server-side repack merges fragments
-   with delta encoding.
-5. **A thin client (`banyan`)** — minimal download by default: the workspace
-   holds the checkout manifest and a content-addressed cache, never the
-   commit closure; history queries (log/blame/diff) are answered by the
-   server over the JSON API.
+1. **Drop-in git compatibility** — plain `git clone / fetch / push` works
+   (Smart HTTP v1 + v2 fetch command set, docs/gateway/git-compat.md §9b).
+2. **Any subdirectory is a repo** — `/r/{repo}/tree/{subdir}` serves a
+   complete repository with full projected history; not sparse checkout.
+3. **Timeline-first write path (v5)** — a push touches one timeline (a
+   single CAS); the root view is woven on read, never merged on write.
+4. **Sharded pack storage** — immutable content-addressed shards, central
+   metadata index, server-side repack with delta encoding.
+5. **A thin client (`banyan`)** — workspace = checkout manifest + object
+   cache, never the commit closure; log/blame/diff answered server-side
+   over the JSON API.
 
 ## What works today
 
@@ -136,7 +114,7 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 |---|---|
 | Any subdirectory is a repo | `/r/{repo}/tree/{subdir}`, full projected history — `log / show / fsck` all work on it |
 | Per-directory timelines | a push CASes exactly one timeline — zero cross-directory locks; the root view is woven on read (v5) |
-| Directory workflow (M4) | per-timeline queue + server-side convergence: bursts land with zero rejections, conflicts isolated per ticket; `banyan snapshot` workspace checkpoints, `banyan stack` path-scoped changeset queue, and `banyan sync` explicit subtree→root rebase — server-side replay closing the true-divergence race ([docs/design/workflow.md](docs/design/workflow.md), [docs/client/cli.md](docs/client/cli.md) §3.7-3.9) |
+| Directory workflow (M4) | per-timeline queue + server-side convergence: bursts land with zero rejections, conflicts isolated per ticket; `banyan snapshot` / `stack` / `sync` ([docs/design/workflow.md](docs/design/workflow.md), [docs/client/cli.md](docs/client/cli.md) §3.7-3.9) |
 | Personal branch namespaces | `refs/heads/<user>/*` visible to their owner alone — the monorepo too-many-branches answer |
 | Repack | fragment merge + delta encoding |
 | Bounded-memory serving | exact-pack verbatim streams; typed enumeration + windowed encode at any repo size ([docs/storage/storage.md](docs/storage/storage.md) §3) |
@@ -150,7 +128,7 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 | Push policy gate | protected branches and friends enforced via `/internal/allowed`; Rails' rejection message reaches the git client verbatim |
 | Platform callbacks | post-receive adapter: activity events, pipelines, cache expiry, MR-from-push (`-o merge_request.create` verified live) |
 | Subtree projection refs | `refs/banyan/tree/<dir>` — one GitLab URL and one credential per subtree; pushes assemble upward into the root view |
-| Subtree management console | `/-/banyan/` under the GitLab URL (`banyand web` in its gitlab profile — banyan's subtree features only, GitLab keeps project management): subtree listings, activity, clone recipes and **runtime access rules** — GitLab SSO login ([docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b) |
+| Subtree management console | `/-/banyan/` under the GitLab URL (`banyand web` gitlab profile — banyan's subtree features only): subtree listings, activity, clone recipes, runtime access rules; GitLab SSO login ([docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b) |
 | GitLab push size limit | the Maximum-push-size setting enforced via `receive.maxInputSize` |
 
 **Production and operations**:
@@ -164,9 +142,9 @@ GitLab-mode rows are additionally verified against a real GitLab-CE
 | Server-side diff & blame | path-diff and blame RPCs byte-equal to `git diff` / `git blame` |
 | Storage addressing | named vs hashed, renames never touch storage ([docs/storage/storage.md](docs/storage/storage.md) §6) |
 | Service layer + JSON API | `/api/v1/*` unified error envelope; SQLite / MySQL / Postgres metadata + YAML config |
-| Web tier (`banyand web`) | the three-layer standalone deployment (web → gateway → storage): sessions and import history in the web tier's own database — sqlite / mysql / postgres, optionally **shared with the gateway** (the demo does) — local and OAuth login (**GitHub, gitlab.com and private GitLab instances side by side**; gateway side: `auth.oauth`), the SPA, and the single control plane in the standalone profile ([docs/web/web-layer.md](docs/web/web-layer.md)) |
-| Repository import | from github.com / gitlab.com / private GitLab by URL, authenticated by the login provider's token or a pasted PAT — a server-side fetch through the same ingest a push rides, pack streamed to disk at any repo size ([docs/web/web-layer.md](docs/web/web-layer.md) §4) |
-| Clients & UIs | thin-workspace CLI (`banyan`), React web console (code browsing, history/diff/blame, branches, tokens, subtree management, import), product console (`banyand console`) with subtree-scoped roles ([docs/web/console.md](docs/web/console.md); console SSH/web → M6.3/M6.4) |
+| Web tier (`banyand web`) | three-layer standalone deployment (web → gateway → storage): own database (sqlite / mysql / postgres, optionally shared with the gateway — the demo does), local + OAuth login (GitHub and multiple GitLab instances; gateway side `auth.oauth`), SPA hosting ([docs/web/web-layer.md](docs/web/web-layer.md)) |
+| Repository import | by URL from github.com / gitlab.com / private GitLab, session token or pasted PAT; server-side fetch through the same ingest a push rides, pack streamed to disk ([docs/web/web-layer.md](docs/web/web-layer.md) §4) |
+| Clients & UIs | thin-workspace CLI (`banyan`), React web console (code browsing, history/diff/blame, branches, tokens, subtrees, import), product console (`banyand console`, subtree-scoped roles — [docs/web/console.md](docs/web/console.md)) |
 | Ops plane | pprof family, runtime snapshots, serve-path counters |
 
 The thin-CLI commit path is cross-verified by fresh git clones plus `fsck`;
@@ -270,7 +248,7 @@ go build ./... && go vet ./... && go test ./...   # ~65s (integration needs git 
 
 # Start the server. Config resolves as defaults < YAML (-config) < explicit flags;
 # unknown config keys are rejected. -dev = unauthenticated local mode — production
-# posture refuses to start without auth (see banyan.example.yaml). See banyan.example.yaml.
+# posture refuses to start without auth (see banyan.example.yaml).
 go run ./cmd/banyand -dev -listen 127.0.0.1:8097 -root ./banyand-data -meta sqlite
 
 # Push any git repo (first push auto-creates it)
@@ -304,8 +282,8 @@ go run ../cmd/banyan log           # remote history, zero download
 
 ## Documentation
 
-Reading order follows the design: overview and positioning first, then the
-architecture layer by layer, then cross-cutting concerns, then operations.
+Reading order: story first, then the architecture layer by layer, then
+cross-cutting concerns, then operations.
 
 **The story** — what banyan is and where it sits:
 
@@ -364,11 +342,8 @@ architecture layer by layer, then cross-cutting concerns, then operations.
 
 ## License
 
-The core is **MIT** ([LICENSE](LICENSE)) — it covers everything outside
-[enterprise/](enterprise/). Commercial capabilities live under enterprise/
-— a separate Go module licensed under
-[enterprise/LICENSE.enterprise](enterprise/LICENSE.enterprise): free to
-modify and test, production use requires a banyan enterprise subscription
-(each enterprise source carries a `LicenseRef-BANYAN-ENTERPRISE` SPDX
-header). The core never imports enterprise; only enterprise imports the
-core.
+The core is **MIT** ([LICENSE](LICENSE)) — everything outside
+[enterprise/](enterprise/). Enterprise capabilities are a separate Go
+module under [enterprise/LICENSE.enterprise](enterprise/LICENSE.enterprise):
+free to modify and test, production use requires a subscription. The core
+never imports enterprise; only enterprise imports the core.

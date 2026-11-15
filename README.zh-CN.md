@@ -12,22 +12,23 @@
 
 ## 为什么做 banyan
 
-**git 是绕不开的行业标准。** 诞生二十余年，git 从个人项目到超大规模企业无处不在，git 工作流早已是整个行业的肌肉记忆，围绕它的工具链、CI 与平台生态无可替代。任何新方案的第一约束由此确定：**不要求任何人离开 git**。
+git 是行业标准，banyan 不要求任何人离开 git；替换的是协议背后的存储服务端：
 
-**但 git 并不擅长大型仓库的托管。** Android、Chromium 这类巨型项目早已触到 git 的能力边界：仓库体积以数十 GB 计、对象数以百万计、一次 clone 以小时计。社区用 shallow / sparse / partial clone 缓解症状，但"仓库即单机目录、可达即全量"的底层假设从未改变。
+- 大仓库在 git 上不好过：Android 级 monorepo 体积数十 GB、对象数百万、
+  clone 以小时计；shallow / sparse / partial clone 只缓解症状，
+  "可达即全量"的底层假设未变。
+- monorepo 需要目录级权限：部门边界、合规隔离、外包可见性都要落到
+  目录粒度；git 权限止步于仓库粒度，"一个目录拆一个仓"又摧毁了
+  monorepo 的完整性。
+- AI Agent 把协作节奏从"人天级"推到"Agent 分钟级"，git 集中式 ref
+  模型的瓶颈被放大：push 锁、全量协商、force push / rebase 级联。
 
-**Monorepo 是企业级代码维护的方向。** 在现代化构建系统（Bazel / Buck 等）之上，**源码依赖是最高效的持续维护方式**——跨包原子变更、无发版延迟、一次提交协同多方。越来越多企业把代码资产收敛进单仓。
+答案是两个结构性动作：**分片 pack CAS + 中心元数据**（存储横向扩展、
+不绑定单机）与**目录锚定时间线**（每个目录拥有自己的提交历史——任意
+子目录即仓库、传输 O(子目录)、零跨目录锁、权限边界即时间线边界）。
 
-**而 Monorepo 必然要求目录级权限。** 单仓共享意味着部门边界、合规隔离、外包可见性都要在**目录粒度**上控制。原生 git 的权限模型止步于仓库粒度；"一个目录拆一个仓库"的模拟又摧毁了 monorepo 的完整性——这是一个原生 Git 无法很好解决的结构性矛盾。
-
-**AI Agent 让矛盾激化。** Agent 对软件开发的渗透持续加深，仓库协作频率从"人天级"跃升到"Agent 分钟级并发"。git 集中式 ref 协作模型（push 锁、全量协商、force push / rebase 级联）的性能瓶颈与协作风险被同步放大。
-
-banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存储服务端**——
-
-- **分布式设计为默认形态**：分片 pack CAS + 中心元数据，存储可横向扩展、不绑定单机，从架构上解决代码这一企业核心资产的存储可靠性问题；
-- **目录锚定时间线数据模型**：每个目录拥有自己的提交历史，目录级协作（子目录即仓库、O(子目录) 传输、零跨目录锁）与目录级管理（权限边界即时间线边界）成为**原生能力**，而非外围补丁。
-
-**远景**：让代码存储成为像数据库一样**独立的基础设施层**——任何平台（GitLab / Gitea / 自建）、任何客户端（git CLI / IDE / CI / AI Agent）、任何规模（个人项目到企业 monorepo），都以标准协议访问同一个存储层。banyan 管"代码住在哪里、怎么高效取用"；协作流程归平台，组织与权限归企业——目录时间线把两者的边界对齐在同一粒度上。
+远景：代码存储成为像数据库一样独立的基础设施层——任何平台、客户端、
+规模，以标准协议访问同一存储层（docs/design/big-picture.md）。
 
 ## 实测性能
 
@@ -49,7 +50,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
   <img src="docs/assets/architecture-simple.zh.svg" width="800" alt="banyan 简化架构：浏览器接入无状态 web 层（banyand web——登录、导入、能力档位）；git、GitLab 与薄 CLI 客户端直达无状态网关；refs 服务为唯一串行点，旁边是散布 pack 存储；目录时间线读时织入根仓库" />
 </p>
 
-支撑整个设计的四个关键动作：
+支撑整个设计的四个关键机制：
 
 - **目录锚定时间线** —— 每个目录拥有自己的提交历史：任何子目录都是语义完整的仓库，
   权限边界就是时间线边界。
@@ -62,17 +63,16 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 
 ## 设计目标
 
-1. **完全兼容 git 命令行**：标准 `git clone / fetch / push` 直接可用（Smart HTTP
-   v1 + v2——fetch 侧命令面 ls-refs/fetch 已落地，docs/gateway/git-compat.md §9b）。
-2. **任意子目录可 clone 为独立仓库**：不是 partial clone 的"稀疏检出"，而是每个
-   目录拥有自己的 commit timeline，`/r/{repo}/tree/{subdir}` 即一个语义完整、
-   带完整投影历史的仓库。
-3. **时间线优先写路径（v5）**：目录 push 只 CAS 本目录时间线——零跨目录锁；根视图
-   读时线性织入，无收编 merge 噪音。
-4. **分布式 pack 存储**：packfile 为不可变内容寻址分片 + 中心元数据索引；服务端
+1. **完全兼容 git 命令行**：标准 `git clone / fetch / push` 直接可用
+   （Smart HTTP v1 + v2 fetch 命令面，docs/gateway/git-compat.md §9b）。
+2. **任意子目录即仓库**：`/r/{repo}/tree/{subdir}` 是一个带完整投影历史的
+   仓库；不是稀疏检出。
+3. **时间线优先写路径（v5）**：一次 push 只 CAS 一条时间线；根视图读时织入，
+   写路径永不合并。
+4. **分布式 pack 存储**：不可变内容寻址分片 + 中心元数据索引，服务端
    repack 合并碎片并做 delta 编码。
-5. **薄客户端（`banyan`）**：默认最小化下载——工作区只有检出清单 + 内容寻址缓存，
-   从不下载提交闭包；历史查询（log/blame/diff）由服务端经 JSON API 集中回答。
+5. **薄客户端（`banyan`）**：工作区只有检出清单 + 内容寻址缓存，从不下载
+   提交闭包；log/blame/diff 由服务端经 JSON API 回答。
 
 ## 当前能力
 
@@ -98,7 +98,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 |---|---|
 | 任意子目录即仓库 | `/r/{repo}/tree/{subdir}`，完整投影历史——`log / show / fsck` 全可用 |
 | 目录时间线 | 一次 push 只 CAS 一条时间线——零跨目录锁；根视图读时织入（v5） |
-| 目录级工作流（M4） | 同目录队列 + 服务端收敛：突发零拒绝、冲突按票隔离；`banyan snapshot` 工作区快照（逐字节时间机、离线）与 `banyan stack` 路径分片变更队列（排队+择机落台）、`banyan sync` 子树→根显式重放（服务端重放收口真分叉竞态）（[docs/design/workflow.md](docs/design/workflow.md)、[docs/client/cli.md](docs/client/cli.md) §3.7-3.9） |
+| 目录级工作流（M4） | 同目录队列 + 服务端收敛：突发零拒绝、冲突按票隔离；`banyan snapshot` / `stack` / `sync`（[docs/design/workflow.md](docs/design/workflow.md)、[docs/client/cli.md](docs/client/cli.md) §3.7-3.9） |
 | 个人分支命名空间 | `refs/heads/<user>/*` 仅本人可见——monorepo 分支过多解法 |
 | repack | 碎片合并 + delta 编码 |
 | 有界内存服务 | 精确命中 verbatim 直传、类型化枚举 + 逐对象窗口编码，任意仓规模（[docs/storage/storage.md](docs/storage/storage.md) §3） |
@@ -112,7 +112,7 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 推送策略门 | 保护分支等 ref 级策略经 `/internal/allowed` 强制，Rails 拒绝原话透传到 git 客户端 |
 | 平台回调 | post-receive 适配器：活动事件、pipeline、缓存过期、MR-from-push（`-o merge_request.create` 活体实证） |
 | 子树投影 ref | `refs/banyan/tree/<dir>`——一个 GitLab URL、一套凭证取推任意子树；推送向上装配回根视图 |
-| 子树管理控制面 | GitLab 域名下 `/-/banyan/`（`banyand web` 的 gitlab 档位——只透出 banyan 特有的子树功能，项目管理留给 GitLab）：子树清单/活动/克隆配方 + **运行时访问规则**——GitLab SSO 登录（[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b） |
+| 子树管理控制面 | GitLab 域名下 `/-/banyan/`（`banyand web` gitlab 档位，只透出 banyan 子树功能）：子树清单/活动/克隆配方、运行时访问规则；GitLab SSO 登录（[docs/integration/gitlab-integration.md](docs/integration/gitlab-integration.md) §7b） |
 | 推送大小上限 | GitLab Maximum push size 设置经 `receive.maxInputSize` 强制 |
 
 **生产与运维**：
@@ -126,9 +126,9 @@ banyan 的答案：不推翻 git，而是**重新设计 git 兼容的代码存�
 | 服务端 diff 与 blame | 路径 diff、blame RPC 与 `git diff` / `git blame` 逐字节一致 |
 | 存储寻址 | named 可读 / hashed 不透明，rename 零存储动作（[docs/storage/storage.md](docs/storage/storage.md) §6） |
 | 服务层 + JSON API | `/api/v1/*` 统一错误信封；SQLite / MySQL / Postgres 元数据 + YAML 配置 |
-| web 层（`banyand web`） | 三层独立站部署（web → gateway → 存储）：会话与导入历史落在 web 层自己的数据库——sqlite / mysql / postgres，可**与 gateway 共用同一库**（demo 即如此）；本地登录 + OAuth（**GitHub、gitlab.com、私有 GitLab 多实例并存**；gateway 侧 `auth.oauth`）；独立站档位下是唯一控制面（[docs/web/web-layer.md](docs/web/web-layer.md)） |
-| 仓库导入 | 按 URL 从 github.com / gitlab.com / 私有 GitLab 导入，凭登录 provider 的 token 或粘贴的 PAT——服务端 fetch，走与 push 相同的入库路径，pack 流式落盘不占内存（[docs/web/web-layer.md](docs/web/web-layer.md) §4） |
-| 客户端与界面 | 薄工作区 CLI（`banyan`）、React Web 控制台（代码浏览、历史/diff/blame、分支、token、子树管理、导入）、产品控制台（`banyand console` 子命令）子树作用域角色（[docs/web/console.md](docs/web/console.md)；控制台 SSH/web → M6.3/M6.4） |
+| web 层（`banyand web`） | 三层独立站部署（web → gateway → 存储）：自己的数据库（sqlite / mysql / postgres，可与 gateway 共用——demo 即如此）；本地登录 + OAuth（GitHub 与多个 GitLab 实例并存；gateway 侧 `auth.oauth`）；SPA 托管（[docs/web/web-layer.md](docs/web/web-layer.md)） |
+| 仓库导入 | 按 URL 从 github.com / gitlab.com / 私有 GitLab 导入，会话 token 或粘贴 PAT；服务端 fetch 走与 push 相同的入库路径，pack 流式落盘（[docs/web/web-layer.md](docs/web/web-layer.md) §4） |
+| 客户端与界面 | 薄工作区 CLI（`banyan`）、React Web 控制台（代码浏览、历史/diff/blame、分支、token、子树、导入）、产品控制台（`banyand console`，子树作用域角色——[docs/web/console.md](docs/web/console.md)） |
 | 运维面 | pprof 全家、运行时快照、服务路径计数器 |
 
 薄 CLI 的提交链路经 fresh git clone + `fsck` 交叉验证；gitaly 前端经
@@ -261,8 +261,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 
 ## 文档索引
 
-阅读顺序即设计展开的顺序：先总览与定位，再按层拆解核心架构，然后是横切
-能力，最后是运行与演进。
+阅读顺序：先总览与定位，再按层拆解核心架构，然后横切能力，最后运行与演进。
 
 **总——banyan 是什么、站在哪里**：
 
@@ -321,8 +320,7 @@ go run ../cmd/banyan log           # 远端历史，零下载
 ## 许可
 
 核心为 **MIT**（[LICENSE](LICENSE)）——覆盖 enterprise/ 之外的一切。
-商业化能力维护在 [enterprise/](enterprise/)——独立 Go module，按
+企业能力是独立 Go module，按
 [enterprise/LICENSE.enterprise](enterprise/LICENSE.enterprise) 授权：
-开发与测试免费，生产使用需 banyan 企业订阅（每个 enterprise 源文件
-带 `LicenseRef-BANYAN-ENTERPRISE` SPDX 头）。核心永不 import
-enterprise，只有 enterprise 引用核心。
+开发与测试免费，生产使用需订阅。核心永不 import enterprise，只有
+enterprise 引用核心。
