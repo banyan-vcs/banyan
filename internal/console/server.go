@@ -410,6 +410,7 @@ func (s *Server) handleRepoList(w http.ResponseWriter, r *http.Request, u User) 
 // gateway; a subproject may not register on these names.
 var gatewaySubResources = map[string]bool{
 	"placement": true, "size": true, "hooks": true, "rename": true, "force-push": true,
+	"merge-requests": true, "branch-rules": true,
 }
 
 // handleRepoPath serves /api/v1/repos/{g}[/p[/path...]][/...]: project

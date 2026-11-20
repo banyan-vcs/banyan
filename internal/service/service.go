@@ -68,8 +68,12 @@ func Translate(err error) (code string, data any) {
 	case errors.Is(err, meta.ErrRepoNotFound),
 		errors.Is(err, model.ErrObjectNotFound),
 		errors.Is(err, meta.ErrPackNotFound),
-		errors.Is(err, meta.ErrTimelineUnknown):
+		errors.Is(err, meta.ErrTimelineUnknown),
+		errors.Is(err, meta.ErrMRUnknown),
+		errors.Is(err, ErrBranchMissing):
 		return "NOT_FOUND", nil
+	case errors.Is(err, meta.ErrMRState):
+		return "CONFLICT_MR", nil
 	case errors.Is(err, meta.ErrRepoCycle),
 		errors.Is(err, meta.ErrRepoDepth):
 		// A refused hierarchy link is a client-input problem, not a server
@@ -80,6 +84,10 @@ func Translate(err error) (code string, data any) {
 		var conflict *ErrSyncConflict
 		if errors.As(err, &conflict) {
 			return "CONFLICT_SYNC_CONFLICT", map[string]any{"commit": string(conflict.Commit), "paths": conflict.Paths}
+		}
+		var nm *ErrMRNotMergeable
+		if errors.As(err, &nm) {
+			return "CONFLICT_MR", map[string]any{"reason": nm.Reason, "conflicts": nm.Conflicts}
 		}
 		var unsupported *ErrSyncUnsupported
 		if errors.As(err, &unsupported) {

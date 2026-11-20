@@ -141,7 +141,7 @@ type errEnvelope struct {
 
 func statusFor(code string) int {
 	switch code {
-	case "CONFLICT_BASE_MOVED", "CONFLICT_REF_CAS", "CONFLICT_SYNC_CONFLICT":
+	case "CONFLICT_BASE_MOVED", "CONFLICT_REF_CAS", "CONFLICT_SYNC_CONFLICT", "CONFLICT_MR":
 		return http.StatusConflict
 	case "SYNC_UNSUPPORTED":
 		return http.StatusBadRequest
@@ -530,6 +530,10 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePush(w, r, req.Repo, req.Sub, branch) {
 		return
 	}
+	if s.mrOnly(r.Context(), req.Repo, branch) {
+		s.rejectMROnly(w, branch)
+		return
+	}
 	res, err := s.Svc.CreateCommit(r.Context(), req)
 	if err != nil {
 		writeServiceErr(w, err)
@@ -586,7 +590,12 @@ func (s *Server) handleRefs(w http.ResponseWriter, r *http.Request) {
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		if !s.requirePush(w, r, req.Repo, "", strings.TrimPrefix(req.Name, "refs/heads/")) {
+		branch := strings.TrimPrefix(req.Name, "refs/heads/")
+		if !s.requirePush(w, r, req.Repo, "", branch) {
+			return
+		}
+		if branch != req.Name && s.mrOnly(r.Context(), req.Repo, branch) {
+			s.rejectMROnly(w, branch)
 			return
 		}
 		if err := s.Svc.UpdateRef(r.Context(), req); err != nil {
@@ -660,6 +669,14 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/")
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
+	if len(parts) >= 2 && parts[1] == "merge-requests" {
+		s.handleMergeRequests(w, r, parts)
+		return
+	}
+	if len(parts) >= 2 && parts[1] == "branch-rules" {
+		s.handleBranchRules(w, r, parts)
+		return
+	}
 	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks" && parts[1] != "subtree-access" && parts[1] != "parent") {
 		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access|parent)"}})
 		return

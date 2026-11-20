@@ -234,6 +234,12 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			_ = WritePacket(out, []byte("ng "+u.Name+" permission denied\n"))
 			continue
 		}
+		if s.mrOnlyBranch(ctx, vr, name) {
+			// docs/design/merge-requests.md: an mr-only branch accepts NO
+			// direct push — the merge-request path is the only way in.
+			_ = WritePacket(out, []byte("ng "+u.Name+" mr-only: merge via a merge request\n"))
+			continue
+		}
 		if name == "" {
 			_ = WritePacket(out, []byte("ng "+u.Name+" empty branch name\n"))
 			continue
