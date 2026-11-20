@@ -331,6 +331,10 @@ type MemoryMetaStore struct {
 	retired      map[string]string              // tombstone: from → to (rename completed)
 	tokens       map[string]TokenInfo           // sha256 → token (docs/gateway/authorization.md §6)
 	subtreeRules map[string]map[string][]string // repo → anchor path → allowed users (docs/gateway/authorization.md §8)
+	mrs          map[string]map[int64]*MRInfo   // repo → iid → merge request (docs/design/merge-requests.md)
+	mrNextIID    map[string]int64               // repo → last allocated MR IID
+	mrApprovals  map[string]map[int64]map[string]int64 // repo → iid → user → approved-at
+	branchRules  map[string]map[string]BranchRule      // repo → branch → protection rule
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
@@ -348,6 +352,10 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 		renames:      map[string]string{},
 		retired:      map[string]string{},
 		subtreeRules: map[string]map[string][]string{},
+		mrs:          map[string]map[int64]*MRInfo{},
+		mrNextIID:    map[string]int64{},
+		mrApprovals:  map[string]map[int64]map[string]int64{},
+		branchRules:  map[string]map[string]BranchRule{},
 	}
 }
 

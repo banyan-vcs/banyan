@@ -164,6 +164,50 @@ type subtreeRuleRow struct {
 
 func (subtreeRuleRow) TableName() string { return "subtree_rules" }
 
+// mrRow embeds MRInfo so the domain type stays the wire shape; every column
+// name is the plain snake-case of the field (no renames to trap on).
+type mrRow struct {
+	MRInfo
+}
+
+func (mrRow) TableName() string { return "merge_requests" }
+
+// updates is the TransitionMR write set: every column except the composite
+// key (repo, iid).
+func (m MRInfo) updates() map[string]any {
+	return map[string]any{
+		"title":        m.Title,
+		"description":  m.Description,
+		"source":       m.Source,
+		"target":       m.Target,
+		"state":        m.State,
+		"author":       m.Author,
+		"source_head":  m.SourceHead,
+		"merge_commit": m.MergeCommit,
+		"merged_by":    m.MergedBy,
+		"created_at":   m.CreatedAt,
+		"updated_at":   m.UpdatedAt,
+	}
+}
+
+type mrApprovalRow struct {
+	Repo       string `gorm:"primaryKey"`
+	IID        int64  `gorm:"primaryKey;column:iid"`
+	Username   string `gorm:"primaryKey"`
+	ApprovedAt int64  `gorm:"column:approved_at"`
+}
+
+func (mrApprovalRow) TableName() string { return "mr_approvals" }
+
+type branchRuleRow struct {
+	Repo      string `gorm:"primaryKey"`
+	Branch    string `gorm:"primaryKey"`
+	Level     string
+	Approvals int
+}
+
+func (branchRuleRow) TableName() string { return "branch_rules" }
+
 // --- open path ---
 
 // gormOpen mounts GORM on the existing pool (one pool, two query surfaces).

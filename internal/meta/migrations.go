@@ -36,8 +36,13 @@ func metaIndexesUp(q ddl.Q) error {
 		return err
 	}
 	// ListTokens(user) filters owner and sorts by created_at.
-	return q.EnsureIndex("idx_tokens_owner",
-		"CREATE INDEX idx_tokens_owner ON tokens(owner, created_at)")
+	if err := q.EnsureIndex("idx_tokens_owner",
+		"CREATE INDEX idx_tokens_owner ON tokens(owner, created_at)"); err != nil {
+		return err
+	}
+	// ListMRs(repo, state) filters and orders by IID.
+	return q.EnsureIndex("idx_merge_requests_state",
+		"CREATE INDEX idx_merge_requests_state ON merge_requests(repo, state, iid)")
 }
 
 // metaBaseline is the authoritative full shape for FRESH databases — tables
@@ -90,6 +95,23 @@ var metaSteps = []ddl.Step{
 	// Query-driven indexes (see docs/storage/storage.md §2.4 for the
 	// rationale, including the deliberately un-indexed small tables).
 	{Name: "0006-indexes", Up: metaIndexesUp},
+	// The merge-request tables (docs/design/merge-requests.md). Fresh
+	// databases already carry them in 0001's living tableDDL; this step
+	// lands them on pre-MR deployments (IF NOT EXISTS makes replay a no-op).
+	{Name: "0007-mr-tables", Up: mrTablesUp},
+}
+
+// mrTablesUp is step 0007: the three MR tables plus the ListMRs index
+// (existence-guarded — metaIndexesUp carries the same index for the
+// baseline track, pinned equal by TestBaselineEqualsIncremental).
+func mrTablesUp(q ddl.Q) error {
+	for _, stmt := range mrsDDL(q.Dialect()) {
+		if err := q.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return q.EnsureIndex("idx_merge_requests_state",
+		"CREATE INDEX idx_merge_requests_state ON merge_requests(repo, state, iid)")
 }
 
 // addColumn is the guarded ALTER every column step is written against.
@@ -126,5 +148,5 @@ func tableDDL(dialect string) []string {
 	default:
 		base = ddlSQLite()
 	}
-	return append(base, tokensDDL(dialect), subtreeRulesDDL(dialect))
+	return append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...)
 }

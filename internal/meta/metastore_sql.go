@@ -415,6 +415,84 @@ func firstLine(s string) string {
 	return s
 }
 
+// mrsDDL answers the merge-request tables (docs/design/merge-requests.md):
+// the MR ledger, its approvals, and the branch protection rules. Identity
+// is natural composite keys — (repo, iid) with per-repo monotonically
+// allocated IIDs, (repo, iid, username), (repo, branch) — no auto-increment
+// anywhere, so all three dialects share one shape. Branch names get the
+// same VARCHAR(400) headroom subtree paths use.
+func mrsDDL(dialect string) []string {
+	var oidType, textType string
+	switch dialect {
+	case "mysql", "postgres":
+		oidType = "VARCHAR(64) NOT NULL DEFAULT ''"
+		textType = "TEXT NOT NULL"
+	default:
+		oidType = "TEXT NOT NULL DEFAULT ''"
+		textType = "TEXT NOT NULL"
+	}
+	userCol := "VARCHAR(120) NOT NULL"
+	if dialect == "sqlite" {
+		userCol = "TEXT NOT NULL"
+	}
+	return []string{
+		`CREATE TABLE IF NOT EXISTS merge_requests(
+repo         ` + nameCol(dialect) + ` NOT NULL,
+iid          BIGINT NOT NULL,
+title        ` + titleCol(dialect) + ` NOT NULL,
+description  ` + textType + `,
+source       ` + titleCol(dialect) + ` NOT NULL,
+target       ` + titleCol(dialect) + ` NOT NULL,
+state        ` + shortCol(dialect) + ` NOT NULL,
+author       ` + userCol + `,
+source_head  ` + oidType + `,
+merge_commit ` + oidType + `,
+merged_by    ` + userCol + ` DEFAULT '',
+created_at   BIGINT NOT NULL,
+updated_at   BIGINT NOT NULL,
+PRIMARY KEY(repo, iid)
+)`,
+		`CREATE TABLE IF NOT EXISTS mr_approvals(
+repo        ` + nameCol(dialect) + ` NOT NULL,
+iid         BIGINT NOT NULL,
+username    ` + userCol + `,
+approved_at BIGINT NOT NULL,
+PRIMARY KEY(repo, iid, username)
+)`,
+		`CREATE TABLE IF NOT EXISTS branch_rules(
+repo      ` + nameCol(dialect) + ` NOT NULL,
+branch    ` + titleCol(dialect) + ` NOT NULL,
+level     ` + shortCol(dialect) + ` NOT NULL,
+approvals INTEGER NOT NULL DEFAULT 1,
+PRIMARY KEY(repo, branch)
+)`,
+	}
+}
+
+// nameCol/titleCol/shortCol spell the sized string columns per dialect —
+// MySQL cannot DEFAULT a TEXT column and keeps index-width-friendly
+// VARCHARs; the others take TEXT.
+func nameCol(dialect string) string {
+	if dialect == "sqlite" {
+		return "TEXT"
+	}
+	return "VARCHAR(190)"
+}
+
+func titleCol(dialect string) string {
+	if dialect == "sqlite" {
+		return "TEXT"
+	}
+	return "VARCHAR(400)"
+}
+
+func shortCol(dialect string) string {
+	if dialect == "sqlite" {
+		return "TEXT"
+	}
+	return "VARCHAR(16)"
+}
+
 func (s *SQLMetaStore) Close() error { return s.db.Close() }
 
 func (s *SQLMetaStore) CreateRepo(ctx context.Context, repo string, algo model.HashAlgo) error {
