@@ -216,3 +216,62 @@ func TestMRRuleGatesAndWithdrawal(t *testing.T) {
 	out, err = support.GitTry(src, "push", credURL(s, "admin", "x", "/r/mrg.git"), "main")
 	require.Error(t, err, "still mr-only after the merge: %s", out)
 }
+
+// TestMRTokenScopeCeiling: PAT scopes ride the MR face unchanged — a read
+// token answers the reads but bounces at every mutation's push gate (the
+// same ceiling the git face applies); a write token drives the lifecycle.
+func TestMRTokenScopeCeiling(t *testing.T) {
+	support.NeedGit(t)
+	s, _ := newTokenServer(t)
+	readTok, _ := mintToken(t, s, "alice", "a", "read")
+	writeTok, _ := mintToken(t, s, "alice", "a", "write")
+
+	src := t.TempDir()
+	support.Git(t, src, "init", "-q", "-b", "main", ".")
+	support.Write(t, filepath.Join(src, "f.txt"), "base\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "seed")
+	support.Git(t, src, "push", "-q", credURL(s, "alice", "a", "/r/tm.git"), "main")
+	support.Git(t, src, "checkout", "-q", "-b", "feat")
+	support.Write(t, filepath.Join(src, "g.txt"), "feat\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "feat")
+	support.Git(t, src, "push", "-q", credURL(s, "alice", "a", "/r/tm.git"), "feat")
+
+	// Read token: the collection read answers; every mutation bounces at
+	// the scope ceiling (open gates before anything, the per-MR actions
+	// after the target resolves).
+	code, list := mrAPI(t, s, "alice", readTok, "GET", "/api/v1/repos/tm/merge-requests", nil)
+	require.Equal(t, 200, code, "%v", list)
+	code, res := mrAPI(t, s, "alice", readTok, "POST", "/api/v1/repos/tm/merge-requests",
+		map[string]string{"source": "feat", "target": "main", "title": "t"})
+	require.Equal(t, 403, code, "%v", res)
+	require.Contains(t, errmsg(res), "push permission")
+
+	// Write token opens the request; the read token then bounces on every
+	// per-MR action of the real MR.
+	code, mr := mrAPI(t, s, "alice", writeTok, "POST", "/api/v1/repos/tm/merge-requests",
+		map[string]string{"source": "feat", "target": "main", "title": "t"})
+	require.Equal(t, 201, code, "%v", mr)
+	for _, attempt := range []struct {
+		method, path string
+	}{
+		{"POST", "/api/v1/repos/tm/merge-requests/1/approve"},
+		{"DELETE", "/api/v1/repos/tm/merge-requests/1/approve"},
+		{"POST", "/api/v1/repos/tm/merge-requests/1/merge"},
+		{"POST", "/api/v1/repos/tm/merge-requests/1/close"},
+	} {
+		code, res := mrAPI(t, s, "alice", readTok, attempt.method, attempt.path, nil)
+		require.Equal(t, 403, code, "%s %s: %v", attempt.method, attempt.path, res)
+		require.Contains(t, errmsg(res), "push permission")
+	}
+
+	// Write token merges (no rule — no approval bar); the read token still
+	// reads the record afterwards.
+	code, merged := mrAPI(t, s, "alice", writeTok, "POST", "/api/v1/repos/tm/merge-requests/1/merge", nil)
+	require.Equal(t, 200, code, "%v", merged)
+	require.Equal(t, "merged", merged["state"])
+	code, view := mrAPI(t, s, "alice", readTok, "GET", "/api/v1/repos/tm/merge-requests/1", nil)
+	require.Equal(t, 200, code, "%v", view)
+	require.Equal(t, "merged", view["state"])
+}

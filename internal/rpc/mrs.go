@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/banyan-vcs/banyan/internal/meta"
@@ -216,10 +217,14 @@ func (s *Server) handleBranchRules(w http.ResponseWriter, r *http.Request, parts
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "rules": rules})
-	case len(parts) == 3 && r.Method == http.MethodPut:
+	case len(parts) >= 3 && r.Method == http.MethodPut:
 		if !s.requireAdmin(w, r, repo) {
 			return
 		}
+		// Everything after the marker is the branch name — a name may carry
+		// slashes (release/v2), and no other sub-route lives below, so the
+		// whole tail addresses the branch unambiguously.
+		branch := strings.Join(parts[2:], "/")
 		var req struct {
 			Level     string `json:"level"`
 			Approvals int    `json:"approvals"`
@@ -231,16 +236,16 @@ func (s *Server) handleBranchRules(w http.ResponseWriter, r *http.Request, parts
 		if approvals == 0 && req.Level == meta.RuleMROnly {
 			approvals = 1 // the mr-only default when the caller omits it
 		}
-		if err := rs.PutBranchRule(r.Context(), meta.BranchRule{Repo: repo, Branch: parts[2], Level: req.Level, Approvals: approvals}); err != nil {
+		if err := rs.PutBranchRule(r.Context(), meta.BranchRule{Repo: repo, Branch: branch, Level: req.Level, Approvals: approvals}); err != nil {
 			writeServiceErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, meta.BranchRule{Repo: repo, Branch: parts[2], Level: req.Level, Approvals: approvals})
-	case len(parts) == 3 && r.Method == http.MethodDelete:
+		writeJSON(w, http.StatusOK, meta.BranchRule{Repo: repo, Branch: branch, Level: req.Level, Approvals: approvals})
+	case len(parts) >= 3 && r.Method == http.MethodDelete:
 		if !s.requireAdmin(w, r, repo) {
 			return
 		}
-		if err := rs.DeleteBranchRule(r.Context(), repo, parts[2]); err != nil {
+		if err := rs.DeleteBranchRule(r.Context(), repo, strings.Join(parts[2:], "/")); err != nil {
 			writeServiceErr(w, err)
 			return
 		}

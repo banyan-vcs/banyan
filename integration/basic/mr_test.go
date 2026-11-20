@@ -247,3 +247,81 @@ func TestMergeRequestLifecycleE2E(t *testing.T) {
 	require.Equal(t, 200, code)
 	require.Empty(t, rules["rules"])
 }
+
+// TestMRBranchRuleExactMatchE2E: rules address branches by exact name —
+// the slashy name rides the path's tail segments (release/v2), only that
+// branch is fenced (release and release/v2/feature push freely), and the
+// fence is a ROOT-timeline affair: the subtree face of the same repo
+// (/tree/lib) never consults it.
+func TestMRBranchRuleExactMatchE2E(t *testing.T) {
+	support.NeedGit(t)
+	s, _, _ := support.NewServerPlane(t)
+
+	src := t.TempDir()
+	support.Git(t, src, "init", "-q", "-b", "main", ".")
+	support.Write(t, filepath.Join(src, "readme.md"), "seed\n")
+	support.Write(t, filepath.Join(src, "lib", "a.txt"), "a\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "seed")
+	support.Git(t, src, "push", "-q", s.URL+"/r/sle.git", "main")
+	for _, b := range []string{"release/v2", "release/v3", "hotfix"} {
+		support.Git(t, src, "checkout", "-q", "-b", b, "main")
+		support.Write(t, filepath.Join(src, strings.ReplaceAll(b, "/", "-")+".txt"), "x\n")
+		support.Git(t, src, "add", "-A")
+		support.Git(t, src, "commit", "-qm", b)
+		support.Git(t, src, "push", "-q", s.URL+"/r/sle.git", b)
+	}
+
+	// The slashy name is the path tail — the rule round-trips verbatim.
+	code, rule := apiCall(t, s, "PUT", "/api/v1/repos/sle/branch-rules/release/v2",
+		map[string]any{"level": "mr-only"})
+	require.Equal(t, 200, code, "%v", rule)
+	require.Equal(t, "release/v2", rule["branch"])
+
+	// Exact match: the ruled branch bounces, the sibling and the plain
+	// neighbor push freely.
+	support.Git(t, src, "checkout", "-q", "release/v2")
+	support.Write(t, filepath.Join(src, "release-v2.txt"), "y\n")
+	support.Git(t, src, "commit", "-qam", "bump")
+	out, err := support.GitTry(src, "push", s.URL+"/r/sle.git", "release/v2")
+	require.Error(t, err, "the ruled branch must bounce: %s", out)
+	require.Contains(t, out, "mr-only: merge via a merge request")
+
+	support.Git(t, src, "checkout", "-q", "release/v3")
+	support.Write(t, filepath.Join(src, "release-v3.txt"), "y\n")
+	support.Git(t, src, "commit", "-qam", "bump")
+	support.Git(t, src, "push", "-q", s.URL+"/r/sle.git", "release/v3")
+	support.Git(t, src, "checkout", "-q", "hotfix")
+	support.Write(t, filepath.Join(src, "hotfix.txt"), "y\n")
+	support.Git(t, src, "commit", "-qam", "bump")
+	support.Git(t, src, "push", "-q", s.URL+"/r/sle.git", "hotfix")
+
+	// The fence is root-timeline only: mr-only on main fences the root face
+	// but the subtree face of the same repo pushes freely (the subtree owns
+	// its own timelines; the woven root view derives, no root CAS happens).
+	code, res := apiCall(t, s, "PUT", "/api/v1/repos/sle/branch-rules/main",
+		map[string]any{"level": "mr-only"})
+	require.Equal(t, 200, code, "%v", res)
+	sub := support.CloneRepo(t, s, s.TreeURL("sle", "lib"))
+	support.Write(t, filepath.Join(sub, "a.txt"), "a-sub\n")
+	support.Git(t, sub, "commit", "-qam", "subtree edit")
+	support.Git(t, sub, "push", "-q", "origin", "main")
+	// The adoption moved the advertised root tip — rebase first so the
+	// direct attempt is fast-forward-clean and actually reaches the gate
+	// (otherwise git's own client-side check rejects before any command).
+	support.Git(t, src, "checkout", "-q", "main")
+	support.Git(t, src, "pull", "--rebase", "-q", s.URL+"/r/sle.git", "main")
+	support.Write(t, filepath.Join(src, "readme.md"), "direct\n")
+	support.Git(t, src, "commit", "-qam", "root direct attempt")
+	out, err = support.GitTry(src, "push", s.URL+"/r/sle.git", "main")
+	require.Error(t, err, "the root face stays fenced: %s", out)
+	require.Contains(t, out, "mr-only: merge via a merge request")
+
+	// A slashy rule deletes by the same tail form.
+	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/sle/branch-rules/release/v2", nil)
+	require.Equal(t, 200, code, "%v", res)
+	support.Git(t, src, "checkout", "-q", "release/v2")
+	support.Write(t, filepath.Join(src, "release-v2.txt"), "z\n")
+	support.Git(t, src, "commit", "-qam", "after delete")
+	support.Git(t, src, "push", "-q", s.URL+"/r/sle.git", "release/v2")
+}

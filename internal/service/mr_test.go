@@ -6,6 +6,8 @@ package service
 // and the reserve-land-finalize exclusivity two racing merges run through.
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -397,4 +399,191 @@ func TestMergeBranchesSourceBehindTarget(t *testing.T) {
 	require.Equal(t, base, ci.Parents[1])
 	files := treeFiles(t, s, "r", ci.Tree)
 	require.Equal(t, "2\n", files["g"])
+}
+
+// racingMeta lands a concurrent writer on the watched timeline between the
+// merger's head read and its landing CAS — the exact race the CAS fails
+// closed on (a sequential test cannot produce it; the wrapper injects it).
+// The capability interfaces embed so the service's type assertions
+// (MRStore, BranchRuleStore) keep finding a store through the wrapper.
+type racingMeta struct {
+	meta.MetaStore
+	meta.MRStore
+	meta.BranchRuleStore
+	watch   model.Timeline
+	intrude model.OID
+	fired   bool
+}
+
+func (m *racingMeta) CASHead(ctx context.Context, tl model.Timeline, expected, next model.OID) error {
+	if tl == m.watch && !m.fired {
+		m.fired = true
+		if err := m.MetaStore.CASHead(ctx, tl, expected, m.intrude); err != nil {
+			return err
+		}
+	}
+	return m.MetaStore.CASHead(ctx, tl, expected, next)
+}
+
+// TestMRMergeTargetMovedRollsBackAndRetries: a target that moves between
+// the merge's head read and its CAS bounces as "moved — retry", the
+// reservation rolls back to open, nothing lands, and the retry re-derives
+// the same content over the moved head.
+func TestMRMergeTargetMovedRollsBackAndRetries(t *testing.T) {
+	s := newService(t)
+	ctx := context.Background()
+	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	feat := mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	// A commit that exists but is NOT on main — the racer lands it while the
+	// merge is between its head read and its CAS (a disjoint file, so the
+	// retry stays clean).
+	racer := mrBranch(t, s, "r", "racer", base, map[string]string{"h": "3\n"}, "concurrent writer")
+
+	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	require.NoError(t, err)
+
+	real := s.Meta
+	s.Meta = &racingMeta{MetaStore: real, MRStore: real.(meta.MRStore), BranchRuleStore: real.(meta.BranchRuleStore),
+		watch: model.Timeline{Repo: "r", Anchor: model.RootAnchor, Name: "main"}, intrude: racer}
+
+	var nm *ErrMRNotMergeable
+	_, err = s.MergeMR(ctx, "r", mr.IID, "bob", "", 1)
+	require.ErrorAs(t, err, &nm)
+	require.Contains(t, nm.Reason, "moved")
+
+	// The reservation rolled back — still open, the racer owns the head.
+	got, err := s.MRByIIDDie(ctx, mr.IID)
+	require.NoError(t, err)
+	require.Equal(t, meta.MRStateOpen, got.State)
+	require.Empty(t, got.MergeCommit)
+	require.Equal(t, racer, s.branchHeadOrDie(t, "r", "main"))
+
+	// The retry re-derives over the moved head: racer is parent 1 now.
+	s.Meta = real
+	merged, err := s.MergeMR(ctx, "r", mr.IID, "bob", "", 2)
+	require.NoError(t, err)
+	require.Equal(t, meta.MRStateMerged, merged.State)
+	raw := s.branchHeadOrDie(t, "r", "main")
+	ci, err := s.Objects.CommitInfo("r", raw)
+	require.NoError(t, err)
+	require.Len(t, ci.Parents, 2)
+	require.Equal(t, racer, ci.Parents[0], "the retry merged onto the moved head")
+	require.Equal(t, feat, ci.Parents[1])
+	files := treeFiles(t, s, "r", ci.Tree)
+	require.Equal(t, "3\n", files["h"], "the racer's content survives the retry")
+}
+
+// failingFinalize drops exactly one finalize transition on the floor — the
+// store hiccup that opens the documented crash window (state=merged, the
+// ledger never filled in).
+type failingFinalize struct {
+	meta.MetaStore
+	meta.MRStore
+	meta.BranchRuleStore
+}
+
+func (m *failingFinalize) TransitionMR(ctx context.Context, repo string, iid int64, from string, patch func(*meta.MRInfo)) (meta.MRInfo, error) {
+	if from == meta.MRStateMerged {
+		return meta.MRInfo{}, fmt.Errorf("store hiccup")
+	}
+	return m.MRStore.TransitionMR(ctx, repo, iid, from, patch)
+}
+
+// TestMRFinalizeFailureWindow pins the honest window (docs/design/
+// merge-requests.md §边界): the ref moved and the merge stands, the error
+// says both facts, and the ledger holds merged with an empty merge_commit
+// — never a silent success, never a phantom landing.
+func TestMRFinalizeFailureWindow(t *testing.T) {
+	s := newService(t)
+	ctx := context.Background()
+	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	require.NoError(t, err)
+
+	real := s.Meta
+	s.Meta = &failingFinalize{MetaStore: real, MRStore: real.(meta.MRStore), BranchRuleStore: real.(meta.BranchRuleStore)}
+	_, err = s.MergeMR(ctx, "r", mr.IID, "bob", "", 1)
+	s.Meta = real
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "finalizing")
+
+	// The merge itself stands on the ref; the ledger tells the truth about
+	// what it does not know.
+	raw := s.branchHeadOrDie(t, "r", "main")
+	ci, err := s.Objects.CommitInfo("r", raw)
+	require.NoError(t, err)
+	require.Len(t, ci.Parents, 2, "the landing happened")
+	got, err := s.MRByIIDDie(ctx, mr.IID)
+	require.NoError(t, err)
+	require.Equal(t, meta.MRStateMerged, got.State)
+	require.Empty(t, got.MergeCommit, "the window: merged with no recorded commit")
+	require.Empty(t, got.MergedBy)
+}
+
+// TestMRDeletedSourceBranch: a source branch deleted after open (a push of
+// :feat) — the detail answers honestly unmergeable rather than erroring
+// (the record is the shareable truth), and the merge bounces with the
+// branch sentinel, rolled back to open.
+func TestMRDeletedSourceBranch(t *testing.T) {
+	s := newService(t)
+	ctx := context.Background()
+	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	featHead := mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	require.NoError(t, err)
+
+	// Deletion is the zero-head CAS (the receive-pack form).
+	require.NoError(t, s.Meta.CASHead(ctx, model.Timeline{Repo: "r", Anchor: model.RootAnchor, Name: "feat"}, featHead, ""))
+
+	view, err := s.MRDetail(ctx, "r", mr.IID)
+	require.NoError(t, err, "the detail must not error on a deleted source")
+	require.Equal(t, meta.MRStateOpen, view.State)
+	require.Zero(t, view.SourceTip)
+	require.False(t, view.Mergeable)
+
+	_, err = s.MergeMR(ctx, "r", mr.IID, "bob", "", 1)
+	require.ErrorIs(t, err, ErrBranchMissing)
+	got, err := s.MRByIIDDie(ctx, mr.IID)
+	require.NoError(t, err)
+	require.Equal(t, meta.MRStateOpen, got.State, "the failed merge rolls back")
+}
+
+// TestMRConcurrentMergeVsClose: the optimistic gate gives the merge and
+// the close exactly one winner, and the ledger agrees with the refs — a
+// merged winner moved the head and filled the record, a closed winner
+// touched nothing.
+func TestMRConcurrentMergeVsClose(t *testing.T) {
+	for round := 0; round < 3; round++ {
+		s := newService(t)
+		ctx := context.Background()
+		repo := fmt.Sprintf("r%d", round)
+		base := mrBranch(t, s, repo, "main", "", map[string]string{"f": "1\n"}, "seed")
+		mrBranch(t, s, repo, "feat", base, map[string]string{"g": "2\n"}, "feat")
+		mr, err := s.OpenMR(ctx, repo, "feat", "main", "t", "", "alice")
+		require.NoError(t, err)
+		before := s.branchHeadOrDie(t, repo, "main")
+
+		var wg sync.WaitGroup
+		var mergeErr, closeErr error
+		wg.Add(2)
+		go func() { defer wg.Done(); _, mergeErr = s.MergeMR(ctx, repo, mr.IID, "bob", "", 1) }()
+		go func() { defer wg.Done(); _, closeErr = s.CloseMR(ctx, repo, mr.IID, 2) }()
+		wg.Wait()
+
+		require.True(t, (mergeErr == nil) != (closeErr == nil),
+			"exactly one winner: merge=%v close=%v", mergeErr, closeErr)
+
+		st := s.Meta.(meta.MRStore)
+		got, err := st.MRByIID(ctx, repo, mr.IID)
+		require.NoError(t, err)
+		if mergeErr == nil {
+			require.Equal(t, meta.MRStateMerged, got.State)
+			require.NotEmpty(t, got.MergeCommit)
+			require.NotEqual(t, before, s.branchHeadOrDie(t, repo, "main"), "the merge moved the ref")
+		} else {
+			require.Equal(t, meta.MRStateClosed, got.State)
+			require.Equal(t, before, s.branchHeadOrDie(t, repo, "main"), "a closed winner touches no ref")
+		}
+	}
 }
