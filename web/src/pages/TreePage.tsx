@@ -1,14 +1,15 @@
 // TreePage.tsx — the code browser: one lazy directory level at a time
 // (GET /api/v1/tree) with breadcrumbs and a branch switcher; selecting a
-// file shows its content (BlobView) with a blame entry point.
-import { useQuery } from "@tanstack/react-query";
+// file opens the FilePanel (plain view, the Monaco editor view, and the
+// online edit that rides the server-side assembly) with a blame entry.
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, qs } from "../api/client";
 import { branchesOf, listRefs } from "../api/gitrefs";
 import type { TreeResponse } from "../api/types";
-import { BlobView } from "../components/Blob";
 import { FileIcon } from "../components/FileIcon";
+import { FilePanel } from "../components/FilePanel";
 import { ErrorBox, Pill, Spinner, sizeStr } from "../components/ui";
 
 interface ResolveResult {
@@ -20,10 +21,12 @@ interface ResolveResult {
 export function TreePage(): ReactNode {
   const { repo = "", "*": splat = "" } = useParams();
   const [params, setParams] = useSearchParams();
+  const qc = useQueryClient();
   const path = splat.replace(/^\/+|\/+$/g, "");
   const refs = useQuery({ queryKey: ["refs", repo], queryFn: () => listRefs(repo), retry: false });
   const branches = branchesOf(refs.data || { refs: [], capabilities: "", defaultBranch: "" });
   const ref = params.get("ref") || refs.data?.defaultBranch || branches[0]?.name || "";
+  const headOid = branches.find((b) => b.name === ref)?.oid || "";
 
   const tree = useQuery({
     queryKey: ["tree", repo, ref, path],
@@ -144,7 +147,21 @@ export function TreePage(): ReactNode {
               {blob.isPending && <Spinner label="loading file…" />}
               {blob.isError && <ErrorBox error={blob.error} />}
               {blob.isSuccess && (
-                <BlobView name={crumbs[crumbs.length - 1] || ""} bytes={new Uint8Array(blob.data as ArrayBuffer)} size={resolved.data.size} />
+                <FilePanel
+                  repo={repo}
+                  branch={ref}
+                  headOid={headOid}
+                  path={path}
+                  name={crumbs[crumbs.length - 1] || ""}
+                  bytes={new Uint8Array(blob.data as ArrayBuffer)}
+                  size={resolved.data.size}
+                  onSaved={() => {
+                    qc.invalidateQueries({ queryKey: ["refs", repo] });
+                    qc.invalidateQueries({ queryKey: ["resolve", repo] });
+                    qc.invalidateQueries({ queryKey: ["object", repo] });
+                    qc.invalidateQueries({ queryKey: ["tree", repo] });
+                  }}
+                />
               )}
             </>
           )}
