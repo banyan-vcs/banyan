@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 
+	gmysql "github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -294,10 +296,36 @@ func (m *MemoryMetaStore) DeleteBranchRule(_ context.Context, repo, branch strin
 
 // --- SQL implementation (sqlite / mysql / postgres share it) ---
 
-// mrCreateTries bounds the CreateMR unique-key race retry: IID allocation
-// is MAX+1 under the write serialization, so a genuine collision needs a
-// concurrent mint that won the race — one retry is plenty, three is generous.
-const mrCreateTries = 3
+// mrCreateTries bounds the CreateMR allocation retry. IID allocation is
+// MAX+1 under write serialization, so every collision is a concurrent mint
+// that won the race — under bursty contention (eight creators at once,
+// the conformance matrix) each loser needs one try per already-lost round,
+// and the MVCC backends may also surface a deadlock that costs a round.
+const mrCreateTries = 10
+
+// mrAllocationRetryable reports whether a failed CreateMR try was the
+// allocation protocol's own collision and can simply run again: the lost
+// MAX+1 race (unique key) or the MVCC lock contention it provokes —
+// MySQL deadlock 1213 / lock-wait 1205, PostgreSQL deadlock 40P01 /
+// serialization 40001 (the pg unique violation 23505 joins belt-and-braces;
+// the translator already maps it to ErrDuplicatedKey).
+func mrAllocationRetryable(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var my *gmysql.MySQLError
+	if errors.As(err, &my) && (my.Number == 1213 || my.Number == 1205) {
+		return true
+	}
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		switch pg.Code {
+		case "40P01", "40001", "23505":
+			return true
+		}
+	}
+	return false
+}
 
 func (s *SQLMetaStore) CreateMR(ctx context.Context, in MRInfo) (MRInfo, error) {
 	if err := in.Valid(); err != nil {
@@ -319,13 +347,13 @@ func (s *SQLMetaStore) CreateMR(ctx context.Context, in MRInfo) (MRInfo, error) 
 			in.IID = iid + 1
 			return txq(tx).Create(&mrRow{MRInfo: in}).Error
 		})
-		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			continue // lost the MAX+1 race; recompute
-		}
-		if err != nil {
+		if err != nil && !mrAllocationRetryable(err) {
 			return MRInfo{}, err
 		}
-		return in, nil
+		if err == nil {
+			return in, nil
+		}
+		// lost the MAX+1 race or the lock contention it provokes; recompute
 	}
 	return MRInfo{}, fmt.Errorf("mr iid allocation raced %d times", mrCreateTries)
 }
