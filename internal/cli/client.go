@@ -299,7 +299,9 @@ func (c *client) getObjectsBatch(repo string, oids []string) (map[string][]byte,
 }
 
 func decodeResp(resp *http.Response, out any) error {
-	if resp.StatusCode != http.StatusOK {
+	// The JSON face's success vocabulary is 200 and 201 Created (merge
+	// request creation answers 201) — anything else carries the envelope.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return envelopeErr(resp)
 	}
 	if out == nil {
@@ -573,6 +575,13 @@ func (c *client) mrOpen(repo, source, target, title string) (*mrInfo, error) {
 	body := map[string]string{"source": source, "target": target, "title": title}
 	if err := c.post("/api/v1/repos/"+url.PathEscape(repo)+"/merge-requests", body, &out); err != nil {
 		return nil, err
+	}
+	// The server owns no web origin — the client knows the host it talks
+	// to, so the shareable URL (/r/<repo>/-/merge_requests/<iid>,
+	// docs/design/merge-requests.md §4) is derived here when the response
+	// carries none.
+	if out.URL == "" && out.IID > 0 {
+		out.URL = c.base + "/r/" + url.PathEscape(repo) + "/-/merge_requests/" + strconv.FormatInt(out.IID, 10)
 	}
 	return &out, nil
 }
