@@ -148,3 +148,102 @@ func TestMergeRequestConflictE2E(t *testing.T) {
 	require.Equal(t, 200, code, "%v", merged)
 	require.Equal(t, "merged", merged["state"])
 }
+
+// TestMergeRequestLifecycleE2E: the state machine over real HTTP — close
+// and reopen, the terminal gates, the shareable-record semantics (unknown
+// and malformed IIDs), approval withdrawal, and the branch-rule CRUD the
+// settings page rides. The dev plane has one identity ("local"), so the
+// author-self-approval refusal is the approval story here; the
+// multi-identity matrix lives in integration/authz.
+func TestMergeRequestLifecycleE2E(t *testing.T) {
+	support.NeedGit(t)
+	s, _, _ := support.NewServerPlane(t)
+
+	src := t.TempDir()
+	support.Git(t, src, "init", "-q", "-b", "main", ".")
+	support.Write(t, filepath.Join(src, "readme.md"), "seed\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "seed")
+	support.Git(t, src, "push", "-q", s.URL+"/r/mrl.git", "main")
+	support.Git(t, src, "checkout", "-q", "-b", "feat")
+	support.Write(t, filepath.Join(src, "feat.txt"), "feat\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "feat")
+	support.Git(t, src, "push", "-q", s.URL+"/r/mrl.git", "feat")
+
+	// Unknown and malformed IIDs answer 404 / 400 — the shareable-record
+	// semantics of a permanent URL space.
+	code, res := apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests/99", nil)
+	require.Equal(t, 404, code, "%v", res)
+	require.Contains(t, fmt.Sprint(res["error"]), "NOT_FOUND")
+	code, res = apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests/abc", nil)
+	require.Equal(t, 400, code, "%v", res)
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/merge", nil)
+	require.Equal(t, 404, code, "merging an unknown MR is 404, not 409", "%v", res)
+
+	code, mr := apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests",
+		map[string]string{"source": "feat", "target": "main", "title": "lifecycle"})
+	require.Equal(t, 201, code, "%v", mr)
+
+	// The dev plane's single identity is the author: self-approval bounces,
+	// and the withdrawal is an idempotent no-op that never 404s.
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/approve", nil)
+	require.Equal(t, 400, code, "%v", res)
+	require.Contains(t, fmt.Sprint(res["error"]), "author")
+	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/mrl/merge-requests/1/approve", nil)
+	require.Equal(t, 200, code, "un-approve is idempotent", "%v", res)
+
+	// Close: state only, filtered in the list; the merge needs open.
+	code, closed := apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/close", nil)
+	require.Equal(t, 200, code, "%v", closed)
+	require.Equal(t, "closed", closed["state"])
+	code, list := apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests?state=closed", nil)
+	require.Equal(t, 200, code)
+	require.Len(t, list["merge_requests"], 1)
+	code, list = apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests?state=open", nil)
+	require.Equal(t, 200, code)
+	require.Empty(t, list["merge_requests"])
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/merge", nil)
+	require.Equal(t, 400, code, "%v", res)
+	require.Contains(t, fmt.Sprint(res["error"]), "closed")
+
+	// Reopen, then the merge lands; merged is terminal for close/reopen.
+	code, reopened := apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/reopen", nil)
+	require.Equal(t, 200, code, "%v", reopened)
+	require.Equal(t, "open", reopened["state"])
+	code, merged := apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/merge", nil)
+	require.Equal(t, 200, code, "%v", merged)
+	require.Equal(t, "merged", merged["state"])
+	require.NotEmpty(t, merged["merge_commit"])
+
+	code, view := apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests/1", nil)
+	require.Equal(t, 200, code)
+	require.Equal(t, "merged", view["state"])
+	require.Equal(t, false, view["mergeable"], "the merged detail is the record, not a live recompute")
+	require.Equal(t, "local", view["merged_by"])
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/close", nil)
+	require.Equal(t, 409, code, "%v", res)
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/reopen", nil)
+	require.Equal(t, 409, code, "a merged MR never reopens", "%v", res)
+
+	// Branch-rule CRUD (the settings page's surface): the mr-only default
+	// approval count kicks in when the caller omits it, a bad level bounces,
+	// and delete is idempotent.
+	code, rule := apiCall(t, s, "PUT", "/api/v1/repos/mrl/branch-rules/release",
+		map[string]any{"level": "mr-only"})
+	require.Equal(t, 200, code, "%v", rule)
+	require.Equal(t, float64(1), rule["approvals"], "mr-only defaults to one approval")
+	code, res = apiCall(t, s, "PUT", "/api/v1/repos/mrl/branch-rules/bad",
+		map[string]any{"level": "nope"})
+	require.Equal(t, 400, code, "%v", res)
+	code, rules := apiCall(t, s, "GET", "/api/v1/repos/mrl/branch-rules", nil)
+	require.Equal(t, 200, code)
+	require.Len(t, rules["rules"], 1)
+	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/mrl/branch-rules/release", nil)
+	require.Equal(t, 200, code, "%v", res)
+	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/mrl/branch-rules/release", nil)
+	require.Equal(t, 200, code, "rule delete is idempotent", "%v", res)
+	code, rules = apiCall(t, s, "GET", "/api/v1/repos/mrl/branch-rules", nil)
+	require.Equal(t, 200, code)
+	require.Empty(t, rules["rules"])
+}

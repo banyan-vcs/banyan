@@ -42,6 +42,14 @@ var ErrMRUnknown = errors.New("merge request unknown")
 // different state (a concurrent merge/close got there first).
 var ErrMRState = errors.New("merge request state changed")
 
+// ErrMRInvalid and ErrBranchRuleInvalid mark store-level validation
+// refusals — client-input problems, not server faults, so the JSON surface
+// translates them to INVALID_ARG rather than INTERNAL.
+var (
+	ErrMRInvalid         = errors.New("invalid merge request")
+	ErrBranchRuleInvalid = errors.New("invalid branch rule")
+)
+
 // MRInfo is one merge request. Identity is (Repo, IID) — the IID is
 // allocated per repository, monotonic, and never reused, so merged and
 // closed requests keep shareable URLs forever.
@@ -63,16 +71,16 @@ type MRInfo struct {
 
 func (m MRInfo) Valid() error {
 	if m.Repo == "" || m.Author == "" {
-		return fmt.Errorf("mr: repo and author required")
+		return fmt.Errorf("%w: repo and author required", ErrMRInvalid)
 	}
 	if m.Source == "" || m.Target == "" || m.Source == m.Target {
-		return fmt.Errorf("mr: distinct source and target branches required")
+		return fmt.Errorf("%w: distinct source and target branches required", ErrMRInvalid)
 	}
 	if m.Title == "" {
-		return fmt.Errorf("mr: title required")
+		return fmt.Errorf("%w: title required", ErrMRInvalid)
 	}
 	if m.State != MRStateOpen && m.State != MRStateMerged && m.State != MRStateClosed {
-		return fmt.Errorf("mr: state must be open|merged|closed")
+		return fmt.Errorf("%w: state must be open|merged|closed", ErrMRInvalid)
 	}
 	return nil
 }
@@ -116,21 +124,21 @@ type BranchRule struct {
 
 func (r BranchRule) Valid() error {
 	if r.Repo == "" || r.Branch == "" {
-		return fmt.Errorf("branch rule: repo and branch required")
+		return fmt.Errorf("%w: repo and branch required", ErrBranchRuleInvalid)
 	}
 	if strings.ContainsAny(r.Branch, " \t\n") || strings.HasPrefix(r.Branch, "-") {
-		return fmt.Errorf("branch rule: malformed branch name")
+		return fmt.Errorf("%w: malformed branch name", ErrBranchRuleInvalid)
 	}
 	switch r.Level {
 	case RuleProtected, RuleMROnly:
 	default:
-		return fmt.Errorf("branch rule: level must be protected|mr-only")
+		return fmt.Errorf("%w: level must be protected|mr-only", ErrBranchRuleInvalid)
 	}
 	if r.Approvals < 0 || r.Approvals > 9 {
-		return fmt.Errorf("branch rule: approvals must be 0..9")
+		return fmt.Errorf("%w: approvals must be 0..9", ErrBranchRuleInvalid)
 	}
 	if r.Level == RuleMROnly && r.Approvals == 0 {
-		return fmt.Errorf("branch rule: mr-only needs at least one approval")
+		return fmt.Errorf("%w: mr-only needs at least one approval", ErrBranchRuleInvalid)
 	}
 	return nil
 }

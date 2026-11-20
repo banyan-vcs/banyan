@@ -8,13 +8,13 @@
 | 子包 | 文件（节选） | 功能域 |
 |---|---|---|
 | `support/` | support.go | 共享基建：进程内服务端装配、git CLI 封装、种子/克隆/断言辅助 + 跨包助手（GitDated/GitV2/NewStack） |
-| `basic/` | transport_basic、protocol_compat | 基础传输（T1–T4）与协议兼容矩阵（T13–T16） |
+| `basic/` | transport_basic、protocol_compat、mr | 基础传输（T1–T4）、协议兼容矩阵（T13–T16）与 MR e2e（T99/T100/T103） |
 | `streaming/` | streaming_{clone,zoo,deepen}、budget、gzbody、fullclone、import、clone_serving | 流式服务与内存链（T48/T53/T55/T57/T58/T59/T82/T96） |
 | `protocol/` | push_guards、force_push、workflow、protocol_v2、packing_efficiency、hooks | 写路径协议面：守卫/收敛/force-push、v2 命令面、打包效率、服务端 hook（T8b/T9/T19/T29/T30/T34/T35/T37/T41/T42/T43/T44/T47） |
 | `subtree/` | subtree_collaboration、projection_refs、subtrees_api、weave_{consistency,provenance} | 子树协作语义与织入一致性（T5/T7/T8/T10/T18/T52/T78/T84/T88/T89/T90） |
 | `ha/` | ha_cluster、refs_and_repack、persistence、storage_modes、memory_chain | HA 集群/存储模式/持久化/小内存链（T17/T20/T21/T23–T26/T31/T36/T40/T46） |
-| `authz/` | auth、auth_tokens、ssh | 授权矩阵、token 细粒度、SSH 传输（T38/T38b/T39/T79–T81） |
-| `cli/` | cli_workspace、cli_snapshot、cli_stack、bigblob、login、sync | 薄工作区 CLI 全家（T22*/T91/T92/T93/T97/T98） |
+| `authz/` | auth、auth_tokens、ssh、mr | 授权矩阵、token 细粒度、SSH 传输（T38/T38b/T39/T79–T81）、MR 保护矩阵（T101/T102/T104） |
+| `cli/` | cli_workspace、cli_snapshot、cli_stack、bigblob、login、sync、mr | 薄工作区 CLI 全家（T22*/T91/T92/T93/T97/T98/T105） |
 | `gitalyrpc/` | 17 个 gitaly_*_test.go | gitaly gRPC 兼容面（T60–T76） |
 | `gitlab/` | gitlab_demo、gitlab_hook、gitlab_pushopts | GitLab 活体集成（T83/T85/T86/T87） |
 | `ops/` | rpc_log、console、ops_plane、metrics | RPC 读面/控制面/可观测（T11/T50/T54 + metrics） |
@@ -125,10 +125,14 @@
 | T91 | `TestCLISnapshot` | **CLI 快照 checkpoint/restore**（docs/client/cli.md §3.7，2026-11-08）：干净树 no-op；M/D/?? 三态存档**不动工作树**（非 stash 式回退）；ls 带 message；脏树 apply 拒（exit 1）；`--force` 逐字节还原（脏字节取镜像、删除文件自缓存复活、untracked 归位，status 回到快照脏集）；落地快照态后**清空缓存**再干净树 apply——干净文件经服务端回填 + 基漂移提示（manifest 拨回旧视图）；drop 后 ls 空、apply 缺名 exit 2 |
 | T92 | `TestCLIStack` | **CLI 栈式变更**（docs/client/cli.md §3.8，2026-11-08）：路径分片 push 只回退选中路径（untracked 捕获+删除）；全量 push 后树净；ls oldest-first；pop 顶条写回离栈；`stack commit` 逐条落台**写回工作树**（真 git 克隆交叉验证：subject 顺序、untracked 落成 tracked、fsck、栈 blob 库回收）；peer 推动头后 commit→exit 1 条目原样保留→pull→重试全落地（路径级重放无需 rebase） |
 | T93 | `TestSyncSubtree` | **子树→根显式对齐 sync**（docs/design/data-model.md §12 / docs/client/cli.md §3.9，2026-11-08）：真分歧夹具=TOCTOU 竞态确定性模拟（对象搭 aux 分支推送入库+root 时间线直 CAS，夹具注释说明守卫无法顺序构造该状态）→ sync 重放 1 提交+pull 物化两侧；**Base 推进到同步时刻根头**；根视图 git 克隆交叉验证（内容两侧齐全、每 subject 恰一次、fsck）——/.woven 重置防旧折痕重复是该测试钉住的修复；吸收孪生（peer pull 带走本地内容）→ uptodate；同文件双改 → exit 1 具名路径、时间线头与 Base 不动；merge 链 → exit 2（SYNC_UNSUPPORTED）；根工作区 → exit 2 |
-| T94 | `TestMergeRequestE2E` | **MR 功能 e2e**（docs/design/merge-requests.md，2026-11-20）：真 git 推 main+feat → API 开 MR → 详情活算 mergeable → 合并落地；**织入事实钉死**——通告头为折叠合成（重线性化），MR 记录 advertised OID，fresh clone 可解析且双文件齐全 |
-| T95 | `TestMergeRequestConflictE2E` | **MR 冲突回路**：同文件双改 → 详情 conflicts 带路径、合并 409 CONFLICT_MR、状态回 open；source 侧改为与 target 同内容（同内容修改=干净合并）后合并落地 |
-| T96 | `TestMRBranchProtection` | **mr-only 保护矩阵**（authz 面，static policy）：规则落地后 admin 的 git 直推/ref CAS/commit API 三路全拒（mr-only: merge via a merge request）；作者自批 400、审批不足 409、他人批后 developer 合并成功；合并后规则仍拦下一次直推 |
-| T97 | `TestMRProtectedTargetNeedsOwner` | **protected 目标 MR 合并门槛**：快照保护 main（无规则）下 developer 合并 403、admin 合并 200——合并门镜像直推语义（分支感知 CanPush） |
+| T99 | `TestMergeRequestE2E` | **MR 功能 e2e**（docs/design/merge-requests.md，2026-11-20）：真 git 推 main+feat → API 开 MR → 详情活算 mergeable → 合并落地；**织入事实钉死**——通告头为折叠合成（重线性化），MR 记录 advertised OID，fresh clone 可解析且双文件齐全 |
+| T100 | `TestMergeRequestConflictE2E` | **MR 冲突回路**：同文件双改 → 详情 conflicts 带路径、合并 409 CONFLICT_MR、状态回 open；source 侧改为与 target 同内容（同内容修改=干净合并）后合并落地 |
+| T101 | `TestMRBranchProtection` | **mr-only 保护矩阵**（authz 面，static policy）：规则落地后 admin 的 git 直推/ref CAS/commit API 三路全拒（mr-only: merge via a merge request）；作者自批 400、审批不足 409、他人批后 developer 合并成功；合并后规则仍拦下一次直推 |
+| T102 | `TestMRProtectedTargetNeedsOwner` | **protected 目标 MR 合并门槛**：快照保护 main（无规则）下 developer 合并 403、admin 合并 200——合并门镜像直推语义（分支感知 CanPush） |
+| T103 | `TestMergeRequestLifecycleE2E` | **MR 生命周期 HTTP 全回路**（2026-11-20）：未知/畸形 IID 404/400、合并未知 MR 404；自批 400、撤批幂等 200；close 后列表过滤+合并 400、reopen 恢复、合并落地后 close/reopen 皆 409（终态）；详情 merged=记录非活算（mergeable 恒 false）；规则 CRUD——mr-only 缺省审批数=1、坏 level **400**（连同生产修复：store 校验错曾 500 INTERNAL，ErrMRInvalid/ErrBranchRuleInvalid 哨兵入 Translate INVALID_ARG） |
+| T104 | `TestMRRuleGatesAndWithdrawal` | **规则管理门槛+活审批闸**（authz 面）：developer 写规则 403/删规则 403、成员读 200；规则按分支精确作用域——feat 照常推、main 更新与**删除**皆拒；审批撤回后合并 409（闸是活的）再批即落地；合并后规则仍在仍拦 |
+| T105 | `TestCLIMR` | **CLI mr 全子命令真栈**（docs/client/cli.md §3.10）：thin 工作区 open（**可分享 URL 客户端侧派生**——连带修复响应无 url 字段时打印空 URL；及 POST 201 Created 被 decodeResp 当错误两处生产修复）→ ls 状态过滤 → show 活算/落地记录 → 自批 exit 2 → close/reopen/merge，打印的 OID ≡ ls-remote 通告头 ≡ fresh clone 内容；usage/未知 MR exit 2 |
+| T106 | service `TestMRCloseReopenLifecycle` / `TestMRApprovalWithdrawal` / `TestMRMergeTakesCurrentTip` / `TestMRDetailRuleEcho` / `TestMergeBranchesSourceBehindTarget` / `TestMergeBranchesMissingBranch`（扩展） | **service 层 MR 电池补全**（2026-11-20）：close/reopen 状态机（非 open 态合并/审批/跳转全拒、merged 终态）；审批撤回使计数闸复燃；**合并取当时 tip**（SourceHead 留 open 时值、详情答活 tip、落地树带后续提交）且审批不因 source 前进重置；详情回显规则（level+所需审批数）；source 无独有提交仍落显式双亲合并（--no-ff 形态）；MergeBranches 缺分支哨兵 |
 
 | T43 | `TestForcePushRevivalRejected` / `…Recovery` / `TestRootForcePushViewMonotonic` | **子树 force push 回滚守卫**（docs/gateway/git-compat.md §6a）：wire 无 force 信号、old 恒=广告值——回滚/重写丢他人内容的 force push 以连续 push 形态到达；四种形态（adopt/收敛 × 纯回滚/回滚+己方提交）真实 git 客户端全拒绝（non-fast-forward: would rewind，旧代码上实证全部 forced-update 落地）；拒后 pull --rebase 恢复路线畅通；根仓库 force push 放行（git 原生 verbatim）但织入视图单调——root-local 内容与目录时间线内容均不回魂 |
 | T44 | `TestForcePushOptIn` | **仓库级 force push 开关 + 织入重建**（docs/gateway/git-compat.md §6a）：PUT /api/v1/repos/&lt;repo&gt;/force-push 运行时生效——关（默认）回滚仍拒（T43 语义不回归）；开后回滚链落地（forced update）且 `/.woven` 家族重置全量重织：lib 时间线回滚（a.txt 回退）而**下层 lib/nested 独立时间线内容保留**（时间线边界=回滚边界）、根视图历史**重建**（被回滚提交的织入体从 log 消失、nested 织入保留）、回滚后正常 push 即刻恢复；开关再关守卫重新武装 |

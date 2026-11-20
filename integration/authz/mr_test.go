@@ -147,3 +147,72 @@ func TestMRProtectedTargetNeedsOwner(t *testing.T) {
 	require.Equal(t, 200, code, "%v", merged)
 	require.Equal(t, "merged", merged["state"])
 }
+
+// TestMRRuleGatesAndWithdrawal: the rule surface's rank gates (members
+// read, admins write), the exact-branch scoping of an mr-only rule (other
+// branches push freely, the ruled branch survives deletion), and the live
+// approval bar — a withdrawn approval re-arms the merge refusal.
+func TestMRRuleGatesAndWithdrawal(t *testing.T) {
+	support.NeedGit(t)
+	s, _ := newAuthServer(t)
+
+	src := t.TempDir()
+	support.Git(t, src, "init", "-q", "-b", "main", ".")
+	support.Write(t, filepath.Join(src, "f.txt"), "base\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "seed")
+	support.Git(t, src, "push", "-q", credURL(s, "admin", "x", "/r/mrg.git"), "main")
+	support.Git(t, src, "checkout", "-q", "-b", "feat")
+	support.Write(t, filepath.Join(src, "g.txt"), "feat\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "feat")
+	support.Git(t, src, "push", "-q", credURL(s, "admin", "x", "/r/mrg.git"), "feat")
+
+	// Rule management: members read (the settings page renders for them),
+	// only admins write.
+	code, res := mrAPI(t, s, "alice", "a", "PUT", "/api/v1/repos/mrg/branch-rules/main",
+		map[string]any{"level": "mr-only", "approvals": 1})
+	require.Equal(t, 403, code, "a developer cannot write rules", "%v", res)
+	code, res = mrAPI(t, s, "alice", "a", "DELETE", "/api/v1/repos/mrg/branch-rules/main", nil)
+	require.Equal(t, 403, code, "%v", res)
+	code, rules := mrAPI(t, s, "alice", "a", "GET", "/api/v1/repos/mrg/branch-rules", nil)
+	require.Equal(t, 200, code, "members read the rules", "%v", rules)
+	code, res = mrAPI(t, s, "admin", "x", "PUT", "/api/v1/repos/mrg/branch-rules/main",
+		map[string]any{"level": "mr-only", "approvals": 1})
+	require.Equal(t, 200, code, "%v", res)
+	code, rules = mrAPI(t, s, "admin", "x", "GET", "/api/v1/repos/mrg/branch-rules", nil)
+	require.Equal(t, 200, code)
+	require.Len(t, rules["rules"], 1)
+
+	// Exact-branch scoping: main is fenced (updates AND deletion bounce),
+	// feat pushes freely.
+	support.Git(t, src, "checkout", "-q", "feat")
+	support.Write(t, filepath.Join(src, "g.txt"), "feat2\n")
+	support.Git(t, src, "commit", "-qam", "feat moves")
+	support.Git(t, src, "push", "-q", credURL(s, "admin", "x", "/r/mrg.git"), "feat")
+	out, err := support.GitTry(src, "push", credURL(s, "admin", "x", "/r/mrg.git"), ":main")
+	require.Error(t, err, "deleting an mr-only branch must bounce: %s", out)
+	require.Contains(t, out, "mr-only: merge via a merge request")
+
+	// The live approval bar: approve, withdraw (the count drops), refuse,
+	// re-approve, land.
+	code, mr := mrAPI(t, s, "alice", "a", "POST", "/api/v1/repos/mrg/merge-requests",
+		map[string]string{"source": "feat", "target": "main", "title": "t"})
+	require.Equal(t, 201, code, "%v", mr)
+	code, res = mrAPI(t, s, "bob", "b", "POST", "/api/v1/repos/mrg/merge-requests/1/approve", nil)
+	require.Equal(t, 200, code, "%v", res)
+	code, res = mrAPI(t, s, "bob", "b", "DELETE", "/api/v1/repos/mrg/merge-requests/1/approve", nil)
+	require.Equal(t, 200, code, "%v", res)
+	code, res = mrAPI(t, s, "alice", "a", "POST", "/api/v1/repos/mrg/merge-requests/1/merge", nil)
+	require.Equal(t, 409, code, "the withdrawn approval re-arms the gate", "%v", res)
+	require.Contains(t, errmsg(res), "approval")
+	code, res = mrAPI(t, s, "bob", "b", "POST", "/api/v1/repos/mrg/merge-requests/1/approve", nil)
+	require.Equal(t, 200, code, "%v", res)
+	code, merged := mrAPI(t, s, "alice", "a", "POST", "/api/v1/repos/mrg/merge-requests/1/merge", nil)
+	require.Equal(t, 200, code, "%v", merged)
+	require.Equal(t, "merged", merged["state"])
+
+	// The rule outlives the merge — still listed, still fencing.
+	out, err = support.GitTry(src, "push", credURL(s, "admin", "x", "/r/mrg.git"), "main")
+	require.Error(t, err, "still mr-only after the merge: %s", out)
+}
