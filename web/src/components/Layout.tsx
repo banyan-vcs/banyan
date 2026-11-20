@@ -9,7 +9,7 @@ import { useEffect, type ReactNode } from "react";
 import { BASE_URL } from "../api/client";
 import { useSession } from "../session";
 import { can, useMode } from "../mode";
-import { BranchesIcon, CodeIcon, HistoryIcon, ImportIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon, TokensIcon } from "./icons";
+import { BranchesIcon, CodeIcon, HistoryIcon, ImportIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon, TokensIcon } from "./icons";
 
 export function Layout(): ReactNode {
   const { info } = useSession();
@@ -47,6 +47,7 @@ export function Layout(): ReactNode {
     { to: `${base}/tree`, label: "code", icon: CodeIcon, enabled: can(mode, "code"), active: under(`${base}/tree`) || under(`${base}/blame`) },
     { to: `${base}/history`, label: "history", icon: HistoryIcon, enabled: can(mode, "history"), active: under(`${base}/history`) || under(`${base}/commit`) },
     { to: `${base}/branches`, label: "branches", icon: BranchesIcon, enabled: can(mode, "branches"), active: under(`${base}/branches`) },
+    { to: `${base}/-/merge_requests`, label: "merge requests", icon: MergeIcon, enabled: can(mode, "mergeRequests"), active: under(`${base}/-/merge_requests`) },
     { to: `${base}/subtrees`, label: "subtrees", icon: SubtreesIcon, enabled: can(mode, "subtrees"), active: under(`${base}/subtrees`) },
     { to: `${base}/settings`, label: "settings", icon: SettingsIcon, enabled: can(mode, "settings"), active: under(`${base}/settings`) },
   ].filter((n) => n.enabled);

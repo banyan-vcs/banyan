@@ -130,7 +130,7 @@ export function RepoHomePage(): ReactNode {
           )}
           {defaultBranch && (
             <p className="pad">
-              <Link to={`/r/${repo}/history/${defaultBranch}`}>full history →</Link>
+              <Link to={`/r/${repo}/history?ref=${encodeURIComponent(defaultBranch)}`}>full history →</Link>
             </p>
           )}
         </section>
