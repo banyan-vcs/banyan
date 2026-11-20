@@ -10,8 +10,11 @@ import { ErrorBox, Spinner, shortOid, whenStr } from "../components/ui";
 const PAGE = 30;
 
 export function HistoryPage(): ReactNode {
-  const { repo = "", ref: branch = "" } = useParams();
+  const { repo = "", ref: routeRef = "" } = useParams();
   const [params, setParams] = useSearchParams();
+  // The ref rides ?ref= so branch names with slashes share cleanly (the
+  // :ref path param could never match them).
+  const branch = params.get("ref") || routeRef;
   const pathFilter = params.get("path") || "";
 
   const history = useInfiniteQuery({

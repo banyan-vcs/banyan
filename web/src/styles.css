@@ -459,3 +459,26 @@ button.link {
   font: inherit;
 }
 .breadcrumb { margin-top: -8px; }
+
+/* --- merge requests (docs/design/merge-requests.md) --- */
+.tab-row { display: flex; gap: 6px; margin: 10px 0; }
+.tab {
+  border: 1px solid var(--line); background: none; color: inherit;
+  padding: 3px 12px; border-radius: 14px; cursor: pointer; font: inherit; font-size: 13px;
+}
+.tab.active { background: var(--accent, #2d6a4f); border-color: var(--accent, #2d6a4f); color: #fff; }
+.mr-new { margin: 8px 0 14px; }
+.mr-new summary { cursor: pointer; color: var(--ink-soft); margin-bottom: 6px; }
+.mr-overview { display: grid; gap: 18px; margin-top: 10px; }
+.mr-overview section h3 { margin-bottom: 6px; }
+.act-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.approval-list { margin: 4px 0; padding-left: 18px; }
+.ok-text { color: #2d6a4f; }
+.mr-diff { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
+.mr-diff-file { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.mr-diff-head {
+  display: flex; justify-content: space-between; gap: 10px; width: 100%;
+  padding: 6px 10px; border: none; border-bottom: 1px solid var(--line);
+  background: var(--bg-soft, #f6f8f6); cursor: pointer; font: inherit; text-align: left;
+}
+.mr-diff-file > div { overflow-x: auto; }

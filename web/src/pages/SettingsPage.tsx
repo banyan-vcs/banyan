@@ -1,10 +1,12 @@
 // SettingsPage.tsx — repository administration: size, the force-push
-// switch, rename and a repack trigger (all require the admin rank; a 403
-// downgrades the page to read-only).
+// switch, branch protection rules, rename and a repack trigger (all
+// require the admin rank; a 403 downgrades the page to read-only).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
+import { branchesOf, listRefs } from "../api/gitrefs";
+import { branchRules, deleteBranchRule, putBranchRule } from "../api/mrs";
 import { ErrorBox, Spinner, sizeStr } from "../components/ui";
 
 export function SettingsPage(): ReactNode {
@@ -24,6 +26,30 @@ export function SettingsPage(): ReactNode {
     queryKey: ["force-push", repo],
     queryFn: () => api<{ repo: string; enabled: boolean }>(`/api/v1/repos/${encodeURIComponent(repo)}/force-push`),
     retry: false,
+  });
+  const rules = useQuery({
+    queryKey: ["branch-rules", repo],
+    queryFn: () => branchRules(repo),
+    retry: false,
+  });
+  const refs = useQuery({ queryKey: ["refs", repo], queryFn: () => listRefs(repo), retry: false });
+  const branches = branchesOf(refs.data || { refs: [], capabilities: "", defaultBranch: "" });
+  const [ruleBranch, setRuleBranch] = useState("");
+  const [ruleLevel, setRuleLevel] = useState("mr-only");
+  const [ruleApprovals, setRuleApprovals] = useState(1);
+
+  const putRule = useMutation({
+    mutationFn: () => putBranchRule(repo, ruleBranch, ruleLevel, ruleApprovals),
+    onSuccess: () => {
+      setError("");
+      qc.invalidateQueries({ queryKey: ["branch-rules", repo] });
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
+  const delRule = useMutation({
+    mutationFn: (branch: string) => deleteBranchRule(repo, branch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["branch-rules", repo] }),
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
   });
 
   const setForce = useMutation({
@@ -91,6 +117,78 @@ export function SettingsPage(): ReactNode {
             currently <strong>{force.data.enabled ? "enabled" : "disabled"}</strong>
           </p>
         )}
+      </section>
+
+      <section>
+        <h2>branch protection</h2>
+        <p className="muted">
+          <code>protected</code> keeps the direct-push semantics (owner rank); <code>mr-only</code> accepts no direct
+          push at all — merge requests with the approval count are the only way in.
+        </p>
+        {rules.isPending && <Spinner />}
+        {rules.isSuccess && (rules.data || []).length > 0 && (
+          <table>
+            <thead>
+              <tr>
+                <th>branch</th>
+                <th>level</th>
+                <th>approvals</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {(rules.data || []).map((r) => (
+                <tr key={r.branch}>
+                  <td className="mono">{r.branch}</td>
+                  <td>
+                    <code>{r.level}</code>
+                  </td>
+                  <td>{r.level === "mr-only" ? r.approvals : "—"}</td>
+                  <td>
+                    <button className="btn ghost danger" disabled={delRule.isPending} onClick={() => delRule.mutate(r.branch)}>
+                      clear
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {rules.isSuccess && (rules.data || []).length === 0 && <p className="muted pad">no rules — every branch takes the policy default.</p>}
+        <form
+          className="create-branch"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (ruleBranch) putRule.mutate();
+          }}
+        >
+          <select value={ruleBranch} onChange={(e) => setRuleBranch(e.target.value)}>
+            <option value="">branch…</option>
+            {branches.map((b) => (
+              <option key={b.name} value={b.name}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+          <select value={ruleLevel} onChange={(e) => setRuleLevel(e.target.value)}>
+            <option value="mr-only">mr-only</option>
+            <option value="protected">protected</option>
+          </select>
+          {ruleLevel === "mr-only" && (
+            <input
+              type="number"
+              min={1}
+              max={9}
+              style={{ width: "5em" }}
+              value={ruleApprovals}
+              onChange={(e) => setRuleApprovals(Number(e.target.value) || 1)}
+              title="required approvals"
+            />
+          )}
+          <button className="btn" type="submit" disabled={putRule.isPending || !ruleBranch}>
+            set rule
+          </button>
+        </form>
       </section>
 
       <section>

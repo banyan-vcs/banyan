@@ -105,3 +105,11 @@ export const ImportIcon = (): ReactNode => (
     <path d="M2.5 10.5v1.75A1.25 1.25 0 0 0 3.75 13.5h8.5a1.25 1.25 0 0 0 1.25-1.25V10.5" />
   </Svg>
 );
+
+export const MergeIcon = (): ReactNode => (
+  <Svg>
+    <path d="M2 4h3.5l2 8H13" />
+    <path d="M10.5 9.5 13 12l-2.5 2.5" transform="translate(0 -5)" />
+    <circle cx="13" cy="4" r="1.75" />
+  </Svg>
+);
