@@ -38,6 +38,8 @@ workspace commands (run inside a clone — any subdirectory — or with -C):
   stack push -m <msg> [path...]                               capture dirty paths as a queued changeset
   stack ls | pop | drop <id> | commit [<id>]                  land entries oldest-first via /api/v1/commit
   branch | tag                                                list remote refs
+  mr ls [state] | open <src> <tgt> <title...> | show <iid>    merge-request lifecycle
+  mr approve|merge|close|reopen <iid> [-m msg]               (server-side 3-way merge, approvals)
   repo ls                                                     list server repos (needs a workspace or BANYAN_SERVER)
   import <repo> <url> [--branch b] [--segment-bytes 3G] [--dry-run]
                                                               bulk-migrate a local git repo, segment by segment
@@ -111,6 +113,8 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return runRefsList(wsRoot, rest, stdout, stderr, "refs/tags/")
 	case "repo":
 		return runRepo(wsRoot, rest, stdout, stderr)
+	case "mr":
+		return runMR(wsRoot, rest, stdout, stderr)
 	case "import":
 		return runImport(wsRoot, rest, stdout, stderr)
 	case "help", "-h", "--help":
