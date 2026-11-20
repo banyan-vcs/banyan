@@ -111,6 +111,8 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | blame | `GET /api/v1/blame?repo&rev&path` | History.Blame | **已落地**（2026-11-06；`--line-porcelain` 字节对齐 `git blame`，T81） |
 | cat（非 HEAD rev / 缓存脱靶） | `POST /api/v1/resolve` | Resolve | **已落地**（计划外增补：rev:path → 对象指针） |
 | branch / tag | `GET /api/v1/refs` / `POST /api/v1/refs` | Ref.List / Ref.CAS | **已落地**（POST 限根仓库） |
+| merge requests | `GET|POST /api/v1/repos/{repo}/merge-requests`、`…/{iid}[/approve|merge|close|reopen]` | — | **已落地**（2026-11-20，T94-T96；docs/design/merge-requests.md：服务端三方合并+审批门+保护档） |
+| branch rules | `GET /api/v1/repos/{repo}/branch-rules[/{branch}]` | — | **已落地**（protected / mr-only 两档，admin 写；mr-only 三执法点拦直推） |
 | repo create/ls | `GET/POST /api/v1/repos` | Repo.List/Create | **已落地**（GET 列表含层级 `parent` 字段；POST body `{name, parent?}`——带 parent 即建子项目，link 失败回滚建仓、write-rank 门）|
 | 项目层级 | `GET/PUT /api/v1/repos/<repo>/parent` | Repo.Parent | **已落地**（2026-11-15，docs/design/data-model.md §14：GET `{repo,parent}`；PUT body `{parent}`——空串摘根；环/深度（≤16 级）由存储校验，INVALID_ARG；改挂为 admin 门）|
 | repo rename | `POST /api/v1/repos/<repo>/rename` | Repo.Rename | **已落地**（docs/storage/storage.md §6） |

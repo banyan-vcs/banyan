@@ -353,3 +353,11 @@ sync。本地段含 merge 提交 → 400 `SYNC_UNSUPPORTED`（exit 2）。根工
 exit 2。**何时遇到真分歧**：所有顺序入口都有守卫（thin commit 的
 base-moved、子树 push 的投影守卫、root push 的织入尖守卫）——该状态只产生
 于守卫过检后、CAS 落地前的并发窗口；sync 即该窗口的收口工具。
+### 3.10 merge requests（2026-11-20 落地，T94）
+
+`banyan mr ls [state]` / `mr open <source> <target> <title...>` / `mr show <iid>` /
+`mr approve <iid>` / `mr merge <iid>` / `mr close|reopen <iid>`——对工作区 repo 驱动
+MR 生命周期（docs/design/merge-requests.md）。合并完全在服务端：三方合并 raw 时间线
+头、审批门计数（作者不可自批）、保护档执法（mr-only 分支直推任何人都被拒）。merge
+默认消息服务端生成；409 = 冲突/目标移动/审批不足，`mr show` 看冲突路径。
+
