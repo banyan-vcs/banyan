@@ -204,6 +204,22 @@ func newAbortBufWriter(w http.ResponseWriter) *bufWriter {
 	return b
 }
 
+// mrOnlyBranch reports whether the branch carries an mr-only rule
+// (docs/design/merge-requests.md): NOBODY pushes it directly — not even
+// admins — the merge-request path is the only way in. v1 scopes rules to
+// root-anchor branches.
+func (s *Server) mrOnlyBranch(ctx context.Context, vr VirtualRepo, branch string) bool {
+	if !vr.Sub.IsRoot() {
+		return false
+	}
+	rs, ok := s.Meta.(meta.BranchRuleStore)
+	if !ok {
+		return false
+	}
+	rule, has, err := rs.BranchRuleOf(ctx, vr.Repo, branch)
+	return err == nil && has && rule.Level == meta.RuleMROnly
+}
+
 // abortStream kills the connection when a mid-serve stream can no longer be
 // completed honestly. It walks the v1/v2 writer chain (the closure ladder
 // receives the bufWriter directly; the v2 packfile section wraps it in

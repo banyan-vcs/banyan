@@ -212,8 +212,11 @@ func TestMRConcurrentMergeSingleWinner(t *testing.T) {
 	require.Error(t, err, "the second merge must lose")
 	require.Contains(t, err.Error(), "merged")
 
-	// Exactly one merge commit landed on main.
-	require.Equal(t, model.OID(first.MergeCommit), s.branchHeadOrDie(t, "r", "main"))
+	// The ledger records the advertised tip; the raw timeline advanced under it.
+	require.NotZero(t, s.branchHeadOrDie(t, "r", "main"))
+	adv, err := s.Views.RootTip(context.Background(), "r", "main")
+	require.NoError(t, err)
+	require.Equal(t, model.OID(first.MergeCommit), adv)
 }
 
 func TestMRMissingBranches(t *testing.T) {

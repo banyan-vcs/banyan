@@ -281,6 +281,28 @@ func (s *Service) OpenMR(ctx context.Context, repo, sourceBranch, targetBranch, 
 	})
 }
 
+// ListMRs answers the repo's merge requests (state "" = all), newest first.
+func (s *Service) ListMRs(ctx context.Context, repo, state string) ([]meta.MRInfo, error) {
+	st, ok := s.Meta.(meta.MRStore)
+	if !ok {
+		return nil, invalid("this deployment owns no merge-request store")
+	}
+	return st.ListMRs(ctx, repo, state)
+}
+
+// MRTarget answers one MR's target branch (the merge gate's rule lookup).
+func (s *Service) MRTarget(ctx context.Context, repo string, iid int64) (string, error) {
+	st, ok := s.Meta.(meta.MRStore)
+	if !ok {
+		return "", invalid("this deployment owns no merge-request store")
+	}
+	mr, err := st.MRByIID(ctx, repo, iid)
+	if err != nil {
+		return "", err
+	}
+	return mr.Target, nil
+}
+
 // MRView is the detail wire shape: the stored record plus everything the
 // UI decides on, computed live.
 type MRView struct {
@@ -446,15 +468,24 @@ func (s *Service) MergeMR(ctx context.Context, repo string, iid int64, merger, m
 		}
 		return release(err)
 	}
+	// The recorded merge commit is the ADVERTISED tip, not the raw timeline
+	// head: the woven view re-linearizes a multi-parent commit into a fold
+	// (docs/design/merge-requests.md §边界) — the fold is what every clone
+	// and every link resolves; the raw two-parent commit stays in the
+	// timeline and the object store.
+	recorded := out.Commit
+	if adv, terr := s.Views.RootTip(ctx, repo, mr.Target); terr == nil && !adv.IsZero() {
+		recorded = adv
+	}
 	final, err := st.TransitionMR(ctx, repo, iid, meta.MRStateMerged, func(m *meta.MRInfo) {
-		m.MergeCommit = string(out.Commit)
+		m.MergeCommit = string(recorded)
 		m.MergedBy = merger
 		m.UpdatedAt = at
 	})
 	if err != nil {
 		// The ref moved but the ledger did not — surface both facts; the
 		// merge itself stands (out.Commit is on the branch).
-		return reserved, fmt.Errorf("merge landed as %s but finalizing the record failed: %w", out.Commit, err)
+		return reserved, fmt.Errorf("merge landed as %s but finalizing the record failed: %w", recorded, err)
 	}
 	return final, nil
 }
