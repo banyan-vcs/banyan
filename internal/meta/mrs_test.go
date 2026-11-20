@@ -7,6 +7,8 @@ package meta
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -148,6 +150,34 @@ func TestMRStoreConformance(t *testing.T) {
 			}
 			if rules, err = rs.BranchRules(ctx, "r"); err != nil || len(rules) != 1 {
 				t.Fatalf("rules after delete: %+v err=%v", rules, err)
+			}
+
+			// --- concurrent creation: the IID allocation is serialized under
+			// the store's own lock — every racer gets a distinct, positive IID
+			// (the SQL store exercises its unique-key retry here). ---
+			const racers = 8
+			var wg sync.WaitGroup
+			iids := make([]int64, racers)
+			rerrs := make([]error, racers)
+			for i := 0; i < racers; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					m, err := st.CreateMR(ctx, MRInfo{Repo: "race", Title: "r", Source: fmt.Sprintf("s%d", i),
+						Target: "main", State: MRStateOpen, Author: "a", CreatedAt: 1, UpdatedAt: 1})
+					iids[i], rerrs[i] = m.IID, err
+				}(i)
+			}
+			wg.Wait()
+			seen := map[int64]bool{}
+			for i := 0; i < racers; i++ {
+				if rerrs[i] != nil {
+					t.Fatalf("racer %d: %v", i, rerrs[i])
+				}
+				if iids[i] < 1 || seen[iids[i]] {
+					t.Fatalf("racer %d: iid %d invalid or duplicated", i, iids[i])
+				}
+				seen[iids[i]] = true
 			}
 		})
 	}

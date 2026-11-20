@@ -41,7 +41,8 @@ advertised OID 为 merge_commit**（可分享链接必须在 fresh clone 里可�
 ## 3. 分支保护三档
 
 `branch_rules(repo, branch, level, approvals)`，admin 读写
-（`GET/PUT/DELETE /api/v1/repos/{repo}/branch-rules[/{branch}]`）：
+（`GET/PUT/DELETE /api/v1/repos/{repo}/branch-rules[/{branch}]`——branch 段
+可含 `/`，路径尾段整体即分支名，如 `release/v2`；匹配按分支全名精确）：
 
 | level | 直推 | MR 合并 |
 |---|---|---|
