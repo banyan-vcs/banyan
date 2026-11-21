@@ -10,6 +10,7 @@ import { BASE_URL } from "../api/client";
 import { useSession } from "../session";
 import { can, useMode } from "../mode";
 import { BranchesIcon, CodeIcon, HistoryIcon, ImportIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon, TokensIcon } from "./icons";
+import { ThemeToggle } from "./ThemeToggle";
 
 export function Layout(): ReactNode {
   const { info } = useSession();
@@ -59,6 +60,7 @@ export function Layout(): ReactNode {
           <img src={`${BASE_URL}avatar.png`} alt="" width="24" height="24" /> banyan
         </Link>
         <span className="spacer" />
+        <ThemeToggle />
         {info && (
           <span className="who">
             <span className="user-dot">{info.user.slice(0, 1).toUpperCase()}</span>
