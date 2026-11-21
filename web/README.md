@@ -103,9 +103,13 @@ that every static call-site key carries a zh entry.
 
 The chrome: the avatar at the top bar's right end opens the account menu
 (click or right-click — identity, personal settings, log out). The sidebar
-carries the three global destinations with one-key shortcuts (R
-repositories, G groups, M merge requests) and folds to an icon rail with
-`[` (plain keys only — never while typing, never with modifiers).
+is contextual, one group at a time: the workspace pages carry the three
+global destinations (repositories, groups, merge requests) with one-key
+shortcuts; inside /r/&lt;repo&gt; it carries only that repository's
+navigation — the breadcrumb atop the content (repositories / group / repo)
+is the way back out. The fold control sits at the sidebar's bottom edge;
+`[` works everywhere (plain keys only — never while typing, never with
+modifiers; R/G/M stay live on repository pages too).
 
 In the `gitlab` profile the SPA narrows to the repositories list and each
 repo's subtree pages; login is the GitLab provider only.
