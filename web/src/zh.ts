@@ -17,9 +17,11 @@ export const zh: Record<string, string> = {
   overview: "概览",
   "Blame": "追溯",
   "Code": "代码",
-  "History": "历史",
+  "Commits": "提交",
   "Branches": "分支",
   "Subtrees": "子树",
+  "Members": "成员",
+  "General": "基本设置",
   "Settings": "设置",
   "Profile": "个人信息",
   "SSH Keys": "SSH 密钥",
@@ -172,9 +174,9 @@ export const zh: Record<string, string> = {
   default: "默认",
   "personal branches of other users are simply not advertised here — the same filtered ref list your git client gets.":
     "其他用户的个人分支在这里就是不可见——与你 git 客户端拿到的过滤后 ref 列表一致。",
-  "Recent History": "最近历史",
-  "no history yet.": "还没有历史。",
-  "full history →": "完整历史 →",
+  "Recent Commits": "最近提交",
+  "no history yet.": "还没有提交。",
+  "all commits →": "全部提交 →",
   "Sub-Projects": "子项目",
   "this project has no sub-projects yet.": "该项目还没有子项目。",
   "sub-project": "子项目",
@@ -216,7 +218,7 @@ export const zh: Record<string, string> = {
   "merge ({0} parents)": "合并（{0} 个父提交）",
   "root commit — no parent to diff against.": "根提交——没有可对照的父提交。",
   "diffing…": "正在计算 diff…",
-  "← history": "← 历史",
+  "← commits": "← 提交",
 
   // BlamePage.tsx
   "← back to the file": "← 返回文件",
@@ -264,6 +266,7 @@ export const zh: Record<string, string> = {
   enabled: "已启用",
   disabled: "已禁用",
   "Branch Protection": "分支保护",
+  "Rules": "规则",
   "{0} keeps the direct-push semantics (owner rank); {1} accepts no direct push at all — merge requests with the approval count are the only way in.":
     "{0} 保持直推语义（owner 级）；{1} 完全不接受直推——达到审批数的合并请求是唯一入口。",
   level: "级别",
@@ -290,8 +293,7 @@ export const zh: Record<string, string> = {
   "repacking…": "正在重打包…",
   "repacked: {0} → {1} packs, {2} objects, {3} → {4}{5}": "重打包完成：{0} → {1} 个 pack，{2} 个对象，{3} → {4}{5}",
 
-  // members (GroupDetailPage + SettingsPage, docs/design/data-model.md §16)
-  "Members": "成员",
+  // members (GroupDetailPage + MembersPage, docs/design/data-model.md §16)
   rank: "权限",
   viewer: "只读",
   developer: "开发者",

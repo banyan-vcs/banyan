@@ -61,7 +61,7 @@ export function CommitPage(): ReactNode {
           {diff.isError && <ErrorBox error={diff.error} />}
           {diff.isSuccess && <DiffView files={parseUnifiedDiff(diff.data)} />}
           <p className="pad">
-            <Link to={`${base}/history`}>{t("← history")}</Link>
+            <Link to={`${base}/history`}>{t("← commits")}</Link>
           </p>
         </>
       )}

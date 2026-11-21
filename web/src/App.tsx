@@ -8,12 +8,14 @@ import { Layout } from "./components/Layout";
 import { useT } from "./i18n";
 import { can, useMode } from "./mode";
 import { BlamePage } from "./pages/BlamePage";
+import { BranchProtectionPage } from "./pages/BranchProtectionPage";
 import { BranchesPage } from "./pages/BranchesPage";
 import { CommitPage } from "./pages/CommitPage";
 import { GroupDetailPage } from "./pages/GroupDetailPage";
 import { GroupsPage } from "./pages/GroupsPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MembersPage } from "./pages/MembersPage";
 import { MergeRequestPage } from "./pages/MergeRequestPage";
 import { MergeRequestsGlobalPage } from "./pages/MergeRequestsGlobalPage";
 import { MergeRequestsPage } from "./pages/MergeRequestsPage";
@@ -84,7 +86,9 @@ export function AppRoutes(): ReactNode {
         <Route path="/r/:repo/-/merge_requests/:iid" element={<Gate capability="mergeRequests"><MergeRequestPage /></Gate>} />
         <Route path="/r/:repo/branches" element={<Gate capability="branches"><BranchesPage /></Gate>} />
         <Route path="/r/:repo/subtrees" element={<SubtreesPage />} />
+        <Route path="/r/:repo/members" element={<Gate capability="groups"><MembersPage /></Gate>} />
         <Route path="/r/:repo/settings" element={<Gate capability="settings"><SettingsPage /></Gate>} />
+        <Route path="/r/:repo/settings/branch-protection" element={<Gate capability="settings"><BranchProtectionPage /></Gate>} />
         {/* the grouped shape (docs/design/data-model.md §15): /r/<group>/<project> —
             the project segment is the physical id; react-router's static
             segments outrank the legacy param routes, so both shapes coexist */}
@@ -98,7 +102,9 @@ export function AppRoutes(): ReactNode {
         <Route path="/r/:group/:project/-/merge_requests/:iid" element={<Gate capability="mergeRequests"><MergeRequestPage /></Gate>} />
         <Route path="/r/:group/:project/branches" element={<Gate capability="branches"><BranchesPage /></Gate>} />
         <Route path="/r/:group/:project/subtrees" element={<SubtreesPage />} />
+        <Route path="/r/:group/:project/members" element={<Gate capability="groups"><MembersPage /></Gate>} />
         <Route path="/r/:group/:project/settings" element={<Gate capability="settings"><SettingsPage /></Gate>} />
+        <Route path="/r/:group/:project/settings/branch-protection" element={<Gate capability="settings"><BranchProtectionPage /></Gate>} />
         <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
         <Route path="/settings/profile" element={<ProfilePage />} />
         <Route path="/settings/ssh-keys" element={<Gate capability="sshKeys"><SSHKeysPage /></Gate>} />

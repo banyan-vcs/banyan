@@ -116,7 +116,7 @@ export function RepoHomePage(): ReactNode {
           </p>
         </section>
         <section>
-          <h2>{t("Recent History")}{defaultBranch ? ` · ${defaultBranch}` : ""}</h2>
+          <h2>{t("Recent Commits")}{defaultBranch ? ` · ${defaultBranch}` : ""}</h2>
           {log.isPending && <Spinner />}
           {log.isError && <p className="muted pad">{t("no history yet.")}</p>}
           {log.isSuccess && (
@@ -137,7 +137,7 @@ export function RepoHomePage(): ReactNode {
           )}
           {defaultBranch && (
             <p className="pad">
-              <Link to={`${base}/history?ref=${encodeURIComponent(defaultBranch)}`}>{t("full history →")}</Link>
+              <Link to={`${base}/history?ref=${encodeURIComponent(defaultBranch)}`}>{t("all commits →")}</Link>
             </p>
           )}
         </section>

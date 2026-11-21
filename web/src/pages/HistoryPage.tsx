@@ -35,7 +35,7 @@ export function HistoryPage(): ReactNode {
   return (
     <>
       <h1>
-        {t("History")}{branch ? <> · <code>{branch}</code></> : null}
+        {t("Commits")}{branch ? <> · <code>{branch}</code></> : null}
       </h1>
       <form
         className="path-filter"
