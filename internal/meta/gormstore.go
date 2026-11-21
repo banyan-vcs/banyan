@@ -208,6 +208,22 @@ type branchRuleRow struct {
 
 func (branchRuleRow) TableName() string { return "branch_rules" }
 
+// groupRow embeds GroupInfo (the groups table, docs/design/data-model.md
+// §15). The assignment table repo_groups carries group_name — "group" is
+// reserved in MySQL and spelling it out reads better anyway.
+type groupRow struct {
+	GroupInfo
+}
+
+func (groupRow) TableName() string { return "groups" }
+
+type repoGroupRow struct {
+	Repo      string `gorm:"primaryKey"`
+	GroupName string `gorm:"column:group_name;not null"`
+}
+
+func (repoGroupRow) TableName() string { return "repo_groups" }
+
 // --- open path ---
 
 // gormOpen mounts GORM on the existing pool (one pool, two query surfaces).
