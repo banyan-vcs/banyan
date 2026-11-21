@@ -26,12 +26,19 @@ export function langOf(path: string): string {
   return LANGS[base.slice(dot + 1).toLowerCase()] || "plaintext";
 }
 
+/** The localStorage key both diff surfaces (commit, MR) remember the
+ * split/unified choice under — one preference follows the user across
+ * pages. */
+export const DIFF_VIEW_KEY = "banyan.diff.view";
+
 export interface DiffViewFile {
   oldPath: string;
   newPath: string;
   lang: string;
   hunks: string[];
   binary: boolean;
+  add: number; // + lines across all hunks (0 for binary)
+  del: number; // − lines across all hunks
 }
 
 /** Split a unified diff into per-file hunk blocks for the diff view. */
@@ -52,7 +59,7 @@ export function toDiffViewFiles(text: string): DiffViewFile[] {
     if (line.startsWith("diff --git ")) {
       flushFile();
       const m = / a\/(\S+) b\/(\S+)$/.exec(line);
-      cur = { oldPath: m ? m[1] : "", newPath: m ? m[2] : "", lang: "plaintext", hunks: [], binary: false };
+      cur = { oldPath: m ? m[1] : "", newPath: m ? m[2] : "", lang: "plaintext", hunks: [], binary: false, add: 0, del: 0 };
       continue;
     }
     if (!cur) continue; // preamble (commit id, etc.)
@@ -76,7 +83,12 @@ export function toDiffViewFiles(text: string): DiffViewFile[] {
     }
     if (hunk !== null) {
       // stop swallowing trailing file-level lines after the last hunk
-      hunk.push(line.replace(/\r$/, ""));
+      const l = line.replace(/\r$/, "");
+      hunk.push(l);
+      // the per-file diffstat rides the same walk (body lines carry the
+      // +/- sigil; "\ No newline" markers start with a backslash)
+      if (l.startsWith("+")) cur.add++;
+      else if (l.startsWith("-")) cur.del++;
     }
   }
   flushFile();

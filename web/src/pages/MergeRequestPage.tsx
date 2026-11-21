@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { lazy, Suspense, useState, type ReactNode } from "react";
 import { apiText } from "../api/client";
-import { toDiffViewFiles } from "../api/diffview";
+import { DIFF_VIEW_KEY, toDiffViewFiles } from "../api/diffview";
 import { approveMR, closeMR, getMR, mergeMR, reopenMR, unapproveMR } from "../api/mrs";
 // The diff view (highlight.js grammars included) is the heaviest leaf in
 // the bundle — it code-splits behind the changes tab, as does the editor
@@ -20,7 +20,9 @@ import { useSession } from "../session";
 import { useRepoBase, useRepoId } from "../repo";
 import { useT } from "../i18n";
 
-const VIEW_KEY = "banyan.mr.view";
+// One split/unified memory across the diff surfaces (the commit page rides
+// the same key); this page keeps the URL ?view= override for shareability.
+const VIEW_KEY = DIFF_VIEW_KEY;
 
 export function MergeRequestPage(): ReactNode {
   const t = useT();
@@ -143,10 +145,6 @@ export function MergeRequestPage(): ReactNode {
           <p className="muted pad">{t("unrelated histories — no merge base to diff against.")}</p>
         ) : (
           <>
-            <div className="tab-row">
-              <button className={"tab" + (view === "split" ? " active" : "")} onClick={() => setView("split")}>{t("split")}</button>
-              <button className={"tab" + (view === "unified" ? " active" : "")} onClick={() => setView("unified")}>{t("unified")}</button>
-            </div>
             {diff.isPending && <Spinner />}
             {diff.isError && <ErrorBox error={diff.error} />}
             {editingPath && view0 && (
@@ -169,6 +167,7 @@ export function MergeRequestPage(): ReactNode {
                 <MrDiff
                   files={toDiffViewFiles(diff.data)}
                   view={view}
+                  onViewChange={setView}
                   onEdit={me ? setEditingPath : undefined}
                   editingPath={editingPath}
                 />

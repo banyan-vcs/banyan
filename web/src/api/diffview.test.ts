@@ -44,6 +44,16 @@ describe("toDiffViewFiles", () => {
     expect(files[2].hunks).toHaveLength(0);
   });
 
+  it("counts the per-file diffstat from the hunk body sigils", () => {
+    const files = toDiffViewFiles(sample);
+    expect(files[0].add).toBe(1); // +import "fmt"
+    expect(files[0].del).toBe(0);
+    expect(files[1].add).toBe(2); // the two new-file exports
+    expect(files[1].del).toBe(0);
+    expect(files[2].add).toBe(0); // binary carries no counts
+    expect(files[2].del).toBe(0);
+  });
+
   it("keeps multi-hunk files as separate blocks", () => {
     const two = `diff --git a/f b/f
 --- a/f
@@ -61,6 +71,8 @@ describe("toDiffViewFiles", () => {
     expect(files).toHaveLength(1);
     expect(files[0].hunks).toHaveLength(2);
     expect(files[0].hunks[1].startsWith("@@ -10,2 +10,2 @@")).toBe(true);
+    expect(files[0].add).toBe(2);
+    expect(files[0].del).toBe(2);
   });
 });
 
