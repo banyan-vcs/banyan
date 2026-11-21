@@ -6,7 +6,7 @@
 // view switches to it or edit mode opens.
 import * as monaco from "monaco-editor/editor/editor.api.js";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 // The tokenizers (Monarch grammars, main-thread, tiny per language).
 import "monaco-editor/languages/definitions/go/register.js";
@@ -55,6 +55,21 @@ export function monacoLangOf(path: string): string {
   return LANG_BY_EXT[base.slice(dot + 1).toLowerCase()] || "plaintext";
 }
 
+// prefersDark answers (and tracks) the OS color scheme — the editor's
+// chrome follows the console's automatic light/dark theming.
+function usePrefersDark(): boolean {
+  const [dark, setDark] = useState(
+    typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const on = (e: MediaQueryListEvent): void => setDark(e.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return dark;
+}
+
 export function CodeEditor({
   path,
   value,
@@ -70,6 +85,7 @@ export function CodeEditor({
 }): ReactNode {
   const host = useRef<HTMLDivElement | null>(null);
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const dark = usePrefersDark();
 
   useEffect(() => {
     if (!host.current) return;
@@ -83,7 +99,7 @@ export function CodeEditor({
       lineNumbersMinChars: 4,
       renderWhitespace: "selection",
       wordWrap: "off",
-      theme: "vs",
+      theme: dark ? "vs-dark" : "vs",
       automaticLayout: true,
     });
     editor.current = ed;

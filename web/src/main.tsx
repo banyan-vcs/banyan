@@ -6,7 +6,7 @@ import { BASE_URL } from "./api/client";
 import { AppRoutes } from "./App";
 import { ModeProvider } from "./mode";
 import { SessionProvider } from "./session";
-import "./styles.css";
+import "./styles.less";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false } },

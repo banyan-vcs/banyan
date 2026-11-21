@@ -14,7 +14,7 @@ import { BranchesIcon, CodeIcon, HistoryIcon, ImportIcon, MergeIcon, OverviewIco
 export function Layout(): ReactNode {
   const { info } = useSession();
   const mode = useMode();
-  // A GitLab-provider session wears GitLab's palette (styles.css body.gitlab)
+  // A GitLab-provider session wears GitLab's palette (styles.less body.gitlab)
   useEffect(() => {
     document.body.classList.toggle("gitlab", info?.provider?.kind === "gitlab");
   }, [info?.provider?.kind]);
