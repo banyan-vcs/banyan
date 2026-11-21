@@ -84,13 +84,22 @@ go run ./cmd/banyand web -listen :3000 -gateway http://127.0.0.1:8080 \
 | `/r/:repo/branches` | branch management through the same ref CAS a git push rides |
 | `/r/:repo/subtrees` | subtree management: directory timelines, branch heads, per-path activity, admin access rules |
 | `/r/:repo/settings` | repo admin: size, force-push switch, group label, rename, repack |
-| `/settings/profile` | personal settings: the theme (auto / day / night) and the access tokens (mint, list, revoke) |
+| `/settings/profile` | personal settings: the theme (auto / day / night), the language (follow the browser / 中文 / English) and the access tokens (mint, list, revoke) |
 
 Groups are organizational containers only (docs/design/data-model.md §15):
 they folder the list and nothing else — the repository's physical name and
 every URL stay untouched. The theme picker lives in personal settings (the
 pre-paint snippet in `index.html` still applies the stored choice before
 first paint).
+
+The console is bilingual (Chinese / English). The default follows the
+browser's language (`zh*` tags pick Chinese, everything else English); the
+picker in personal settings overrides it per browser (`localStorage
+"banyan.locale"`, with "auto" stored by removing the key — the theme's
+pattern). The dictionary is English-source-as-key: the English text is its
+own fallback and `zh.ts` is the only table, so a missing entry degrades to
+English instead of breaking; a vitest pins both placeholder parity and
+that every static call-site key carries a zh entry.
 
 The chrome: the avatar at the top bar's right end opens the account menu
 (click or right-click — identity, personal settings, log out). The sidebar
