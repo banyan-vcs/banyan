@@ -121,14 +121,20 @@ func TestDebugRatesRequireAddr(t *testing.T) {
 // TestProductionRequiresAuth pins the secure-by-default posture: the
 // client-facing roles refuse to start unauthenticated, the gitaly frontend
 // refuses an empty token, dev mode is the explicit opt-out, and the
-// cluster-internal roles (refs/storage) are not client-facing.
+// cluster-internal roles (refs/storage) are not client-facing. Since the
+// account table (docs/gateway/authorization.md §2a), a DURABLE meta
+// (sqlite/mysql/postgres — what production defaults all-in-one to) counts
+// as the user source: the process boots authenticated on the bootstrapped
+// administrator. mem never does — its accounts would vanish with the
+// process.
 func TestProductionRequiresAuth(t *testing.T) {
 	cases := []struct {
 		name    string
 		yaml    string
 		wantErr string
 	}{
-		{"plain-allin-one", "listen: 127.0.0.1:8100\n", "requires authentication"},
+		{"plain-allin-one", "listen: 127.0.0.1:8100\n", ""},
+		{"mem-allin-one", "listen: 127.0.0.1:8100\nmeta: mem\n", "dev-only"},
 		{"gateway-no-auth", "role: gateway\nrefs_addr: 127.0.0.1:8200\n", "requires authentication"},
 		{"gitaly-no-token", "gitaly:\n  listen: 127.0.0.1:8300\nauth:\n  users:\n    ops: pw\n", "gitaly.token"},
 		{"dev-optout", "dev: true\n", ""},

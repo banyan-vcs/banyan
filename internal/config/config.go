@@ -426,10 +426,15 @@ func (c *Config) normalize() error {
 	// refuse to start unauthenticated, and the gitaly frontend refuses an
 	// empty token. Dev mode is the explicit opt-out for local/demo
 	// deployments — an open server must be a decision, never an accident.
+	// The account table counts as a user source when it is durable
+	// (sqlite/mysql/postgres): a fresh one bootstraps its administrator
+	// (docs/gateway/authorization.md §2a). mem does not — its accounts
+	// would vanish with the process.
 	if !c.Dev {
 		if c.Role == "" || c.Role == "all-in-one" || c.Role == "gateway" {
-			if c.Auth.Upstream == "" && c.Auth.GitLabSSO == "" && len(c.Auth.OAuth) == 0 && len(c.Auth.Users) == 0 {
-				return fmt.Errorf("config: production mode requires authentication (auth.upstream, auth.gitlab_sso, auth.oauth or auth.users); set dev: true for an unauthenticated local deployment")
+			durableMeta := c.MetaBackend == "sqlite" || c.MetaBackend == "mysql" || c.MetaBackend == "postgres"
+			if !c.Demo && !durableMeta && c.Auth.Upstream == "" && c.Auth.GitLabSSO == "" && len(c.Auth.OAuth) == 0 && len(c.Auth.Users) == 0 {
+				return fmt.Errorf("config: production mode requires authentication (auth.upstream, auth.gitlab_sso, auth.oauth, auth.users — or a durable meta (sqlite/mysql/postgres)/demo: true, whose account table is the user source)")
 			}
 		}
 		if c.Gitaly.Listen != "" && c.Gitaly.Token == "" {

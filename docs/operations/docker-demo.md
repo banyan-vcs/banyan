@@ -19,7 +19,8 @@ PAT、建项目、push、读面核对），T83 是其 Go 形态。
 
 认证姿态（docs/gateway/authorization.md §0 安全默认）：单体栈挂 `demo/auth-demo.yaml` 走
 **正路**（auth.users 在）；集群 demo 的 gateway 无用户表，以 `-dev`
-显式开发模式启动——生产缺省下无认证的客户端面角色会**拒绝启动**，
+显式开发模式启动——生产缺省下无认证且无持久 meta 的客户端面角色会
+**拒绝启动**（持久 meta / demo:true 以账号表为用户源，见 §0b 与 §2a），
 demo 与生产的差别就在这一个旗标上，不是隐式放行。
 
 ### 0b. 一键演示（demo: true，2026-11-21）

@@ -195,11 +195,13 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		}
 		gw.Auth = svc
 		api.Auth = svc
-	case staticPolicy(cfg) != nil || metaUserStore(ms):
+	case staticPolicy(cfg) != nil || (!cfg.Dev && metaUserStore(ms)):
 		// The static branch now also serves deployments with NO config
 		// users: the metadata-plane account table is the user source, and a
 		// fresh one bootstraps its administrator (generated password, once,
-		// on the terminal).
+		// on the terminal). Dev mode keeps its nil-means-open semantics —
+		// a durable meta store alone must not turn -dev into an
+		// authenticated deployment.
 		policy := staticPolicy(cfg)
 		if policy == nil {
 			policy = &auth.StaticPolicy{}
