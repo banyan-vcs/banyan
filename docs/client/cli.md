@@ -219,6 +219,12 @@ ssh_host_keys:               # SSH TOFU 主机指纹钉扎（变更即拒）
 
 - **server 解析链**：`参数 > 工作区 .banyan/config > BANYAN_SERVER > default_host`
   ——`repo ls` 等无工作区命令走同一条链的尾部两级（`repo ls` 输出项目树：子项目按 `parent` 缩进两级空格、多级叠加，docs/design/data-model.md §14）；
+- **`banyan user reset-password <name>`**（2026-11-21，服务端管理命令）：
+  admin 凭据重置一个账号的密码——**新随机密码只在终端打印一次**，账号
+  下次登录 web 时必须自助改密（must-change 栅栏：控制台只放行
+  Settings → Profile，PAT/SSH-key 铸造面 403，docs/gateway/
+  authorization.md §2a）。server 解析走 `BANYAN_SERVER > default_host`
+  （无工作区语义——这是对服务器的操作，不是对克隆的）。
 - 首次 login 的主机自动成为 `default_host`（gh 同义）；切换显式走
   `banyan host use <server>`，**无参时是编号菜单**（终端从多站点中选择，
   空值/EOF 退化为提示语）；

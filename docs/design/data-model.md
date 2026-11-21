@@ -386,6 +386,6 @@ demo 策略 `auth.keys` 的配置钥匙共存（docs/gateway/authorization.md §
 服务端管理的账号与 bcrypt 密码哈希（docs/gateway/authorization.md §2a）：
 控制台的密码自助、banyand 的首启引导、demo 种子的账号底座。
 
-- **数据**：`users(username, password_hash, is_admin, created_at)`（0012 迁移）。is_admin 走 INTEGER+int 行字段（PG 布尔坑，tokens 表 revoked 同款）；password_hash 存 bcrypt（x/crypto，加密归 auth 包，store 只见 opaque 串）。UserStore 照 MemberStore 先例：独立接口 type-assert、无删除路径——写者只有引导与自助改密，不做用户管理面。upsert by name：改密是原地重写，admin 旗标随行。
+- **数据**：`users(username, password_hash, is_admin, must_change_password, created_at)`（0012 迁移 + 0013 加列）。is_admin 与 must_change_password 走 INTEGER+int 行字段（PG 布尔坑，tokens 表 revoked 同款）；password_hash 存 bcrypt（x/crypto，加密归 auth 包，store 只见 opaque 串）。UserStore 照 MemberStore 先例：独立接口 type-assert、无删除路径——写者只有引导、自助改密与管理员重置，不做用户管理面。upsert by name：改密是原地重写，admin 旗标随行；must_change_password 由管理员重置起立（随机密码须在下一次登录换成自选的，PAT/SSH-key 铸造面在此之前 403），自助改密付清。
 - **识别次序**：表先答、配置表兜底；表内名字配错密码即匿名（不落到同名配置条目）；已验凭证对 60s TTL 缓存（bcrypt ~100ms，web 层每代理调用重发 Basic 头），改密经 CredentialInvalidator 链立即清缓存。
 - **首启**：生产（无配置用户）建 admin + 随机密码只在终端打印一次；`demo: true` 由 internal/demoseed 种 admin/alice/bob（密码 demo）与整套演示世界（§16 组成员、§13 目录时间线两条、MR 三态、mr-only 规则），README 即引导文档，幂等。
