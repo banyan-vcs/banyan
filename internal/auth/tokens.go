@@ -94,6 +94,14 @@ func (p *TokenPolicy) IdentifyKey(user string, keyBlob []byte) Identity {
 	return p.Inner.IdentifyKey(user, keyBlob)
 }
 
+// InvalidateCredentials forwards to the inner policy when it manages a
+// verified-credential cache (the password-change path).
+func (p *TokenPolicy) InvalidateCredentials() {
+	if inv, ok := p.Inner.(CredentialInvalidator); ok {
+		inv.InvalidateCredentials()
+	}
+}
+
 // VisibleRefs delegates: branch visibility is the inner policy's rule set
 // (personal namespaces, snapshot roles). Scope never widens visibility.
 func (p *TokenPolicy) VisibleRefs(id Identity, repo string, refs []Ref) []Ref {

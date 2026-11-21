@@ -10,7 +10,9 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"sync"
 	"time"
 
@@ -30,6 +32,32 @@ func HashPassword(plain string) (string, error) {
 // verifyPassword answers whether plain matches the stored hash.
 func verifyPassword(hash, plain string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil
+}
+
+// CheckPassword is verifyPassword for consumers outside the package (the
+// password-change endpoint re-verifies the current credential).
+func CheckPassword(hash, plain string) bool {
+	return verifyPassword(hash, plain)
+}
+
+// RandomPassword answers a fresh url-safe secret (first-boot administrator;
+// crypto/rand). 16 chars of the base64url alphabet ≈ 96 bits.
+func RandomPassword() string {
+	var raw [12]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		// crypto/rand failing is unrecoverable here; a panic at bootstrap is
+		// louder and safer than a guessable password.
+		panic("auth: crypto/rand unavailable: " + err.Error())
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:])
+}
+
+// CredentialInvalidator is the optional password-change hook: the wired
+// policy drops its verified-credential cache when a password rotates, so
+// the old value dies immediately instead of at TTL lapse. Decorators
+// forward it inward.
+type CredentialInvalidator interface {
+	InvalidateCredentials()
 }
 
 // verifiedTTL bounds how long a verified (user, password) pair is trusted
