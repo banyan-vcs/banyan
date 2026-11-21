@@ -41,6 +41,8 @@ workspace commands (run inside a clone — any subdirectory — or with -C):
   mr ls [state] | open <src> <tgt> <title...> | show <iid>    merge-request lifecycle
   mr approve|merge|close|reopen <iid> [-m msg]               (server-side 3-way merge, approvals)
   repo ls                                                     list server repos (needs a workspace or BANYAN_SERVER)
+  user reset-password <name>                                  admin: reset one account (random password, shown once;
+  must choose its own at next login; needs BANYAN_SERVER or a default host)
   import <repo> <url> [--branch b] [--segment-bytes 3G] [--dry-run]
                                                               bulk-migrate a local git repo, segment by segment
 
@@ -117,6 +119,8 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		return runMR(wsRoot, rest, stdout, stderr)
 	case "import":
 		return runImport(wsRoot, rest, stdout, stderr)
+	case "user":
+		return runUser(rest, stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usageText)
 		return 0
