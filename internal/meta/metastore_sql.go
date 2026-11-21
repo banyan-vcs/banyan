@@ -499,13 +499,15 @@ PRIMARY KEY(repo)
 // the group member table (inherited grants) and the repository's direct
 // member table. Composite primary keys double as the query paths
 // (group_name+ prefix, repo+ prefix), so no extra indexes — the small-table
-// precedent. The user column is username (USER is reserved on PostgreSQL).
+// precedent. The user column is username (USER is reserved on PostgreSQL)
+// and the rank column member_rank (RANK is reserved on MySQL 8+ — the
+// GROUPS pitfall's sibling).
 func membersDDL(dialect string) []string {
 	return []string{
 		`CREATE TABLE IF NOT EXISTS repo_group_members(
 group_name  ` + nameCol(dialect) + ` NOT NULL,
 username    ` + nameCol(dialect) + ` NOT NULL,
-rank        ` + nameCol(dialect) + ` NOT NULL,
+member_rank ` + nameCol(dialect) + ` NOT NULL,
 added_by    ` + nameCol(dialect) + ` NOT NULL,
 added_at    BIGINT NOT NULL,
 PRIMARY KEY(group_name, username)
@@ -513,7 +515,7 @@ PRIMARY KEY(group_name, username)
 		`CREATE TABLE IF NOT EXISTS repo_members(
 repo        ` + nameCol(dialect) + ` NOT NULL,
 username    ` + nameCol(dialect) + ` NOT NULL,
-rank        ` + nameCol(dialect) + ` NOT NULL,
+member_rank ` + nameCol(dialect) + ` NOT NULL,
 added_by    ` + nameCol(dialect) + ` NOT NULL,
 added_at    BIGINT NOT NULL,
 PRIMARY KEY(repo, username)

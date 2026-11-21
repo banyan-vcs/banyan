@@ -64,12 +64,14 @@ var ErrMemberUnknown = errors.New("member unknown")
 // redundant, lower is a silent narrowing, both bounce.
 var ErrMemberRank = errors.New("rank not above the inherited grant")
 
-// Member is one row of either member table.
+// Member is one row of either member table. The columns spell their names
+// out (username, member_rank) — USER is reserved on PostgreSQL and RANK on
+// MySQL 8+ (the GROUPS pitfall's siblings).
 type Member struct {
 	User    string `json:"user" gorm:"column:username;primaryKey"`
-	Rank    string `json:"rank"`
-	AddedBy string `json:"addedBy"`
-	AddedAt int64  `json:"addedAt"`
+	Rank    string `json:"rank" gorm:"column:member_rank;not null"`
+	AddedBy string `json:"addedBy" gorm:"column:added_by;not null"`
+	AddedAt int64  `json:"addedAt" gorm:"column:added_at;not null"`
 }
 
 // EffectiveMember is one row of a repository's resolved membership:
