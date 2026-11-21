@@ -208,21 +208,23 @@ type branchRuleRow struct {
 
 func (branchRuleRow) TableName() string { return "branch_rules" }
 
-// groupRow embeds GroupInfo (the groups table, docs/design/data-model.md
-// §15). The assignment table repo_groups carries group_name — "group" is
-// reserved in MySQL and spelling it out reads better anyway.
+// groupRow embeds GroupInfo (docs/design/data-model.md §15). The tables
+// spell their names out — GROUPS is a reserved word on MySQL 8+ (window
+// functions) and GROUP itself always was, so the entities live in
+// repo_groups and the assignment table is repo_group_labels (one optional
+// label per repo, the column group_name).
 type groupRow struct {
 	GroupInfo
 }
 
-func (groupRow) TableName() string { return "groups" }
+func (groupRow) TableName() string { return "repo_groups" }
 
 type repoGroupRow struct {
 	Repo      string `gorm:"primaryKey"`
 	GroupName string `gorm:"column:group_name;not null"`
 }
 
-func (repoGroupRow) TableName() string { return "repo_groups" }
+func (repoGroupRow) TableName() string { return "repo_group_labels" }
 
 // --- open path ---
 

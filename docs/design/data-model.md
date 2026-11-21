@@ -351,7 +351,7 @@ v2 的全部协议修复（协商终态 ACK、delete-refs、ng 行格式、竞�
 
 层级链接（§14）把项目挂进项目树；**组**补上另一维：不占名字的纯容器。组只是仓库列表的文件夹——不持代码、不带任何权限语义、不改仓库物理名与 `/api/v1/repos/<name>` 寻址（与 §14 同一条纪律：组织元数据永不进名字空间）。
 
-- **数据**：meta 面两张表——`groups(name, description, created_by, created_at)` 与 `repo_groups(repo, group_name)`（一仓至多一个标签；列名拼全因为 `group` 是 MySQL 保留字）。自然键、无自增，三方言同构；GroupStore 走 MRStore 先例（不在 MetaStore 复合接口里，消费方 type-assert，remote-meta 网关零改动编译）。
+- **数据**：meta 面两张表——`repo_groups(name, description, created_by, created_at)` 与 `repo_group_labels(repo, group_name)`（一仓至多一个标签；表名列名全部拼全——`GROUPS` 是 MySQL 8+ 保留字、`GROUP` 历来如此）。自然键、无自增，三方言同构；GroupStore 走 MRStore 先例（不在 MetaStore 复合接口里，消费方 type-assert，remote-meta 网关零改动编译）。
 - **API**：`GET/POST /api/v1/groups`（列表连带 assignments 表；创建记 created_by）；`DELETE /api/v1/groups/<name>`（删除同刻清空其 assignments——仓库永不指向消失的组）；`GET/PUT /api/v1/repos/<repo>/group`（PUT body `{group}`，空串摘标签）。创建/移动走 **write-rank**（与建仓同门）：标签是纯组织行为，不 join parent 所在的 admin 管理行——改挂重塑策略引擎行走的层级，贴标签永不触及。`POST /api/v1/repos` 带可选 `group`，link 失败同样回滚建仓（全有或全无）。重复建组答 409 CONFLICT_GROUP；坏名/未知组按 INVALID_ARG/NOT_FOUND。
 - **防御性读取**：客户端把指向已删组的陈旧标签按未分组渲染（服务端已清，陈旧缓存未必知道——partitionByGroup 纯函数钉死，vitest）。
 - **表面**：web 仓库列表组先渲染为文件夹（可折叠、计数、描述），组内各自渲染 §14 层级树；建仓表单（/new 页）带组选择；仓库设置页带组标签区。`groups` 档位进 /api/mode（standalone 有、gitlab 档无）。
