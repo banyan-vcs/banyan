@@ -99,6 +99,19 @@ var metaSteps = []ddl.Step{
 	// databases already carry them in 0001's living tableDDL; this step
 	// lands them on pre-MR deployments (IF NOT EXISTS makes replay a no-op).
 	{Name: "0007-mr-tables", Up: mrTablesUp},
+	// The group tables (docs/design/data-model.md §15) — same baseline/
+	// incremental split as the MR tables.
+	{Name: "0008-group-tables", Up: groupTablesUp},
+}
+
+// groupTablesUp is step 0008: the groups and repo_groups tables.
+func groupTablesUp(q ddl.Q) error {
+	for _, stmt := range groupsDDL(q.Dialect()) {
+		if err := q.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mrTablesUp is step 0007: the three MR tables plus the ListMRs index
@@ -148,5 +161,5 @@ func tableDDL(dialect string) []string {
 	default:
 		base = ddlSQLite()
 	}
-	return append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...)
+	return append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), groupsDDL(dialect)...)
 }

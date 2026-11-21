@@ -469,6 +469,28 @@ PRIMARY KEY(repo, branch)
 	}
 }
 
+// groupsDDL answers the group tables (docs/design/data-model.md §15): the
+// groups themselves and the repo→group assignment table. One optional label
+// per repo — natural keys, no auto-increment, the same shape on all three
+// dialects. The assignment column is group_name ("group" is reserved in
+// MySQL).
+func groupsDDL(dialect string) []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS groups(
+name         ` + nameCol(dialect) + ` NOT NULL,
+description  TEXT NOT NULL,
+created_by   ` + nameCol(dialect) + ` NOT NULL,
+created_at   BIGINT NOT NULL,
+PRIMARY KEY(name)
+)`,
+		`CREATE TABLE IF NOT EXISTS repo_groups(
+repo        ` + nameCol(dialect) + ` NOT NULL,
+group_name  ` + nameCol(dialect) + ` NOT NULL,
+PRIMARY KEY(repo)
+)`,
+	}
+}
+
 // nameCol/titleCol/shortCol spell the sized string columns per dialect —
 // MySQL cannot DEFAULT a TEXT column and keeps index-width-friendly
 // VARCHARs; the others take TEXT.

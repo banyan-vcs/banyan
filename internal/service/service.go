@@ -70,18 +70,23 @@ func Translate(err error) (code string, data any) {
 		errors.Is(err, meta.ErrPackNotFound),
 		errors.Is(err, meta.ErrTimelineUnknown),
 		errors.Is(err, meta.ErrMRUnknown),
+		errors.Is(err, meta.ErrGroupUnknown),
 		errors.Is(err, ErrBranchMissing):
 		return "NOT_FOUND", nil
+	case errors.Is(err, meta.ErrGroupExists):
+		return "CONFLICT_GROUP", nil
 	case errors.Is(err, meta.ErrMRState):
 		return "CONFLICT_MR", nil
 	case errors.Is(err, meta.ErrRepoCycle),
 		errors.Is(err, meta.ErrRepoDepth),
 		errors.Is(err, meta.ErrMRInvalid),
-		errors.Is(err, meta.ErrBranchRuleInvalid):
-		// A refused hierarchy link or a failed MR/rule validation is a
-		// client-input problem, not a server fault — the parent the caller
+		errors.Is(err, meta.ErrBranchRuleInvalid),
+		errors.Is(err, meta.ErrGroupInvalid):
+		// A refused hierarchy link or a failed MR/rule/group validation is
+		// a client-input problem, not a server fault — the parent the caller
 		// picked loops or nests too deep (docs/design/data-model.md §14),
-		// or the merge request / branch rule failed its store validation.
+		// or the merge request / branch rule / group failed its store
+		// validation.
 		return "INVALID_ARG", nil
 	default:
 		var conflict *ErrSyncConflict
