@@ -117,6 +117,21 @@ export function RepoHomePage(): ReactNode {
           </p>
         </section>
         <section>
+          {can(mode, "createRepos") && (
+            <form
+              className="create-repo"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (subName.trim()) createSub.mutate(subName.trim());
+              }}
+            >
+              <input placeholder={t("new sub-project under this repo")} value={subName} onChange={(e) => setSubName(e.target.value)} />
+              <button className="btn" type="submit" disabled={createSub.isPending}>
+                {t("create sub-project")}
+              </button>
+              {subError && <span className="muted">{subError}</span>}
+            </form>
+          )}
           <h2>{t("Recent Commits")}{defaultBranch ? ` · ${defaultBranch}` : ""}</h2>
           {log.isPending && <Spinner />}
           {log.isError && <p className="muted pad">{t("no history yet.")}</p>}
@@ -165,24 +180,9 @@ export function RepoHomePage(): ReactNode {
                   <td className="muted">{c.defaultBranch || "main"}</td>
                 </tr>
               ))}
-            </tbody>
-          </table>
-        )}
-        {can(mode, "createRepos") && (
-          <form
-            className="create-repo"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (subName.trim()) createSub.mutate(subName.trim());
-            }}
-          >
-            <input placeholder={t("new sub-project under this repo")} value={subName} onChange={(e) => setSubName(e.target.value)} />
-            <button className="btn" type="submit" disabled={createSub.isPending}>
-              {t("create sub-project")}
-            </button>
-            {subError && <span className="muted">{subError}</span>}
-          </form>
-        )}
+              </tbody>
+            </table>
+          )}
       </section>
     </>
   );
