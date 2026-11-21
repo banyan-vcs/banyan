@@ -57,6 +57,7 @@ func (s *Server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.Password = hash
+	u.MustChangePassword = false // a self-chosen password clears the admin-reset fence
 	if err := us.PutUser(r.Context(), u); err != nil {
 		writeServiceErr(w, err)
 		return

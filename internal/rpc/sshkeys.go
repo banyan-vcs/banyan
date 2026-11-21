@@ -58,9 +58,14 @@ func (s *Server) handleSSHKeys(w http.ResponseWriter, r *http.Request) {
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		// An SSH key is an UNSCOPED credential — it carries no token
-		// ceiling — so minting one is a write-rank act (a read PAT must not
-		// forge itself a full-rank key; the token-minting gate, same seam).
+		// A reset-but-unchanged account plants nothing that could outlive
+		// the forced password change (the must-change fence), and an SSH
+		// key is an UNSCOPED credential — it carries no token ceiling — so
+		// minting one is a write-rank act (a read PAT must not forge
+		// itself a full-rank key; the token-minting gate, same seam).
+		if !s.requireNoPasswordReset(w, r) {
+			return
+		}
 		if !s.requireWriteRank(w, r) {
 			return
 		}

@@ -104,6 +104,11 @@ func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
 		if req.Scope == "" {
 			req.Scope = meta.ScopeWrite
 		}
+		// A reset-but-unchanged account mints nothing that could outlive
+		// the forced password change (the must-change fence).
+		if !s.requireNoPasswordReset(w, r) {
+			return
+		}
 		// Minting is a write-rank act, and the requested scope may never
 		// exceed what the caller holds: a read PAT minting itself a write
 		// or admin PAT (or a plain user minting admin) is the textbook
