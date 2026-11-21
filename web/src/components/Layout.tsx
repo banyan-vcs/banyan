@@ -1,10 +1,13 @@
 // Layout.tsx — the application chrome: a light top bar (brand, the "+"
 // create menu, the avatar whose click/right-click opens the account
-// menu) over the collapsible sidebar. The sidebar's workspace section is
-// the three global destinations (repositories, groups, merge requests —
-// narrowed by the deployment's advertised capabilities) with one-key
-// shortcuts; "[" folds it to an icon rail. Inside /r/<repo> the sidebar
-// additionally carries that repository's navigation.
+// menu) over the collapsible sidebar. The sidebar is contextual, one
+// group at a time: on the workspace pages it carries the three global
+// destinations (repositories, groups, merge requests — one-key
+// shortcuts, narrowed by the deployment's capabilities); inside
+// /r/<repo> it carries only that repository's navigation, and the way
+// back out is the breadcrumb atop the content (repositories / group /
+// repo). The fold control lives at the sidebar's bottom edge, next to
+// the tagline; "[" folds it to an icon rail from anywhere.
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { BASE_URL } from "../api/client";
@@ -77,7 +80,9 @@ export function Layout(): ReactNode {
 
   // One-key navigation + the fold: plain keys only, never while typing in
   // a form field or the editor, never with a modifier held (browser
-  // shortcuts stay the browser's).
+  // shortcuts stay the browser's). The R/G/M keys stay global even on
+  // repository pages, where the workspace menu is not shown — a hidden
+  // capability shouldn't stop working because the page changed.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
@@ -102,6 +107,19 @@ export function Layout(): ReactNode {
     </Link>
   );
 
+  const collapseBtn = (
+    <button
+      className="side-collapse"
+      onClick={() => setCollapsed((v) => !v)}
+      title={collapsed ? t("expand the sidebar ( [ )") : t("fold to icons ( [ )")}
+      aria-label={collapsed ? t("expand sidebar") : t("collapse sidebar")}
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+        {collapsed ? <path d="M6 3.5 10.5 8 6 12.5" /> : <path d="M10 3.5 5.5 8 10 12.5" />}
+      </svg>
+    </button>
+  );
+
   return (
     <div className="shell">
       <header className="topbar">
@@ -115,33 +133,37 @@ export function Layout(): ReactNode {
       <div className="shell-body">
         <aside className={"sidebar" + (collapsed ? " collapsed" : "")}>
           <nav className="side-nav">
-            <div className="side-group">
-              <div className="side-title-row">
-                {!collapsed && <div className="side-title">{t("workspace")}</div>}
-                <button
-                  className="side-collapse"
-                  onClick={() => setCollapsed((v) => !v)}
-                  title={collapsed ? t("expand the sidebar ( [ )") : t("fold to icons ( [ )")}
-                  aria-label={collapsed ? t("expand sidebar") : t("collapse sidebar")}
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
-                    {collapsed ? <path d="M6 3.5 10.5 8 6 12.5" /> : <path d="M10 3.5 5.5 8 10 12.5" />}
-                  </svg>
-                </button>
-              </div>
-              {workspaceNav.map((n) => item(n.to, n.label, n.icon, n.active, n.hint))}
-            </div>
-            {repo !== "" && (
+            {repo === "" ? (
+              <div className="side-group">{workspaceNav.map((n) => item(n.to, n.label, n.icon, n.active, n.hint))}</div>
+            ) : (
               <div className="side-group">
                 {!collapsed && <div className="side-title">{group ? `${group} / ${repo}` : repo}</div>}
                 {repoNav.map((n) => item(n.to, n.label, n.icon, n.active))}
               </div>
             )}
           </nav>
-          {!collapsed && <div className="side-foot">{t("banyan · the tree becomes a forest")}</div>}
+          <div className="side-bottom">
+            {!collapsed && <div className="side-foot">{t("banyan · the tree becomes a forest")}</div>}
+            {collapseBtn}
+          </div>
         </aside>
         <main>
           <div className="content-inner">
+            {repo !== "" && (
+              <div className="crumb-top">
+                <Link to="/">{t("repositories")}</Link>
+                {group && (
+                  <>
+                    {" / "}
+                    <Link to="/groups">{group}</Link>
+                  </>
+                )}
+                {" / "}
+                <Link to={base} className="crumb-here">
+                  {repo}
+                </Link>
+              </div>
+            )}
             <Outlet />
           </div>
         </main>

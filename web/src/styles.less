@@ -309,19 +309,21 @@ header .brand {
   display: flex;
   flex-direction: column;
 }
-.side-nav { flex: 1; padding: 8px 0 16px; }
-/* the workspace title row carries the fold: "[" works too */
-.side-title-row {
+.side-nav { flex: 1; padding: 14px 0 16px; }
+/* the bottom strip carries the fold: the tagline left, the chevron right */
+.side-bottom {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
-  padding: 14px 12px 4px 18px;
+  gap: 8px;
+  padding: 8px 12px 8px 18px;
+  border-top: 1px solid var(--line);
 }
 .side-collapse {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 22px;
   height: 22px;
   border: none;
@@ -338,7 +340,7 @@ header .brand {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--muted);
-  padding: 14px 18px 4px;
+  padding: 0 18px 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -378,17 +380,33 @@ header .brand {
 }
 .side-item:hover .kbd { color: var(--control); }
 .side-foot {
-  padding: 10px 18px;
-  border-top: 1px solid var(--line);
   font-size: 12px;
   color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* the folded rail: icons only, centered; labels live in the title attr */
 .sidebar.collapsed { width: 56px; }
-.sidebar.collapsed .side-title-row { justify-content: center; padding: 14px 0 4px; }
+.sidebar.collapsed .side-bottom { justify-content: center; padding: 8px 0; }
 .sidebar.collapsed .side-item { justify-content: center; margin: 1px 10px; padding: 6px 0; }
 .sidebar.collapsed .side-title { display: none; }
+
+/* the breadcrumb strip atop every repository page: the way back out */
+.crumb-top {
+  font-size: 12px;
+  color: var(--muted);
+  padding-bottom: 10px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crumb-top a { color: var(--muted); text-decoration: none; }
+.crumb-top a:hover { color: var(--ink); text-decoration: underline; }
+.crumb-top .crumb-here { color: var(--ink); font-weight: 500; }
 
 main { flex: 1; min-width: 0; }
 .content-inner { max-width: 1120px; margin: 0 auto; padding: 20px 28px 56px; }
@@ -397,10 +415,10 @@ main { flex: 1; min-width: 0; }
   .shell-body { flex-direction: column; }
   .sidebar, .sidebar.collapsed { position: static; width: 100%; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .side-nav { display: flex; align-items: center; gap: 2px; padding: 6px 8px; overflow-x: auto; }
-  .side-title, .side-title-row { display: none; }
+  .side-title { display: none; }
   .side-item, .sidebar.collapsed .side-item { margin: 0; padding: 5px 10px; justify-content: flex-start; }
   .side-item .kbd { display: none; }
-  .side-foot { display: none; }
+  .side-bottom { display: none; }
   .content-inner { padding: 16px 16px 40px; }
 }
 
