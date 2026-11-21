@@ -115,6 +115,10 @@ var metaSteps = []ddl.Step{
 	// The user SSH key table (docs/design/data-model.md §17) — the
 	// console-managed key table behind the git-over-SSH transport.
 	{Name: "0011-ssh-keys", Up: sshKeysUp},
+	// The account table (docs/design/data-model.md §18) — server-managed
+	// users with bcrypt hashes: first-boot administrator, password
+	// self-service.
+	{Name: "0012-users", Up: usersUp},
 }
 
 // memberTablesUp is step 0010: the group and repository member tables.
@@ -130,6 +134,16 @@ func memberTablesUp(q ddl.Q) error {
 // sshKeysUp is step 0011: the ssh_keys table.
 func sshKeysUp(q ddl.Q) error {
 	for _, stmt := range sshKeysDDL(q.Dialect()) {
+		if err := q.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// usersUp is step 0012: the users table.
+func usersUp(q ddl.Q) error {
+	for _, stmt := range usersDDL(q.Dialect()) {
 		if err := q.Exec(stmt); err != nil {
 			return err
 		}
@@ -194,5 +208,5 @@ func tableDDL(dialect string) []string {
 	default:
 		base = ddlSQLite()
 	}
-	return append(append(append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), groupsDDL(dialect)...), membersDDL(dialect)...), sshKeysDDL(dialect)...)
+	return append(append(append(append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), groupsDDL(dialect)...), membersDDL(dialect)...), sshKeysDDL(dialect)...), usersDDL(dialect)...)
 }
