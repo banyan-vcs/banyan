@@ -36,6 +36,12 @@ type Config struct {
 	InitRepo    string `yaml:"init_repo"` // repo created at startup (optional)
 	MetaBackend string `yaml:"meta"`      // "mem" | "sqlite" | "mysql" | "postgres"
 	DBPath      string `yaml:"db"`        // sqlite path; defaults to <root>/banyan.db
+	// Demo turns on one-command demonstration seeding at boot: known demo
+	// accounts, a playground repository with subtrees, merge requests and
+	// protection rules, and the guide markdown (internal/demoseed).
+	// Production deployments never set it — they get the first-boot
+	// administrator instead.
+	Demo bool `yaml:"demo"`
 
 	Role          string `yaml:"role"`             // all-in-one (default) | gateway | refs | storage
 	NodeID        string `yaml:"node_id"`          // storage role: cluster identity

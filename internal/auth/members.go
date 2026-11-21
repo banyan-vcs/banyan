@@ -39,6 +39,14 @@ func (p *MemberPolicy) IdentifyKey(user string, keyBlob []byte) Identity {
 	return p.Inner.IdentifyKey(user, keyBlob)
 }
 
+// InvalidateCredentials forwards to the inner policy when it manages a
+// verified-credential cache (the password-change path).
+func (p *MemberPolicy) InvalidateCredentials() {
+	if inv, ok := p.Inner.(CredentialInvalidator); ok {
+		inv.InvalidateCredentials()
+	}
+}
+
 func (p *MemberPolicy) VisibleRefs(id Identity, repo string, refs []Ref) []Ref {
 	return p.Inner.VisibleRefs(id, repo, refs)
 }

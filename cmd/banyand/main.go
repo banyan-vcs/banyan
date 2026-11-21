@@ -194,8 +194,22 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		}
 		gw.Auth = svc
 		api.Auth = svc
-	case staticPolicy(cfg) != nil:
+	case staticPolicy(cfg) != nil || metaUserStore(ms):
+		// The static branch now also serves deployments with NO config
+		// users: the metadata-plane account table is the user source, and a
+		// fresh one bootstraps its administrator (generated password, once,
+		// on the terminal).
 		policy := staticPolicy(cfg)
+		if policy == nil {
+			policy = &auth.StaticPolicy{}
+		}
+		if us, ok := ms.(meta.UserStore); ok {
+			policy.UserSource = us
+			log.Printf("auth: account table on (server-managed passwords, bcrypt, docs/gateway/authorization.md §2a)")
+			if len(cfg.Auth.Users) == 0 && !cfg.Demo {
+				bootstrapAdminAccount(ctx, ms)
+			}
+		}
 		var svc auth.Service = policy
 		// Metadata-plane PATs ride on top of the static policy (docs/gateway/authorization.md
 		// §6): passwords and SSH keys keep working, tokens add scoped
@@ -305,6 +319,13 @@ func gitLabAdapter(cfg *config.Config) *gitwire.GitLabConfig {
 	}
 	log.Printf("gitaly.gitlab: post-receive adapter → %s", cfg.Gitaly.GitLab.URL)
 	return &gitwire.GitLabConfig{URL: cfg.Gitaly.GitLab.URL, Secret: string(secret)}
+}
+
+// metaUserStore answers whether the metadata plane carries the account
+// table (the no-config-users deployments build their static policy on it).
+func metaUserStore(ms meta.MetaStore) bool {
+	_, ok := ms.(meta.UserStore)
+	return ok
 }
 
 // staticPolicy builds the demo authorization policy from config (docs/gateway/authorization.md
