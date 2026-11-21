@@ -472,18 +472,19 @@ PRIMARY KEY(repo, branch)
 // groupsDDL answers the group tables (docs/design/data-model.md §15): the
 // groups themselves and the repo→group assignment table. One optional label
 // per repo — natural keys, no auto-increment, the same shape on all three
-// dialects. The assignment column is group_name ("group" is reserved in
-// MySQL).
+// dialects. GROUPS is a reserved word on MySQL 8+ (and GROUP always was),
+// so the tables spell their names out: repo_groups and repo_group_labels,
+// the assignment column group_name.
 func groupsDDL(dialect string) []string {
 	return []string{
-		`CREATE TABLE IF NOT EXISTS groups(
+		`CREATE TABLE IF NOT EXISTS repo_groups(
 name         ` + nameCol(dialect) + ` NOT NULL,
 description  TEXT NOT NULL,
 created_by   ` + nameCol(dialect) + ` NOT NULL,
 created_at   BIGINT NOT NULL,
 PRIMARY KEY(name)
 )`,
-		`CREATE TABLE IF NOT EXISTS repo_groups(
+		`CREATE TABLE IF NOT EXISTS repo_group_labels(
 repo        ` + nameCol(dialect) + ` NOT NULL,
 group_name  ` + nameCol(dialect) + ` NOT NULL,
 PRIMARY KEY(repo)
