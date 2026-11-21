@@ -43,6 +43,17 @@ func (p *SubtreeRulePolicy) IdentifyKey(user string, keyBlob []byte) Identity {
 	return p.Inner.IdentifyKey(user, keyBlob)
 }
 
+// InvalidateCredentials forwards to the inner policy when it manages a
+// verified-credential cache (the password-change path — the production
+// assembly carries this decorator between the tokens and the static
+// policy, where a missing forwarder would leave the OLD password alive
+// until TTL lapse).
+func (p *SubtreeRulePolicy) InvalidateCredentials() {
+	if inv, ok := p.Inner.(CredentialInvalidator); ok {
+		inv.InvalidateCredentials()
+	}
+}
+
 func (p *SubtreeRulePolicy) VisibleRefs(id Identity, repo string, refs []Ref) []Ref {
 	return p.Inner.VisibleRefs(id, repo, refs)
 }

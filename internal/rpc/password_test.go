@@ -25,15 +25,17 @@ func TestPasswordChange(t *testing.T) {
 	ms := meta.NewMemoryMetaStore()
 	objects := storage.NewObjectService(ms, storage.NewLocalShardStore(t.TempDir()), []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
 	s := NewServer(ms, objects, model.SHA1)
-	// Production shape: the key/member decorators over tokens over the
+	// Production shape: keys → members → subtree rules → tokens → the
 	// static policy, the account table wired in — the invalidation must
-	// survive the whole chain.
+	// survive the WHOLE chain (a missing forwarder on any decorator would
+	// leave the old password alive until TTL lapse; the subtree-rule layer
+	// once did exactly that, caught live on the demo stack).
 	static := &auth.StaticPolicy{Users: map[string]string{"bob": "cfg-pass"}}
 	static.UserSource = ms
 	hash, err := auth.HashPassword("first-password")
 	require.NoError(t, err)
 	require.NoError(t, ms.PutUser(t.Context(), meta.User{Name: "alice", Password: hash, Admin: true, CreatedAt: 1}))
-	s.Auth = &auth.KeyPolicy{Inner: &auth.TokenPolicy{Inner: static, Tokens: ms}, Keys: ms}
+	s.Auth = &auth.KeyPolicy{Inner: &auth.MemberPolicy{Inner: &auth.SubtreeRulePolicy{Inner: &auth.TokenPolicy{Inner: static, Tokens: ms}, Rules: ms}, Members: ms}, Keys: ms}
 	mux := http.NewServeMux()
 	s.Register(mux)
 	hs := httptest.NewServer(mux)
