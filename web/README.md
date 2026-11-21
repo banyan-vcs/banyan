@@ -72,6 +72,8 @@ go run ./cmd/banyand web -listen :3000 -gateway http://127.0.0.1:8080 \
 |---|---|
 | `/login` | local form + one button per OAuth provider |
 | `/` | repository list: group folders (collapsible) over the project trees, ungrouped roots after |
+| `/groups` | every group with its member repositories and deletion |
+| `/merge_requests` | the workspace-wide request list (state filter; rows link into the repository's page) |
 | `/new?kind=repo\|group` | the topbar "+" target: a blank repository (name, parent nest, group label), an import from URL (with the job list), or a new group |
 | `/r/:repo` | branch list (**your** filtered view, parsed from the same ref advertisement git gets) + recent history |
 | `/r/:repo/tree/…` | code browser: lazy one-level directory walk (`GET /api/v1/tree`), file contents with line numbers + syntax highlighting + binary detection + 64 KiB preview cap, branch switcher, blame links |
@@ -88,6 +90,12 @@ they folder the list and nothing else — the repository's physical name and
 every URL stay untouched. The theme picker lives in personal settings (the
 pre-paint snippet in `index.html` still applies the stored choice before
 first paint).
+
+The chrome: the avatar at the top bar's right end opens the account menu
+(click or right-click — identity, personal settings, log out). The sidebar
+carries the three global destinations with one-key shortcuts (R
+repositories, G groups, M merge requests) and folds to an icon rail with
+`[` (plain keys only — never while typing, never with modifiers).
 
 In the `gitlab` profile the SPA narrows to the repositories list and each
 repo's subtree pages; login is the GitLab provider only.
