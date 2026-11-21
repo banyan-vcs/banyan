@@ -621,9 +621,10 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 		// Parent (docs/design/data-model.md §14) optionally nests the new repo under an
 		// existing one — organizational metadata only, names stay flat.
 		var req struct {
-			Name   string `json:"name"`
-			Parent string `json:"parent"`
-			Group  string `json:"group"`
+			Name        string `json:"name"`
+			Parent      string `json:"parent"`
+			Group       string `json:"group"`
+			Description string `json:"description"`
 		}
 		if !decodeBody(w, r, &req) {
 			return
@@ -670,6 +671,15 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// The display one-liner rides along (display metadata, no rollback
+		// semantics to violate — a failed write still fails the create).
+		if req.Description != "" {
+			if err := s.Meta.SetRepoDescription(r.Context(), req.Name, req.Description); err != nil {
+				_ = s.Meta.DeleteRepo(r.Context(), req.Name)
+				writeServiceErr(w, err)
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"name": req.Name, "parent": req.Parent})
 	default:
 		repos, err := s.Svc.ListRepos(r.Context())
@@ -694,20 +704,51 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 		s.handleBranchRules(w, r, parts)
 		return
 	}
-	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks" && parts[1] != "subtree-access" && parts[1] != "parent" && parts[1] != "group") {
-		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access|parent|group)"}})
+	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks" && parts[1] != "subtree-access" && parts[1] != "parent" && parts[1] != "group" && parts[1] != "description") {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access|parent|group|description)"}})
 		return
 	}
 	// Repo management is admin territory (docs/gateway/authorization.md §5); size stays a plain
-	// repo stat for any authenticated member, and the group label is
-	// organizational metadata — write rank, the creation gate's rank (the
-	// parent link stays admin because re-homing reshapes the hierarchy the
-	// policy engine walks; a label never does).
-	if parts[1] != "size" && parts[1] != "group" && !s.requireAdmin(w, r, parts[0]) {
+	// repo stat for any authenticated member, and the group label and the
+	// description are organizational/display metadata — write rank, the
+	// creation gate's rank (the parent link stays admin because re-homing
+	// reshapes the hierarchy the policy engine walks; a label never does).
+	if parts[1] != "size" && parts[1] != "group" && parts[1] != "description" && !s.requireAdmin(w, r, parts[0]) {
 		return
 	}
 	if parts[1] == "group" {
 		s.handleRepoGroup(w, r, parts[0])
+		return
+	}
+	if parts[1] == "description" {
+		// GET/PUT the display one-liner: GET any authenticated member, PUT
+		// write rank (the group-label precedent).
+		switch r.Method {
+		case http.MethodGet:
+			info, err := s.Meta.GetRepo(r.Context(), parts[0])
+			if err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"repo": parts[0], "description": info.Description})
+		case http.MethodPut:
+			var req struct {
+				Description string `json:"description"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if !s.requireWriteRank(w, r) {
+				return
+			}
+			if err := s.Meta.SetRepoDescription(r.Context(), parts[0], req.Description); err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"repo": parts[0], "description": req.Description})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET or PUT"}})
+		}
 		return
 	}
 	if parts[1] == "parent" {

@@ -157,6 +157,12 @@ func (m *RemoteMeta) SetRepoParent(ctx context.Context, repo string, parent stri
 		map[string]string{"repo": repo, "parent": parent}, nil)
 }
 
+// SetRepoDescription sets the display one-liner on the refs service.
+func (m *RemoteMeta) SetRepoDescription(ctx context.Context, repo string, description string) error {
+	return m.Refs.call(ctx, "/internal/meta/set-repo-description",
+		map[string]string{"repo": repo, "description": description}, nil)
+}
+
 func (m *RemoteMeta) GetRepo(ctx context.Context, repo string) (RepoInfo, error) {
 	var out struct {
 		Repo RepoInfo `json:"repo"`

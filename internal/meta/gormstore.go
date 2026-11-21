@@ -44,6 +44,7 @@ type repoRow struct {
 	StorageID     string
 	ForcePush     int
 	Parent        string
+	Description   string
 }
 
 func (repoRow) TableName() string { return "repos" }
@@ -56,6 +57,7 @@ func (r repoRow) info() RepoInfo {
 		StorageID:     r.StorageID,
 		ForcePush:     r.ForcePush != 0,
 		Parent:        r.Parent,
+		Description:   r.Description,
 	}
 }
 

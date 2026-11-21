@@ -102,6 +102,13 @@ var metaSteps = []ddl.Step{
 	// The group tables (docs/design/data-model.md §15) — same baseline/
 	// incremental split as the MR tables.
 	{Name: "0008-group-tables", Up: groupTablesUp},
+	// The repository display one-liner (the list page shows it truncated).
+	{Name: "0009-repos-description", Up: func(q ddl.Q) error {
+		if q.Dialect() == "mysql" {
+			return addColumn(q, "repos", "description", "VARCHAR(500) NOT NULL DEFAULT ''")
+		}
+		return addColumn(q, "repos", "description", "TEXT NOT NULL DEFAULT ''")
+	}},
 }
 
 // groupTablesUp is step 0008: the groups and repo_groups tables.

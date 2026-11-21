@@ -159,6 +159,10 @@ type RepoRegistry interface {
 	// past MaxRepoDepth levels. Pure registry metadata — names stay
 	// single-segment, so git URLs never change.
 	SetRepoParent(ctx context.Context, repo string, parent string) error
+	// SetRepoDescription sets the repo's display one-liner (empty clears).
+	// Pure display metadata (the repository list truncates it); the repo
+	// must exist.
+	SetRepoDescription(ctx context.Context, repo string, description string) error
 }
 
 // PackRegistry is the central pack table: pack → replica nodes. Packs are
@@ -248,6 +252,9 @@ type RepoInfo struct {
 	// is a full repository at its own single-segment name, not a namespaced
 	// path, so clone URLs and refnames are untouched by the tree.
 	Parent string `json:"parent,omitempty"`
+	// Description is the free-form one-liner the repository list shows
+	// (truncated in the UI). Pure display metadata, never parsed.
+	Description string `json:"description,omitempty"`
 }
 
 // ErrNonFastForward mirrors git push non-fast-forward (docs/design/data-model.md §4.3).
@@ -623,6 +630,22 @@ func (m *MemoryMetaStore) SetRepoParent(_ context.Context, repo string, parent s
 	}
 	info := m.repos[repo]
 	info.Parent = parent
+	m.repos[repo] = info
+	return nil
+}
+
+// SetRepoDescription sets the display one-liner under the store lock.
+func (m *MemoryMetaStore) SetRepoDescription(_ context.Context, repo string, description string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fenceHit(repo) {
+		return fenceErr(repo)
+	}
+	if _, ok := m.repos[repo]; !ok {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+	}
+	info := m.repos[repo]
+	info.Description = description
 	m.repos[repo] = info
 	return nil
 }

@@ -174,6 +174,13 @@ type RepoSummary struct {
 	// Parent is the hierarchy link (docs/design/data-model.md §14): the parent repo's
 	// name, empty for a root — the web tree and `repo ls` group by it.
 	Parent string `json:"parent,omitempty"`
+	// Description is the display one-liner (the repository list truncates it).
+	Description string `json:"description,omitempty"`
+	// UpdatedAt is the default branch's latest commit time (committer
+	// clock), 0 for an empty repository — the list's "recently updated"
+	// column. Best-effort: a repo whose head cannot resolve answers 0
+	// rather than failing the whole listing.
+	UpdatedAt int64 `json:"updatedAt,omitempty"`
 }
 
 func (s *Service) ListRepos(ctx context.Context) ([]RepoSummary, error) {
@@ -187,7 +194,16 @@ func (s *Service) ListRepos(ctx context.Context) ([]RepoSummary, error) {
 		if r.Algo == model.SHA256 {
 			algo = "sha256"
 		}
-		out = append(out, RepoSummary{ID: r.ID, DefaultBranch: r.DefaultBranch, Algorithm: algo, Parent: r.Parent})
+		var updated int64
+		if tip, err := s.Views.RootTip(ctx, r.ID, r.DefaultBranch); err == nil && !tip.IsZero() {
+			if ci, err := s.Objects.CommitInfo(r.ID, tip); err == nil {
+				updated = ci.When
+			}
+		}
+		out = append(out, RepoSummary{
+			ID: r.ID, DefaultBranch: r.DefaultBranch, Algorithm: algo, Parent: r.Parent,
+			Description: r.Description, UpdatedAt: updated,
+		})
 	}
 	return out, nil
 }
