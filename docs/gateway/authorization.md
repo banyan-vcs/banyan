@@ -246,6 +246,23 @@ GitLabSSO 的姿态推广到**多个同时受信的 token 发行方**：`auth.oa
 - **web 层配套**（docs/web/web-layer.md）：web 层做多 provider 的
   authorization-code 登录与凭证代持，授权判定仍在 gateway 本节策略。
 
+## 8e. 成员账本（2026-11-21，docs/design/data-model.md §16）
+
+`auth.MemberPolicy`——SubtreeRulePolicy 同缝的装饰器，包在策略栈**最外层**
+（banyand 的 static 与 SSO 分支装配；upstream 快照分支不包，该拓扑策略由
+console 同步）。数据源是 meta 面的 `MemberStore`（组员表 + 仓库直接成员表，
+0010 迁移）：
+
+- **受管判定**：仓库有任一直接成员行、或其组（§15 标签）的组员表非空 =
+  受管。受管仓库 download 需 viewer+、commit 需 developer+；部署 admin
+  （内层 AdminChecker）凌驾。**未受管仓库原样透传内层策略**——从不管理
+  成员的部署行为零变化。账本查询出错 fail-closed（受管且无 rank，静默拒）。
+- **只收窄不放宽的原则在此反转半步**：成员门决定"准入"，准入者仍完整走
+  内层规则（scope 上限、保护分支、个人分支空间照常叠加）——与 SubtreeRule
+  的叠加方向一致：外层定生死，内层定形状。
+- 语义与表结构、继承解析（有效 rank=max(直接,继承)、直接授权必须严格高于
+  继承）、API 面见 data-model §16；测试 T116/T117/T118。
+
 **导入 API 的授权**（同一扩展缝）：`POST /api/v1/imports` 走
 `requireWriteRank`（建仓同级门）；目标仓必须不存在（409，导入只落新名）；
 `source_authorization` 只在请求体里存在——用于那次 fetch，不落任何记录、

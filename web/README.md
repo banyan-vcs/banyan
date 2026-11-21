@@ -73,6 +73,7 @@ go run ./cmd/banyand web -listen :3000 -gateway http://127.0.0.1:8080 \
 | `/login` | local form + one button per OAuth provider |
 | `/` | the repository list, GitHub-shaped: name (group prefix), description (truncated), latest update |
 | `/groups` | every group with its member repositories and deletion |
+| `/groups/:name` | one group: the member table (what labeled repositories inherit — viewer/developer/owner) and the group's repositories |
 | `/merge_requests` | the workspace-wide request list (state filter; rows link into the repository's page) |
 | `/new?kind=repo\|group` | the topbar "+" target: a blank repository (group required, name, description, optional parent nest), an import from URL (with the job list), or a new group |
 | `/r/:repo` or `/r/:group/:project` | every repository page answers both shapes — the group form is the canonical address, the one-level form keeps old links alive; the project segment is the physical id |
@@ -83,7 +84,7 @@ go run ./cmd/banyand web -listen :3000 -gateway http://127.0.0.1:8080 \
 | `/r/:repo/blame/…` | blame view: single-line attribution per commit run |
 | `/r/:repo/branches` | branch management through the same ref CAS a git push rides |
 | `/r/:repo/subtrees` | subtree management: directory timelines, branch heads, per-path activity, admin access rules |
-| `/r/:repo/settings` | repo admin: size, force-push switch, group label, rename, repack |
+| `/r/:repo/settings` | repo admin: size, force-push switch, members (effective table with inherited rows marked, direct grants strictly above the inherited rank), group label, rename, repack |
 | `/settings/profile` | personal settings: the theme (auto / day / night), the language (follow the browser / 中文 / English) and the access tokens (mint, list, revoke) |
 
 Groups are organizational containers only (docs/design/data-model.md §15):

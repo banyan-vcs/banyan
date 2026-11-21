@@ -358,3 +358,15 @@ v2 的全部协议修复（协商终态 ACK、delete-refs、ng 行格式、竞�
 - **删除仓库**：repo_groups 行可能悬空（DeleteRepo 不在 GroupStore 域）——不可见且无害，下次贴标签覆盖。
 
 **二级路径（2026-11-21 晚增补）**：控制台把有组仓库的页面地址升为 `/r/<group>/<project>`（GitHub 形）——project 段即物理名，API 与 git wire 寻址不变；无组仓库保留一级 `/r/<name>` 旧形（react-router 静态段优先级天然消歧，两种形态并存）。创建侧组为必选（新仓生于 `/<group>/<name>`）；既有仓库经设置页贴组即获新地址。`repos.description`（0009 列）是纯展示一行文，列表按列宽截断；`updatedAt` 不落库——ListRepos 活算默认分支头提交的 committer 时间（best-effort，空仓/解不出答 0）。
+
+## 16. 成员与权限继承（members，2026-11-21）
+
+组（§15）自此携带权限语义：**成员账本**。两级三档——组员表（组内所有打标签仓库**继承**的授权）与仓库直接成员表（只能**高于**继承的追加授权）。
+
+- **rank 三档**：`viewer`（读，fetch 面）< `developer`（读写，push 面）< `owner`。部署管理员（策略层 admin）凌驾一切——他们拥有编辑这些表的管理面，把自己锁在外面会瘫掉管理面。
+- **数据**：meta 面两张表——`repo_group_members(group_name, username, rank, added_by, added_at)` 与 `repo_members(repo, username, ...)`（0010 迁移；列名 username——`USER` 在 PostgreSQL 是保留字，tokens 表的 owner 列同一次规避）。复合主键即查询路径，无额外索引（小表惯例）。MemberStore 照 GroupStore/MRStore 先例：独立接口、消费方 type-assert。
+- **继承解析**：仓库有效成员 = 直接表 ∪ 组员表（继承行带 `viaGroup` 标记，UI 显示"继承自 <组>"）；有效 rank = max(直接, 继承)。**守卫**：仓库直接授权必须**严格高于**该用户自组继承的 rank——等于冗余、低于是静默收窄，双双 400（ErrMemberRank→INVALID_ARG）；无继承时任意档可加。移除直接成员即回落继承 rank；删组同刻清组员与继承授权（assignments 先例），直接授权存活。
+- **受管判定**：仓库有任一直接成员行、或其组的组员表非空 = **受管**；受管仓库只放行成员（viewer 起可 fetch、developer 起可 push）与部署 admin。未受管仓库行为与从前完全一致（SubtreeRulePolicy 哲学：从不管理成员的部署零变化）。账本查询出错 fail-closed。
+- **执行链**：`auth.MemberPolicy`（SubtreeRulePolicy 同缝装饰器）包住策略栈最外层——先过成员门，再走内层规则（scope 上限、保护分支、个人分支空间全部照常叠加）。banyand 的 static 与 SSO 分支装配；console-fronted（upstream 快照）分支不包——该拓扑的策略由 console 快照同步。
+- **API**：`GET/PUT /api/v1/groups/<name>/members`（PUT body `{user, rank}`，rank 空串=移除）与 `GET/PUT /api/v1/repos/<repo>/members`（GET 答有效视图 `members`+继承标记与直接表 `direct` 双数组）。读对任何认证成员开放（组织元数据，组列表先例）；写走 write-rank（建组同门）。
+- **表面**：组详情页 `/groups/<name>`（成员表+添加表单+组内仓库列表，组列表行与仓库面包屑组段均链入）；仓库设置页 members 区（有效表：继承行带标记不可移除、直接行可移除；添加表单的提权校验由服务端执行、错误即显）。
