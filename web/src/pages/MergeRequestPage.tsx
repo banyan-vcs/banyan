@@ -17,11 +17,14 @@ const MrDiff = lazy(() => import("../components/MrDiff").then((m) => ({ default:
 const MrFileEdit = lazy(() => import("../components/MrFileEdit").then((m) => ({ default: m.MrFileEdit })));
 import { ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 import { useSession } from "../session";
+import { useRepoBase, useRepoId } from "../repo";
 
 const VIEW_KEY = "banyan.mr.view";
 
 export function MergeRequestPage(): ReactNode {
-  const { repo = "", iid = "" } = useParams();
+  const { iid = "" } = useParams();
+  const repo = useRepoId();
+  const base = useRepoBase();
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") === "diff" ? "diff" : "overview";
   const urlView = params.get("view");
@@ -111,7 +114,7 @@ export function MergeRequestPage(): ReactNode {
         {view0?.merge_commit && (
           <>
             {" "}· merged as{" "}
-            <Link className="mono" to={`/r/${repo}/commit/${view0.merge_commit}`}>
+            <Link className="mono" to={`${base}/commit/${view0.merge_commit}`}>
               {shortOid(view0.merge_commit)}
             </Link>{" "}
             by {view0.merged_by}

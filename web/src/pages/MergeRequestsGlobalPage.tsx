@@ -6,11 +6,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import { listAllMRs } from "../api/mrs";
+import { repoHref, useRepoGroups } from "../repo";
 import { Empty, ErrorBox, Pill, Spinner, whenStr } from "../components/ui";
 
 const STATES = ["open", "merged", "closed", "all"];
 
 export function MergeRequestsGlobalPage(): ReactNode {
+  const groups = useRepoGroups();
   const [params, setParams] = useSearchParams();
   const state = STATES.includes(params.get("state") || "") ? params.get("state")! : "open";
 
@@ -54,12 +56,12 @@ export function MergeRequestsGlobalPage(): ReactNode {
             {(mrs.data || []).map((mr) => (
               <tr key={`${mr.repo}#${mr.iid}`}>
                 <td>
-                  <Link to={`/r/${mr.repo}/-/merge_requests/${mr.iid}`}>
+                  <Link to={repoHref(mr.repo, groups[mr.repo]) + `/-/merge_requests/${mr.iid}`}>
                     <strong>!{mr.iid}</strong> {mr.title}
                   </Link>
                 </td>
                 <td>
-                  <Link to={`/r/${mr.repo}`} className="rowlink">
+                  <Link to={repoHref(mr.repo, groups[mr.repo])} className="rowlink">
                     {mr.repo}
                   </Link>
                 </td>

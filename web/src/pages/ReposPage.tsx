@@ -1,113 +1,20 @@
-// ReposPage.tsx — the repository list: groups as folders (each nesting the
-// parent-hierarchy trees of its members), the ungrouped projects after
-// (docs/design/data-model.md §14 and §15). The registry list is flat with
-// a parent link; buildRepoTree/flattenTree nest it; collapse state is
-// local — group folders ride the same set under "group:<name>" keys. In
-// GitLab SSO mode repo ids are sha256(project_id); the BFF maps them back
-// to project paths for display (only what the user can see). The create
-// form itself moved to /new (the topbar "+").
+// ReposPage.tsx — the repository list, GitHub-shaped after the two-level
+// addressing (docs/design/data-model.md §15): one flat row per repository
+// — name (its group's path prefix muted in front), the description
+// truncated by the table's width budget, the default branch's latest
+// commit time. Group folders and the hierarchy tree are gone; the group
+// IS the path now. In GitLab SSO mode repo ids are sha256(project_id);
+// the BFF maps them back to project paths for display (only what the
+// user can see). Creation lives at /new (the topbar "+").
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Fragment, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { api } from "../api/client";
-import { buildRepoTree, flattenTree } from "../api/repos";
-import { partitionByGroup, type GroupInfo, type GroupsResponse } from "../api/groups";
+import type { GroupInfo, GroupsResponse } from "../api/groups";
 import type { RepoInfo } from "../api/types";
+import { repoHref } from "../repo";
 import { can, useMode } from "../mode";
-import { Empty, ErrorBox, Spinner } from "../components/ui";
-
-/** RepoTree renders the whole registry as one table: group folders first
- * (caret + name + count, collapsible), their repos' hierarchy trees
- * indented one level under them, the ungrouped roots at the top level. */
-function RepoTree({
-  repos,
-  display,
-  groups,
-  assignments,
-}: {
-  repos: RepoInfo[];
-  display: (r: RepoInfo) => string;
-  groups: GroupInfo[];
-  assignments: Record<string, string>;
-}): ReactNode {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const toggle = (key: string): void =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
-  const parts = partitionByGroup(repos, assignments, groups);
-  // One row per repo, honoring the parent-carets above it (the same
-  // ancestor walk as before, scoped to the repo's bucket) and the group
-  // folder's own collapse.
-  const repoRows = (bucket: RepoInfo[], keyPrefix: string, indentOffset: number): ReactNode =>
-    flattenTree(buildRepoTree(bucket))
-      .filter((n) => {
-        let p = n.repo.parent;
-        while (p) {
-          if (collapsed.has(p)) return false;
-          const parent = bucket.find((r) => r.id === p);
-          p = parent?.parent;
-        }
-        return true;
-      })
-      .map((n) => {
-        const kids = n.children.length > 0;
-        const isOpen = !collapsed.has(n.repo.id);
-        return (
-          <tr key={keyPrefix + n.repo.id}>
-            <td style={{ paddingLeft: `${(n.depth + indentOffset) * 1.4}em`, whiteSpace: "nowrap" }}>
-              {kids ? (
-                <button className="link" title={isOpen ? "collapse" : "expand"} onClick={() => toggle(n.repo.id)}>
-                  {isOpen ? "▾" : "▸"}
-                </button>
-              ) : (
-                <span className="muted">·</span>
-              )}{" "}
-              <Link to={`/r/${n.repo.id}`}>{display(n.repo)}</Link>
-              {kids && <span className="muted"> ({n.children.length})</span>}
-            </td>
-            <td className="muted">{n.repo.defaultBranch || "main"}</td>
-          </tr>
-        );
-      });
-
-  return (
-    <table>
-      <thead>
-        <tr>
-          <th>repository</th>
-          <th>default branch</th>
-        </tr>
-      </thead>
-      <tbody>
-        {parts.groups.map(({ info, repos: bucket }) => {
-          const key = `group:${info.name}`;
-          const open = !collapsed.has(key);
-          return (
-            <Fragment key={key}>
-              <tr className="group-row">
-                <td colSpan={2}>
-                  <button className="link" title={open ? "collapse" : "expand"} onClick={() => toggle(key)}>
-                    {open ? "▾" : "▸"}
-                  </button>{" "}
-                  <strong>{info.name}</strong>
-                  <span className="muted"> ({bucket.length})</span>
-                  {info.description && <span className="muted"> — {info.description}</span>}
-                </td>
-              </tr>
-              {open && repoRows(bucket, key + ":", 1)}
-            </Fragment>
-          );
-        })}
-        {repoRows(parts.rest, "", 0)}
-      </tbody>
-    </table>
-  );
-}
+import { Empty, ErrorBox, Spinner, whenStr } from "../components/ui";
 
 export function ReposPage(): ReactNode {
   const mode = useMode();
@@ -129,7 +36,10 @@ export function ReposPage(): ReactNode {
   });
 
   const display = (r: RepoInfo): string => names.data?.names[r.id] || r.id;
-  const list = repos.data?.repos ?? [];
+  const assignments = groups.data?.repoGroups ?? {};
+  const groupOf = (id: string): GroupInfo | undefined =>
+    (groups.data?.groups ?? []).find((g) => g.name === assignments[id]);
+  const list = [...(repos.data?.repos ?? [])].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 
   return (
     <>
@@ -144,12 +54,34 @@ export function ReposPage(): ReactNode {
               the top bar.
             </Empty>
           ) : (
-            <RepoTree
-              repos={list}
-              display={display}
-              groups={groups.data?.groups ?? []}
-              assignments={groups.data?.repoGroups ?? {}}
-            />
+            <table className="repo-list">
+              <thead>
+                <tr>
+                  <th>repository</th>
+                  <th>description</th>
+                  <th>updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((r) => {
+                  const g = groupOf(r.id);
+                  return (
+                    <tr key={r.id}>
+                      <td>
+                        <Link to={repoHref(r.id, g?.name)} className="repo-name">
+                          {g && <span className="muted">{g.name} / </span>}
+                          {display(r)}
+                        </Link>
+                      </td>
+                      <td className="cell-desc" title={r.description}>
+                        {r.description || <span className="muted">—</span>}
+                      </td>
+                      <td className="muted">{r.updatedAt ? whenStr(r.updatedAt) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
         </>
       )}

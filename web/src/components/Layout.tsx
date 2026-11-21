@@ -44,8 +44,16 @@ export function Layout(): ReactNode {
     }
   }, [collapsed]);
 
-  const repo = loc.pathname.match(/^\/r\/([^/]+)/)?.[1] || "";
-  const base = `/r/${repo}`;
+  // The repo the page sits in, from the path: two-level /r/<group>/<project>
+  // (the project is the physical id) or legacy one-level /r/<name>. The
+  // known page segments distinguish the shapes — segment two is a page
+  // name exactly when the path is one-level.
+  const segs = loc.pathname.match(/^\/r\/([^/]+)(?:\/([^/]+))?/);
+  const PAGE_SEGS = new Set(["tree", "history", "branches", "subtrees", "settings", "-"]);
+  const twoLevel = !!segs?.[2] && !PAGE_SEGS.has(segs[2]);
+  const group = twoLevel ? segs[1] : "";
+  const repo = twoLevel ? segs[2] : segs?.[1] || "";
+  const base = `/r/${group ? group + "/" : ""}${repo}`;
   const at = (path: string): boolean => loc.pathname === path;
   const under = (prefix: string): boolean => loc.pathname === prefix || loc.pathname.startsWith(prefix + "/");
 
@@ -123,7 +131,7 @@ export function Layout(): ReactNode {
             </div>
             {repo !== "" && (
               <div className="side-group">
-                {!collapsed && <div className="side-title">{repo}</div>}
+                {!collapsed && <div className="side-title">{group ? `${group} / ${repo}` : repo}</div>}
                 {repoNav.map((n) => item(n.to, n.label, n.icon, n.active))}
               </div>
             )}

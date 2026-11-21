@@ -5,16 +5,19 @@
 // direct sub-projects with an inline "create sub-project" form.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, qs } from "../api/client";
 import { repoPath } from "../api/repos";
 import { branchesOf, listRefs } from "../api/gitrefs";
 import type { LogResponse, RepoInfo } from "../api/types";
 import { can, useMode } from "../mode";
 import { Empty, ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
+import { repoHref, useRepoBase, useRepoGroups, useRepoId } from "../repo";
 
 export function RepoHomePage(): ReactNode {
-  const { repo = "" } = useParams();
+  const repo = useRepoId();
+  const base = useRepoBase();
+  const groups = useRepoGroups();
   const [params] = useSearchParams();
   const mode = useMode();
   const nav = useNavigate();
@@ -49,7 +52,7 @@ export function RepoHomePage(): ReactNode {
       setSubName("");
       setSubError("");
       qc.invalidateQueries({ queryKey: ["repos"] });
-      nav(`/r/${name}`);
+      nav(repoHref(name));
     },
     onError: (e) => setSubError(e instanceof Error ? e.message : String(e)),
   });
@@ -66,7 +69,7 @@ export function RepoHomePage(): ReactNode {
         <p className="muted breadcrumb">
           {ancestors.map((a) => (
             <span key={a.id}>
-              <Link to={`/r/${a.id}`}>{a.id}</Link> /{" "}
+              <Link to={repoHref(a.id, groups[a.id])}>{a.id}</Link> /{" "}
             </span>
           ))}
           <code>{repo}</code>
@@ -91,11 +94,11 @@ export function RepoHomePage(): ReactNode {
                 {branches.map((b) => (
                   <tr key={b.name}>
                     <td>
-                      <Link to={`/r/${repo}/tree?ref=${encodeURIComponent(b.name)}`}>{b.name}</Link>
+                      <Link to={`${base}/tree?ref=${encodeURIComponent(b.name)}`}>{b.name}</Link>
                       {b.isDefault && <Pill>default</Pill>}
                     </td>
                     <td>
-                      <Link to={`/r/${repo}/commit/${b.oid}`} className="muted mono">
+                      <Link to={`${base}/commit/${b.oid}`} className="muted mono">
                         {shortOid(b.oid)}
                       </Link>
                     </td>
@@ -118,7 +121,7 @@ export function RepoHomePage(): ReactNode {
                 {log.data.entries.map((e) => (
                   <tr key={e.oid}>
                     <td>
-                      <Link to={`/r/${repo}/commit/${e.oid}`}>{e.subject}</Link>
+                      <Link to={`${base}/commit/${e.oid}`}>{e.subject}</Link>
                       <div className="muted">
                         {e.author} · {whenStr(e.when)} · {shortOid(e.oid)}
                       </div>
@@ -130,7 +133,7 @@ export function RepoHomePage(): ReactNode {
           )}
           {defaultBranch && (
             <p className="pad">
-              <Link to={`/r/${repo}/history?ref=${encodeURIComponent(defaultBranch)}`}>full history →</Link>
+              <Link to={`${base}/history?ref=${encodeURIComponent(defaultBranch)}`}>full history →</Link>
             </p>
           )}
         </section>
@@ -151,7 +154,7 @@ export function RepoHomePage(): ReactNode {
               {children.map((c) => (
                 <tr key={c.id}>
                   <td>
-                    <Link to={`/r/${c.id}`}>{c.id}</Link>
+                    <Link to={repoHref(c.id, groups[c.id])}>{c.id}</Link>
                   </td>
                   <td className="muted">{c.defaultBranch || "main"}</td>
                 </tr>

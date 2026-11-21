@@ -4,6 +4,8 @@ export interface RepoInfo {
   id: string;
   defaultBranch: string;
   parent?: string;
+  description?: string;
+  updatedAt?: number; // default branch's latest commit time (0/absent = empty repo)
 }
 
 export interface RefEntry {

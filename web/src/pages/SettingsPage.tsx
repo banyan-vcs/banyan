@@ -2,7 +2,7 @@
 // switch, branch protection rules, rename and a repack trigger (all
 // require the admin rank; a 403 downgrades the page to read-only).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
 import { branchesOf, listRefs } from "../api/gitrefs";
@@ -10,15 +10,35 @@ import type { GroupsResponse } from "../api/groups";
 import { branchRules, deleteBranchRule, putBranchRule } from "../api/mrs";
 import { can, useMode } from "../mode";
 import { ErrorBox, Spinner, sizeStr } from "../components/ui";
+import { useRepoId } from "../repo";
 
 export function SettingsPage(): ReactNode {
-  const { repo = "" } = useParams();
+  const repo = useRepoId();
   const nav = useNavigate();
   const qc = useQueryClient();
   const mode = useMode();
   const [to, setTo] = useState("");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [desc, setDesc] = useState<string | null>(null);
+
+  // The display one-liner (the repository list truncates it): write rank,
+  // the group-label precedent.
+  const descQuery = useQuery({
+    queryKey: ["repo-desc", repo],
+    queryFn: () => api<{ repo: string; description: string }>(`/api/v1/repos/${encodeURIComponent(repo)}/description`),
+    retry: false,
+  });
+  const putDesc = useMutation({
+    mutationFn: (description: string) =>
+      api(`/api/v1/repos/${encodeURIComponent(repo)}/description`, { method: "PUT", body: JSON.stringify({ description }) }),
+    onSuccess: () => {
+      setError("");
+      qc.invalidateQueries({ queryKey: ["repo-desc", repo] });
+      qc.invalidateQueries({ queryKey: ["repos"] });
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
 
   const size = useQuery({
     queryKey: ["size", repo],
@@ -128,6 +148,30 @@ export function SettingsPage(): ReactNode {
           <p className="pad">
             {sizeStr(size.data.bytes)} across {size.data.packs} pack{size.data.packs === 1 ? "" : "s"}
           </p>
+        )}
+      </section>
+
+      <section>
+        <h2>description</h2>
+        <p className="muted">the one-liner the repository list shows (truncated to the column's width).</p>
+        {descQuery.isSuccess && (
+          <form
+            className="rule-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (desc !== null) putDesc.mutate(desc);
+            }}
+          >
+            <input
+              className="repo-desc-input"
+              placeholder="what this repository is"
+              value={desc ?? descQuery.data.description}
+              onChange={(e) => setDesc(e.target.value)}
+            />
+            <button className="btn" type="submit" disabled={putDesc.isPending || desc === null}>
+              save
+            </button>
+          </form>
         )}
       </section>
 

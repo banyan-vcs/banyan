@@ -543,14 +543,20 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 }
 .new-menu-pop button:hover { background: var(--bg-control); }
 
-/* group folders in the repository tree */
-.group-row td {
-  background: var(--bg-subtle);
-  font-size: 13px;
+form.rule-form .group-desc { flex: 1; min-width: 220px; }
+
+/* the GitHub-shaped repository list: name (group prefix muted), the
+   description clamped to one line with the full text in the title, the
+   default branch's latest commit time */
+.repo-list td { vertical-align: top; }
+.repo-list .repo-name { font-weight: 500; white-space: nowrap; }
+.cell-desc {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.group-row:hover td { background: var(--bg-subtle); }
-form.rule-form .group-desc { flex: 1; min-width: 220px; }
+.repo-desc-input { flex: 1; min-width: 260px; }
 
 .error-box {
   background: var(--error-soft);

@@ -11,6 +11,7 @@ import type { TreeResponse } from "../api/types";
 import { FileIcon } from "../components/FileIcon";
 import { FilePanel } from "../components/FilePanel";
 import { ErrorBox, Pill, Spinner, sizeStr } from "../components/ui";
+import { useRepoBase, useRepoId } from "../repo";
 
 interface ResolveResult {
   type: "blob" | "tree";
@@ -19,7 +20,9 @@ interface ResolveResult {
 }
 
 export function TreePage(): ReactNode {
-  const { repo = "", "*": splat = "" } = useParams();
+  const { "*": splat = "" } = useParams();
+  const repo = useRepoId();
+  const base = useRepoBase();
   const [params, setParams] = useSearchParams();
   const qc = useQueryClient();
   const path = splat.replace(/^\/+|\/+$/g, "");
@@ -73,13 +76,13 @@ export function TreePage(): ReactNode {
         </select>
       </h1>
       <div className="crumbs">
-        <Link to={`/r/${repo}/tree${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>{repo}</Link>
+        <Link to={`${base}/tree${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>{repo}</Link>
         {crumbs.map((seg, i) => {
           const upto = crumbs.slice(0, i + 1).join("/");
           return (
             <span key={upto}>
               {" / "}
-              <Link to={`/r/${repo}/tree/${upto}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>{seg}</Link>
+              <Link to={`${base}/tree/${upto}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>{seg}</Link>
             </span>
           );
         })}
@@ -100,7 +103,7 @@ export function TreePage(): ReactNode {
             {path !== "" && (
               <tr>
                 <td colSpan={3}>
-                  <Link to={`/r/${repo}/tree/${parent}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`} className="muted">
+                  <Link to={`${base}/tree/${parent}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`} className="muted">
                     ../
                   </Link>
                 </td>
@@ -113,11 +116,11 @@ export function TreePage(): ReactNode {
                     <FileIcon name={e.name} kind={e.type} mode={e.mode} />
                   </span>{" "}
                   {e.type === "tree" ? (
-                    <Link to={`/r/${repo}/tree/${path ? path + "/" : ""}${e.name}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>
+                    <Link to={`${base}/tree/${path ? path + "/" : ""}${e.name}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>
                       {e.name}
                     </Link>
                   ) : (
-                    <Link to={`/r/${repo}/tree/${path ? path + "/" : ""}${e.name}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>
+                    <Link to={`${base}/tree/${path ? path + "/" : ""}${e.name}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>
                       {e.name}
                     </Link>
                   )}
@@ -127,7 +130,7 @@ export function TreePage(): ReactNode {
                   {e.type === "blob" && ref && (
                     <Link
                       className="muted rowlink"
-                      to={`/r/${repo}/blame/${path ? path + "/" : ""}${e.name}?ref=${encodeURIComponent(ref)}`}
+                      to={`${base}/blame/${path ? path + "/" : ""}${e.name}?ref=${encodeURIComponent(ref)}`}
                     >
                       blame
                     </Link>
