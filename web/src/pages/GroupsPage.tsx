@@ -71,7 +71,9 @@ export function GroupsPage(): ReactNode {
             {parts.groups.map(({ info, repos: members }) => (
               <tr key={info.name}>
                 <td>
-                  <strong>{info.name}</strong>
+                  <Link to={`/groups/${encodeURIComponent(info.name)}`}>
+                    <strong>{info.name}</strong>
+                  </Link>
                   {info.description && <span className="muted"> — {info.description}</span>}
                 </td>
                 <td>
