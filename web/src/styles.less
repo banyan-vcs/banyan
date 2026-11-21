@@ -234,7 +234,7 @@ header .brand {
 .spacer { flex: 1; }
 
 /* the avatar at the bar's right end: click or right-click opens the
-   account menu (who is signed in, personal settings, log out) */
+   account menu (who is signed in, settings, log out) */
 .user-menu { position: relative; }
 .avatar-btn {
   display: inline-flex;
@@ -514,7 +514,7 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn.small { padding: 2px 8px; font-size: 12px; line-height: 18px; }
 
-/* the theme picker in personal settings: the chosen state is the solid
+/* the theme picker in the settings area: the chosen state is the solid
    button, the others stay ghost */
 .theme-picker { display: flex; gap: 8px; margin: 10px 0 4px; flex-wrap: wrap; }
 
@@ -716,11 +716,28 @@ form.rule-form .group-desc { flex: 1; min-width: 220px; }
 
 /* ---- forms ------------------------------------------------------------ */
 
-form.create-repo, form.create-branch, form.mint-form, form.rename-form, form.rule-form, form.path-filter, form.edit-commit {
+form.create-repo, form.create-branch, form.mint-form, form.rename-form, form.rule-form, form.path-filter, form.edit-commit, form.key-form {
   display: flex;
   gap: 8px;
   margin: 14px 0;
   flex-wrap: wrap;
+}
+/* the ssh key paste: the textarea takes the row, mono like the key it
+   holds, the button keeps its natural width */
+form.key-form { align-items: flex-start; }
+form.key-form textarea.key-input {
+  flex: 1;
+  min-width: 280px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12.5px;
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+  padding: 6px 10px;
+  resize: vertical;
+}
+form.key-form textarea.key-input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 form.path-filter input { flex: 1; }
 /* the online edit's commit row: the message input stretches, the buttons

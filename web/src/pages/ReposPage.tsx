@@ -45,7 +45,7 @@ export function ReposPage(): ReactNode {
 
   return (
     <>
-      <h1>{t("repositories")}</h1>
+      <h1>{t("Repositories")}</h1>
       {repos.isPending && <Spinner />}
       {repos.isError && <ErrorBox error={repos.error} />}
       {repos.isSuccess && (

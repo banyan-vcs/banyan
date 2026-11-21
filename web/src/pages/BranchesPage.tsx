@@ -56,7 +56,7 @@ export function BranchesPage(): ReactNode {
   return (
     <>
       <h1>
-        {t("branches")} · <code>{repo}</code>
+        {t("Branches")} · <code>{repo}</code>
       </h1>
       {error && <div className="error-box">{error}</div>}
       <form

@@ -79,7 +79,7 @@ export function SubtreesPage(): ReactNode {
   return (
     <>
       <h1>
-        {t("subtrees")} · <code>{repo}</code>
+        {t("Subtrees")} · <code>{repo}</code>
       </h1>
       <p className="muted">
         {t(
@@ -131,7 +131,7 @@ export function SubtreesPage(): ReactNode {
             {sub && (
               <>
                 <h2>{sub.path}</h2>
-                <h3>{t("branch heads")}</h3>
+                <h3>{t("Branch Heads")}</h3>
                 <table>
                   <tbody>
                     {sub.branches.map((b) => (

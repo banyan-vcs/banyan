@@ -67,7 +67,7 @@ export function GroupDetailPage(): ReactNode {
   return (
     <>
       <h1>
-        {t("group")} · <code>{name}</code>
+        {t("Group")} · <code>{name}</code>
       </h1>
       {info.description && <p className="muted">{info.description}</p>}
       <p className="muted">
@@ -75,7 +75,7 @@ export function GroupDetailPage(): ReactNode {
       </p>
 
       <section>
-        <h2>{t("members")}</h2>
+        <h2>{t("Members")}</h2>
         <p className="muted">
           {t(
             "the group's member table — every labeled repository inherits these grants (the effective rank is the higher of the two)."
@@ -147,7 +147,7 @@ export function GroupDetailPage(): ReactNode {
       </section>
 
       <section>
-        <h2>{t("repositories")}</h2>
+        <h2>{t("Repositories")}</h2>
         {mine.length === 0 && <Empty>{t("no repositories in this group yet.")}</Empty>}
         {mine.length > 0 && (
           <table>

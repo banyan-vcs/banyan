@@ -6,7 +6,9 @@
 // shortcuts, narrowed by the deployment's capabilities); inside
 // /r/<repo> it carries only that repository's navigation, and the way
 // back out is the breadcrumb atop the content (repositories / group /
-// repo). The fold control lives at the sidebar's bottom edge, next to
+// repo); under /settings it carries the settings area's sections
+// (Profile, SSH Keys, Access Tokens — the brand link leads back out).
+// The fold control lives at the sidebar's bottom edge, next to
 // the tagline; "[" folds it to an icon rail from anywhere.
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
@@ -14,7 +16,7 @@ import { BASE_URL } from "../api/client";
 import { useT } from "../i18n";
 import { useSession } from "../session";
 import { can, useMode } from "../mode";
-import { BranchesIcon, CodeIcon, GroupsIcon, HistoryIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon } from "./icons";
+import { BranchesIcon, CodeIcon, GroupsIcon, HistoryIcon, KeyIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon, TokensIcon, UserIcon } from "./icons";
 import { NewMenu } from "./NewMenu";
 import { UserMenu } from "./UserMenu";
 
@@ -63,20 +65,32 @@ export function Layout(): ReactNode {
   const under = (prefix: string): boolean => loc.pathname === prefix || loc.pathname.startsWith(prefix + "/");
 
   const workspaceNav = [
-    { to: "/", label: t("repositories"), icon: RepositoriesIcon, hint: "R", active: at("/"), enabled: true },
-    { to: "/groups", label: t("groups"), icon: GroupsIcon, hint: "G", active: under("/groups"), enabled: can(mode, "groups") },
-    { to: "/merge_requests", label: t("merge requests"), icon: MergeIcon, hint: "M", active: under("/merge_requests"), enabled: can(mode, "mergeRequests") },
+    { to: "/", label: t("Repositories"), icon: RepositoriesIcon, hint: "R", active: at("/"), enabled: true },
+    { to: "/groups", label: t("Groups"), icon: GroupsIcon, hint: "G", active: under("/groups"), enabled: can(mode, "groups") },
+    { to: "/merge_requests", label: t("Merge Requests"), icon: MergeIcon, hint: "M", active: under("/merge_requests"), enabled: can(mode, "mergeRequests") },
   ].filter((n) => n.enabled);
 
   const repoNav = [
-    { to: base, label: t("overview"), icon: OverviewIcon, enabled: true, active: at(base) },
-    { to: `${base}/tree`, label: t("code"), icon: CodeIcon, enabled: can(mode, "code"), active: under(`${base}/tree`) || under(`${base}/blame`) },
-    { to: `${base}/history`, label: t("history"), icon: HistoryIcon, enabled: can(mode, "history"), active: under(`${base}/history`) || under(`${base}/commit`) },
-    { to: `${base}/branches`, label: t("branches"), icon: BranchesIcon, enabled: can(mode, "branches"), active: under(`${base}/branches`) },
-    { to: `${base}/-/merge_requests`, label: t("merge requests"), icon: MergeIcon, enabled: can(mode, "mergeRequests"), active: under(`${base}/-/merge_requests`) },
-    { to: `${base}/subtrees`, label: t("subtrees"), icon: SubtreesIcon, enabled: can(mode, "subtrees"), active: under(`${base}/subtrees`) },
-    { to: `${base}/settings`, label: t("settings"), icon: SettingsIcon, enabled: can(mode, "settings"), active: under(`${base}/settings`) },
+    { to: base, label: t("Overview"), icon: OverviewIcon, enabled: true, active: at(base) },
+    { to: `${base}/tree`, label: t("Code"), icon: CodeIcon, enabled: can(mode, "code"), active: under(`${base}/tree`) || under(`${base}/blame`) },
+    { to: `${base}/history`, label: t("History"), icon: HistoryIcon, enabled: can(mode, "history"), active: under(`${base}/history`) || under(`${base}/commit`) },
+    { to: `${base}/branches`, label: t("Branches"), icon: BranchesIcon, enabled: can(mode, "branches"), active: under(`${base}/branches`) },
+    { to: `${base}/-/merge_requests`, label: t("Merge Requests"), icon: MergeIcon, enabled: can(mode, "mergeRequests"), active: under(`${base}/-/merge_requests`) },
+    { to: `${base}/subtrees`, label: t("Subtrees"), icon: SubtreesIcon, enabled: can(mode, "subtrees"), active: under(`${base}/subtrees`) },
+    { to: `${base}/settings`, label: t("Settings"), icon: SettingsIcon, enabled: can(mode, "settings"), active: under(`${base}/settings`) },
   ].filter((n) => n.enabled);
+
+  // The settings area's own sections — the account menu's "Settings" lands
+  // here. One group at a time still: /settings carries this list instead of
+  // the workspace trio; the top bar's brand is the way back out (and R/G/M
+  // keep working — the keyboard handler below consults workspaceNav
+  // regardless of which group is on display).
+  const settingsNav = [
+    { to: "/settings/profile", label: t("Profile"), icon: UserIcon, enabled: true, active: under("/settings/profile") },
+    { to: "/settings/ssh-keys", label: t("SSH Keys"), icon: KeyIcon, enabled: can(mode, "sshKeys"), active: under("/settings/ssh-keys") },
+    { to: "/settings/tokens", label: t("Access Tokens"), icon: TokensIcon, enabled: can(mode, "tokens"), active: under("/settings/tokens") },
+  ].filter((n) => n.enabled);
+  const inSettings = under("/settings");
 
   // One-key navigation + the fold: plain keys only, never while typing in
   // a form field or the editor, never with a modifier held (browser
@@ -133,7 +147,12 @@ export function Layout(): ReactNode {
       <div className="shell-body">
         <aside className={"sidebar" + (collapsed ? " collapsed" : "")}>
           <nav className="side-nav">
-            {repo === "" ? (
+            {inSettings ? (
+              <div className="side-group">
+                {!collapsed && <div className="side-title">{t("Settings")}</div>}
+                {settingsNav.map((n) => item(n.to, n.label, n.icon, n.active))}
+              </div>
+            ) : repo === "" ? (
               <div className="side-group">{workspaceNav.map((n) => item(n.to, n.label, n.icon, n.active, n.hint))}</div>
             ) : (
               <div className="side-group">
@@ -151,7 +170,7 @@ export function Layout(): ReactNode {
           <div className="content-inner">
             {repo !== "" && (
               <div className="crumb-top">
-                <Link to="/">{t("repositories")}</Link>
+                <Link to="/">{t("Repositories")}</Link>
                 {group && (
                   <>
                     {" / "}

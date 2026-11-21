@@ -43,7 +43,7 @@ export function GroupsPage(): ReactNode {
 
   return (
     <>
-      <h1>{t("groups")}</h1>
+      <h1>{t("Groups")}</h1>
       <p className="muted">
         {t(
           "a group is an organizational container: it folders the repository list and gates nothing — names and URLs stay untouched. Repositories take the label at creation or from their settings page."

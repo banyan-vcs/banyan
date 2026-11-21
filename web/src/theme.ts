@@ -1,5 +1,5 @@
-// theme.ts — the three-state theme control behind personal settings
-// (appearance section): auto (follow the OS scheme) / light / dark. The
+// theme.ts — the three-state theme control behind the settings area's
+// Profile page (appearance section): auto (follow the OS scheme) / light / dark. The
 // choice persists in localStorage as "banyan.theme"; a forced scheme rides
 // html[data-theme], which outranks the prefers-color-scheme block by
 // specificity. The index.html pre-paint snippet applies the stored choice

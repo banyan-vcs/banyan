@@ -26,7 +26,7 @@ const EMPTY: ModeInfo = {
   providers: [],
   capabilities: {
     createRepos: true, code: true, history: true, branches: true,
-    subtrees: true, settings: true, tokens: true, import: true, mergeRequests: true,
+    subtrees: true, settings: true, tokens: true, sshKeys: true, import: true, mergeRequests: true,
     groups: true,
   },
 };

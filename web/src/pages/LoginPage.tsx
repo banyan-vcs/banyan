@@ -51,7 +51,7 @@ export function LoginPage(): ReactNode {
     <div className="login-page">
     <div className="login-card">
       <img className="login-logo" src={`${BASE_URL}avatar.png`} alt="" width="36" height="36" />
-      <h1>{t("banyan console")}</h1>
+      <h1>{t("Banyan Console")}</h1>
       <p className="muted">{t("every page shows the repositories and branches this account can see — the same view git gets.")}</p>
       {error && <div className="error-box">{error}</div>}
       {localForm && (

@@ -44,7 +44,7 @@ export function MergeRequestsPage(): ReactNode {
   return (
     <>
       <h1>
-        {t("merge requests")} · <code>{repo}</code>
+        {t("Merge Requests")} · <code>{repo}</code>
       </h1>
       <div className="tab-row">
         {STATES.map((s) => (

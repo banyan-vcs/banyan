@@ -268,7 +268,7 @@ export function NewPage(): ReactNode {
   if (!canRepo && !canGroup) {
     return (
       <>
-        <h1>{t("not in this deployment")}</h1>
+        <h1>{t("Not in This Deployment")}</h1>
         <p className="muted">{t("this page is a standalone-console capability; this deployment (profile {0}) does not expose it.", mode.profile)}</p>
       </>
     );
@@ -281,7 +281,7 @@ export function NewPage(): ReactNode {
   };
   return (
     <>
-      <h1>{t("create")}</h1>
+      <h1>{t("Create")}</h1>
       <div className="tab-row">
         {canRepo && (
           <button className={"tab" + (kind === "repo" ? " active" : "")} onClick={() => setKind("repo")}>
@@ -325,7 +325,7 @@ export function NewPage(): ReactNode {
                 )}
               </p>
               <ImportForm />
-              <h2>{t("import history")}</h2>
+              <h2>{t("Import History")}</h2>
               <ImportJobs />
             </>
           )}

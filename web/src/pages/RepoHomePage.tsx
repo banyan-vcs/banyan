@@ -80,7 +80,7 @@ export function RepoHomePage(): ReactNode {
       {cloneBase === "" && null}
       <div className="two-col">
         <section>
-          <h2>{t("branches · your view")}</h2>
+          <h2>{t("Branches · Your View")}</h2>
           {refs.isPending && <Spinner />}
           {refs.isError && <ErrorBox error={refs.error} />}
           {refs.isSuccess && branches.length === 0 && <p className="muted pad">{t("no branches yet — push one.")}</p>}
@@ -116,7 +116,7 @@ export function RepoHomePage(): ReactNode {
           </p>
         </section>
         <section>
-          <h2>{t("recent history")}{defaultBranch ? ` · ${defaultBranch}` : ""}</h2>
+          <h2>{t("Recent History")}{defaultBranch ? ` · ${defaultBranch}` : ""}</h2>
           {log.isPending && <Spinner />}
           {log.isError && <p className="muted pad">{t("no history yet.")}</p>}
           {log.isSuccess && (
@@ -143,7 +143,7 @@ export function RepoHomePage(): ReactNode {
         </section>
       </div>
       <section>
-        <h2>{t("sub-projects")}</h2>
+        <h2>{t("Sub-Projects")}</h2>
         {children.length === 0 ? (
           <Empty>{t("this project has no sub-projects yet.")}</Empty>
         ) : (

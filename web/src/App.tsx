@@ -22,7 +22,9 @@ import { ProfilePage } from "./pages/ProfilePage";
 import { ReposPage } from "./pages/ReposPage";
 import { RepoHomePage } from "./pages/RepoHomePage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SSHKeysPage } from "./pages/SSHKeysPage";
 import { SubtreesPage } from "./pages/SubtreesPage";
+import { TokensPage } from "./pages/TokensPage";
 import { TreePage } from "./pages/TreePage";
 
 /** LegacyHistoryRef forwards pre-?ref= links (branch names in the path
@@ -39,7 +41,7 @@ function Gate({ capability, children }: { capability: string; children: ReactNod
   if (can(mode, capability)) return children;
   return (
     <>
-      <h1>{t("not in this deployment")}</h1>
+      <h1>{t("Not in This Deployment")}</h1>
       <p className="muted">
         {t("this page is a standalone-console capability; this deployment (profile {0}) does not expose it.", mode.profile)}
       </p>
@@ -97,7 +99,10 @@ export function AppRoutes(): ReactNode {
         <Route path="/r/:group/:project/branches" element={<Gate capability="branches"><BranchesPage /></Gate>} />
         <Route path="/r/:group/:project/subtrees" element={<SubtreesPage />} />
         <Route path="/r/:group/:project/settings" element={<Gate capability="settings"><SettingsPage /></Gate>} />
+        <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
         <Route path="/settings/profile" element={<ProfilePage />} />
+        <Route path="/settings/ssh-keys" element={<Gate capability="sshKeys"><SSHKeysPage /></Gate>} />
+        <Route path="/settings/tokens" element={<Gate capability="tokens"><TokensPage /></Gate>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

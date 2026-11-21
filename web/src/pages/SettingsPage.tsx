@@ -164,13 +164,13 @@ export function SettingsPage(): ReactNode {
   return (
     <>
       <h1>
-        {t("settings")} · <code>{repo}</code>
+        {t("Settings")} · <code>{repo}</code>
       </h1>
       {error && <div className="error-box">{error}</div>}
       {note && <div className="ok-box">{note}</div>}
 
       <section>
-        <h2>{t("size")}</h2>
+        <h2>{t("Size")}</h2>
         {size.isPending && <Spinner />}
         {size.isSuccess && (
           <p className="pad">
@@ -182,7 +182,7 @@ export function SettingsPage(): ReactNode {
       </section>
 
       <section>
-        <h2>{t("description")}</h2>
+        <h2>{t("Description")}</h2>
         <p className="muted">{t("the one-liner the repository list shows (truncated to the column's width).")}</p>
         {descQuery.isSuccess && (
           <form
@@ -206,7 +206,7 @@ export function SettingsPage(): ReactNode {
       </section>
 
       <section>
-        <h2>{t("force-push switch")}</h2>
+        <h2>{t("Force-Push Switch")}</h2>
         <p className="muted">{t("the subtree rollback guard is default-on; enabling rewrites is an explicit administrative opt-in.")}</p>
         {size.isPending && <Spinner />}
         {adminBlocked(force) && <p className="muted pad">{t("admin required.")}</p>}
@@ -221,7 +221,7 @@ export function SettingsPage(): ReactNode {
       </section>
 
       <section>
-        <h2>{t("branch protection")}</h2>
+        <h2>{t("Branch Protection")}</h2>
         <p className="muted">
           {t(
             "{0} keeps the direct-push semantics (owner rank); {1} accepts no direct push at all — merge requests with the approval count are the only way in.",
@@ -297,7 +297,7 @@ export function SettingsPage(): ReactNode {
 
       {can(mode, "groups") && (
         <section>
-          <h2>{t("members")}</h2>
+          <h2>{t("Members")}</h2>
           <p className="muted">
             {t(
               "direct members plus the grants inherited from the group (marked) — the effective rank is the higher of the two; a direct grant must rank strictly above the inherited one."
@@ -376,7 +376,7 @@ export function SettingsPage(): ReactNode {
 
       {can(mode, "groups") && (
         <section>
-          <h2>{t("group")}</h2>
+          <h2>{t("Group")}</h2>
           <p className="muted">{t("an organizational label only — it folders the repository list and nothing else; the name and every URL stay untouched.")}</p>
           {label.isPending && <Spinner />}
           {label.isSuccess && (
@@ -405,7 +405,7 @@ export function SettingsPage(): ReactNode {
       )}
 
       <section>
-        <h2>{t("rename")}</h2>
+        <h2>{t("Rename")}</h2>
         <p className="muted">{t("hashed addressing flips the registry alone; named addressing moves storage without touching object ids.")}</p>
         <form
           className="rename-form"
@@ -425,7 +425,7 @@ export function SettingsPage(): ReactNode {
       </section>
 
       <section>
-        <h2>{t("repack")}</h2>
+        <h2>{t("Repack")}</h2>
         <p className="muted">{t("merges pack fragments and delta-encodes the result (docs/storage/storage.md §5).")}</p>
         <p className="pad">
           <button className="btn ghost" disabled={repack.isPending} onClick={() => repack.mutate()}>
