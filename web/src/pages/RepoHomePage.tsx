@@ -13,6 +13,7 @@ import type { LogResponse, RepoInfo } from "../api/types";
 import { can, useMode } from "../mode";
 import { useT } from "../i18n";
 import { Empty, ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
+import { ReadmeSection } from "../components/Readme";
 import { repoHref, useRepoBase, useRepoGroups, useRepoId } from "../repo";
 
 export function RepoHomePage(): ReactNode {
@@ -142,6 +143,7 @@ export function RepoHomePage(): ReactNode {
           )}
         </section>
       </div>
+      <ReadmeSection repo={repo} rev={defaultBranch} base={base} />
       <section>
         <h2>{t("Sub-Projects")}</h2>
         {children.length === 0 ? (
