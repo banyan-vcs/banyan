@@ -692,26 +692,12 @@ form.rule-form .group-desc { flex: 1; min-width: 220px; }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
 
-/* diff */
-.diff-files { display: flex; flex-direction: column; gap: 14px; }
-.diff-file { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--bg); }
-.diff-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: var(--bg-subtle);
-  padding: 6px 12px;
-  font-size: 12.5px;
-  border-bottom: 1px solid var(--line);
-}
+/* diff — the shared DiffBrowser (its per-file sections ride the .mr-diff
+   rules below); the toolbar carries the whole-change stat and the toggle */
+.diff-tool { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; }
+.diff-tool .tab-row { margin: 0 0 0 auto; }
 .diffstat .add { color: var(--success); font-weight: 600; }
 .diffstat .del { color: var(--error); font-weight: 600; }
-.code-table.diff td.codetext.plus { background: var(--add-bg); }
-.code-table.diff td.codetext.minus { background: var(--del-bg); }
-.code-table.diff tr.hunk td { background: var(--bg-subtle); color: var(--muted); }
-.code-table.diff tr:hover td.codetext.plus { background: var(--add-bg); }
-.code-table.diff tr:hover td.codetext.minus { background: var(--del-bg); }
-.code-table.diff tr.meta td { color: var(--muted); }
 
 /* blame */
 .code-table.blame { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
