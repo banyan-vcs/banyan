@@ -96,6 +96,16 @@ meta: "mem"   # 本示例为 dev 姿态；生产部署删掉此行或改 postgre
 #   无认证 git 流量 + push 自动建仓 + gitaly 前端免 token。生产部署删掉此键并配好 auth 段。
 #dev: true
 
+# --- 演示一键种子 / 生产首启引导（docs/gateway/authorization.md §2a） ---
+
+#demo: true
+# 首启即种子整套演示世界（internal/demoseed，幂等）：admin/alice/bob 三账号
+# （密码 demo）、platform 组与继承成员、demo 演示仓（README 即引导文档，
+# 另落 <root>/demo-guide.md）、/src /docs 两条目录时间线子树、三个合并请求
+# （可合/冲突/已合并）、release 的 mr-only 规则、alice 个人分支。
+# 生产不设 demo：无 auth.users 的首启由后端建 admin——随机密码只在终端
+# 打印一次（落库仅哈希），首登后 Settings → Profile 自助改密。
+
 # --- 授权（docs/gateway/authorization.md；缺省=关闭） ---
 
 # 一体化 demo 的静态策略：HTTP Basic 用户表 + 管理员 + 保护分支 + 目录访问
