@@ -72,6 +72,7 @@ func Translate(err error) (code string, data any) {
 		errors.Is(err, meta.ErrMRUnknown),
 		errors.Is(err, meta.ErrGroupUnknown),
 		errors.Is(err, meta.ErrMemberUnknown),
+		errors.Is(err, meta.ErrSSHKeyUnknown),
 		errors.Is(err, ErrBranchMissing):
 		return "NOT_FOUND", nil
 	case errors.Is(err, meta.ErrGroupExists):
@@ -84,13 +85,16 @@ func Translate(err error) (code string, data any) {
 		errors.Is(err, meta.ErrBranchRuleInvalid),
 		errors.Is(err, meta.ErrGroupInvalid),
 		errors.Is(err, meta.ErrMemberInvalid),
-		errors.Is(err, meta.ErrMemberRank):
-		// A refused hierarchy link or a failed MR/rule/group/member
+		errors.Is(err, meta.ErrMemberRank),
+		errors.Is(err, meta.ErrSSHKeyInvalid),
+		errors.Is(err, meta.ErrSSHKeyExists):
+		// A refused hierarchy link or a failed MR/rule/group/member/key
 		// validation is a client-input problem, not a server fault — the
 		// parent the caller picked loops or nests too deep
 		// (docs/design/data-model.md §14), or the merge request / branch
-		// rule / group / member grant failed its store validation (the
-		// inheritance guard included: a direct grant wants strictly above).
+		// rule / group / member grant / ssh key failed its store validation
+		// (the inheritance guard included: a direct grant wants strictly
+		// above; one key, one account).
 		return "INVALID_ARG", nil
 	default:
 		var conflict *ErrSyncConflict
