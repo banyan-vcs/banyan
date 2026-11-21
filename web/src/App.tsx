@@ -65,11 +65,6 @@ export function AppRoutes(): ReactNode {
   const nav = useNavigate();
   const loc = useLocation();
   const { info: session, loading } = useSession();
-  // The admin-reset fence: a reset-but-unchanged account may only reach
-  // the password page (mint faces also bounce server-side).
-  if (!loading && session?.mustChange && !mustChangeAllowed(loc.pathname)) {
-    return <Navigate to="/settings/profile" replace />;
-  }
   // API 401s route to the login page in-router (keeps the return target,
   // never reloads, and cannot loop on the login page itself).
   useEffect(() => {
@@ -80,6 +75,14 @@ export function AppRoutes(): ReactNode {
     window.addEventListener("banyan:unauthorized", on401);
     return () => window.removeEventListener("banyan:unauthorized", on401);
   }, [nav]);
+  // The admin-reset fence: a reset-but-unchanged account may only reach
+  // the password page (mint faces also bounce server-side). This guard
+  // sits AFTER every hook — a conditional early return above them would
+  // change the hook count between renders and crash React (#300, caught
+  // live on the demo stack).
+  if (!loading && session?.mustChange && !mustChangeAllowed(loc.pathname)) {
+    return <Navigate to="/settings/profile" replace />;
+  }
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
