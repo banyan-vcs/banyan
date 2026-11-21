@@ -34,8 +34,8 @@
 @d-placeholder: #5f5f57;
 @d-line: #282823;
 @d-line-control: #3a3a33;
-@d-soft: #2d280c;          // the dark yellow-100 wash
-@d-soft-border: #4a4214;
+@d-soft: #1d1d20;          // neutral selection wash — yellow lives on controls only
+@d-soft-border: #3a3a33;
 
 // the yellow ramp: the light-mode brand stays black, dark mode
 // rides yellow-300/200; text on yellow is the warm near-black
@@ -227,8 +227,7 @@ header .who { display: flex; align-items: center; gap: 8px; font-size: 13px; col
   height: 24px;
   border-radius: 999px;
   background: var(--accent-soft);
-  color: var(--accent-hi);
-  font-size: 12px;
+  color: var(--ink);
   font-weight: 600;
   display: inline-flex;
   align-items: center;
@@ -282,7 +281,7 @@ header .who { display: flex; align-items: center; gap: 8px; font-size: 13px; col
   font-weight: 500;
   box-shadow: 0 0 0 1px var(--line);
 }
-.side-item.active svg { opacity: 1; color: var(--accent); }
+.side-item.active svg { opacity: 1; color: var(--ink); }
 .side-foot {
   padding: 10px 18px;
   border-top: 1px solid var(--line);
@@ -330,7 +329,7 @@ h1 code { font-family: ui-monospace, Consolas, monospace; }
 .mono { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
 .muted { color: var(--muted); }
 .pad { padding: 8px 2px; }
-a { color: var(--accent-hi); text-decoration: none; }
+a { color: var(--ink); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .rowlink { font-size: 12px; }
 
@@ -407,7 +406,7 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 }
 .ok-box {
   background: var(--accent-soft);
-  color: var(--accent-hi);
+  color: var(--ink);
   border: 1px solid var(--accent-border);
   border-radius: 4px;
   padding: 8px 12px;
@@ -429,7 +428,7 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 .crumbs .pill { margin-left: 10px; }
 
 .entry-icon { display: inline-block; min-width: 24px; margin-right: 6px; color: var(--muted); }
-.entry-icon.tree { color: var(--accent-hi); }
+.entry-icon.tree { color: var(--ink); }
 .entry-icon svg { vertical-align: -3px; }
 
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
