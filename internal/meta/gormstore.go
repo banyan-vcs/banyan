@@ -245,6 +245,15 @@ type repoMemberRow struct {
 
 func (repoMemberRow) TableName() string { return "repo_members" }
 
+// The user SSH key table (docs/design/data-model.md §17): same username
+// spelling as the member tables; the fingerprint is the primary key — one
+// key, one account.
+type sshKeyRow struct {
+	SSHKey
+}
+
+func (sshKeyRow) TableName() string { return "ssh_keys" }
+
 // --- open path ---
 
 // gormOpen mounts GORM on the existing pool (one pool, two query surfaces).

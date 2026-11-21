@@ -346,6 +346,7 @@ type MemoryMetaStore struct {
 	repoGroups   map[string]string              // repo → group name
 	groupMembers map[string]map[string]*Member  // group → user → member (docs/design/data-model.md §16)
 	repoMembers  map[string]map[string]*Member  // repo → user → direct member
+	sshKeys      map[string]*SSHKey             // fingerprint → user key (§17)
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
@@ -370,6 +371,7 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 		groups:       map[string]*GroupInfo{},
 		groupMembers: map[string]map[string]*Member{},
 		repoMembers:  map[string]map[string]*Member{},
+		sshKeys:      map[string]*SSHKey{},
 		repoGroups:   map[string]string{},
 	}
 }
