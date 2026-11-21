@@ -2,10 +2,13 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	"net/http"
 	"strings"
+
+	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
 // StaticPolicy is the demo authorization implementation (docs/gateway/authorization.md §2):
@@ -25,9 +28,22 @@ type StaticPolicy struct {
 	// "algo base64 comment" — extra fields ignored). The base64 payload is
 	// the wire-format key blob an SSH server presents.
 	Keys map[string][]string
+	// UserSource, when set, is the metadata-plane account table: server-
+	// managed bcrypt accounts answer BEFORE the config table (the verified-
+	// credential cache lives in passwords.go). Deployments without it keep
+	// the config-only behavior byte for byte.
+	UserSource meta.UserStore
+	verified   credentialCache
 }
 
 func (p *StaticPolicy) isAdmin(user string) bool {
+	// The account table's admin flag outranks nothing and nothing outranks
+	// it — either source grants management rank.
+	if p.UserSource != nil {
+		if u, err := p.UserSource.UserByName(context.Background(), user); err == nil && u.Admin {
+			return true
+		}
+	}
 	for _, a := range p.Admins {
 		if a == user {
 			return true
@@ -58,12 +74,16 @@ func (p *StaticPolicy) isProtected(branch string) bool {
 	return false
 }
 
-// Identify verifies HTTP Basic credentials against the user table. A missing
-// or wrong Authorization header yields the anonymous identity.
+// Identify verifies HTTP Basic credentials: the account table first (when
+// wired), the config table as the fallback. A missing or wrong
+// Authorization header yields the anonymous identity.
 func (p *StaticPolicy) Identify(h *http.Request) Identity {
 	user, pass, ok := basicAuth(h)
 	if !ok {
 		return Identity{}
+	}
+	if id, handled := p.identifyStored(user, pass); handled {
+		return id
 	}
 	want, known := p.Users[user]
 	if !known || subtle.ConstantTimeCompare([]byte(pass), []byte(want)) != 1 {
