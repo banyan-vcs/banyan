@@ -6,29 +6,11 @@
 // applies unchanged. Monaco is code-split behind the toggle.
 import { useMutation } from "@tanstack/react-query";
 import { lazy, Suspense, useState, type ReactNode } from "react";
-import { api } from "../api/client";
+import { commitFileEdit, EDIT_CAP } from "../api/commitEdit";
 import { BlobView, looksBinary } from "./Blob";
 import { Spinner } from "./ui";
 
 const CodeEditor = lazy(() => import("./CodeEditor").then((m) => ({ default: m.CodeEditor })));
-
-const EDIT_CAP = 256 * 1024; // the wire round-trip is whole-file; past this, edit via clone
-
-async function sha1Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-1", bytes as unknown as ArrayBuffer);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let out = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    out += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(out);
-}
 
 export function FilePanel({
   repo,
@@ -59,29 +41,8 @@ export function FilePanel({
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 
   const save = useMutation({
-    mutationFn: async () => {
-      const enc = new TextEncoder();
-      const content = enc.encode(draft);
-      const header = enc.encode(`blob ${content.length}\0`);
-      const both = new Uint8Array(header.length + content.length);
-      both.set(header);
-      both.set(content);
-      const oid = await sha1Hex(both);
-      await api("/api/v1/objects/content", {
-        method: "POST",
-        body: JSON.stringify({ repo, objects: [{ oid, type: "blob", data: toBase64(content) }] }),
-      });
-      await api("/api/v1/commit", {
-        method: "POST",
-        body: JSON.stringify({
-          repo,
-          branch,
-          base: headOid,
-          message: message.trim() || `edit ${path}`,
-          changes: [{ path, blob: oid }],
-        }),
-      });
-    },
+    mutationFn: () =>
+      commitFileEdit({ repo, branch, base: headOid, path, content: draft, message: message.trim() || `edit ${path}` }),
     onSuccess: () => {
       setEditing(false);
       setError("");

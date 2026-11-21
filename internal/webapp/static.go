@@ -48,7 +48,11 @@ func (st *staticServer) serve(w http.ResponseWriter, rel string) {
 		}
 		rel = "index.html"
 	}
-	ctype := mimeTypes[strings.ToLower(filepath.Ext(full))]
+	// The content type follows the file ACTUALLY served — after the SPA
+	// fallback that is index.html, never the missed route's extension
+	// (…/README.md answered application/octet-stream and every deep link
+	// turned into a download).
+	ctype := mimeTypes[strings.ToLower(filepath.Ext(rel))]
 	if ctype == "" {
 		ctype = "application/octet-stream"
 	}

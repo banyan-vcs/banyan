@@ -72,7 +72,11 @@ advertised OID 为 merge_commit**（可分享链接必须在 fresh clone 里可�
 - **代码展示/在线编辑**：Monaco（OpenSumi 的编辑器内核）直接 ESM + Vite 打包 worker
   （无 loader CDN）；只注册 Monarch 基础语言（无 TS 语言服务）；编辑提交走薄 CLI 同
   款服务端装配（objects/content + commit），保护围栏原样生效；Monaco chunk 懒加载在
-  editor view/edit 之后。
+  editor view/edit 之后。**MR 页内联编辑**：changes 视图每个 source 侧文件带 edit
+  入口（删除/二进制不参与），编辑器打开 source tip 的 blob、提交 CAS 该 tip——落地
+  后 diff/mergeability/审批即时活算重取（页内解决冲突即此路径）；OpenSumi 完整
+  workbench 经再评估仍不引入：lite 纯前端面不含 SCM/diff 视图（本功能恰是其缺项），
+  且 workbench+扩展机器与 web 层零 Node 运行时冲突，Monaco 已是其编辑器内核。
 
 ## 6. 边界与诚实清单（v1）
 
