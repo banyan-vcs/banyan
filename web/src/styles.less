@@ -232,11 +232,57 @@ header .brand {
   text-decoration: none;
 }
 .spacer { flex: 1; }
-header .who { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--control); }
-/* the user's name opens personal settings — same quiet look as the text
-   around it, the hover says it is a link */
-.who-name { display: inline-flex; align-items: center; gap: 8px; color: var(--control); }
-.who-name:hover { color: var(--ink); text-decoration: none; }
+
+/* the avatar at the bar's right end: click or right-click opens the
+   account menu (who is signed in, personal settings, log out) */
+.user-menu { position: relative; }
+.avatar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  border: 1px solid var(--line-control);
+  border-radius: 999px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.avatar-btn:hover { border-color: var(--control); }
+.user-menu-pop {
+  position: absolute;
+  right: 0;
+  top: 34px;
+  z-index: 30;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  box-shadow: var(--shadow, 0 4px 14px rgba(0, 0, 0, 0.12));
+  padding: 4px;
+}
+.user-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 7px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.user-menu-name { font-weight: 600; font-size: 13px; }
+.user-menu-pop button {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.user-menu-pop button:hover { background: var(--bg-control); }
+.user-menu-pop button.user-menu-logout { color: var(--error); }
 .user-dot {
   width: 24px;
   height: 24px;
@@ -264,6 +310,28 @@ header .who { display: flex; align-items: center; gap: 8px; font-size: 13px; col
   flex-direction: column;
 }
 .side-nav { flex: 1; padding: 8px 0 16px; }
+/* the workspace title row carries the fold: "[" works too */
+.side-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 14px 12px 4px 18px;
+}
+.side-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+.side-collapse:hover { color: var(--ink); background: var(--bg-control-hi); }
 .side-title {
   font-size: 11px;
   font-weight: 600;
@@ -297,6 +365,18 @@ header .who { display: flex; align-items: center; gap: 8px; font-size: 13px; col
   box-shadow: 0 0 0 1px var(--line);
 }
 .side-item.active svg { opacity: 1; color: var(--ink); }
+/* the one-key shortcut hint, right-aligned in the row */
+.side-item .kbd {
+  margin-left: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.side-item:hover .kbd { color: var(--control); }
 .side-foot {
   padding: 10px 18px;
   border-top: 1px solid var(--line);
@@ -304,15 +384,22 @@ header .who { display: flex; align-items: center; gap: 8px; font-size: 13px; col
   color: var(--muted);
 }
 
+/* the folded rail: icons only, centered; labels live in the title attr */
+.sidebar.collapsed { width: 56px; }
+.sidebar.collapsed .side-title-row { justify-content: center; padding: 14px 0 4px; }
+.sidebar.collapsed .side-item { justify-content: center; margin: 1px 10px; padding: 6px 0; }
+.sidebar.collapsed .side-title { display: none; }
+
 main { flex: 1; min-width: 0; }
 .content-inner { max-width: 1120px; margin: 0 auto; padding: 20px 28px 56px; }
 
 @media (max-width: 820px) {
   .shell-body { flex-direction: column; }
-  .sidebar { position: static; width: 100%; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .sidebar, .sidebar.collapsed { position: static; width: 100%; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .side-nav { display: flex; align-items: center; gap: 2px; padding: 6px 8px; overflow-x: auto; }
-  .side-title { display: none; }
-  .side-item { margin: 0; }
+  .side-title, .side-title-row { display: none; }
+  .side-item, .sidebar.collapsed .side-item { margin: 0; padding: 5px 10px; justify-content: flex-start; }
+  .side-item .kbd { display: none; }
   .side-foot { display: none; }
   .content-inner { padding: 16px 16px 40px; }
 }

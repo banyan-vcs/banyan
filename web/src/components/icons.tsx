@@ -113,3 +113,11 @@ export const MergeIcon = (): ReactNode => (
     <circle cx="13" cy="4" r="1.75" />
   </Svg>
 );
+
+// GroupsIcon: a folder with a second folder tucked behind it.
+export const GroupsIcon = (): ReactNode => (
+  <Svg>
+    <path d="M5.5 3.25h3l1.25 1.5h3A1.5 1.5 0 0 1 14.25 6.25" transform="translate(0 -0.75)" />
+    <path d="M2 5.75A1.75 1.75 0 0 1 3.75 4h2.9l1.6 2h4A1.75 1.75 0 0 1 14 7.75v4.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25z" />
+  </Svg>
+);
