@@ -34,13 +34,14 @@ import (
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/config"
 	"github.com/banyan-vcs/banyan/internal/debug"
+	"github.com/banyan-vcs/banyan/internal/demoseed"
 	"github.com/banyan-vcs/banyan/internal/gitaly"
 	"github.com/banyan-vcs/banyan/internal/gitwire"
+	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/metrics"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/refs"
 	"github.com/banyan-vcs/banyan/internal/rpc"
-	"github.com/banyan-vcs/banyan/internal/meta"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/storenode"
 )
@@ -208,6 +209,14 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 			log.Printf("auth: account table on (server-managed passwords, bcrypt, docs/gateway/authorization.md §2a)")
 			if len(cfg.Auth.Users) == 0 && !cfg.Demo {
 				bootstrapAdminAccount(ctx, ms)
+			}
+		}
+		if cfg.Demo {
+			// One-command demonstration seeding (internal/demoseed): the
+			// populated world a fresh demo boots into. Rides the service
+			// APIs only — a no-op on an already-seeded deployment.
+			if err := demoseed.Seed(ctx, api.Svc, cfg.Root); err != nil {
+				log.Printf("demo: seeding failed: %v", err)
 			}
 		}
 		var svc auth.Service = policy
