@@ -11,10 +11,12 @@ import { repoPath } from "../api/repos";
 import { branchesOf, listRefs } from "../api/gitrefs";
 import type { LogResponse, RepoInfo } from "../api/types";
 import { can, useMode } from "../mode";
+import { useT } from "../i18n";
 import { Empty, ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 import { repoHref, useRepoBase, useRepoGroups, useRepoId } from "../repo";
 
 export function RepoHomePage(): ReactNode {
+  const t = useT();
   const repo = useRepoId();
   const base = useRepoBase();
   const groups = useRepoGroups();
@@ -63,7 +65,7 @@ export function RepoHomePage(): ReactNode {
     <>
       <h1>
         <code>{repo}</code>
-        {defaultBranch && <Pill>default: {defaultBranch}</Pill>}
+        {defaultBranch && <Pill>{t("default: {0}", defaultBranch)}</Pill>}
       </h1>
       {ancestors.length > 0 && (
         <p className="muted breadcrumb">
@@ -78,16 +80,16 @@ export function RepoHomePage(): ReactNode {
       {cloneBase === "" && null}
       <div className="two-col">
         <section>
-          <h2>branches · your view</h2>
+          <h2>{t("branches · your view")}</h2>
           {refs.isPending && <Spinner />}
           {refs.isError && <ErrorBox error={refs.error} />}
-          {refs.isSuccess && branches.length === 0 && <p className="muted pad">no branches yet — push one.</p>}
+          {refs.isSuccess && branches.length === 0 && <p className="muted pad">{t("no branches yet — push one.")}</p>}
           {branches.length > 0 && (
             <table>
               <thead>
                 <tr>
-                  <th>branch</th>
-                  <th>head</th>
+                  <th>{t("branch")}</th>
+                  <th>{t("head")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -95,7 +97,7 @@ export function RepoHomePage(): ReactNode {
                   <tr key={b.name}>
                     <td>
                       <Link to={`${base}/tree?ref=${encodeURIComponent(b.name)}`}>{b.name}</Link>
-                      {b.isDefault && <Pill>default</Pill>}
+                      {b.isDefault && <Pill>{t("default")}</Pill>}
                     </td>
                     <td>
                       <Link to={`${base}/commit/${b.oid}`} className="muted mono">
@@ -108,13 +110,15 @@ export function RepoHomePage(): ReactNode {
             </table>
           )}
           <p className="muted pad">
-            personal branches of other users are simply not advertised here — the same filtered ref list your git client gets.
+            {t(
+              "personal branches of other users are simply not advertised here — the same filtered ref list your git client gets."
+            )}
           </p>
         </section>
         <section>
-          <h2>recent history{defaultBranch ? ` · ${defaultBranch}` : ""}</h2>
+          <h2>{t("recent history")}{defaultBranch ? ` · ${defaultBranch}` : ""}</h2>
           {log.isPending && <Spinner />}
-          {log.isError && <p className="muted pad">no history yet.</p>}
+          {log.isError && <p className="muted pad">{t("no history yet.")}</p>}
           {log.isSuccess && (
             <table>
               <tbody>
@@ -133,21 +137,21 @@ export function RepoHomePage(): ReactNode {
           )}
           {defaultBranch && (
             <p className="pad">
-              <Link to={`${base}/history?ref=${encodeURIComponent(defaultBranch)}`}>full history →</Link>
+              <Link to={`${base}/history?ref=${encodeURIComponent(defaultBranch)}`}>{t("full history →")}</Link>
             </p>
           )}
         </section>
       </div>
       <section>
-        <h2>sub-projects</h2>
+        <h2>{t("sub-projects")}</h2>
         {children.length === 0 ? (
-          <Empty>this project has no sub-projects yet.</Empty>
+          <Empty>{t("this project has no sub-projects yet.")}</Empty>
         ) : (
           <table>
             <thead>
               <tr>
-                <th>sub-project</th>
-                <th>default branch</th>
+                <th>{t("sub-project")}</th>
+                <th>{t("default branch")}</th>
               </tr>
             </thead>
             <tbody>
@@ -170,9 +174,9 @@ export function RepoHomePage(): ReactNode {
               if (subName.trim()) createSub.mutate(subName.trim());
             }}
           >
-            <input placeholder="new sub-project under this repo" value={subName} onChange={(e) => setSubName(e.target.value)} />
+            <input placeholder={t("new sub-project under this repo")} value={subName} onChange={(e) => setSubName(e.target.value)} />
             <button className="btn" type="submit" disabled={createSub.isPending}>
-              create sub-project
+              {t("create sub-project")}
             </button>
             {subError && <span className="muted">{subError}</span>}
           </form>

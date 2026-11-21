@@ -8,6 +8,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useState, useEffect, type ReactNode } from "react";
 import { api } from "../api/client";
 import { commitFileEdit, EDIT_CAP } from "../api/commitEdit";
+import { useT } from "../i18n";
 import { looksBinary } from "./Blob";
 import { ErrorBox, Spinner } from "./ui";
 
@@ -34,6 +35,7 @@ export function MrFileEdit({
   defaultMessage: string;
   onDone: () => void;
 }): ReactNode {
+  const t = useT();
   // The queries key on the CAS base (the source tip): every landed edit
   // advances it, so the next edit of the same path fetches fresh content
   // instead of hitting the stale cache.
@@ -68,20 +70,20 @@ export function MrFileEdit({
     onSuccess: onDone,
   });
 
-  if (resolved.isPending) return <Spinner label="loading file…" />;
+  if (resolved.isPending) return <Spinner label={t("loading file…")} />;
   if (resolved.isError) return <ErrorBox error={resolved.error} />;
   if (resolved.data.type !== "blob")
     return (
       <p className="muted pad">
-        {path} is not a file on {branch}.
+        {t("{0} is not a file on {1}.", path, branch)}
       </p>
     );
-  if (blob.isPending) return <Spinner label="loading file…" />;
+  if (blob.isPending) return <Spinner label={t("loading file…")} />;
   if (blob.isError) return <ErrorBox error={blob.error} />;
   if (!bytes || looksBinary(bytes) || bytes.length > EDIT_CAP)
     return (
       <p className="muted pad">
-        {path} is not editable in place (binary or over {Math.round(EDIT_CAP / 1024)} KiB) — edit via clone.
+        {t("{0} is not editable in place (binary or over {1} KiB) — edit via clone.", path, Math.round(EDIT_CAP / 1024))}
       </p>
     );
 
@@ -90,9 +92,9 @@ export function MrFileEdit({
       <div className="file-panel-bar">
         <span className="muted mono">{path}</span>
         <span className="spacer" />
-        <span className="muted">commits to {branch}</span>
+        <span className="muted">{t("commits to {0}", branch)}</span>
       </div>
-      <Suspense fallback={<Spinner label="loading editor…" />}>
+      <Suspense fallback={<Spinner label={t("loading editor…")} />}>
         <CodeEditor path={path.split("/").pop() || path} value={draft} readOnly={false} onChange={setDraft} height="55vh" />
       </Suspense>
       {save.error && <ErrorBox error={save.error} />}
@@ -104,20 +106,21 @@ export function MrFileEdit({
         }}
       >
         <input
-          placeholder={`commit message (default: ${defaultMessage})`}
+          placeholder={t("commit message (default: {0})", defaultMessage)}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
         />
         <button className="btn primary" type="submit" disabled={save.isPending}>
-          commit to {branch}
+          {t("commit to {0}", branch)}
         </button>
         <button className="btn ghost" type="button" onClick={onDone} disabled={save.isPending}>
-          cancel
+          {t("cancel")}
         </button>
       </form>
       <p className="muted">
-        the edit rides the server-side assembly (the thin CLI's publish path) — branch protections apply, and the
-        diff and mergeability recompute the moment it lands.
+        {t(
+          "the edit rides the server-side assembly (the thin CLI's publish path) — branch protections apply, and the diff and mergeability recompute the moment it lands."
+        )}
       </p>
     </div>
   );

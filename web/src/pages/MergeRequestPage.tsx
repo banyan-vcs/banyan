@@ -18,10 +18,12 @@ const MrFileEdit = lazy(() => import("../components/MrFileEdit").then((m) => ({ 
 import { ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 import { useSession } from "../session";
 import { useRepoBase, useRepoId } from "../repo";
+import { useT } from "../i18n";
 
 const VIEW_KEY = "banyan.mr.view";
 
 export function MergeRequestPage(): ReactNode {
+  const t = useT();
   const { iid = "" } = useParams();
   const repo = useRepoId();
   const base = useRepoBase();
@@ -66,7 +68,7 @@ export function MergeRequestPage(): ReactNode {
   };
   const act = useMutation({
     mutationFn: async (what: "approve" | "unapprove" | "merge" | "close" | "reopen") => {
-      const msg = what === "merge" && view0?.state === "open" ? window.prompt("merge commit message (empty = default)") ?? null : undefined;
+      const msg = what === "merge" && view0?.state === "open" ? window.prompt(t("merge commit message (empty = default)")) ?? null : undefined;
       if (what === "merge" && msg === null) return; // cancelled
       if (what === "approve") await approveMR(repo, iid);
       if (what === "unapprove") await unapproveMR(repo, iid);
@@ -87,9 +89,7 @@ export function MergeRequestPage(): ReactNode {
           !{iid} · <code>{repo}</code>
         </h1>
         {/not found|404/i.test(msg) ? (
-          <p className="muted pad">
-            no merge request !{iid} in {repo} — IIDs are never reused, so this link points at nothing.
-          </p>
+          <p className="muted pad">{t("no merge request !{0} in {1} — IIDs are never reused, so this link points at nothing.", iid, repo)}</p>
         ) : (
           <ErrorBox error={mr.error} />
         )}
@@ -106,18 +106,21 @@ export function MergeRequestPage(): ReactNode {
   return (
     <>
       <h1>
-        !{view0?.iid} {view0?.title} {view0 && <Pill tone={open ? "warn" : "normal"}>{view0.state}</Pill>}
+        !{view0?.iid} {view0?.title} {view0 && <Pill tone={open ? "warn" : "normal"}>{t(view0.state)}</Pill>}
       </h1>
       <p className="muted">
-        <code>{repo}</code> · <span className="mono">{view0?.source} → {view0?.target}</span> · opened by{" "}
-        {view0?.author} {whenStr(view0?.created_at)}
+        <code>{repo}</code> · <span className="mono">{view0?.source} → {view0?.target}</span> · {t("opened by {0}", view0?.author || "")}{" "}
+        {whenStr(view0?.created_at)}
         {view0?.merge_commit && (
           <>
-            {" "}· merged as{" "}
-            <Link className="mono" to={`${base}/commit/${view0.merge_commit}`}>
-              {shortOid(view0.merge_commit)}
-            </Link>{" "}
-            by {view0.merged_by}
+            {" "}·{" "}
+            {t(
+              "merged as {0} by {1}",
+              <Link className="mono" to={`${base}/commit/${view0.merge_commit}`}>
+                {shortOid(view0.merge_commit)}
+              </Link>,
+              view0.merged_by
+            )}
           </>
         )}
       </p>
@@ -126,28 +129,28 @@ export function MergeRequestPage(): ReactNode {
 
       <div className="tab-row">
         <button className={"tab" + (tab === "overview" ? " active" : "")} onClick={() => setParams((p) => { const n = new URLSearchParams(p); n.delete("tab"); return n; })}>
-          overview
+          {t("overview")}
         </button>
         <button className={"tab" + (tab === "diff" ? " active" : "")} onClick={() => setParams((p) => { const n = new URLSearchParams(p); n.set("tab", "diff"); return n; })}>
-          changes
+          {t("changes")}
         </button>
       </div>
 
       {tab === "diff" &&
         (view0?.state !== "open" ? (
-          <p className="muted pad">the request is {view0?.state} — the change view is the stored record above.</p>
+          <p className="muted pad">{t("the request is {0} — the change view is the stored record above.", t(view0?.state || "closed"))}</p>
         ) : !view0?.merge_base ? (
-          <p className="muted pad">unrelated histories — no merge base to diff against.</p>
+          <p className="muted pad">{t("unrelated histories — no merge base to diff against.")}</p>
         ) : (
           <>
             <div className="tab-row">
-              <button className={"tab" + (view === "split" ? " active" : "")} onClick={() => setView("split")}>split</button>
-              <button className={"tab" + (view === "unified" ? " active" : "")} onClick={() => setView("unified")}>unified</button>
+              <button className={"tab" + (view === "split" ? " active" : "")} onClick={() => setView("split")}>{t("split")}</button>
+              <button className={"tab" + (view === "unified" ? " active" : "")} onClick={() => setView("unified")}>{t("unified")}</button>
             </div>
             {diff.isPending && <Spinner />}
             {diff.isError && <ErrorBox error={diff.error} />}
             {editingPath && view0 && (
-              <Suspense fallback={<Spinner label="loading editor…" />}>
+              <Suspense fallback={<Spinner label={t("loading editor…")} />}>
                 <MrFileEdit
                   repo={repo}
                   branch={view0.source}
@@ -177,58 +180,62 @@ export function MergeRequestPage(): ReactNode {
       {tab === "overview" && (
         <div className="mr-overview">
           <section>
-            <h3>merge status</h3>
+            <h3>{t("merge status")}</h3>
             {open ? (
               view0?.mergeable ? (
-                <p className="ok-text">mergeable — no conflicts against {view0.target}.</p>
+                <p className="ok-text">{t("mergeable — no conflicts against {0}.", view0.target)}</p>
               ) : (
                 <div className="error-box">
-                  conflicts: {(view0?.conflicts || []).join(", ") || "the branches conflict"} — resolve on the source
-                  side, the check is live.
+                  {t("conflicts: ")}
+                  {(view0?.conflicts || []).join(", ") || t("the branches conflict")}
+                  {t(" — resolve on the source side, the check is live.")}
                 </div>
               )
             ) : (
-              <p className="muted">{view0?.state}.</p>
+              <p className="muted">{t(view0?.state || "closed")}.</p>
             )}
             {open && view0?.rule_level && (
               <p className="muted">
-                target rule: <code>{view0.rule_level}</code>
-                {approvalsNeeded > 0 && <> — needs {approvalsNeeded} approval(s) from others</>}
+                {t("target rule: ")}<code>{view0.rule_level}</code>
+                {approvalsNeeded > 0 && t(" — needs {0} approval(s) from others", approvalsNeeded)}
               </p>
             )}
             {open && (
               <p className="act-row">
                 <button className="btn primary" disabled={!view0?.mergeable || !approvalsMet || act.isPending} onClick={() => act.mutate("merge")}>
-                  merge
+                  {t("merge")}
                 </button>
                 {me && me !== view0?.author && (
                   approvedByMe ? (
                     <button className="btn ghost" disabled={act.isPending} onClick={() => act.mutate("unapprove")}>
-                      revoke my approval
+                      {t("revoke my approval")}
                     </button>
                   ) : (
                     <button className="btn" disabled={act.isPending} onClick={() => act.mutate("approve")}>
-                      approve
+                      {t("approve")}
                     </button>
                   )
                 )}
                 <button className="btn ghost" disabled={act.isPending} onClick={() => act.mutate("close")}>
-                  close
+                  {t("close")}
                 </button>
               </p>
             )}
             {view0?.state === "closed" && (
               <p className="act-row">
                 <button className="btn" disabled={act.isPending} onClick={() => act.mutate("reopen")}>
-                  reopen
+                  {t("reopen")}
                 </button>
               </p>
             )}
           </section>
           <section>
-            <h3>approvals</h3>
+            <h3>{t("approvals")}</h3>
             {(view0?.approvals || []).length === 0 ? (
-              <p className="muted">none yet{approvalsNeeded > 0 ? ` — ${approvalsNeeded} needed` : ""}.</p>
+              <p className="muted">
+                {t("none yet")}
+                {approvalsNeeded > 0 ? t(" — {0} needed", approvalsNeeded) : ""}.
+              </p>
             ) : (
               <ul className="approval-list">
                 {(view0?.approvals || []).map((u) => (
@@ -238,7 +245,7 @@ export function MergeRequestPage(): ReactNode {
             )}
             {approvalsNeeded > 0 && (
               <p className="muted">
-                {(view0?.approvals || []).length}/{approvalsNeeded} — the author's own approval never counts.
+                {t("{0}/{1} — the author's own approval never counts.", (view0?.approvals || []).length, approvalsNeeded)}
               </p>
             )}
           </section>

@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { api } from "../api/client";
 import type { TokenInfo } from "../api/types";
+import { useT } from "../i18n";
 import { useSession } from "../session";
 import { ErrorBox, Spinner, whenStr } from "./ui";
 
@@ -19,6 +20,7 @@ interface MintResponse {
 }
 
 export function TokensSection(): ReactNode {
+  const t = useT();
   const { info } = useSession();
   const qc = useQueryClient();
   const [name, setName] = useState("");
@@ -58,43 +60,43 @@ export function TokensSection(): ReactNode {
     onError: (e) => setError(e instanceof Error ? e.message : String(e)),
   });
 
-  const table = (toks: TokenInfo[], title: string, showUser: boolean): ReactNode => (
+  const table = (toks: TokenInfo[], heading: string, showUser: boolean): ReactNode => (
     <section>
-      <h3>{title}</h3>
-      {toks.length === 0 && <p className="muted pad">none yet.</p>}
+      <h3>{heading}</h3>
+      {toks.length === 0 && <p className="muted pad">{t("none yet.")}</p>}
       {toks.length > 0 && (
         <table>
           <thead>
             <tr>
-              {showUser && <th>user</th>}
-              <th>name</th>
-              <th>scope</th>
-              <th>created</th>
-              <th>expires</th>
+              {showUser && <th>{t("user")}</th>}
+              <th>{t("name")}</th>
+              <th>{t("scope")}</th>
+              <th>{t("created")}</th>
+              <th>{t("expires")}</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {toks.map((t) => (
-              <tr key={t.hash} className={t.revoked ? "muted" : ""}>
-                {showUser && <td>{t.user}</td>}
-                <td>{t.name || <span className="muted">(unnamed)</span>}</td>
+            {toks.map((tok) => (
+              <tr key={tok.hash} className={tok.revoked ? "muted" : ""}>
+                {showUser && <td>{tok.user}</td>}
+                <td>{tok.name || <span className="muted">{t("(unnamed)")}</span>}</td>
                 <td>
-                  <span className={"pill" + (t.scope === "admin" ? " warn" : "")}>{t.scope}</span>
+                  <span className={"pill" + (tok.scope === "admin" ? " warn" : "")}>{tok.scope}</span>
                 </td>
-                <td>{whenStr(t.created)}</td>
-                <td>{t.expires ? whenStr(t.expires) : "never"}</td>
+                <td>{whenStr(tok.created)}</td>
+                <td>{tok.expires ? whenStr(tok.expires) : t("never")}</td>
                 <td>
-                  {t.revoked ? (
-                    <span className="muted">revoked</span>
+                  {tok.revoked ? (
+                    <span className="muted">{t("revoked")}</span>
                   ) : (
                     <button
                       className="btn ghost danger"
                       onClick={() => {
-                        if (window.confirm(`revoke ${t.name || t.hash.slice(0, 8)} (${t.user})?`)) revoke.mutate(t.hash);
+                        if (window.confirm(t("revoke {0} ({1})?", tok.name || tok.hash.slice(0, 8), tok.user))) revoke.mutate(tok.hash);
                       }}
                     >
-                      revoke
+                      {t("revoke")}
                     </button>
                   )}
                 </td>
@@ -108,8 +110,8 @@ export function TokensSection(): ReactNode {
 
   return (
     <section>
-      <h2>access tokens</h2>
-      <p className="muted">scopes are ceilings, never bypasses: a write-scoped token can read, an admin-scoped token can mint — none of them escapes the policies above.</p>
+      <h2>{t("access tokens")}</h2>
+      <p className="muted">{t("scopes are ceilings, never bypasses: a write-scoped token can read, an admin-scoped token can mint — none of them escapes the policies above.")}</p>
       {error && <div className="error-box">{error}</div>}
       <form
         className="mint-form"
@@ -119,20 +121,20 @@ export function TokensSection(): ReactNode {
           mint.mutate();
         }}
       >
-        <input placeholder="token name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input placeholder={t("token name")} value={name} onChange={(e) => setName(e.target.value)} />
         <select value={scope} onChange={(e) => setScope(e.target.value)}>
           <option value="read">read</option>
           <option value="write">write</option>
           <option value="admin">admin</option>
         </select>
-        <input className="days" placeholder="days" value={days} onChange={(e) => setDays(e.target.value)} />
+        <input className="days" placeholder={t("days")} value={days} onChange={(e) => setDays(e.target.value)} />
         <button className="btn" type="submit" disabled={mint.isPending}>
-          mint
+          {t("mint")}
         </button>
       </form>
       {minted && (
         <div className="minted-box">
-          <strong>copy it now — the plaintext is shown exactly once:</strong>
+          <strong>{t("copy it now — the plaintext is shown exactly once:")}</strong>
           <pre>{minted.token}</pre>
           <button
             className="btn ghost"
@@ -140,14 +142,14 @@ export function TokensSection(): ReactNode {
               void navigator.clipboard?.writeText(minted.token);
             }}
           >
-            copy
+            {t("copy")}
           </button>
         </div>
       )}
       {mine.isPending && <Spinner />}
       {mine.isError && <ErrorBox error={mine.error} />}
-      {mine.isSuccess && table((mine.data.tokens || []).filter((t) => !t.revoked).concat((mine.data.tokens || []).filter((t) => t.revoked)), `your tokens · ${info?.user ?? ""}`, false)}
-      {all.isSuccess && table(all.data.tokens || [], "all tokens (admin)", true)}
+      {mine.isSuccess && table((mine.data.tokens || []).filter((tok) => !tok.revoked).concat((mine.data.tokens || []).filter((tok) => tok.revoked)), t("your tokens · {0}", info?.user ?? ""), false)}
+      {all.isSuccess && table(all.data.tokens || [], t("all tokens (admin)"), true)}
     </section>
   );
 }

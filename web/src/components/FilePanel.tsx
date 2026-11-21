@@ -7,6 +7,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { lazy, Suspense, useState, type ReactNode } from "react";
 import { commitFileEdit, EDIT_CAP } from "../api/commitEdit";
+import { useT } from "../i18n";
 import { BlobView, looksBinary } from "./Blob";
 import { Spinner } from "./ui";
 
@@ -31,6 +32,7 @@ export function FilePanel({
   size: number;
   onSaved: () => void;
 }): ReactNode {
+  const t = useT();
   const [monacoView, setMonacoView] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -58,7 +60,7 @@ export function FilePanel({
         <span className="spacer" />
         {!editing && !looksBinary(bytes) && (
           <button className="btn ghost" onClick={() => setMonacoView((v) => !v)}>
-            {monacoView ? "plain view" : "editor view"}
+            {monacoView ? t("plain view") : t("editor view")}
           </button>
         )}
         {!editing && editable && (
@@ -71,14 +73,14 @@ export function FilePanel({
               setError("");
             }}
           >
-            edit
+            {t("edit")}
           </button>
         )}
       </div>
       {error && <div className="error-box">{error}</div>}
       {editing ? (
         <>
-          <Suspense fallback={<Spinner label="loading editor…" />}>
+          <Suspense fallback={<Spinner label={t("loading editor…")} />}>
             <CodeEditor path={name} value={draft} readOnly={false} onChange={setDraft} height="55vh" />
           </Suspense>
           <form
@@ -89,23 +91,23 @@ export function FilePanel({
             }}
           >
             <input
-              placeholder={`commit message (default: edit ${path})`}
+              placeholder={t("commit message (default: edit {0})", path)}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
             />
             <button className="btn primary" type="submit" disabled={save.isPending}>
-              commit to {branch}
+              {t("commit to {0}", branch)}
             </button>
             <button className="btn ghost" type="button" onClick={() => setEditing(false)} disabled={save.isPending}>
-              cancel
+              {t("cancel")}
             </button>
           </form>
           <p className="muted">
-            commits through the server-side assembly (the thin CLI's publish path) — branch protections apply.
+            {t("commits through the server-side assembly (the thin CLI's publish path) — branch protections apply.")}
           </p>
         </>
       ) : monacoView && !looksBinary(bytes) ? (
-        <Suspense fallback={<Spinner label="loading editor…" />}>
+        <Suspense fallback={<Spinner label={t("loading editor…")} />}>
           <CodeEditor path={name} value={text} readOnly height="60vh" />
         </Suspense>
       ) : (

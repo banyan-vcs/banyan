@@ -7,11 +7,13 @@ import { Link, useSearchParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import { listAllMRs } from "../api/mrs";
 import { repoHref, useRepoGroups } from "../repo";
+import { useT } from "../i18n";
 import { Empty, ErrorBox, Pill, Spinner, whenStr } from "../components/ui";
 
 const STATES = ["open", "merged", "closed", "all"];
 
 export function MergeRequestsGlobalPage(): ReactNode {
+  const t = useT();
   const groups = useRepoGroups();
   const [params, setParams] = useSearchParams();
   const state = STATES.includes(params.get("state") || "") ? params.get("state")! : "open";
@@ -29,27 +31,27 @@ export function MergeRequestsGlobalPage(): ReactNode {
 
   return (
     <>
-      <h1>merge requests</h1>
+      <h1>{t("merge requests")}</h1>
       <div className="tab-row">
         {STATES.map((s) => (
           <button key={s} className={"tab" + (state === s ? " active" : "")} onClick={() => setState(s)}>
-            {s}
+            {t(s)}
           </button>
         ))}
       </div>
       {mrs.isPending && <Spinner />}
       {mrs.isError && <ErrorBox error={mrs.error} />}
-      {mrs.isSuccess && (mrs.data || []).length === 0 && <Empty>nothing here — requests opened from a repository's page land in this list too.</Empty>}
+      {mrs.isSuccess && (mrs.data || []).length === 0 && <Empty>{t("nothing here — requests opened from a repository's page land in this list too.")}</Empty>}
       {mrs.isSuccess && (mrs.data || []).length > 0 && (
         <table>
           <thead>
             <tr>
-              <th>request</th>
-              <th>repository</th>
-              <th>branches</th>
-              <th>state</th>
-              <th>author</th>
-              <th>updated</th>
+              <th>{t("request")}</th>
+              <th>{t("repository")}</th>
+              <th>{t("branches")}</th>
+              <th>{t("state")}</th>
+              <th>{t("author")}</th>
+              <th>{t("updated")}</th>
             </tr>
           </thead>
           <tbody>
@@ -69,9 +71,9 @@ export function MergeRequestsGlobalPage(): ReactNode {
                   {mr.source} → {mr.target}
                 </td>
                 <td>
-                  {mr.state === "open" && <Pill tone="warn">open</Pill>}
-                  {mr.state === "merged" && <Pill tone="ok">merged</Pill>}
-                  {mr.state === "closed" && <span className="muted">closed</span>}
+                  {mr.state === "open" && <Pill tone="warn">{t("open")}</Pill>}
+                  {mr.state === "merged" && <Pill tone="ok">{t("merged")}</Pill>}
+                  {mr.state === "closed" && <span className="muted">{t("closed")}</span>}
                 </td>
                 <td>{mr.author}</td>
                 <td className="muted">{whenStr(mr.updated_at)}</td>
