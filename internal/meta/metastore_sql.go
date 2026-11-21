@@ -542,6 +542,22 @@ PRIMARY KEY(fingerprint)
 	}
 }
 
+// usersDDL answers the account table (docs/design/data-model.md §18):
+// bcrypt hashes, one admin flag (INTEGER — the PG-boolean pitfall, the
+// tokens table's revoked precedent). No delete path: the writers are
+// bootstrap and password self-service.
+func usersDDL(dialect string) []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS users(
+username      ` + nameCol(dialect) + ` NOT NULL,
+password_hash TEXT NOT NULL,
+is_admin      INTEGER NOT NULL DEFAULT 0,
+created_at    BIGINT NOT NULL,
+PRIMARY KEY(username)
+)`,
+	}
+}
+
 // nameCol/titleCol/shortCol spell the sized string columns per dialect —
 // MySQL cannot DEFAULT a TEXT column and keeps index-width-friendly
 // VARCHARs; the others take TEXT.
