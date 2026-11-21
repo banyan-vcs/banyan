@@ -155,7 +155,7 @@ export function Layout(): ReactNode {
                 {group && (
                   <>
                     {" / "}
-                    <Link to="/groups">{group}</Link>
+                    <Link to={`/groups/${encodeURIComponent(group)}`}>{group}</Link>
                   </>
                 )}
                 {" / "}

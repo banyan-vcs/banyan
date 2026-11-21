@@ -278,6 +278,31 @@ export const zh: Record<string, string> = {
   "repacking…": "正在重打包…",
   "repacked: {0} → {1} packs, {2} objects, {3} → {4}{5}": "重打包完成：{0} → {1} 个 pack，{2} 个对象，{3} → {4}{5}",
 
+  // members (GroupDetailPage + SettingsPage, docs/design/data-model.md §16)
+  members: "成员",
+  rank: "权限",
+  viewer: "只读",
+  developer: "开发者",
+  owner: "所有者",
+  "inherited from {0}": "继承自 {0}",
+  direct: "直接",
+  "remove member {0}?": "移除成员 {0}？",
+  remove: "移除",
+  "username…": "用户名…",
+  "add member": "添加成员",
+  "group not found.": "找不到该分组。",
+  "the group's member table — every labeled repository inherits these grants (the effective rank is the higher of the two).":
+    "分组成员表——组内所有仓库继承这些授权（有效权限取两者中较高者）。",
+  "no members yet — the group's repositories are open to every authenticated user until you add some.":
+    "还没有成员——在添加成员之前，组内仓库对所有登录用户开放。",
+  "added by": "添加人",
+  added: "添加时间",
+  "no repositories in this group yet.": "该分组还没有仓库。",
+  "direct members plus the grants inherited from the group (marked) — the effective rank is the higher of the two; a direct grant must rank strictly above the inherited one.":
+    "直接成员加上自分组继承的授权（带标记）——有效权限取两者中较高者；直接授权必须严格高于继承权限。",
+  "no members — every authenticated user has this repository's baseline access.":
+    "还没有成员——所有登录用户保有该仓库的基线访问。",
+
   // TokensSection.tsx
   "access tokens": "访问令牌",
   "scopes are ceilings, never bypasses: a write-scoped token can read, an admin-scoped token can mint — none of them escapes the policies above.":

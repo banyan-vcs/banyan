@@ -2,15 +2,16 @@
 // switch, branch protection rules, rename and a repack trigger (all
 // require the admin rank; a 403 downgrades the page to read-only).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
 import { branchesOf, listRefs } from "../api/gitrefs";
 import type { GroupsResponse } from "../api/groups";
+import { getRepoMembers, setRepoMember } from "../api/members";
 import { branchRules, deleteBranchRule, putBranchRule } from "../api/mrs";
 import { can, useMode } from "../mode";
 import { useT } from "../i18n";
-import { ErrorBox, Spinner, sizeStr } from "../components/ui";
+import { ErrorBox, Pill, Spinner, sizeStr } from "../components/ui";
 import { useRepoId } from "../repo";
 
 export function SettingsPage(): ReactNode {
@@ -83,6 +84,24 @@ export function SettingsPage(): ReactNode {
     onError: (e) => setError(e instanceof Error ? e.message : String(e)),
   });
   const branches = branchesOf(refs.data || { refs: [], capabilities: "", defaultBranch: "" });
+  // The member ledger (docs/design/data-model.md §16): the effective table
+  // (inherited rows marked) over the direct one; writes are write-rank and
+  // the store bounces direct grants not strictly above the inherited rank.
+  const [memberUser, setMemberUser] = useState("");
+  const [memberRank, setMemberRank] = useState("viewer");
+  const membersQ = useQuery({
+    queryKey: ["repo-members", repo],
+    queryFn: () => getRepoMembers(repo),
+    retry: false,
+  });
+  const putMember = useMutation({
+    mutationFn: (m: { user: string; rank: string }) => setRepoMember(repo, m.user, m.rank),
+    onSuccess: () => {
+      setMemberUser("");
+      qc.invalidateQueries({ queryKey: ["repo-members", repo] });
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
   const [ruleBranch, setRuleBranch] = useState("");
   const [ruleLevel, setRuleLevel] = useState("mr-only");
   const [ruleApprovals, setRuleApprovals] = useState(1);
@@ -275,6 +294,85 @@ export function SettingsPage(): ReactNode {
           </button>
         </form>
       </section>
+
+      {can(mode, "groups") && (
+        <section>
+          <h2>{t("members")}</h2>
+          <p className="muted">
+            {t(
+              "direct members plus the grants inherited from the group (marked) — the effective rank is the higher of the two; a direct grant must rank strictly above the inherited one."
+            )}
+          </p>
+          {membersQ.isPending && <Spinner />}
+          {membersQ.isError && <ErrorBox error={membersQ.error} />}
+          {membersQ.isSuccess && membersQ.data.members.length === 0 && (
+            <p className="muted pad">{t("no members — every authenticated user has this repository's baseline access.")}</p>
+          )}
+          {membersQ.isSuccess && membersQ.data.members.length > 0 && (
+            <table>
+              <thead>
+                <tr>
+                  <th>{t("user")}</th>
+                  <th>{t("rank")}</th>
+                  <th>{t("source")}</th>
+                  <th>{t("added by")}</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {membersQ.data.members.map((m) => (
+                  <tr key={m.user}>
+                    <td className="mono">{m.user}</td>
+                    <td>
+                      <Pill tone={m.rank === "owner" ? "warn" : m.rank === "developer" ? "ok" : "normal"}>{t(m.rank)}</Pill>
+                    </td>
+                    <td>
+                      {m.viaGroup ? (
+                        <Link to={`/groups/${encodeURIComponent(m.viaGroup)}`}>
+                          <Pill>{t("inherited from {0}", m.viaGroup)}</Pill>
+                        </Link>
+                      ) : (
+                        <span className="muted">{t("direct")}</span>
+                      )}
+                    </td>
+                    <td className="muted">{m.addedBy}</td>
+                    <td>
+                      {!m.viaGroup && (
+                        <button
+                          className="btn ghost danger"
+                          disabled={putMember.isPending}
+                          onClick={() => {
+                            if (window.confirm(t("remove member {0}?", m.user))) putMember.mutate({ user: m.user, rank: "" });
+                          }}
+                        >
+                          {t("remove")}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <form
+            className="create-branch"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (memberUser.trim()) putMember.mutate({ user: memberUser.trim(), rank: memberRank });
+            }}
+          >
+            <input placeholder={t("username…")} value={memberUser} onChange={(e) => setMemberUser(e.target.value)} />
+            <select value={memberRank} onChange={(e) => setMemberRank(e.target.value)} title={t("rank")}>
+              <option value="viewer">{t("viewer")}</option>
+              <option value="developer">{t("developer")}</option>
+              <option value="owner">{t("owner")}</option>
+            </select>
+            <button className="btn" type="submit" disabled={putMember.isPending || !memberUser.trim()}>
+              {t("add member")}
+            </button>
+          </form>
+        </section>
+      )}
 
       {can(mode, "groups") && (
         <section>

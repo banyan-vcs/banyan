@@ -10,6 +10,7 @@ import { can, useMode } from "./mode";
 import { BlamePage } from "./pages/BlamePage";
 import { BranchesPage } from "./pages/BranchesPage";
 import { CommitPage } from "./pages/CommitPage";
+import { GroupDetailPage } from "./pages/GroupDetailPage";
 import { GroupsPage } from "./pages/GroupsPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -65,6 +66,7 @@ export function AppRoutes(): ReactNode {
         <Route path="/" element={<ReposPage />} />
         <Route path="/new" element={<NewPage />} />
         <Route path="/groups" element={<Gate capability="groups"><GroupsPage /></Gate>} />
+        <Route path="/groups/:name" element={<Gate capability="groups"><GroupDetailPage /></Gate>} />
         <Route path="/merge_requests" element={<Gate capability="mergeRequests"><MergeRequestsGlobalPage /></Gate>} />
         <Route path="/r/:repo" element={<RepoHomePage />} />
         <Route path="/r/:repo/tree" element={<Gate capability="code"><TreePage /></Gate>} />
