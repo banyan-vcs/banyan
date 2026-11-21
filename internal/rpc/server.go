@@ -71,6 +71,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/sync", s.authn(s.handleSync)) // subtree→root alignment (docs/design/data-model.md §12)
 	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
+	mux.HandleFunc("/api/v1/merge-requests", s.authn(s.handleMergeRequestsAll)) // workspace-wide MR list
 	mux.HandleFunc("/api/v1/groups", s.authn(s.handleGroups))   // repo groups (docs/design/data-model.md §15)
 	mux.HandleFunc("/api/v1/groups/", s.authn(s.handleGroupSub)) // /api/v1/groups/<name>
 	mux.HandleFunc("/api/v1/imports", s.authn(s.handleImports)) // server-side repo import (docs/web/web-layer.md §4)
