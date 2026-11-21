@@ -9,9 +9,11 @@ import { api, qs } from "../api/client";
 import { useSession } from "../session";
 import { useRepoBase, useRepoId } from "../repo";
 import type { LogResponse, SubtreeListing, SubtreeRule, SubtreeSummary } from "../api/types";
+import { useT } from "../i18n";
 import { Empty, ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 
 export function SubtreesPage(): ReactNode {
+  const t = useT();
   const repo = useRepoId();
   const base = useRepoBase();
   const qc = useQueryClient();
@@ -77,20 +79,25 @@ export function SubtreesPage(): ReactNode {
   return (
     <>
       <h1>
-        subtrees · <code>{repo}</code>
+        {t("subtrees")} · <code>{repo}</code>
       </h1>
-      <p className="muted">every directory that owns a commit history. <code>projected</code> marks the projection refs (refs/banyan/tree/&lt;dir&gt;) — one URL, one credential per subtree.</p>
+      <p className="muted">
+        {t(
+          "every directory that owns a commit history. {0} marks the projection refs (refs/banyan/tree/<dir>) — one URL, one credential per subtree.",
+          <code>projected</code>
+        )}
+      </p>
       {error && <div className="error-box">{error}</div>}
       {listing.isPending && <Spinner />}
       {listing.isError && <ErrorBox error={listing.error} />}
-      {listing.isSuccess && listing.data.subtrees.length === 0 && <Empty>no directory timelines yet — push into a subdirectory.</Empty>}
+      {listing.isSuccess && listing.data.subtrees.length === 0 && <Empty>{t("no directory timelines yet — push into a subdirectory.")}</Empty>}
       {listing.isSuccess && listing.data.subtrees.length > 0 && (
         <div className="two-col">
           <table>
             <thead>
               <tr>
-                <th>path</th>
-                <th>branches</th>
+                <th>{t("path")}</th>
+                <th>{t("branches")}</th>
               </tr>
             </thead>
             <tbody>
@@ -106,8 +113,8 @@ export function SubtreesPage(): ReactNode {
                     >
                       {s.path}
                     </a>
-                    {s.projected && <Pill>projected</Pill>}
-                    {ruleOf(s.path) && <Pill tone="warn">restricted</Pill>}
+                    {s.projected && <Pill>{t("projected")}</Pill>}
+                    {ruleOf(s.path) && <Pill tone="warn">{t("restricted")}</Pill>}
                   </td>
                   <td className="muted">{s.branches.map((b) => b.name).join(", ")}</td>
                 </tr>
@@ -115,11 +122,16 @@ export function SubtreesPage(): ReactNode {
             </tbody>
           </table>
           <section>
-            {!sub && <p className="muted pad">select a subtree to see its activity{admin ? " and access rule" : ""}.</p>}
+            {!sub && (
+              <p className="muted pad">
+                {t("select a subtree to see its activity")}
+                {admin ? t(" and access rule") : ""}.
+              </p>
+            )}
             {sub && (
               <>
                 <h2>{sub.path}</h2>
-                <h3>branch heads</h3>
+                <h3>{t("branch heads")}</h3>
                 <table>
                   <tbody>
                     {sub.branches.map((b) => (
@@ -135,10 +147,10 @@ export function SubtreesPage(): ReactNode {
                     ))}
                   </tbody>
                 </table>
-                <h3>clone</h3>
+                <h3>{t("clone")}</h3>
                 {info?.provider?.kind === "gitlab" && (names.data?.names[repo] || "").includes("/") && (
                   <>
-                    <p className="muted">via the GitLab URL (one URL, one credential):</p>
+                    <p className="muted">{t("via the GitLab URL (one URL, one credential):")}</p>
                     <pre>
                       <code>{`git clone http://<gitlab-host>/${names.data!.names[repo]}.git
 git fetch origin refs/banyan/tree/${top}:refs/heads/${top}
@@ -148,15 +160,15 @@ git push origin ${top}:refs/banyan/tree/${top}`}</code>
                     </pre>
                   </>
                 )}
-                <p className="muted">via banyan's own face:</p>
+                <p className="muted">{t("via banyan's own face:")}</p>
                 <pre>
                   <code>{`git clone http://<banyan>/r/${repo}.git/tree${sub.path}
 # work, commit, then push back:
 git push origin ${listing.data?.defaultBranch || "main"}`}</code>
                 </pre>
-                <h3>activity</h3>
+                <h3>{t("activity")}</h3>
                 {activity.isPending && <Spinner />}
-                {activity.isSuccess && activity.data.entries.length === 0 && <p className="muted pad">no history at this path yet.</p>}
+                {activity.isSuccess && activity.data.entries.length === 0 && <p className="muted pad">{t("no history at this path yet.")}</p>}
                 {activity.isSuccess && (
                   <table>
                     <tbody>
@@ -175,18 +187,19 @@ git push origin ${listing.data?.defaultBranch || "main"}`}</code>
                 )}
                 {admin && (
                   <>
-                    <h3>access rule</h3>
+                    <h3>{t("access rule")}</h3>
                     {ruleOf(sub.path) ? (
                       <div className="rule-box">
                         <div>
-                          allowed users: <strong>{ruleOf(sub.path)!.users.join(", ") || "(nobody)"}</strong>
+                          {t("allowed users: ")}
+                          <strong>{ruleOf(sub.path)!.users.join(", ") || t("(nobody)")}</strong>
                         </div>
                         <button className="btn ghost danger" onClick={() => delRule.mutate(sub.path)}>
-                          remove rule
+                          {t("remove rule")}
                         </button>
                       </div>
                     ) : (
-                      <p className="muted">no rule — inherited from the repo policy.</p>
+                      <p className="muted">{t("no rule — inherited from the repo policy.")}</p>
                     )}
                     <form
                       className="rule-form"
@@ -197,12 +210,12 @@ git push origin ${listing.data?.defaultBranch || "main"}`}</code>
                       }}
                     >
                       <input
-                        placeholder="allowed users (space or comma separated; empty = nobody)"
+                        placeholder={t("allowed users (space or comma separated; empty = nobody)")}
                         value={ruleUsers}
                         onChange={(e) => setRuleUsers(e.target.value)}
                       />
                       <button className="btn" type="submit" disabled={putRule.isPending}>
-                        {ruleOf(sub.path) ? "update rule" : "restrict to users"}
+                        {ruleOf(sub.path) ? t("update rule") : t("restrict to users")}
                       </button>
                     </form>
                   </>

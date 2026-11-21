@@ -9,10 +9,12 @@ import { branchesOf, listRefs } from "../api/gitrefs";
 import type { GroupsResponse } from "../api/groups";
 import { branchRules, deleteBranchRule, putBranchRule } from "../api/mrs";
 import { can, useMode } from "../mode";
+import { useT } from "../i18n";
 import { ErrorBox, Spinner, sizeStr } from "../components/ui";
 import { useRepoId } from "../repo";
 
 export function SettingsPage(): ReactNode {
+  const t = useT();
   const repo = useRepoId();
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -121,8 +123,15 @@ export function SettingsPage(): ReactNode {
       ),
     onSuccess: (res) => {
       setNote(
-        `repacked: ${res.PacksBefore} → ${res.PacksAfter} packs, ${res.Objects} objects, ` +
-          `${sizeStr(res.BytesBefore)} → ${sizeStr(res.BytesAfter)}${res.Delta ? " (delta-encoded)" : ""}`
+        t(
+          "repacked: {0} → {1} packs, {2} objects, {3} → {4}{5}",
+          res.PacksBefore,
+          res.PacksAfter,
+          res.Objects,
+          sizeStr(res.BytesBefore),
+          sizeStr(res.BytesAfter),
+          res.Delta ? " (delta-encoded)" : ""
+        )
       );
       qc.invalidateQueries({ queryKey: ["size", repo] });
     },
@@ -136,24 +145,26 @@ export function SettingsPage(): ReactNode {
   return (
     <>
       <h1>
-        settings · <code>{repo}</code>
+        {t("settings")} · <code>{repo}</code>
       </h1>
       {error && <div className="error-box">{error}</div>}
       {note && <div className="ok-box">{note}</div>}
 
       <section>
-        <h2>size</h2>
+        <h2>{t("size")}</h2>
         {size.isPending && <Spinner />}
         {size.isSuccess && (
           <p className="pad">
-            {sizeStr(size.data.bytes)} across {size.data.packs} pack{size.data.packs === 1 ? "" : "s"}
+            {size.data.packs === 1
+              ? t("{0} across {1} pack", sizeStr(size.data.bytes), 1)
+              : t("{0} across {1} packs", sizeStr(size.data.bytes), size.data.packs)}
           </p>
         )}
       </section>
 
       <section>
-        <h2>description</h2>
-        <p className="muted">the one-liner the repository list shows (truncated to the column's width).</p>
+        <h2>{t("description")}</h2>
+        <p className="muted">{t("the one-liner the repository list shows (truncated to the column's width).")}</p>
         {descQuery.isSuccess && (
           <form
             className="rule-form"
@@ -164,46 +175,49 @@ export function SettingsPage(): ReactNode {
           >
             <input
               className="repo-desc-input"
-              placeholder="what this repository is"
+              placeholder={t("what this repository is")}
               value={desc ?? descQuery.data.description}
               onChange={(e) => setDesc(e.target.value)}
             />
             <button className="btn" type="submit" disabled={putDesc.isPending || desc === null}>
-              save
+              {t("save")}
             </button>
           </form>
         )}
       </section>
 
       <section>
-        <h2>force-push switch</h2>
-        <p className="muted">the subtree rollback guard is default-on; enabling rewrites is an explicit administrative opt-in.</p>
-        {force.isPending && <Spinner />}
-        {adminBlocked(force) && <p className="muted pad">admin required.</p>}
+        <h2>{t("force-push switch")}</h2>
+        <p className="muted">{t("the subtree rollback guard is default-on; enabling rewrites is an explicit administrative opt-in.")}</p>
+        {size.isPending && <Spinner />}
+        {adminBlocked(force) && <p className="muted pad">{t("admin required.")}</p>}
         {force.isSuccess && (
           <p className="pad">
             <button className={"btn" + (force.data.enabled ? " danger" : "")} disabled={setForce.isPending} onClick={() => setForce.mutate(!force.data.enabled)}>
-              {force.data.enabled ? "disable force-push" : "enable force-push"}
+              {force.data.enabled ? t("disable force-push") : t("enable force-push")}
             </button>{" "}
-            currently <strong>{force.data.enabled ? "enabled" : "disabled"}</strong>
+            {t("currently ")}<strong>{force.data.enabled ? t("enabled") : t("disabled")}</strong>
           </p>
         )}
       </section>
 
       <section>
-        <h2>branch protection</h2>
+        <h2>{t("branch protection")}</h2>
         <p className="muted">
-          <code>protected</code> keeps the direct-push semantics (owner rank); <code>mr-only</code> accepts no direct
-          push at all — merge requests with the approval count are the only way in.
+          {t(
+            "{0} keeps the direct-push semantics (owner rank); {1} accepts no direct push at all — merge requests with the approval count are the only way in.",
+            <code>protected</code>,
+            <code>mr-only</code>
+          )}
         </p>
         {rules.isPending && <Spinner />}
         {rules.isSuccess && (rules.data || []).length > 0 && (
           <table>
             <thead>
               <tr>
-                <th>branch</th>
-                <th>level</th>
-                <th>approvals</th>
+                <th>{t("branch")}</th>
+                <th>{t("level")}</th>
+                <th>{t("approvals")}</th>
                 <th />
               </tr>
             </thead>
@@ -217,7 +231,7 @@ export function SettingsPage(): ReactNode {
                   <td>{r.level === "mr-only" ? r.approvals : "—"}</td>
                   <td>
                     <button className="btn ghost danger" disabled={delRule.isPending} onClick={() => delRule.mutate(r.branch)}>
-                      clear
+                      {t("clear")}
                     </button>
                   </td>
                 </tr>
@@ -225,7 +239,7 @@ export function SettingsPage(): ReactNode {
             </tbody>
           </table>
         )}
-        {rules.isSuccess && (rules.data || []).length === 0 && <p className="muted pad">no rules — every branch takes the policy default.</p>}
+        {rules.isSuccess && (rules.data || []).length === 0 && <p className="muted pad">{t("no rules — every branch takes the policy default.")}</p>}
         <form
           className="create-branch"
           onSubmit={(e) => {
@@ -234,7 +248,7 @@ export function SettingsPage(): ReactNode {
           }}
         >
           <select value={ruleBranch} onChange={(e) => setRuleBranch(e.target.value)}>
-            <option value="">branch…</option>
+            <option value="">{t("branch…")}</option>
             {branches.map((b) => (
               <option key={b.name} value={b.name}>
                 {b.name}
@@ -253,19 +267,19 @@ export function SettingsPage(): ReactNode {
               style={{ width: "5em" }}
               value={ruleApprovals}
               onChange={(e) => setRuleApprovals(Number(e.target.value) || 1)}
-              title="required approvals"
+              title={t("required approvals")}
             />
           )}
           <button className="btn" type="submit" disabled={putRule.isPending || !ruleBranch}>
-            set rule
+            {t("set rule")}
           </button>
         </form>
       </section>
 
       {can(mode, "groups") && (
         <section>
-          <h2>group</h2>
-          <p className="muted">an organizational label only — it folders the repository list and nothing else; the name and every URL stay untouched.</p>
+          <h2>{t("group")}</h2>
+          <p className="muted">{t("an organizational label only — it folders the repository list and nothing else; the name and every URL stay untouched.")}</p>
           {label.isPending && <Spinner />}
           {label.isSuccess && (
             <form
@@ -277,7 +291,7 @@ export function SettingsPage(): ReactNode {
               }}
             >
               <select name="group" defaultValue={label.data.group} disabled={setGroup.isPending}>
-                <option value="">— no group —</option>
+                <option value="">{t("— no group —")}</option>
                 {(groups.data?.groups ?? []).map((g) => (
                   <option key={g.name} value={g.name}>
                     {g.name}
@@ -285,7 +299,7 @@ export function SettingsPage(): ReactNode {
                 ))}
               </select>
               <button className="btn" type="submit" disabled={setGroup.isPending}>
-                move
+                {t("move")}
               </button>
             </form>
           )}
@@ -293,31 +307,31 @@ export function SettingsPage(): ReactNode {
       )}
 
       <section>
-        <h2>rename</h2>
-        <p className="muted">hashed addressing flips the registry alone; named addressing moves storage without touching object ids.</p>
+        <h2>{t("rename")}</h2>
+        <p className="muted">{t("hashed addressing flips the registry alone; named addressing moves storage without touching object ids.")}</p>
         <form
           className="rename-form"
           onSubmit={(e) => {
             e.preventDefault();
             setError("");
             if (to.trim()) {
-              if (window.confirm(`rename ${repo} → ${to}?`)) rename.mutate();
+              if (window.confirm(t("rename {0} → {1}?", repo, to))) rename.mutate();
             }
           }}
         >
-          <input placeholder="new name" value={to} onChange={(e) => setTo(e.target.value)} />
+          <input placeholder={t("new name")} value={to} onChange={(e) => setTo(e.target.value)} />
           <button className="btn" type="submit" disabled={rename.isPending}>
-            rename
+            {t("rename")}
           </button>
         </form>
       </section>
 
       <section>
-        <h2>repack</h2>
-        <p className="muted">merges pack fragments and delta-encodes the result (docs/storage/storage.md §5).</p>
+        <h2>{t("repack")}</h2>
+        <p className="muted">{t("merges pack fragments and delta-encodes the result (docs/storage/storage.md §5).")}</p>
         <p className="pad">
           <button className="btn ghost" disabled={repack.isPending} onClick={() => repack.mutate()}>
-            {repack.isPending ? "repacking…" : "repack now"}
+            {repack.isPending ? t("repacking…") : t("repack now")}
           </button>
         </p>
       </section>

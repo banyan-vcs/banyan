@@ -10,9 +10,11 @@ import { partitionByGroup, type GroupsResponse } from "../api/groups";
 import { repoHref } from "../repo";
 import type { RepoInfo } from "../api/types";
 import { can, useMode } from "../mode";
+import { useT } from "../i18n";
 import { Empty, ErrorBox, Spinner, whenStr } from "../components/ui";
 
 export function GroupsPage(): ReactNode {
+  const t = useT();
   const mode = useMode();
   const qc = useQueryClient();
   const groups = useQuery({
@@ -41,26 +43,27 @@ export function GroupsPage(): ReactNode {
 
   return (
     <>
-      <h1>groups</h1>
+      <h1>{t("groups")}</h1>
       <p className="muted">
-        a group is an organizational container: it folders the repository list and gates nothing — names and URLs stay
-        untouched. Repositories take the label at creation or from their settings page.
+        {t(
+          "a group is an organizational container: it folders the repository list and gates nothing — names and URLs stay untouched. Repositories take the label at creation or from their settings page."
+        )}
       </p>
       {can(mode, "groups") && (
         <p className="pad">
           <Link className="btn" to="/new?kind=group">
-            new group
+            {t("new group")}
           </Link>
         </p>
       )}
-      {list.length === 0 && <Empty>no groups yet.</Empty>}
+      {list.length === 0 && <Empty>{t("no groups yet.")}</Empty>}
       {list.length > 0 && (
         <table>
           <thead>
             <tr>
-              <th>group</th>
-              <th>repositories</th>
-              <th>created</th>
+              <th>{t("group")}</th>
+              <th>{t("repositories")}</th>
+              <th>{t("created")}</th>
               <th></th>
             </tr>
           </thead>
@@ -87,11 +90,11 @@ export function GroupsPage(): ReactNode {
                     className="btn ghost danger"
                     disabled={del.isPending}
                     onClick={() => {
-                      if (window.confirm(`delete group ${info.name}? its repositories keep their names — the label just goes away.`))
+                      if (window.confirm(t("delete group {0}? its repositories keep their names — the label just goes away.", info.name)))
                         del.mutate(info.name);
                     }}
                   >
-                    delete
+                    {t("delete")}
                   </button>
                 </td>
               </tr>

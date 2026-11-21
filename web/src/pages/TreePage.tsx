@@ -12,6 +12,7 @@ import { FileIcon } from "../components/FileIcon";
 import { FilePanel } from "../components/FilePanel";
 import { ErrorBox, Pill, Spinner, sizeStr } from "../components/ui";
 import { useRepoBase, useRepoId } from "../repo";
+import { useT } from "../i18n";
 
 interface ResolveResult {
   type: "blob" | "tree";
@@ -20,6 +21,7 @@ interface ResolveResult {
 }
 
 export function TreePage(): ReactNode {
+  const t = useT();
   const { "*": splat = "" } = useParams();
   const repo = useRepoId();
   const base = useRepoBase();
@@ -70,7 +72,7 @@ export function TreePage(): ReactNode {
           {branches.map((b) => (
             <option key={b.name} value={b.name}>
               {b.name}
-              {b.isDefault ? " (default)" : ""}
+              {b.isDefault ? ` (${t("default")})` : ""}
             </option>
           ))}
         </select>
@@ -94,8 +96,8 @@ export function TreePage(): ReactNode {
         <table>
           <thead>
             <tr>
-              <th>name</th>
-              <th>size</th>
+              <th>{t("name")}</th>
+              <th>{t("size")}</th>
               <th />
             </tr>
           </thead>
@@ -125,14 +127,14 @@ export function TreePage(): ReactNode {
                     </Link>
                   )}
                 </td>
-                <td className="muted">{e.size !== undefined ? sizeStr(e.size) : e.type === "commit" ? "submodule" : "—"}</td>
+                <td className="muted">{e.size !== undefined ? sizeStr(e.size) : e.type === "commit" ? t("submodule") : "—"}</td>
                 <td>
                   {e.type === "blob" && ref && (
                     <Link
                       className="muted rowlink"
                       to={`${base}/blame/${path ? path + "/" : ""}${e.name}?ref=${encodeURIComponent(ref)}`}
                     >
-                      blame
+                      {t("blame")}
                     </Link>
                   )}
                 </td>
@@ -144,10 +146,10 @@ export function TreePage(): ReactNode {
 
       {tree.isError && path !== "" && (
         <>
-          {resolved.isPending && <Spinner label="resolving…" />}
+          {resolved.isPending && <Spinner label={t("resolving…")} />}
           {resolved.data?.type === "blob" && (
             <>
-              {blob.isPending && <Spinner label="loading file…" />}
+              {blob.isPending && <Spinner label={t("loading file…")} />}
               {blob.isError && <ErrorBox error={blob.error} />}
               {blob.isSuccess && (
                 <FilePanel

@@ -1,13 +1,16 @@
 // ui.tsx — small shared UI atoms.
 import type { ReactNode } from "react";
+import { useT } from "../i18n";
 
-export function Spinner({ label = "loading…" }: { label?: string }): ReactNode {
-  return <p className="muted pad">{label}</p>;
+export function Spinner({ label }: { label?: string }): ReactNode {
+  const t = useT();
+  return <p className="muted pad">{label ?? t("loading…")}</p>;
 }
 
 export function ErrorBox({ error }: { error: unknown }): ReactNode {
+  const t = useT();
   const msg = error instanceof Error ? error.message : String(error);
-  return <div className="error-box">something went wrong: {msg}</div>;
+  return <div className="error-box">{t("something went wrong: {0}", msg)}</div>;
 }
 
 export function Empty({ children }: { children: ReactNode }): ReactNode {

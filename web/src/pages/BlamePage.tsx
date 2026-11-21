@@ -8,8 +8,10 @@ import { parseBlame } from "../api/blame";
 import { BlameView } from "../components/BlameView";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useRepoBase, useRepoId } from "../repo";
+import { useT } from "../i18n";
 
 export function BlamePage(): ReactNode {
+  const t = useT();
   const { "*": splat = "" } = useParams();
   const repo = useRepoId();
   const base = useRepoBase();
@@ -27,11 +29,11 @@ export function BlamePage(): ReactNode {
   return (
     <>
       <h1>
-        blame · <code>{path}</code>
+        {t("blame")} · <code>{path}</code>
         {ref ? <span className="muted"> @ {ref}</span> : null}
       </h1>
       <p className="pad">
-        <Link to={`${base}/tree/${path}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>← back to the file</Link>
+        <Link to={`${base}/tree/${path}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>{t("← back to the file")}</Link>
       </p>
       {blame.isPending && <Spinner />}
       {blame.isError && <ErrorBox error={blame.error} />}

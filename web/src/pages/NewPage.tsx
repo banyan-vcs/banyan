@@ -13,6 +13,7 @@ import type { GroupInfo, GroupsResponse } from "../api/groups";
 import type { RepoInfo } from "../api/types";
 import { can, useMode } from "../mode";
 import { useSession } from "../session";
+import { useT } from "../i18n";
 import { Empty, ErrorBox, Pill, Spinner } from "../components/ui";
 
 /** BlankRepoForm — the create form (name, description, optional parent
@@ -20,6 +21,7 @@ import { Empty, ErrorBox, Pill, Spinner } from "../components/ui";
  * repository lives at /<group>/<name>). All three ride POST
  * /api/v1/repos, so the whole create stays one all-or-nothing request. */
 function BlankRepoForm({ groups }: { groups: GroupInfo[] }): ReactNode {
+  const t = useT();
   const nav = useNavigate();
   const qc = useQueryClient();
   const [name, setName] = useState("");
@@ -54,8 +56,8 @@ function BlankRepoForm({ groups }: { groups: GroupInfo[] }): ReactNode {
         if (name.trim() && group) create.mutate();
       }}
     >
-      <select value={group} onChange={(e) => setGroup(e.target.value)} title="the repository lives at /<group>/<name>">
-        <option value="">group…</option>
+      <select value={group} onChange={(e) => setGroup(e.target.value)} title={t("the repository lives at /<group>/<name>")}>
+        <option value="">{t("group…")}</option>
         {groups.map((g) => (
           <option key={g.name} value={g.name}>
             {g.name}
@@ -63,15 +65,15 @@ function BlankRepoForm({ groups }: { groups: GroupInfo[] }): ReactNode {
         ))}
       </select>
       <span className="muted">/</span>
-      <input placeholder="repository name (single segment)" value={name} onChange={(e) => setName(e.target.value)} />
+      <input placeholder={t("repository name (single segment)")} value={name} onChange={(e) => setName(e.target.value)} />
       <input
         className="repo-desc-input"
-        placeholder="description (shown in the repository list)"
+        placeholder={t("description (shown in the repository list)")}
         value={description}
         onChange={(e) => setDescription(e.target.value)}
       />
-      <select value={parent} onChange={(e) => setParent(e.target.value)} title="nest under a parent project">
-        <option value="">— root project —</option>
+      <select value={parent} onChange={(e) => setParent(e.target.value)} title={t("nest under a parent project")}>
+        <option value="">{t("— root project —")}</option>
         {list.map((r) => (
           <option key={r.id} value={r.id}>
             {repoPath(list, r.id).map((p) => p.id).join(" / ")}
@@ -79,12 +81,15 @@ function BlankRepoForm({ groups }: { groups: GroupInfo[] }): ReactNode {
         ))}
       </select>
       <button className="btn" type="submit" disabled={create.isPending || !name.trim() || !group}>
-        create
+        {t("create")}
       </button>
       {error && <span className="muted import-error">{error}</span>}
       {groups.length === 0 && (
         <span className="muted">
-          no groups yet — <Link to="/new?kind=group">create one first</Link>; every repository lives under a group.
+          {t(
+            "no groups yet — {0}; every repository lives under a group.",
+            <Link to="/new?kind=group">{t("create one first")}</Link>
+          )}
         </span>
       )}
     </form>
@@ -95,6 +100,7 @@ function BlankRepoForm({ groups }: { groups: GroupInfo[] }): ReactNode {
  * gateway fetches every ref server-side and the imported repo is a
  * first-class banyan repository. */
 function ImportForm(): ReactNode {
+  const t = useT();
   const { info } = useSession();
   const qc = useQueryClient();
   const [url, setUrl] = useState("");
@@ -136,20 +142,20 @@ function ImportForm(): ReactNode {
     >
       <input
         className="import-url"
-        placeholder="https://github.com/owner/repo (or any git http URL)"
+        placeholder={t("https://github.com/owner/repo (or any git http URL)")}
         value={url}
         onChange={(e) => onUrlChange(e.target.value)}
       />
       <select value={mode} onChange={(e) => setMode(e.target.value)}>
-        {info?.provider ? <option value="session">my {info.provider.id} login</option> : null}
-        <option value="token">private token</option>
+        {info?.provider ? <option value="session">{t("my {0} login", info.provider.id)}</option> : null}
+        <option value="token">{t("private token")}</option>
       </select>
       {mode === "token" && (
-        <input type="password" placeholder="github / gitlab token" value={token} onChange={(e) => setToken(e.target.value)} />
+        <input type="password" placeholder={t("github / gitlab token")} value={token} onChange={(e) => setToken(e.target.value)} />
       )}
-      <input placeholder="target name" value={name} onChange={(e) => setName(e.target.value)} />
+      <input placeholder={t("target name")} value={name} onChange={(e) => setName(e.target.value)} />
       <button className="btn" type="submit" disabled={create.isPending || !url.trim()}>
-        {create.isPending ? "starting…" : "import"}
+        {create.isPending ? t("starting…") : t("import")}
       </button>
       {error && <span className="muted import-error">{error}</span>}
     </form>
@@ -158,6 +164,7 @@ function ImportForm(): ReactNode {
 
 /** ImportJobs — the job list (running jobs poll). */
 function ImportJobs(): ReactNode {
+  const t = useT();
   const groups = useRepoGroups();
   const jobs = useQuery({
     queryKey: ["imports"],
@@ -167,16 +174,16 @@ function ImportJobs(): ReactNode {
   });
   if (jobs.isPending) return <Spinner />;
   if (jobs.isError) return <ErrorBox error={jobs.error} />;
-  if (jobs.data.imports.length === 0) return <Empty>nothing imported yet.</Empty>;
+  if (jobs.data.imports.length === 0) return <Empty>{t("nothing imported yet.")}</Empty>;
   return (
     <table>
       <thead>
         <tr>
-          <th>repository</th>
-          <th>source</th>
-          <th>refs</th>
-          <th>status</th>
-          <th>started</th>
+          <th>{t("repository")}</th>
+          <th>{t("source")}</th>
+          <th>{t("refs")}</th>
+          <th>{t("status")}</th>
+          <th>{t("started")}</th>
         </tr>
       </thead>
       <tbody>
@@ -189,9 +196,9 @@ function ImportJobs(): ReactNode {
             <td className="muted mono">{j.sourceUrl}</td>
             <td className="muted">{j.refs || "—"}</td>
             <td>
-              {j.status === "running" && <Pill>running</Pill>}
-              {j.status === "succeeded" && <Pill tone="ok">done</Pill>}
-              {j.status === "failed" && <span className="muted import-error">{j.error || "failed"}</span>}
+              {j.status === "running" && <Pill>{t("running")}</Pill>}
+              {j.status === "succeeded" && <Pill tone="ok">{t("done")}</Pill>}
+              {j.status === "failed" && <span className="muted import-error">{j.error || t("failed")}</span>}
             </td>
             <td className="muted">{new Date(j.startedAt * 1000).toISOString().slice(0, 16).replace("T", " ")}</td>
           </tr>
@@ -205,6 +212,7 @@ function ImportJobs(): ReactNode {
  * description; repos carry the label from the create form or their
  * settings page. */
 function GroupForm(): ReactNode {
+  const t = useT();
   const nav = useNavigate();
   const qc = useQueryClient();
   const [name, setName] = useState("");
@@ -230,10 +238,10 @@ function GroupForm(): ReactNode {
         if (name.trim()) create.mutate();
       }}
     >
-      <input placeholder="group name (single segment)" value={name} onChange={(e) => setName(e.target.value)} />
-      <input className="group-desc" placeholder="what belongs here (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
+      <input placeholder={t("group name (single segment)")} value={name} onChange={(e) => setName(e.target.value)} />
+      <input className="group-desc" placeholder={t("what belongs here (optional)")} value={description} onChange={(e) => setDescription(e.target.value)} />
       <button className="btn" type="submit" disabled={create.isPending}>
-        create group
+        {t("create group")}
       </button>
       {error && <span className="muted import-error">{error}</span>}
     </form>
@@ -241,6 +249,7 @@ function GroupForm(): ReactNode {
 }
 
 export function NewPage(): ReactNode {
+  const t = useT();
   const mode = useMode();
   const [params, setParams] = useSearchParams();
   const kind = params.get("kind") === "group" ? "group" : "repo";
@@ -259,10 +268,8 @@ export function NewPage(): ReactNode {
   if (!canRepo && !canGroup) {
     return (
       <>
-        <h1>not in this deployment</h1>
-        <p className="muted">
-          this page is a standalone-console capability; this deployment (profile {mode.profile}) does not expose it.
-        </p>
+        <h1>{t("not in this deployment")}</h1>
+        <p className="muted">{t("this page is a standalone-console capability; this deployment (profile {0}) does not expose it.", mode.profile)}</p>
       </>
     );
   }
@@ -274,16 +281,16 @@ export function NewPage(): ReactNode {
   };
   return (
     <>
-      <h1>create</h1>
+      <h1>{t("create")}</h1>
       <div className="tab-row">
         {canRepo && (
           <button className={"tab" + (kind === "repo" ? " active" : "")} onClick={() => setKind("repo")}>
-            repository
+            {t("repository")}
           </button>
         )}
         {canGroup && (
           <button className={"tab" + (kind === "group" ? " active" : "")} onClick={() => setKind("group")}>
-            group
+            {t("group")}
           </button>
         )}
       </div>
@@ -292,31 +299,33 @@ export function NewPage(): ReactNode {
           {canImport && (
             <div className="tab-row">
               <button className={"tab" + (repoMode === "blank" ? " active" : "")} onClick={() => setRepoMode("blank")}>
-                blank
+                {t("blank")}
               </button>
               <button className={"tab" + (repoMode === "import" ? " active" : "")} onClick={() => setRepoMode("import")}>
-                import from URL
+                {t("import from URL")}
               </button>
             </div>
           )}
           {repoMode === "blank" || !canImport ? (
             <>
               <p className="muted">
-                a new repository at <code>/&lt;group&gt;/&lt;name&gt;</code> — the group folders the list and the
-                address, the name stays a single flat segment underneath (the git URL keeps speaking it).
+                {t(
+                  "a new repository at {0} — the group folders the list and the address, the name stays a single flat segment underneath (the git URL keeps speaking it).",
+                  <code>/&lt;group&gt;/&lt;name&gt;</code>
+                )}
               </p>
-              {groups.isError && <p className="muted">groups unavailable on this deployment — creation needs one.</p>}
+              {groups.isError && <p className="muted">{t("groups unavailable on this deployment — creation needs one.")}</p>}
               <BlankRepoForm groups={groupList} />
             </>
           ) : (
             <>
               <p className="muted">
-                one URL, one credential: github.com, gitlab.com or a private GitLab — the gateway fetches every ref
-                server-side and the imported repo is a first-class banyan repository. Local passwords are never sent to
-                the source host.
+                {t(
+                  "one URL, one credential: github.com, gitlab.com or a private GitLab — the gateway fetches every ref server-side and the imported repo is a first-class banyan repository. Local passwords are never sent to the source host."
+                )}
               </p>
               <ImportForm />
-              <h2>import history</h2>
+              <h2>{t("import history")}</h2>
               <ImportJobs />
             </>
           )}
@@ -324,8 +333,9 @@ export function NewPage(): ReactNode {
       ) : (
         <>
           <p className="muted">
-            a group is an organizational container: it owns no code and gates nothing — it folders the repository list
-            and nothing else. Repositories take the label at creation or from their settings page.
+            {t(
+              "a group is an organizational container: it owns no code and gates nothing — it folders the repository list and nothing else. Repositories take the label at creation or from their settings page."
+            )}
           </p>
           <GroupForm />
         </>

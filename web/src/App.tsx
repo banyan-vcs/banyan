@@ -5,6 +5,7 @@
 import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { useEffect, type ReactNode } from "react";
 import { Layout } from "./components/Layout";
+import { useT } from "./i18n";
 import { can, useMode } from "./mode";
 import { BlamePage } from "./pages/BlamePage";
 import { BranchesPage } from "./pages/BranchesPage";
@@ -33,12 +34,13 @@ function LegacyHistoryRef(): ReactNode {
 /** Gate renders children only when the deployment exposes the capability. */
 function Gate({ capability, children }: { capability: string; children: ReactNode }): ReactNode {
   const mode = useMode();
+  const t = useT();
   if (can(mode, capability)) return children;
   return (
     <>
-      <h1>not in this deployment</h1>
+      <h1>{t("not in this deployment")}</h1>
       <p className="muted">
-        this page is a standalone-console capability; this deployment (profile {mode.profile}) does not expose it.
+        {t("this page is a standalone-console capability; this deployment (profile {0}) does not expose it.", mode.profile)}
       </p>
     </>
   );

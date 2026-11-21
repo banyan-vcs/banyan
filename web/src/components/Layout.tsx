@@ -8,6 +8,7 @@
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { BASE_URL } from "../api/client";
+import { useT } from "../i18n";
 import { useSession } from "../session";
 import { can, useMode } from "../mode";
 import { BranchesIcon, CodeIcon, GroupsIcon, HistoryIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon } from "./icons";
@@ -27,6 +28,7 @@ function storedCollapsed(): boolean {
 export function Layout(): ReactNode {
   const { info } = useSession();
   const mode = useMode();
+  const t = useT();
   const [collapsed, setCollapsed] = useState(storedCollapsed);
   // A GitLab-provider session wears GitLab's palette (styles.less body.gitlab)
   useEffect(() => {
@@ -58,19 +60,19 @@ export function Layout(): ReactNode {
   const under = (prefix: string): boolean => loc.pathname === prefix || loc.pathname.startsWith(prefix + "/");
 
   const workspaceNav = [
-    { to: "/", label: "repositories", icon: RepositoriesIcon, hint: "R", active: at("/"), enabled: true },
-    { to: "/groups", label: "groups", icon: GroupsIcon, hint: "G", active: under("/groups"), enabled: can(mode, "groups") },
-    { to: "/merge_requests", label: "merge requests", icon: MergeIcon, hint: "M", active: under("/merge_requests"), enabled: can(mode, "mergeRequests") },
+    { to: "/", label: t("repositories"), icon: RepositoriesIcon, hint: "R", active: at("/"), enabled: true },
+    { to: "/groups", label: t("groups"), icon: GroupsIcon, hint: "G", active: under("/groups"), enabled: can(mode, "groups") },
+    { to: "/merge_requests", label: t("merge requests"), icon: MergeIcon, hint: "M", active: under("/merge_requests"), enabled: can(mode, "mergeRequests") },
   ].filter((n) => n.enabled);
 
   const repoNav = [
-    { to: base, label: "overview", icon: OverviewIcon, enabled: true, active: at(base) },
-    { to: `${base}/tree`, label: "code", icon: CodeIcon, enabled: can(mode, "code"), active: under(`${base}/tree`) || under(`${base}/blame`) },
-    { to: `${base}/history`, label: "history", icon: HistoryIcon, enabled: can(mode, "history"), active: under(`${base}/history`) || under(`${base}/commit`) },
-    { to: `${base}/branches`, label: "branches", icon: BranchesIcon, enabled: can(mode, "branches"), active: under(`${base}/branches`) },
-    { to: `${base}/-/merge_requests`, label: "merge requests", icon: MergeIcon, enabled: can(mode, "mergeRequests"), active: under(`${base}/-/merge_requests`) },
-    { to: `${base}/subtrees`, label: "subtrees", icon: SubtreesIcon, enabled: can(mode, "subtrees"), active: under(`${base}/subtrees`) },
-    { to: `${base}/settings`, label: "settings", icon: SettingsIcon, enabled: can(mode, "settings"), active: under(`${base}/settings`) },
+    { to: base, label: t("overview"), icon: OverviewIcon, enabled: true, active: at(base) },
+    { to: `${base}/tree`, label: t("code"), icon: CodeIcon, enabled: can(mode, "code"), active: under(`${base}/tree`) || under(`${base}/blame`) },
+    { to: `${base}/history`, label: t("history"), icon: HistoryIcon, enabled: can(mode, "history"), active: under(`${base}/history`) || under(`${base}/commit`) },
+    { to: `${base}/branches`, label: t("branches"), icon: BranchesIcon, enabled: can(mode, "branches"), active: under(`${base}/branches`) },
+    { to: `${base}/-/merge_requests`, label: t("merge requests"), icon: MergeIcon, enabled: can(mode, "mergeRequests"), active: under(`${base}/-/merge_requests`) },
+    { to: `${base}/subtrees`, label: t("subtrees"), icon: SubtreesIcon, enabled: can(mode, "subtrees"), active: under(`${base}/subtrees`) },
+    { to: `${base}/settings`, label: t("settings"), icon: SettingsIcon, enabled: can(mode, "settings"), active: under(`${base}/settings`) },
   ].filter((n) => n.enabled);
 
   // One-key navigation + the fold: plain keys only, never while typing in
@@ -115,12 +117,12 @@ export function Layout(): ReactNode {
           <nav className="side-nav">
             <div className="side-group">
               <div className="side-title-row">
-                {!collapsed && <div className="side-title">workspace</div>}
+                {!collapsed && <div className="side-title">{t("workspace")}</div>}
                 <button
                   className="side-collapse"
                   onClick={() => setCollapsed((v) => !v)}
-                  title={collapsed ? "expand the sidebar ( [ )" : "fold to icons ( [ )"}
-                  aria-label={collapsed ? "expand sidebar" : "collapse sidebar"}
+                  title={collapsed ? t("expand the sidebar ( [ )") : t("fold to icons ( [ )")}
+                  aria-label={collapsed ? t("expand sidebar") : t("collapse sidebar")}
                 >
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
                     {collapsed ? <path d="M6 3.5 10.5 8 6 12.5" /> : <path d="M10 3.5 5.5 8 10 12.5" />}
@@ -136,7 +138,7 @@ export function Layout(): ReactNode {
               </div>
             )}
           </nav>
-          {!collapsed && <div className="side-foot">banyan · the tree becomes a forest</div>}
+          {!collapsed && <div className="side-foot">{t("banyan · the tree becomes a forest")}</div>}
         </aside>
         <main>
           <div className="content-inner">

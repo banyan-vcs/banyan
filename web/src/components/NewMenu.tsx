@@ -4,11 +4,13 @@
 // no portal, the topbar is sticky so the dropdown rides above the content.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { useT } from "../i18n";
 import { can, useMode } from "../mode";
 
 export function NewMenu(): ReactNode {
   const mode = useMode();
   const nav = useNavigate();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -39,7 +41,7 @@ export function NewMenu(): ReactNode {
     <div className="new-menu" ref={root}>
       <button
         className={"new-menu-btn" + (open ? " open" : "")}
-        title="create"
+        title={t("create")}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -55,7 +57,7 @@ export function NewMenu(): ReactNode {
               role="menuitem"
               onClick={() => go("/new?kind=repo")}
             >
-              new repository
+              {t("new repository")}
             </button>
           )}
           {canGroup && (
@@ -63,7 +65,7 @@ export function NewMenu(): ReactNode {
               role="menuitem"
               onClick={() => go("/new?kind=group")}
             >
-              new group
+              {t("new group")}
             </button>
           )}
         </div>

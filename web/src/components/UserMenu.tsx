@@ -6,10 +6,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BASE_URL } from "../api/client";
+import { useT } from "../i18n";
 import { useSession } from "../session";
 
 export function UserMenu(): ReactNode {
   const { info } = useSession();
+  const t = useT();
   const nav = useNavigate();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -53,7 +55,7 @@ export function UserMenu(): ReactNode {
         setOpen(true);
       }}
     >
-      <button className="avatar-btn" title={`${info.user} — settings & log out`} aria-haspopup="menu" aria-expanded={open}>
+      <button className="avatar-btn" title={t("{0} — settings & log out", info.user)} aria-haspopup="menu" aria-expanded={open}>
         <span className="user-dot">{initial}</span>
       </button>
       {open && (
@@ -70,10 +72,10 @@ export function UserMenu(): ReactNode {
               nav("/settings/profile");
             }}
           >
-            personal settings
+            {t("personal settings")}
           </button>
           <button role="menuitem" className="user-menu-logout" onClick={() => logout.mutate()} disabled={logout.isPending}>
-            {logout.isPending ? "logging out…" : "log out"}
+            {logout.isPending ? t("logging out…") : t("log out")}
           </button>
         </div>
       )}

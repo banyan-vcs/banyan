@@ -7,10 +7,12 @@ import { api, qs } from "../api/client";
 import type { LogResponse } from "../api/types";
 import { ErrorBox, Spinner, shortOid, whenStr } from "../components/ui";
 import { useRepoBase, useRepoId } from "../repo";
+import { useT } from "../i18n";
 
 const PAGE = 30;
 
 export function HistoryPage(): ReactNode {
+  const t = useT();
   const { ref: routeRef = "" } = useParams();
   const repo = useRepoId();
   const base = useRepoBase();
@@ -33,7 +35,7 @@ export function HistoryPage(): ReactNode {
   return (
     <>
       <h1>
-        history{branch ? <> · <code>{branch}</code></> : null}
+        {t("history")}{branch ? <> · <code>{branch}</code></> : null}
       </h1>
       <form
         className="path-filter"
@@ -46,15 +48,18 @@ export function HistoryPage(): ReactNode {
           setParams(next, { replace: true });
         }}
       >
-        <input name="path" placeholder="filter by path (e.g. /a/b — only commits touching that subtree)" defaultValue={pathFilter} />
+        <input name="path" placeholder={t("filter by path (e.g. /a/b — only commits touching that subtree)")} defaultValue={pathFilter} />
         <button className="btn ghost" type="submit">
-          filter
+          {t("filter")}
         </button>
       </form>
       {history.isPending && <Spinner />}
       {history.isError && <ErrorBox error={history.error} />}
       {history.isSuccess && entries.length === 0 && (
-        <p className="muted pad">no commits{pathFilter ? ` touching ${pathFilter}` : ""}.</p>
+        <p className="muted pad">
+          {t("no commits")}
+          {pathFilter ? t(" touching {0}", pathFilter) : ""}.
+        </p>
       )}
       {entries.length > 0 && (
         <table>
@@ -65,7 +70,7 @@ export function HistoryPage(): ReactNode {
                   <Link to={`${base}/commit/${e.oid}`}>{e.subject}</Link>
                   <div className="muted">
                     {e.author} · {whenStr(e.when)} · {shortOid(e.oid)}
-                    {e.parents > 1 ? " · merge" : ""}
+                    {e.parents > 1 ? ` · ${t("merge")}` : ""}
                   </div>
                 </td>
               </tr>
@@ -76,7 +81,7 @@ export function HistoryPage(): ReactNode {
       {history.hasNextPage && (
         <p className="pad">
           <button className="btn ghost" onClick={() => history.fetchNextPage()} disabled={history.isFetchingNextPage}>
-            {history.isFetchingNextPage ? "loading…" : "load more"}
+            {history.isFetchingNextPage ? t("loading…") : t("load more")}
           </button>
         </p>
       )}

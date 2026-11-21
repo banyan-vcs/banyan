@@ -9,8 +9,10 @@ import type { LogResponse } from "../api/types";
 import { DiffView } from "../components/DiffView";
 import { ErrorBox, Spinner, whenStr } from "../components/ui";
 import { useRepoBase, useRepoId } from "../repo";
+import { useT } from "../i18n";
 
 export function CommitPage(): ReactNode {
+  const t = useT();
   const { oid = "" } = useParams();
   const repo = useRepoId();
   const base = useRepoBase();
@@ -36,17 +38,17 @@ export function CommitPage(): ReactNode {
       </h1>
       {commit.isPending && <Spinner />}
       {commit.isError && <ErrorBox error={commit.error} />}
-      {commit.isSuccess && !entry && <p className="muted pad">commit not found.</p>}
+      {commit.isSuccess && !entry && <p className="muted pad">{t("commit not found.")}</p>}
       {entry && (
         <>
           <div className="commit-meta">
             <div className="commit-subject">{entry.subject}</div>
             <div className="muted">
               {entry.author} · {whenStr(entry.when)}
-              {entry.parents > 1 ? ` · merge (${entry.parents} parents)` : ""}
+              {entry.parents > 1 ? ` · ${t("merge ({0} parents)", entry.parents)}` : ""}
               {entry.parentOids?.map((p) => (
                 <span key={p}>
-                  {" · parent "}
+                  {" · "}{t("parent")}{" "}
                   <Link to={`${base}/commit/${p}`} className="mono">
                     {p.slice(0, 8)}
                   </Link>
@@ -54,12 +56,12 @@ export function CommitPage(): ReactNode {
               ))}
             </div>
           </div>
-          {parent === "" && <p className="muted pad">root commit — no parent to diff against.</p>}
-          {diff.isPending && <Spinner label="diffing…" />}
+          {parent === "" && <p className="muted pad">{t("root commit — no parent to diff against.")}</p>}
+          {diff.isPending && <Spinner label={t("diffing…")} />}
           {diff.isError && <ErrorBox error={diff.error} />}
           {diff.isSuccess && <DiffView files={parseUnifiedDiff(diff.data)} />}
           <p className="pad">
-            <Link to={`${base}/history`}>← history</Link>
+            <Link to={`${base}/history`}>{t("← history")}</Link>
           </p>
         </>
       )}

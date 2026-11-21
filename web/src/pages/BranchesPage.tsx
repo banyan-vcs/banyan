@@ -7,8 +7,10 @@ import { api } from "../api/client";
 import { branchesOf, listRefs } from "../api/gitrefs";
 import { ErrorBox, Pill, Spinner, shortOid } from "../components/ui";
 import { useRepoBase, useRepoId } from "../repo";
+import { useT } from "../i18n";
 
 export function BranchesPage(): ReactNode {
+  const t = useT();
   const repo = useRepoId();
   const base = useRepoBase();
   const qc = useQueryClient();
@@ -25,7 +27,7 @@ export function BranchesPage(): ReactNode {
     mutationFn: async () => {
       // the select defaults to the first row (default branch sorts first)
       const source = branches.find((b) => b.name === from) || branches[0];
-      if (!source) throw new Error("no source branch to branch from");
+      if (!source) throw new Error(t("no source branch to branch from"));
       await api("/api/v1/refs", {
         method: "POST",
         body: JSON.stringify({ repo, name: `refs/heads/${name}`, old: "", new: source.oid }),
@@ -41,7 +43,7 @@ export function BranchesPage(): ReactNode {
   const del = useMutation({
     mutationFn: (branch: string) => {
       const b = branches.find((x) => x.name === branch);
-      if (!b) throw new Error("branch vanished");
+      if (!b) throw new Error(t("branch vanished"));
       return api("/api/v1/refs", {
         method: "POST",
         body: JSON.stringify({ repo, name: `refs/heads/${branch}`, old: b.oid, new: "" }),
@@ -54,7 +56,7 @@ export function BranchesPage(): ReactNode {
   return (
     <>
       <h1>
-        branches · <code>{repo}</code>
+        {t("branches")} · <code>{repo}</code>
       </h1>
       {error && <div className="error-box">{error}</div>}
       <form
@@ -62,31 +64,31 @@ export function BranchesPage(): ReactNode {
         onSubmit={(e) => {
           e.preventDefault();
           setError("");
-          if (name.includes("/")) { setError("branch names are single-segment in banyan (the timeline model) — no slashes"); return; }
+          if (name.includes("/")) { setError(t("branch names are single-segment in banyan (the timeline model) — no slashes")); return; }
           if (name.trim()) create.mutate();
         }}
       >
-        <input placeholder="new branch" value={name} onChange={(e) => setName(e.target.value)} />
+        <input placeholder={t("new branch")} value={name} onChange={(e) => setName(e.target.value)} />
         <select value={from || branches[0]?.name || ""} onChange={(e) => setFrom(e.target.value)}>
           {branches.map((b) => (
             <option key={b.name} value={b.name}>
-              from {b.name}
+              {t("from {0}", b.name)}
             </option>
           ))}
         </select>
         <button className="btn" type="submit" disabled={create.isPending || branches.length === 0}>
-          create
+          {t("create")}
         </button>
       </form>
       {refs.isPending && <Spinner />}
       {refs.isError && <ErrorBox error={refs.error} />}
-      {refs.isSuccess && branches.length === 0 && <p className="muted pad">no branches yet — push one.</p>}
+      {refs.isSuccess && branches.length === 0 && <p className="muted pad">{t("no branches yet — push one.")}</p>}
       {branches.length > 0 && (
         <table>
           <thead>
             <tr>
-              <th>branch</th>
-              <th>head</th>
+              <th>{t("branch")}</th>
+              <th>{t("head")}</th>
               <th />
             </tr>
           </thead>
@@ -95,7 +97,7 @@ export function BranchesPage(): ReactNode {
               <tr key={b.name}>
                 <td>
                   <Link to={`${base}/tree?ref=${encodeURIComponent(b.name)}`}>{b.name}</Link>
-                  {b.isDefault && <Pill>default</Pill>}
+                  {b.isDefault && <Pill>{t("default")}</Pill>}
                 </td>
                 <td>
                   <Link to={`${base}/commit/${b.oid}`} className="muted mono">
@@ -108,10 +110,10 @@ export function BranchesPage(): ReactNode {
                       className="btn ghost danger"
                       disabled={del.isPending}
                       onClick={() => {
-                        if (window.confirm(`delete branch ${b.name}?`)) del.mutate(b.name);
+                        if (window.confirm(t("delete branch {0}?", b.name))) del.mutate(b.name);
                       }}
                     >
-                      delete
+                      {t("delete")}
                     </button>
                   )}
                 </td>
@@ -120,7 +122,7 @@ export function BranchesPage(): ReactNode {
           </tbody>
         </table>
       )}
-      <p className="muted pad">creation and deletion go through the same ref CAS (old→new) a git push rides.</p>
+      <p className="muted pad">{t("creation and deletion go through the same ref CAS (old→new) a git push rides.")}</p>
     </>
   );
 }

@@ -14,9 +14,11 @@ import type { GroupInfo, GroupsResponse } from "../api/groups";
 import type { RepoInfo } from "../api/types";
 import { repoHref } from "../repo";
 import { can, useMode } from "../mode";
+import { useT } from "../i18n";
 import { Empty, ErrorBox, Spinner, whenStr } from "../components/ui";
 
 export function ReposPage(): ReactNode {
+  const t = useT();
   const mode = useMode();
   const repos = useQuery({
     queryKey: ["repos"],
@@ -43,23 +45,25 @@ export function ReposPage(): ReactNode {
 
   return (
     <>
-      <h1>repositories</h1>
+      <h1>{t("repositories")}</h1>
       {repos.isPending && <Spinner />}
       {repos.isError && <ErrorBox error={repos.error} />}
       {repos.isSuccess && (
         <>
           {list.length === 0 ? (
             <Empty>
-              no repositories yet — push one (first push auto-creates) or use the <Link to="/new?kind=repo">+</Link> in
-              the top bar.
+              {t(
+                "no repositories yet — push one (first push auto-creates) or use the {0} in the top bar.",
+                <Link to="/new?kind=repo">+</Link>
+              )}
             </Empty>
           ) : (
             <table className="repo-list">
               <thead>
                 <tr>
-                  <th>repository</th>
-                  <th>description</th>
-                  <th>updated</th>
+                  <th>{t("repository")}</th>
+                  <th>{t("description")}</th>
+                  <th>{t("updated")}</th>
                 </tr>
               </thead>
               <tbody>
