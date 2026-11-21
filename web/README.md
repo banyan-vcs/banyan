@@ -85,32 +85,40 @@ go run ./cmd/banyand web -listen :3000 -gateway http://127.0.0.1:8080 \
 | `/r/:repo/branches` | branch management through the same ref CAS a git push rides |
 | `/r/:repo/subtrees` | subtree management: directory timelines, branch heads, per-path activity, admin access rules |
 | `/r/:repo/settings` | repo admin: size, force-push switch, members (effective table with inherited rows marked, direct grants strictly above the inherited rank), group label, rename, repack |
-| `/settings/profile` | personal settings: the theme (auto / day / night), the language (follow the browser / 中文 / English) and the access tokens (mint, list, revoke) |
+| `/settings/profile` | the settings area's Profile section: the theme (auto / day / night) and the language (auto / 中文 / English) |
+| `/settings/ssh-keys` | the settings area's SSH Keys section: paste one authorized_keys line, list (type / fingerprint / comment / added — the key material never echoes), remove your own. The keys authenticate git-over-SSH as their owner (`ssh://git@host/<repo>.git`) |
+| `/settings/tokens` | the settings area's Access Tokens section: mint (plaintext shown exactly once), list your own, list and revoke anyone's with admin |
 
 Groups are organizational containers only (docs/design/data-model.md §15):
 they folder the list and nothing else — the repository's physical name and
-every URL stay untouched. The theme picker lives in personal settings (the
-pre-paint snippet in `index.html` still applies the stored choice before
-first paint).
+every URL stay untouched. The theme picker lives in the settings area's
+Profile section (the pre-paint snippet in `index.html` still applies the
+stored choice before first paint); both three-state pickers label their
+first choice "auto" with the explanation in the hint below.
 
 The console is bilingual (Chinese / English). The default follows the
 browser's language (`zh*` tags pick Chinese, everything else English); the
-picker in personal settings overrides it per browser (`localStorage
+picker in the settings area overrides it per browser (`localStorage
 "banyan.locale"`, with "auto" stored by removing the key — the theme's
 pattern). The dictionary is English-source-as-key: the English text is its
 own fallback and `zh.ts` is the only table, so a missing entry degrades to
 English instead of breaking; a vitest pins both placeholder parity and
-that every static call-site key carries a zh entry.
+that every static call-site key carries a zh entry. Menus and headings
+wear Title Case (Repositories, Merge Requests, Access Tokens), acronyms
+keep their caps (SSH Keys); labels, buttons and table columns stay
+sentence case.
 
 The chrome: the avatar at the top bar's right end opens the account menu
-(click or right-click — identity, personal settings, log out). The sidebar
+(click or right-click — identity, Settings, Log Out). The sidebar
 is contextual, one group at a time: the workspace pages carry the three
-global destinations (repositories, groups, merge requests) with one-key
+global destinations (Repositories, Groups, Merge Requests) with one-key
 shortcuts; inside /r/&lt;repo&gt; it carries only that repository's
-navigation — the breadcrumb atop the content (repositories / group / repo)
-is the way back out. The fold control sits at the sidebar's bottom edge;
+navigation — the breadcrumb atop the content (Repositories / group / repo)
+is the way back out; under /settings it carries the settings area's
+sections (Profile, SSH Keys, Access Tokens — the brand link leads back
+out). The fold control sits at the sidebar's bottom edge;
 `[` works everywhere (plain keys only — never while typing, never with
-modifiers; R/G/M stay live on repository pages too).
+modifiers; R/G/M stay live on repository and settings pages too).
 
 In the `gitlab` profile the SPA narrows to the repositories list and each
 repo's subtree pages; login is the GitLab provider only.
