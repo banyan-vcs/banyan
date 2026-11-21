@@ -6,13 +6,16 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
 import { branchesOf, listRefs } from "../api/gitrefs";
+import type { GroupsResponse } from "../api/groups";
 import { branchRules, deleteBranchRule, putBranchRule } from "../api/mrs";
+import { can, useMode } from "../mode";
 import { ErrorBox, Spinner, sizeStr } from "../components/ui";
 
 export function SettingsPage(): ReactNode {
   const { repo = "" } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
+  const mode = useMode();
   const [to, setTo] = useState("");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -33,6 +36,30 @@ export function SettingsPage(): ReactNode {
     retry: false,
   });
   const refs = useQuery({ queryKey: ["refs", repo], queryFn: () => listRefs(repo), retry: false });
+  // The group label (organizational only — docs/design/data-model.md §15):
+  // read the current label, offer every group, PUT the choice.
+  const label = useQuery({
+    queryKey: ["repo-group", repo],
+    queryFn: () => api<{ repo: string; group: string }>(`/api/v1/repos/${encodeURIComponent(repo)}/group`),
+    retry: false,
+    enabled: can(mode, "groups"),
+  });
+  const groups = useQuery({
+    queryKey: ["groups"],
+    queryFn: () => api<GroupsResponse>("/api/v1/groups"),
+    retry: false,
+    enabled: can(mode, "groups"),
+  });
+  const setGroup = useMutation({
+    mutationFn: (group: string) =>
+      api(`/api/v1/repos/${encodeURIComponent(repo)}/group`, { method: "PUT", body: JSON.stringify({ group }) }),
+    onSuccess: () => {
+      setError("");
+      qc.invalidateQueries({ queryKey: ["repo-group", repo] });
+      qc.invalidateQueries({ queryKey: ["repos"] });
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
   const branches = branchesOf(refs.data || { refs: [], capabilities: "", defaultBranch: "" });
   const [ruleBranch, setRuleBranch] = useState("");
   const [ruleLevel, setRuleLevel] = useState("mr-only");
@@ -190,6 +217,36 @@ export function SettingsPage(): ReactNode {
           </button>
         </form>
       </section>
+
+      {can(mode, "groups") && (
+        <section>
+          <h2>group</h2>
+          <p className="muted">an organizational label only — it folders the repository list and nothing else; the name and every URL stay untouched.</p>
+          {label.isPending && <Spinner />}
+          {label.isSuccess && (
+            <form
+              className="rule-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const v = (e.currentTarget.elements.namedItem("group") as HTMLSelectElement).value;
+                setGroup.mutate(v);
+              }}
+            >
+              <select name="group" defaultValue={label.data.group} disabled={setGroup.isPending}>
+                <option value="">— no group —</option>
+                {(groups.data?.groups ?? []).map((g) => (
+                  <option key={g.name} value={g.name}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+              <button className="btn" type="submit" disabled={setGroup.isPending}>
+                move
+              </button>
+            </form>
+          )}
+        </section>
+      )}
 
       <section>
         <h2>rename</h2>

@@ -413,6 +413,58 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
    button, the others stay ghost */
 .theme-picker { display: flex; gap: 8px; margin: 10px 0 4px; flex-wrap: wrap; }
 
+/* the topbar's "+": an icon-only ghost button with a small dropdown */
+.new-menu { position: relative; }
+.new-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--control);
+  cursor: pointer;
+  padding: 0;
+}
+.new-menu-btn:hover, .new-menu-btn.open { color: var(--ink); background: var(--bg-control); }
+.new-menu-pop {
+  position: absolute;
+  right: 0;
+  top: 34px;
+  z-index: 30;
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--line-control);
+  border-radius: 6px;
+  box-shadow: var(--shadow, 0 4px 14px rgba(0, 0, 0, 0.12));
+  padding: 4px;
+}
+.new-menu-pop button {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.new-menu-pop button:hover { background: var(--bg-control); }
+
+/* group folders in the repository tree */
+.group-row td {
+  background: var(--bg-subtle);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.group-row:hover td { background: var(--bg-subtle); }
+form.rule-form .group-desc { flex: 1; min-width: 220px; }
+
 .error-box {
   background: var(--error-soft);
   color: var(--error-hi);
