@@ -41,7 +41,7 @@ export function NewMenu(): ReactNode {
     <div className="new-menu" ref={root}>
       <button
         className={"new-menu-btn" + (open ? " open" : "")}
-        title={t("create")}
+        title={t("Create")}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -57,7 +57,7 @@ export function NewMenu(): ReactNode {
               role="menuitem"
               onClick={() => go("/new?kind=repo")}
             >
-              {t("new repository")}
+              {t("New Repository")}
             </button>
           )}
           {canGroup && (
@@ -65,7 +65,7 @@ export function NewMenu(): ReactNode {
               role="menuitem"
               onClick={() => go("/new?kind=group")}
             >
-              {t("new group")}
+              {t("New Group")}
             </button>
           )}
         </div>

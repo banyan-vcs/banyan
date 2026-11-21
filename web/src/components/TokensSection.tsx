@@ -1,8 +1,8 @@
-// TokensSection.tsx — the personal access tokens block, lifted out of the
-// old standalone page into personal settings: mint (plaintext shown
-// exactly once), list your own, and — when the account is an admin — list
-// and revoke anyone's. Scopes are ceilings, never bypasses
-// (docs/gateway/authorization.md §8).
+// TokensSection.tsx — the personal access tokens block, the settings
+// area's Access Tokens section: mint (plaintext shown exactly once), list
+// your own, and — when the account is an admin — list and revoke anyone's.
+// Scopes are ceilings, never bypasses (docs/gateway/authorization.md §8).
+// The page heading lives in TokensPage; this section carries the tables.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useState } from "react";
@@ -110,7 +110,6 @@ export function TokensSection(): ReactNode {
 
   return (
     <section>
-      <h2>{t("access tokens")}</h2>
       <p className="muted">{t("scopes are ceilings, never bypasses: a write-scoped token can read, an admin-scoped token can mint — none of them escapes the policies above.")}</p>
       {error && <div className="error-box">{error}</div>}
       <form
@@ -148,8 +147,8 @@ export function TokensSection(): ReactNode {
       )}
       {mine.isPending && <Spinner />}
       {mine.isError && <ErrorBox error={mine.error} />}
-      {mine.isSuccess && table((mine.data.tokens || []).filter((tok) => !tok.revoked).concat((mine.data.tokens || []).filter((tok) => tok.revoked)), t("your tokens · {0}", info?.user ?? ""), false)}
-      {all.isSuccess && table(all.data.tokens || [], t("all tokens (admin)"), true)}
+      {mine.isSuccess && table((mine.data.tokens || []).filter((tok) => !tok.revoked).concat((mine.data.tokens || []).filter((tok) => tok.revoked)), t("Your Tokens · {0}", info?.user ?? ""), false)}
+      {all.isSuccess && table(all.data.tokens || [], t("All Tokens (Admin)"), true)}
     </section>
   );
 }

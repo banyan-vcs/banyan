@@ -29,7 +29,7 @@ export function BlamePage(): ReactNode {
   return (
     <>
       <h1>
-        {t("blame")} · <code>{path}</code>
+        {t("Blame")} · <code>{path}</code>
         {ref ? <span className="muted"> @ {ref}</span> : null}
       </h1>
       <p className="pad">

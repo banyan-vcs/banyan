@@ -31,7 +31,7 @@ export function MergeRequestsGlobalPage(): ReactNode {
 
   return (
     <>
-      <h1>{t("merge requests")}</h1>
+      <h1>{t("Merge Requests")}</h1>
       <div className="tab-row">
         {STATES.map((s) => (
           <button key={s} className={"tab" + (state === s ? " active" : "")} onClick={() => setState(s)}>

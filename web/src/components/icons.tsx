@@ -121,3 +121,20 @@ export const GroupsIcon = (): ReactNode => (
     <path d="M2 5.75A1.75 1.75 0 0 1 3.75 4h2.9l1.6 2h4A1.75 1.75 0 0 1 14 7.75v4.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25z" />
   </Svg>
 );
+
+// UserIcon: a head and shoulders — the settings area's Profile section.
+export const UserIcon = (): ReactNode => (
+  <Svg>
+    <circle cx="8" cy="5" r="2.75" />
+    <path d="M2.75 13.5c.6-2.6 2.7-4 5.25-4s4.65 1.4 5.25 4" />
+  </Svg>
+);
+
+// KeyIcon: a round bow with a bit of stem — the settings area's SSH Keys
+// section (TokensIcon is its sibling: the credentials trio).
+export const KeyIcon = (): ReactNode => (
+  <Svg>
+    <circle cx="5" cy="11" r="2.75" />
+    <path d="M7 9 13 3M10.5 5.5 12 7M8.5 7.5 10 9" />
+  </Svg>
+);

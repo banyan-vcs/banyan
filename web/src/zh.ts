@@ -8,18 +8,25 @@ export const zh: Record<string, string> = {
   "loading…": "加载中…",
   "something went wrong: {0}": "出问题了：{0}",
 
-  // Layout.tsx
-  workspace: "工作区",
-  repositories: "仓库",
-  groups: "分组",
-  group: "分组",
-  "merge requests": "合并请求",
+  // Layout.tsx — menus and headings wear Title Case (acronyms keep their
+  // caps: SSH); labels, buttons and table columns stay sentence case.
+  "Repositories": "仓库",
+  "Groups": "分组",
+  "Merge Requests": "合并请求",
+  "Overview": "概览",
   overview: "概览",
-  code: "代码",
-  history: "历史",
+  "Blame": "追溯",
+  "Code": "代码",
+  "History": "历史",
+  "Branches": "分支",
+  "Subtrees": "子树",
+  "Settings": "设置",
+  "Profile": "个人信息",
+  "SSH Keys": "SSH 密钥",
+  "Access Tokens": "访问令牌",
+  repositories: "仓库",
+  group: "分组",
   branches: "分支",
-  subtrees: "子树",
-  settings: "设置",
   "expand the sidebar ( [ )": "展开侧栏（ [ ）",
   "fold to icons ( [ )": "折叠为图标（ [ ）",
   "expand sidebar": "展开侧栏",
@@ -27,18 +34,19 @@ export const zh: Record<string, string> = {
   "banyan · the tree becomes a forest": "banyan · 独木成林",
 
   // UserMenu.tsx
-  "{0} — settings & log out": "{0} —— 设置与退出",
-  "personal settings": "个人设置",
+  "{0} — Settings & Log Out": "{0} —— 设置与退出",
   "logging out…": "正在退出…",
-  "log out": "退出登录",
+  "Log Out": "退出登录",
 
   // NewMenu.tsx
+  "Create": "创建",
   create: "创建",
-  "new repository": "新建仓库",
   "new group": "新建分组",
+  "New Repository": "新建仓库",
+  "New Group": "新建分组",
 
   // LoginPage.tsx
-  "banyan console": "banyan 控制台",
+  "Banyan Console": "banyan 控制台",
   "every page shows the repositories and branches this account can see — the same view git gets.":
     "每个页面展示该账号可见的仓库与分支——与 git 看到的完全一致。",
   "wrong user or password": "用户名或密码错误",
@@ -117,7 +125,7 @@ export const zh: Record<string, string> = {
   "{0}/{1} — the author's own approval never counts.": "{0}/{1}——作者本人的审批永不计入。",
 
   // NewPage.tsx
-  "not in this deployment": "此部署未提供",
+  "Not in This Deployment": "此部署未提供",
   "this page is a standalone-console capability; this deployment (profile {0}) does not expose it.":
     "本页属于独立控制台能力；当前部署（profile {0}）未开放。",
   blank: "空白",
@@ -127,7 +135,7 @@ export const zh: Record<string, string> = {
   "groups unavailable on this deployment — creation needs one.": "当前部署没有分组可用——创建仓库需要先有分组。",
   "one URL, one credential: github.com, gitlab.com or a private GitLab — the gateway fetches every ref server-side and the imported repo is a first-class banyan repository. Local passwords are never sent to the source host.":
     "一个 URL、一份凭据：github.com、gitlab.com 或私有 GitLab——网关在服务端抓取全部 ref，导入的仓库是正经的 banyan 一等仓库。本地密码永不发往源站。",
-  "import history": "导入历史",
+  "Import History": "导入历史",
   "the repository lives at /<group>/<name>": "仓库位于 /<group>/<name>",
   "group…": "分组…",
   "repository name (single segment)": "仓库名（单段）",
@@ -157,17 +165,17 @@ export const zh: Record<string, string> = {
 
   // RepoHomePage.tsx
   "default: {0}": "默认：{0}",
-  "branches · your view": "分支 · 你的视图",
+  "Branches · Your View": "分支 · 你的视图",
   "no branches yet — push one.": "还没有分支——push 一个吧。",
   branch: "分支",
   head: "头提交",
   default: "默认",
   "personal branches of other users are simply not advertised here — the same filtered ref list your git client gets.":
     "其他用户的个人分支在这里就是不可见——与你 git 客户端拿到的过滤后 ref 列表一致。",
-  "recent history": "最近历史",
+  "Recent History": "最近历史",
   "no history yet.": "还没有历史。",
   "full history →": "完整历史 →",
-  "sub-projects": "子项目",
+  "Sub-Projects": "子项目",
   "this project has no sub-projects yet.": "该项目还没有子项目。",
   "sub-project": "子项目",
   "default branch": "默认分支",
@@ -222,7 +230,7 @@ export const zh: Record<string, string> = {
   restricted: "受限",
   "select a subtree to see its activity": "选择一个子树查看其活动",
   " and access rule": "与访问规则",
-  "branch heads": "分支头",
+  "Branch Heads": "分支头",
   clone: "克隆",
   activity: "活动",
   "via the GitLab URL (one URL, one credential):": "经 GitLab URL（一个 URL、一份凭据）：",
@@ -240,11 +248,13 @@ export const zh: Record<string, string> = {
   // SettingsPage.tsx
   "{0} across {1} pack": "共 {0}，{1} 个包",
   "{0} across {1} packs": "共 {0}，{1} 个包",
+  Size: "大小",
+  Description: "描述",
   "the one-liner the repository list shows (truncated to the column's width).":
     "仓库列表展示的一行简介（按列宽截断）。",
   "what this repository is": "这个仓库是做什么的",
   save: "保存",
-  "force-push switch": "强推开关",
+  "Force-Push Switch": "强推开关",
   "the subtree rollback guard is default-on; enabling rewrites is an explicit administrative opt-in.":
     "子树回滚护栏默认开启；放开改写是管理员的一次显式授权。",
   "admin required.": "需要管理员。",
@@ -253,7 +263,7 @@ export const zh: Record<string, string> = {
   "currently ": "当前",
   enabled: "已启用",
   disabled: "已禁用",
-  "branch protection": "分支保护",
+  "Branch Protection": "分支保护",
   "{0} keeps the direct-push semantics (owner rank); {1} accepts no direct push at all — merge requests with the approval count are the only way in.":
     "{0} 保持直推语义（owner 级）；{1} 完全不接受直推——达到审批数的合并请求是唯一入口。",
   level: "级别",
@@ -266,12 +276,14 @@ export const zh: Record<string, string> = {
     "仅是组织标签——只为仓库列表分拣目录，别无其他；名称与所有 URL 一概不动。",
   "— no group —": "— 无分组 —",
   move: "移动",
+  Group: "分组",
+  Rename: "重命名",
   rename: "重命名",
   "hashed addressing flips the registry alone; named addressing moves storage without touching object ids.":
     "哈希寻址只翻注册表；命名寻址搬存储而对象 id 不动。",
   "new name": "新名称",
   "rename {0} → {1}?": "重命名 {0} → {1}？",
-  repack: "重打包",
+  "Repack": "重打包",
   "merges pack fragments and delta-encodes the result (docs/storage/storage.md §5).":
     "合并 pack 碎片并对结果做增量编码（docs/storage/storage.md §5）。",
   "repack now": "立即重打包",
@@ -279,7 +291,7 @@ export const zh: Record<string, string> = {
   "repacked: {0} → {1} packs, {2} objects, {3} → {4}{5}": "重打包完成：{0} → {1} 个 pack，{2} 个对象，{3} → {4}{5}",
 
   // members (GroupDetailPage + SettingsPage, docs/design/data-model.md §16)
-  members: "成员",
+  "Members": "成员",
   rank: "权限",
   viewer: "只读",
   developer: "开发者",
@@ -304,7 +316,6 @@ export const zh: Record<string, string> = {
     "还没有成员——所有登录用户保有该仓库的基线访问。",
 
   // TokensSection.tsx
-  "access tokens": "访问令牌",
   "scopes are ceilings, never bypasses: a write-scoped token can read, an admin-scoped token can mint — none of them escapes the policies above.":
     "权限范围是上限而非旁路：write 令牌可读，admin 令牌可签发——但谁都逃不出上述策略。",
   "token name": "令牌名称",
@@ -320,8 +331,8 @@ export const zh: Record<string, string> = {
   revoked: "已吊销",
   "revoke {0} ({1})?": "吊销 {0}（{1}）？",
   revoke: "吊销",
-  "your tokens · {0}": "我的令牌 · {0}",
-  "all tokens (admin)": "全部令牌（管理员）",
+  "Your Tokens · {0}": "我的令牌 · {0}",
+  "All Tokens (Admin)": "全部令牌（管理员）",
 
   // FilePanel.tsx / MrFileEdit.tsx
   "plain view": "纯文本视图",
@@ -341,17 +352,28 @@ export const zh: Record<string, string> = {
     "编辑经由服务端组装提交（瘦 CLI 的发布路径）——分支保护照常生效，落地后 diff 与可合并性即时重算。",
 
   // ProfilePage.tsx
-  appearance: "外观",
-  "follow the system": "跟随系统",
+  "Appearance": "外观",
+  auto: "自动",
   day: "白天",
   night: "黑夜",
   "day or night, whatever the OS says": "白天或黑夜，听操作系统的",
   "the monochrome: black primary on white": "单色风：白底黑主色",
   "warm-dark surfaces, the yellow primary": "暖黑底面，黄色主色",
   "following the system — currently {0}": "跟随系统——当前{0}",
-  language: "语言",
-  "follow the browser": "跟随浏览器",
+  "Language": "语言",
   中文: "中文",
   English: "English",
   "following the browser — currently {0}": "跟随浏览器——当前 {0}",
+
+  // SSHKeysPage.tsx
+  "keys here authenticate the git-over-SSH transport — clone as ssh://git@<host>/<repo>.git; a key only ever names its owner.":
+    "这里的密钥用于 git-over-SSH 传输认证——以 ssh://git@<host>/<repo>.git 克隆；一把密钥只代表其所有者。",
+  "ssh-ed25519 AAAA… comment": "ssh-ed25519 AAAA… 备注",
+  "add key": "添加密钥",
+  "no keys yet.": "还没有密钥。",
+  "Fingerprint": "指纹",
+  "Type": "类型",
+  "Comment": "备注",
+  "Added": "添加时间",
+  "delete key {0}?": "删除密钥 {0}？",
 };
