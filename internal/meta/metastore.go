@@ -344,6 +344,8 @@ type MemoryMetaStore struct {
 	branchRules  map[string]map[string]BranchRule      // repo → branch → protection rule
 	groups       map[string]*GroupInfo          // name → group (docs/design/data-model.md §15)
 	repoGroups   map[string]string              // repo → group name
+	groupMembers map[string]map[string]*Member  // group → user → member (docs/design/data-model.md §16)
+	repoMembers  map[string]map[string]*Member  // repo → user → direct member
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
@@ -366,6 +368,8 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 		mrApprovals:  map[string]map[int64]map[string]int64{},
 		branchRules:  map[string]map[string]BranchRule{},
 		groups:       map[string]*GroupInfo{},
+		groupMembers: map[string]map[string]*Member{},
+		repoMembers:  map[string]map[string]*Member{},
 		repoGroups:   map[string]string{},
 	}
 }

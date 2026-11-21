@@ -109,6 +109,19 @@ var metaSteps = []ddl.Step{
 		}
 		return addColumn(q, "repos", "description", "TEXT NOT NULL DEFAULT ''")
 	}},
+	// The member tables (docs/design/data-model.md §16) — same baseline/
+	// incremental split as the group tables.
+	{Name: "0010-member-tables", Up: memberTablesUp},
+}
+
+// memberTablesUp is step 0010: the group and repository member tables.
+func memberTablesUp(q ddl.Q) error {
+	for _, stmt := range membersDDL(q.Dialect()) {
+		if err := q.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // groupTablesUp is step 0008: the groups and repo_groups tables.
@@ -168,5 +181,5 @@ func tableDDL(dialect string) []string {
 	default:
 		base = ddlSQLite()
 	}
-	return append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), groupsDDL(dialect)...)
+	return append(append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), groupsDDL(dialect)...), membersDDL(dialect)...)
 }
