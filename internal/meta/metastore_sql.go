@@ -523,6 +523,25 @@ PRIMARY KEY(repo, username)
 	}
 }
 
+// sshKeysDDL answers the user SSH key table (docs/design/data-model.md
+// §17): the fingerprint is the primary key — one key, one account — and
+// identification queries by key_blob (the wire-format key, base64). Same
+// small-table precedent as the member tables: no extra indexes, the
+// username column is the members' spelling.
+func sshKeysDDL(dialect string) []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS ssh_keys(
+fingerprint ` + nameCol(dialect) + ` NOT NULL,
+username    ` + nameCol(dialect) + ` NOT NULL,
+key_type    ` + nameCol(dialect) + ` NOT NULL,
+key_blob    TEXT NOT NULL,
+key_comment TEXT NOT NULL,
+added_at    BIGINT NOT NULL,
+PRIMARY KEY(fingerprint)
+)`,
+	}
+}
+
 // nameCol/titleCol/shortCol spell the sized string columns per dialect —
 // MySQL cannot DEFAULT a TEXT column and keeps index-width-friendly
 // VARCHARs; the others take TEXT.

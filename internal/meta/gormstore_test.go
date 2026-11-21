@@ -21,6 +21,7 @@ func TestRowModelsMatchSchema(t *testing.T) {
 		repoRow{}, timelineRow{}, packRow{}, packNodeRow{}, objectRow{}, placementRow{},
 		hookRow{}, repoBlobRow{}, repoPoolRow{}, renameFenceRow{}, tokenRow{}, subtreeRuleRow{},
 		mrRow{}, mrApprovalRow{}, branchRuleRow{}, groupRow{}, repoGroupRow{}, groupMemberRow{}, repoMemberRow{},
+		sshKeyRow{},
 	); err != nil {
 		t.Fatal(err)
 	}

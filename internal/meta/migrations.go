@@ -112,11 +112,24 @@ var metaSteps = []ddl.Step{
 	// The member tables (docs/design/data-model.md §16) — same baseline/
 	// incremental split as the group tables.
 	{Name: "0010-member-tables", Up: memberTablesUp},
+	// The user SSH key table (docs/design/data-model.md §17) — the
+	// console-managed key table behind the git-over-SSH transport.
+	{Name: "0011-ssh-keys", Up: sshKeysUp},
 }
 
 // memberTablesUp is step 0010: the group and repository member tables.
 func memberTablesUp(q ddl.Q) error {
 	for _, stmt := range membersDDL(q.Dialect()) {
+		if err := q.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sshKeysUp is step 0011: the ssh_keys table.
+func sshKeysUp(q ddl.Q) error {
+	for _, stmt := range sshKeysDDL(q.Dialect()) {
 		if err := q.Exec(stmt); err != nil {
 			return err
 		}
@@ -181,5 +194,5 @@ func tableDDL(dialect string) []string {
 	default:
 		base = ddlSQLite()
 	}
-	return append(append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), groupsDDL(dialect)...), membersDDL(dialect)...)
+	return append(append(append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), groupsDDL(dialect)...), membersDDL(dialect)...), sshKeysDDL(dialect)...)
 }
