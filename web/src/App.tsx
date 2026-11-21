@@ -10,10 +10,10 @@ import { BlamePage } from "./pages/BlamePage";
 import { BranchesPage } from "./pages/BranchesPage";
 import { CommitPage } from "./pages/CommitPage";
 import { HistoryPage } from "./pages/HistoryPage";
-import { ImportPage } from "./pages/ImportPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MergeRequestPage } from "./pages/MergeRequestPage";
 import { MergeRequestsPage } from "./pages/MergeRequestsPage";
+import { NewPage } from "./pages/NewPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { ReposPage } from "./pages/ReposPage";
 import { RepoHomePage } from "./pages/RepoHomePage";
@@ -59,7 +59,7 @@ export function AppRoutes(): ReactNode {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<Layout />}>
         <Route path="/" element={<ReposPage />} />
-        <Route path="/settings/imports" element={<Gate capability="import"><ImportPage /></Gate>} />
+        <Route path="/new" element={<NewPage />} />
         <Route path="/r/:repo" element={<RepoHomePage />} />
         <Route path="/r/:repo/tree" element={<Gate capability="code"><TreePage /></Gate>} />
         <Route path="/r/:repo/tree/*" element={<Gate capability="code"><TreePage /></Gate>} />

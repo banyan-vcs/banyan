@@ -10,7 +10,8 @@ import { useEffect, type ReactNode } from "react";
 import { BASE_URL } from "../api/client";
 import { useSession } from "../session";
 import { can, useMode } from "../mode";
-import { BranchesIcon, CodeIcon, HistoryIcon, ImportIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon } from "./icons";
+import { BranchesIcon, CodeIcon, HistoryIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon } from "./icons";
+import { NewMenu } from "./NewMenu";
 
 export function Layout(): ReactNode {
   const { info } = useSession();
@@ -60,6 +61,7 @@ export function Layout(): ReactNode {
           <img src={`${BASE_URL}avatar.png`} alt="" width="24" height="24" /> banyan
         </Link>
         <span className="spacer" />
+        <NewMenu />
         {info && (
           <span className="who">
             <Link to="/settings/profile" className="who-name" title="personal settings">
@@ -79,7 +81,6 @@ export function Layout(): ReactNode {
             <div className="side-group">
               <div className="side-title">workspace</div>
               {item("/", "repositories", RepositoriesIcon, at("/"))}
-              {can(mode, "import") && item("/settings/imports", "imports", ImportIcon, under("/settings/imports"))}
               {item("/settings/profile", "personal settings", SettingsIcon, under("/settings/profile"))}
             </div>
             {repo !== "" && (

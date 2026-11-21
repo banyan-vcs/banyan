@@ -31,15 +31,16 @@ const (
 
 // Capabilities is what /api/mode advertises; the SPA renders to this list.
 type Capabilities struct {
-	CreateRepos bool `json:"createRepos"`
-	Code        bool `json:"code"`
-	History     bool `json:"history"`
-	Branches    bool `json:"branches"`
-	Subtrees    bool `json:"subtrees"`
-	Settings    bool `json:"settings"`
-	Tokens      bool `json:"tokens"`
-	Import      bool `json:"import"`
+	CreateRepos   bool `json:"createRepos"`
+	Code          bool `json:"code"`
+	History       bool `json:"history"`
+	Branches      bool `json:"branches"`
+	Subtrees      bool `json:"subtrees"`
+	Settings      bool `json:"settings"`
+	Tokens        bool `json:"tokens"`
+	Import        bool `json:"import"`
 	MergeRequests bool `json:"mergeRequests"`
+	Groups        bool `json:"groups"`
 }
 
 func capabilitiesFor(profile string) Capabilities {
@@ -51,6 +52,7 @@ func capabilitiesFor(profile string) Capabilities {
 	return Capabilities{
 		CreateRepos: true, Code: true, History: true, Branches: true,
 		Subtrees: true, Settings: true, Tokens: true, Import: true, MergeRequests: true,
+		Groups: true,
 	}
 }
 

@@ -27,6 +27,7 @@ const EMPTY: ModeInfo = {
   capabilities: {
     createRepos: true, code: true, history: true, branches: true,
     subtrees: true, settings: true, tokens: true, import: true, mergeRequests: true,
+    groups: true,
   },
 };
 
