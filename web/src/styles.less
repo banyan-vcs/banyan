@@ -1,9 +1,16 @@
 // styles.less — the console's design language. Light mode is the
 // monochrome (black / gray / white; primary buttons black,
 // secondary white); dark mode arrives automatically with the OS scheme and
-// the primary turns the brand yellow (#fcd854 family) on warm-dark surfaces. The only chroma left is
-// functional: the error red, the diff add/del washes, and the syntax
-// palette — every one of them token-driven per scheme. Class names are the
+// the primary turns the brand yellow (#fcd854 family) on warm-dark surfaces.
+// The v2 language (docs side: the 2026-11 mockup round) rides a canvas —
+// the page dips to --canvas, cards and tables stay on --bg and lift with a
+// hairline shadow; heroes wear a dot-grid texture; merge nodes carry the
+// one yellow a light-mode non-control may show.
+//
+// Color budget (binding): ① UI chroma = none beyond the two grayscale
+// schemes ② syntax palette only inside code containers ③ status = green /
+// red (+ the yellow family on dark controls and merge nodes) ④ titles,
+// body, links always --ink / --control / --muted. Class names are the
 // console's stable API; the tokens below are its whole personality.
 
 // ---- palette ramps (Less vars keep the two schemes one source) --------
@@ -81,6 +88,15 @@
   --accent-soft: @z-soft;
   --accent-border: @z-soft-border;
   --accent-ring: rgba(24, 24, 27, 0.14);
+  // v2 surface language: the page dips, cards lift
+  --canvas: #f7f7f5;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-hi: 0 12px 32px rgba(0, 0, 0, 0.11);
+  --glow: none;
+  --grid: rgba(24, 24, 27, 0.05);
+  // the merge timeline node: ink ring, brand-yellow core
+  --merge-border: @z-ink;
+  --merge-core: @y-300;
   --error: #dc2626;
   --error-hi: #b91c1c;
   --error-soft: #fef2f2;
@@ -119,6 +135,15 @@
   --accent-soft: @d-soft;
   --accent-border: @d-soft-border;
   --accent-ring: rgba(252, 216, 84, 0.22);
+  // v2 surface language: deeper canvas, yellow control glow on hover
+  --canvas: #0c0c0e;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-hi: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --glow: 0 0 0 1px rgba(252, 216, 84, 0.3), 0 6px 28px rgba(252, 216, 84, 0.15);
+  --grid: rgba(252, 216, 84, 0.05);
+  // the merge node in dark: yellow ring, quiet core
+  --merge-border: @y-300;
+  --merge-core: @d-bg;
   --error: #f07171;
   --error-hi: #f38989;
   --error-soft: #2a1414;
@@ -201,9 +226,10 @@ body {
   font-family: ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
   font-size: 14px;
   line-height: 1.5;
-  background: var(--bg);
+  background: var(--canvas);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 /* ---- shell: white top bar + gray sidebar + scrolling content ---------- */
@@ -304,7 +330,7 @@ header .brand {
   top: 48px;
   height: calc(100vh - 48px);
   overflow-y: auto;
-  background: var(--bg-control);
+  background: var(--canvas);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -461,8 +487,9 @@ table {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 12px;
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
 th, td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); font-size: 13px; vertical-align: top; }
 tbody tr:last-child td { border-bottom: none; }
@@ -496,14 +523,22 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
   background: var(--accent);
   color: var(--on-accent);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 9px;
   padding: 5px 12px;
   font-size: 13px;
   font-weight: 500;
   line-height: 20px;
   cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
 }
-.btn:hover { background: var(--accent-hi); text-decoration: none; }
+/* the v2 lift: a primary at hover rises a pixel and wears its glow (the
+   dark scheme's yellow halo; light gets the plain deep shadow) */
+.btn:hover {
+  background: var(--accent-hi);
+  text-decoration: none;
+  transform: translateY(-1px);
+  box-shadow: var(--glow), var(--shadow-hi);
+}
 /* the secondary button is white with a gray hairline and full-strength text */
 .btn.ghost { background: var(--bg); color: var(--ink); border-color: var(--line-control); }
 .btn.ghost:hover { background: var(--bg-control); }
@@ -511,8 +546,8 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 .btn.danger:hover { background: var(--error-hi); }
 .btn.ghost.danger { background: var(--bg); color: var(--error); border-color: var(--error-border); }
 .btn.ghost.danger:hover { background: var(--error-soft); }
-.btn:disabled { opacity: 0.5; cursor: default; }
-.btn.small { padding: 2px 8px; font-size: 12px; line-height: 18px; }
+.btn:disabled { opacity: 0.5; cursor: default; transform: none; box-shadow: none; }
+.btn.small { padding: 2px 8px; font-size: 12px; line-height: 18px; border-radius: 7px; }
 
 /* the theme picker in the settings area: the chosen state is the solid
    button, the others stay ghost */
@@ -599,7 +634,7 @@ form.rule-form .group-desc { flex: 1; min-width: 220px; }
 .ref-select {
   margin-left: auto;
   border: 1px solid var(--line-control);
-  border-radius: 4px;
+  border-radius: 9px;
   padding: 4px 8px;
   font-size: 13px;
   background: var(--bg);
@@ -714,9 +749,30 @@ form.rule-form .group-desc { flex: 1; min-width: 220px; }
   white-space: nowrap;
 }
 
-/* the repo home right column carries the sub-project create form above
-   the recent commits — no stray top margin at the section first row */
-.two-col form.create-repo { margin-top: 0; }
+/* the repo home's inline "create sub-project" row: a dashed ghost that
+   solidifies into a focused ring — creation offered without a form box
+   (distinct from .btn.ghost, the secondary button) */
+form.ghost-row {
+  align-items: center;
+  border: 1px dashed var(--line-control);
+  border-radius: 10px;
+  padding: 7px 8px 7px 12px;
+  margin: 0 0 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+form.ghost-row input {
+  border: none;
+  background: none;
+  padding: 4px 2px;
+  flex: 1;
+  min-width: 150px;
+}
+form.ghost-row input:focus { box-shadow: none; border-color: transparent; }
+form.ghost-row:focus-within {
+  border-style: solid;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
 
 /* ---- forms ------------------------------------------------------------ */
 
@@ -749,7 +805,7 @@ form.path-filter input { flex: 1; }
 form.edit-commit input { flex: 1; min-width: 240px; }
 input, select {
   border: 1px solid var(--line-control);
-  border-radius: 4px;
+  border-radius: 9px;
   padding: 5px 10px;
   font-size: 13px;
   font-family: inherit;
@@ -870,3 +926,127 @@ button.link {
 .md-body th, .md-body td { border: 1px solid var(--line); padding: 5px 10px; }
 .md-body th { background: var(--bg-subtle); }
 .md-body hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
+
+/* ---- v2: chips, the repo hero, the commit timeline, the readme card --- */
+
+/* chips: small mono fact capsules (the default branch, freshness) —
+   neutral gray always, never a status color */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--control);
+  background: var(--bg-control);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.chip svg { width: 12px; height: 12px; opacity: 0.8; }
+
+/* the repository hero: the repo's identity card — dot-grid texture, the
+   name in display mono, branch and freshness as chips */
+.repo-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  padding: 20px 24px 18px;
+  margin: 0 0 22px;
+}
+.repo-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+.repo-hero > * { position: relative; }
+.repo-hero h1 { margin: 0; font-size: 24px; }
+.repo-hero h1 code { font-size: 23px; }
+.hero-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.hero-desc { margin: 6px 0 0; color: var(--muted); font-size: 13px; max-width: 720px; }
+
+/* the recent-commits timeline: a rail with nodes; a merge commit wears
+   the merge-node look (light: ink ring, yellow core; dark: yellow ring) */
+.tl { position: relative; padding-left: 26px; margin: 6px 0 0; }
+.tl::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--line);
+  border-radius: 2px;
+}
+.tl-item { position: relative; padding: 7px 0; }
+.tl-dot {
+  position: absolute;
+  left: -24px;
+  top: 12px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 2px solid var(--control);
+}
+.tl-item.merge .tl-dot {
+  border-color: var(--merge-border);
+  background: var(--merge-core);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.tl-subject { font-weight: 550; }
+.tl-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+a.tl-oid {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+a.tl-oid:hover { color: var(--ink); text-decoration: none; border-color: var(--line-control); }
+
+/* the README rides in a card with its own masthead (file name + ref) */
+.readme-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  margin: 24px 0 0;
+}
+.readme-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-subtle);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.readme-bar .fname { font-family: ui-monospace, Consolas, monospace; color: var(--ink); font-weight: 550; }
+.readme-bar .ref { margin-left: auto; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; }
+.readme-card .md-body { padding: 16px 20px 18px; }
+
+/* motion steps down when the OS asks for stillness */
+@media (prefers-reduced-motion: reduce) {
+  body { transition: none; }
+  .btn, form.ghost-row { transition: none; }
+  .btn:hover { transform: none; }
+}
