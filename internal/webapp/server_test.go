@@ -194,7 +194,12 @@ func TestSessionsPersistAcrossRestart(t *testing.T) {
 
 func TestStaticSPA(t *testing.T) {
 	stack, _ := newTestStack(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) })
-	for _, path := range []string{"/", "/r/demo/tree", "/settings/tokens"} {
+	// The deep links include extension-carrying routes: the SPA fallback
+	// serves index.html, and the content type must follow the served file —
+	// a miss path's .md once answered application/octet-stream and every
+	// deep link became a browser download.
+	for _, path := range []string{"/", "/r/demo/tree", "/settings/tokens",
+		"/r/demo/tree/README.md?ref=main", "/r/demo/-/merge_requests/1"} {
 		resp, err := http.Get(stack.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -204,6 +209,9 @@ func TestStaticSPA(t *testing.T) {
 		resp.Body.Close()
 		if resp.StatusCode != 200 || !strings.Contains(string(body[:n]), "banyan") {
 			t.Fatalf("GET %s = %d %q", path, resp.StatusCode, body[:n])
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "text/html; charset=utf-8" {
+			t.Fatalf("GET %s content-type = %q, want the served file's", path, ct)
 		}
 		if resp.Header.Get("Cache-Control") != "no-cache" {
 			t.Fatalf("GET %s cache = %q", path, resp.Header.Get("Cache-Control"))
@@ -216,6 +224,9 @@ func TestStaticSPA(t *testing.T) {
 	resp.Body.Close()
 	if cc := resp.Header.Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
 		t.Fatalf("hashed asset cache = %q", cc)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/javascript; charset=utf-8" {
+		t.Fatalf("asset content-type = %q", ct)
 	}
 }
 

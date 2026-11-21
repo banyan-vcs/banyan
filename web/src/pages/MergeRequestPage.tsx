@@ -6,13 +6,15 @@
 // same view it was shared from. The diff itself is merge-base → source-tip.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import { apiText } from "../api/client";
 import { toDiffViewFiles } from "../api/diffview";
 import { approveMR, closeMR, getMR, mergeMR, reopenMR, unapproveMR } from "../api/mrs";
 // The diff view (highlight.js grammars included) is the heaviest leaf in
-// the bundle — it code-splits behind the changes tab.
+// the bundle — it code-splits behind the changes tab, as does the editor
+// the inline edit opens.
 const MrDiff = lazy(() => import("../components/MrDiff").then((m) => ({ default: m.MrDiff })));
+const MrFileEdit = lazy(() => import("../components/MrFileEdit").then((m) => ({ default: m.MrFileEdit })));
 import { ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 import { useSession } from "../session";
 
@@ -37,6 +39,10 @@ export function MergeRequestPage(): ReactNode {
   const qc = useQueryClient();
   const { info } = useSession();
   const me = info?.user || "";
+  // The inline edit: one file of the change view edited straight onto the
+  // source branch (Monaco, code-split); the diff and mergeability recompute
+  // the moment the commit lands.
+  const [editingPath, setEditingPath] = useState("");
 
   const mr = useQuery({ queryKey: ["mr", repo, iid], queryFn: () => getMR(repo, iid), retry: false });
   const view0 = mr.data;
@@ -137,9 +143,29 @@ export function MergeRequestPage(): ReactNode {
             </div>
             {diff.isPending && <Spinner />}
             {diff.isError && <ErrorBox error={diff.error} />}
+            {editingPath && view0 && (
+              <Suspense fallback={<Spinner label="loading editor…" />}>
+                <MrFileEdit
+                  repo={repo}
+                  branch={view0.source}
+                  base={view0.source_tip}
+                  path={editingPath}
+                  defaultMessage={`update ${editingPath} via MR !${iid}`}
+                  onDone={() => {
+                    setEditingPath("");
+                    invalidate();
+                  }}
+                />
+              </Suspense>
+            )}
             {diff.data && (
               <Suspense fallback={<Spinner />}>
-                <MrDiff files={toDiffViewFiles(diff.data)} view={view} />
+                <MrDiff
+                  files={toDiffViewFiles(diff.data)}
+                  view={view}
+                  onEdit={me ? setEditingPath : undefined}
+                  editingPath={editingPath}
+                />
               </Suspense>
             )}
           </>

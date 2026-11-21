@@ -260,6 +260,7 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 .btn.ghost.danger { background: var(--bg); color: var(--error); border-color: var(--error-border); }
 .btn.ghost.danger:hover { background: var(--error-soft); }
 .btn:disabled { opacity: 0.5; cursor: default; }
+.btn.small { padding: 2px 8px; font-size: 12px; line-height: 18px; }
 
 .error-box {
   background: var(--error-soft);
@@ -476,9 +477,16 @@ button.link {
 .ok-text { color: #2d6a4f; }
 .mr-diff { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
 .mr-diff-file { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.mr-diff-file.editing { border-color: var(--accent, #3d5a80); }
 .mr-diff-head {
-  display: flex; justify-content: space-between; gap: 10px; width: 100%;
-  padding: 6px 10px; border: none; border-bottom: 1px solid var(--line);
-  background: var(--bg-soft, #f6f8f6); cursor: pointer; font: inherit; text-align: left;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 0; border-bottom: 1px solid var(--line);
+  background: var(--bg-soft, #f6f8f6);
 }
+.mr-diff-toggle {
+  display: flex; flex: 1; justify-content: space-between; gap: 10px;
+  padding: 6px 10px; border: none; background: none; cursor: pointer; font: inherit; text-align: left;
+}
+.mr-diff-head .btn { margin-right: 10px; }
 .mr-diff-file > div { overflow-x: auto; }
+.mr-edit { margin: 12px 0; }
