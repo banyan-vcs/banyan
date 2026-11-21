@@ -119,6 +119,14 @@ var metaSteps = []ddl.Step{
 	// users with bcrypt hashes: first-boot administrator, password
 	// self-service.
 	{Name: "0012-users", Up: usersUp},
+	// The must-change flag an administrator's password reset raises; the
+	// user's own password change clears it.
+	{Name: "0013-users-must-change", Up: usersMustChangeUp},
+}
+
+// usersMustChangeUp is step 0013: the users.must_change_password column.
+func usersMustChangeUp(q ddl.Q) error {
+	return addColumn(q, "users", "must_change_password", "INTEGER NOT NULL DEFAULT 0")
 }
 
 // memberTablesUp is step 0010: the group and repository member tables.

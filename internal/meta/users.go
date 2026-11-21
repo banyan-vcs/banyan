@@ -25,12 +25,15 @@ var ErrUserUnknown = errors.New("user unknown")
 var ErrUserInvalid = errors.New("invalid user")
 
 // User is one row of the account table. PasswordHash carries a bcrypt
-// hash and never crosses the JSON face (json:"-").
+// hash and never crosses the JSON face (json:"-"). MustChangePassword is
+// raised by an administrator's reset (the random password must be traded
+// for a chosen one at first login) and cleared by the user's own change.
 type User struct {
-	Name      string `json:"name" gorm:"column:username;primaryKey"`
-	Password  string `json:"-" gorm:"column:password_hash;not null"`
-	Admin     bool   `json:"admin" gorm:"column:is_admin;not null"`
-	CreatedAt int64  `json:"createdAt" gorm:"column:created_at;not null"`
+	Name               string `json:"name" gorm:"column:username;primaryKey"`
+	Password           string `json:"-" gorm:"column:password_hash;not null"`
+	Admin              bool   `json:"admin" gorm:"column:is_admin;not null"`
+	MustChangePassword bool   `json:"mustChangePassword" gorm:"column:must_change_password;not null"`
+	CreatedAt          int64  `json:"createdAt" gorm:"column:created_at;not null"`
 }
 
 // UserStore manages the account table. Creating or re-seeding an account
@@ -98,6 +101,9 @@ func (s *SQLMetaStore) PutUser(ctx context.Context, u User) error {
 	if u.Admin {
 		row.Admin = 1
 	}
+	if u.MustChangePassword {
+		row.MustChange = 1
+	}
 	return s.orm.WithContext(ctx).Clauses(clause.OnConflict{UpdateAll: true}).Create(&row).Error
 }
 
@@ -125,5 +131,5 @@ func (s *SQLMetaStore) Users(ctx context.Context) ([]User, error) {
 }
 
 func (r userRow) user() User {
-	return User{Name: r.Name, Password: r.Password, Admin: r.Admin != 0, CreatedAt: r.CreatedAt}
+	return User{Name: r.Name, Password: r.Password, Admin: r.Admin != 0, MustChangePassword: r.MustChange != 0, CreatedAt: r.CreatedAt}
 }
