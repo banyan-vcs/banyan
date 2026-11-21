@@ -1,6 +1,6 @@
 // mrs.ts — the merge-request API client (docs/design/merge-requests.md).
-// The wire shapes mirror the gateway's /api/v1/repos/<repo>/merge-requests
-// and /branch-rules faces.
+// The wire shapes mirror the gateway's /api/v1/repos/<repo>/merge-requests,
+// /branch-rules, and the workspace-wide /api/v1/merge-requests faces.
 import { api } from "./client";
 
 export interface MRInfo {
@@ -40,6 +40,13 @@ export const listMRs = (repo: string, state = ""): Promise<MRInfo[]> =>
   api<{ repo: string; merge_requests: MRInfo[] }>(
     `/api/v1/repos/${encodeURIComponent(repo)}/merge-requests${state ? `?state=${state}` : ""}`,
   ).then((r) => r.merge_requests ?? []);
+
+// listAllMRs — the workspace-wide list (the sidebar's cross-repo view):
+// every visible repository's ledger rows in one answer, newest first.
+export const listAllMRs = (state = ""): Promise<MRInfo[]> =>
+  api<{ merge_requests: MRInfo[] }>(`/api/v1/merge-requests${state ? `?state=${state}` : ""}`).then(
+    (r) => r.merge_requests ?? [],
+  );
 
 export const getMR = (repo: string, iid: number | string): Promise<MRView> =>
   api<MRView>(`/api/v1/repos/${encodeURIComponent(repo)}/merge-requests/${iid}`);
