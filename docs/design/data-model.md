@@ -356,3 +356,5 @@ v2 的全部协议修复（协商终态 ACK、delete-refs、ng 行格式、竞�
 - **防御性读取**：客户端把指向已删组的陈旧标签按未分组渲染（服务端已清，陈旧缓存未必知道——partitionByGroup 纯函数钉死，vitest）。
 - **表面**：web 仓库列表组先渲染为文件夹（可折叠、计数、描述），组内各自渲染 §14 层级树；建仓表单（/new 页）带组选择；仓库设置页带组标签区。`groups` 档位进 /api/mode（standalone 有、gitlab 档无）。
 - **删除仓库**：repo_groups 行可能悬空（DeleteRepo 不在 GroupStore 域）——不可见且无害，下次贴标签覆盖。
+
+**二级路径（2026-11-21 晚增补）**：控制台把有组仓库的页面地址升为 `/r/<group>/<project>`（GitHub 形）——project 段即物理名，API 与 git wire 寻址不变；无组仓库保留一级 `/r/<name>` 旧形（react-router 静态段优先级天然消歧，两种形态并存）。创建侧组为必选（新仓生于 `/<group>/<name>`）；既有仓库经设置页贴组即获新地址。`repos.description`（0009 列）是纯展示一行文，列表按列宽截断；`updatedAt` 不落库——ListRepos 活算默认分支头提交的 committer 时间（best-effort，空仓/解不出答 0）。
