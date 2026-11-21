@@ -359,6 +359,7 @@ export const zh: Record<string, string> = {
   "changing the password ends this session — log in again with the new one.":
     "修改密码将结束本次会话——请用新密码重新登录。",
   "password changed — log in again.": "密码已修改——请重新登录。",
+  "your password was reset by an administrator — choose a new one to continue.": "你的密码已被管理员重置——请先设置新密码再继续。",
   "current password": "当前密码",
   "new password (8+ characters)": "新密码（至少 8 位）",
   "change password": "修改密码",

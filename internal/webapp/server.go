@@ -222,10 +222,46 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"user": sess.Username, "sso": sess.ProviderID != ""}
+	// The must-change fence (an administrator's reset) rides every session
+	// answer: the gateway's whoami is the authority, so a reset lands on an
+	// already-logged-in browser at its next session refresh. An unreachable
+	// gateway must not log the user out — the fence simply waits.
+	if s.gatewayMustChange(sess) {
+		out["mustChange"] = true
+	}
 	if sess.ProviderID != "" {
 		out["provider"] = map[string]string{"id": sess.ProviderID, "kind": sess.ProviderKind}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// gatewayMustChange asks the gateway whether this session's account still
+// owes a self-chosen password (the admin-reset fence). False on any
+// miss — SSO sessions and config-file accounts never owe one.
+func (s *Server) gatewayMustChange(sess Session) bool {
+	if sess.ProviderID != "" {
+		return false
+	}
+	req, err := http.NewRequest(http.MethodGet, s.opts.Gateway+"/api/v1/auth/whoami", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", sess.Basic())
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var out struct {
+		MustChange bool `json:"mustChange"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return false
+	}
+	return out.MustChange
 }
 
 func (s *Server) handleMode(w http.ResponseWriter, _ *http.Request) {
@@ -267,7 +303,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"user": req.User})
+	out := map[string]any{"user": req.User}
+	// The gateway's answer carries the admin-reset fence so the console can
+	// force the password page right after this login.
+	var gwOut struct {
+		MustChange bool `json:"mustChange"`
+	}
+	_ = json.NewDecoder(gw.Body).Decode(&gwOut)
+	if gwOut.MustChange {
+		out["mustChange"] = true
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // --- helpers ---

@@ -89,10 +89,14 @@ func TestLoginSessionProxyLogout(t *testing.T) {
 				t.Error("login check must not require credentials")
 			}
 			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"user":"alice","mustChange":false}`))
 		case "/api/v1/whoami":
 			seenAuth = r.Header.Get("Authorization")
 			w.WriteHeader(200)
 			_, _ = w.Write([]byte(`{}`))
+		case "/api/v1/auth/whoami": // the session face's must-change ask
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"user":"alice","mustChange":false}`))
 		default:
 			t.Errorf("unexpected gateway call %s", r.URL.Path)
 			w.WriteHeader(404)

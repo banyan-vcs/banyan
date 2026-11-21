@@ -11,6 +11,7 @@ import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useLocale, useT, type Locale, type LocaleChoice } from "../i18n";
 import { effectiveDark, setTheme, storedTheme, type ThemeChoice } from "../theme";
+import { useSession } from "../session";
 
 const CHOICES: { value: ThemeChoice; label: string; hint: string }[] = [
   { value: "auto", label: "auto", hint: "day or night, whatever the OS says" },
@@ -100,6 +101,7 @@ function LanguageSection(): ReactNode {
  * the one action that logs you out). */
 function PasswordSection(): ReactNode {
   const t = useT();
+  const { info: session } = useSession();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [error, setError] = useState("");
@@ -124,6 +126,9 @@ function PasswordSection(): ReactNode {
   return (
     <section>
       <h2>{t("Password")}</h2>
+      {session?.mustChange && (
+        <div className="error-box">{t("your password was reset by an administrator — choose a new one to continue.")}</div>
+      )}
       <p className="muted">{t("changing the password ends this session — log in again with the new one.")}</p>
       {error && <div className="error-box">{error}</div>}
       {done && <div className="ok-box">{t("password changed — log in again.")}</div>}
