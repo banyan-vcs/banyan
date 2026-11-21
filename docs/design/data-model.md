@@ -380,3 +380,12 @@ demo 策略 `auth.keys` 的配置钥匙共存（docs/gateway/authorization.md §
 - **数据**：`ssh_keys(fingerprint, username, key_type, key_blob, key_comment, added_at)`（0011 迁移）。fingerprint（SHA256 指纹）为主键——**一把密钥只属一个账号**，第二处注册即 ErrSSHKeyExists（400）；key_blob 存 authorized_keys 行的 base64 载荷，即 SSH 握手交给 `IdentifyKey` 的线上形态。username 列名随成员表（§16）；小表惯例无额外索引。SSHKeyStore 照 MemberStore 先例：独立接口、消费方 type-assert，remote-meta 网关零改动编译。
 - **识别**：`auth.KeyPolicy`（策略栈最外层装饰器）先查密钥表——命中即认证为**属主**，SSH 连接声明的用户名只是参考（hosted-git 惯例）；未命中或表出错回落内层策略，配置钥匙照常工作。删除按 (username, fingerprint) 属主限定——删不掉别人的钥匙；删除后指纹即刻可被他人注册。
 - **API 与门**：`GET /api/v1/auth/ssh-keys`（自己的，新者在前）、`POST {key}`（恰好一行 authorized_keys，服务端解析指纹化）、`DELETE ?fingerprint=`（查询参数——指纹是 base64 载荷可能含 `/`）。添加走 write-rank 门：SSH 密钥是**无 scope** 凭证，read PAT 不得铸造全权钥匙。密钥材料永不回显，指纹即名。
+
+## 18. 账号表（users，2026-11-21）
+
+服务端管理的账号与 bcrypt 密码哈希（docs/gateway/authorization.md §2a）：
+控制台的密码自助、banyand 的首启引导、demo 种子的账号底座。
+
+- **数据**：`users(username, password_hash, is_admin, created_at)`（0012 迁移）。is_admin 走 INTEGER+int 行字段（PG 布尔坑，tokens 表 revoked 同款）；password_hash 存 bcrypt（x/crypto，加密归 auth 包，store 只见 opaque 串）。UserStore 照 MemberStore 先例：独立接口 type-assert、无删除路径——写者只有引导与自助改密，不做用户管理面。upsert by name：改密是原地重写，admin 旗标随行。
+- **识别次序**：表先答、配置表兜底；表内名字配错密码即匿名（不落到同名配置条目）；已验凭证对 60s TTL 缓存（bcrypt ~100ms，web 层每代理调用重发 Basic 头），改密经 CredentialInvalidator 链立即清缓存。
+- **首启**：生产（无配置用户）建 admin + 随机密码只在终端打印一次；`demo: true` 由 internal/demoseed 种 admin/alice/bob（密码 demo）与整套演示世界（§16 组成员、§13 目录时间线两条、MR 三态、mr-only 规则），README 即引导文档，幂等。

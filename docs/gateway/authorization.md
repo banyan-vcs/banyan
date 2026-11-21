@@ -62,6 +62,26 @@ nil Service = 授权关闭（**仅 dev 模式下能启动到这一步**，§0；
 | 目录（子树虚拟仓库） | `subtree_access` 名单 | 同仓库规则（vr.Sub 参与） |
 | 分支 | 可见才可取（want 覆盖） | 个人命名空间仅本人；`protected_branches`（main）仅 admin |
 
+### 2a. 服务端管理的账号与密码自助（2026-11-21，docs/design/data-model.md §18）
+
+元数据面自此有**账号表** `users`（bcrypt 哈希，is_admin 旗标）——
+StaticPolicy 的 Identify 先查表后查配置文件，且**表拥有它记的名字**：
+表内名字配错密码即匿名，绝不落到同名配置条目；表不知道的名字照旧落
+配置表（两种来源共存）。admin 旗标与配置 admins 任一授管理权。bcrypt
+有意慢（~100ms），而 web 层每个代理调用都重发会话的 Basic 头——已验
+凭证对挂 60s TTL 缓存（改密的旧值最迟 60s 失效；`POST /api/v1/auth/
+password {current, next}` 走 CredentialInvalidator 链**立即**清缓存，
+装饰器逐层转发），新密码下限 8 字符，配置文件账号答 400 说明原委。
+
+**两种首启形态**：生产（无 `demo:`、无 auth.users）首次启动由后端建
+`admin` 账号——**随机密码（crypto/rand，16 字符 url-safe）只在终端打印
+一次**，落库的只有哈希；`demo: true` 则走一键种子（internal/demoseed）：
+admin/alice/bob 三账号（密码 `demo`——演示的凭据不该是秘密，终端与引导
+文档都写明）、platform 组与继承成员、demo 演示仓（README 即引导）、两
+条目录时间线子树、三个合并请求（可合/冲突/已合并）、release 的
+mr-only 规则、alice 个人分支。种子全部走服务层 API（CreateCommit/ref
+CAS/OpenMR/EnsureTimeline——锚定首推同款），幂等重跑为无操作。
+
 ## 3. 个人分支命名空间：monorepo 分支过多解法
 
 约定 `refs/heads/<user>/<name>`（首段命中用户表即为个人分支）：

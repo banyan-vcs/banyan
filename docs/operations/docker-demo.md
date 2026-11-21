@@ -22,6 +22,20 @@ PAT、建项目、push、读面核对），T83 是其 Go 形态。
 显式开发模式启动——生产缺省下无认证的客户端面角色会**拒绝启动**，
 demo 与生产的差别就在这一个旗标上，不是隐式放行。
 
+### 0b. 一键演示（demo: true，2026-11-21）
+
+比挂 auth-demo.yaml 更快的一条路：任意一体机配置加一行 `demo: true`
+首启即种子整套演示世界，无需 auth.users、无需外部种子脚本——
+admin/alice/bob 三账号（密码 `demo`，终端与引导文档都写明）、platform
+组与继承成员、demo 演示仓（**README 即引导文档**：账号表与五站导览，
+另落 `<root>/demo-guide.md`）、`/src` `/docs` 两条目录时间线子树、三个
+合并请求（可合带审批 / 真冲突 / 已合并双亲提交）、release 的 mr-only
+规则、alice 个人分支。种子全走服务层写路径（CreateCommit / ref CAS /
+OpenMR / EnsureTimeline——锚定首推同款），幂等重跑无操作；T125 钉住
+全貌。生产不设 demo：无 auth.users 的首启由后端建 `admin`——**随机密
+码只在终端打印一次**（落库仅 bcrypt 哈希），首登后 Settings → Profile
+自助改密（配置文件账号则会收到"不在此管理"的原委答复）。
+
 ## 1. 启动
 
 ```bash
