@@ -38,6 +38,7 @@ type Capabilities struct {
 	Subtrees      bool `json:"subtrees"`
 	Settings      bool `json:"settings"`
 	Tokens        bool `json:"tokens"`
+	SSHKeys       bool `json:"sshKeys"`
 	Import        bool `json:"import"`
 	MergeRequests bool `json:"mergeRequests"`
 	Groups        bool `json:"groups"`
@@ -51,7 +52,7 @@ func capabilitiesFor(profile string) Capabilities {
 	}
 	return Capabilities{
 		CreateRepos: true, Code: true, History: true, Branches: true,
-		Subtrees: true, Settings: true, Tokens: true, Import: true, MergeRequests: true,
+		Subtrees: true, Settings: true, Tokens: true, SSHKeys: true, Import: true, MergeRequests: true,
 		Groups: true,
 	}
 }

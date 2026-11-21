@@ -80,8 +80,9 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/meta/backup", s.authn(s.handleMetaBackup))
 	mux.HandleFunc("/api/v1/resolve", s.authn(s.handleResolve))
 	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
-	mux.HandleFunc("/api/v1/auth/tokens", s.authn(s.handleTokens))  // PAT mint/list (docs/gateway/authorization.md §6)
-	mux.HandleFunc("/api/v1/auth/tokens/", s.authn(s.handleTokens)) // DELETE /<hash> revoke
+	mux.HandleFunc("/api/v1/auth/tokens", s.authn(s.handleTokens))   // PAT mint/list (docs/gateway/authorization.md §6)
+	mux.HandleFunc("/api/v1/auth/tokens/", s.authn(s.handleTokens))  // DELETE /<hash> revoke
+	mux.HandleFunc("/api/v1/auth/ssh-keys", s.authn(s.handleSSHKeys)) // user ssh keys (docs/gateway/authorization.md §7a)
 	mux.HandleFunc("/api/v1/diff", s.authn(s.handleDiff))           // path diff (docs/project/roadmap.md M2)
 	mux.HandleFunc("/api/v1/blame", s.authn(s.handleBlame))         // recursive blame (docs/project/roadmap.md M3)
 }
