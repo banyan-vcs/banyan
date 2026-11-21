@@ -1,11 +1,13 @@
 // mrs.go — the merge-request API face (docs/design/merge-requests.md):
-// /api/v1/repos/<repo>/merge-requests[/<iid>[/<action>]] and the branch
-// protection rules at /api/v1/repos/<repo>/branch-rules[/<branch>]. Read
-// routes answer any authenticated caller; every mutation needs push rank,
-// and the merge action additionally mirrors the target rule's direct-push
-// semantics (a protected target merges at owner rank, the exact permission
-// a direct push would demand). The mr-only level takes no extra rank gate
-// here by design: its gate IS the approval count, enforced in the service.
+// /api/v1/repos/<repo>/merge-requests[/<iid>[/<action>]], the branch
+// protection rules at /api/v1/repos/<repo>/branch-rules[/<branch>], and
+// the workspace-wide list at /api/v1/merge-requests (the console sidebar's
+// cross-repo view). Read routes answer any authenticated caller; every
+// mutation needs push rank, and the merge action additionally mirrors the
+// target rule's direct-push semantics (a protected target merges at owner
+// rank, the exact permission a direct push would demand). The mr-only
+// level takes no extra rank gate here by design: its gate IS the approval
+// count, enforced in the service.
 package rpc
 
 import (
@@ -13,6 +15,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +57,40 @@ func (s *Server) mrOnly(ctx context.Context, repo, branch string) bool {
 func (s *Server) rejectMROnly(w http.ResponseWriter, branch string) {
 	writeJSON(w, http.StatusForbidden, errEnvelope{Error: errBody{
 		Code: "FORBIDDEN", Message: branch + " is mr-only: merge via a merge request"}})
+}
+
+// handleMergeRequestsAll serves GET /api/v1/merge-requests — the
+// workspace-wide list behind the console sidebar's merge-requests item:
+// every request across the repos the caller can see, newest update first.
+// Ledger fields only — mergeability is a per-request computation (merge
+// base + tree merge) and stays on the detail page.
+func (s *Server) handleMergeRequestsAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET"}})
+		return
+	}
+	st, ok := s.Meta.(meta.MRStore)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "merge requests not available on this deployment's metadata plane"}})
+		return
+	}
+	repos, err := s.Svc.ListRepos(r.Context())
+	if err != nil {
+		writeServiceErr(w, err)
+		return
+	}
+	state := r.URL.Query().Get("state")
+	out := []meta.MRInfo{}
+	for _, repo := range repos {
+		mrs, err := st.ListMRs(r.Context(), repo.ID, state)
+		if err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		out = append(out, mrs...)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	writeJSON(w, http.StatusOK, map[string]any{"merge_requests": out})
 }
 
 func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, parts []string) {
