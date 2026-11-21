@@ -4,10 +4,11 @@
 // group at a time: on the workspace pages it carries the three global
 // destinations (repositories, groups, merge requests — one-key
 // shortcuts, narrowed by the deployment's capabilities); inside
-// /r/<repo> it carries only that repository's navigation, and the way
-// back out is the breadcrumb atop the content (repositories / group /
-// repo); under /settings it carries the settings area's sections
-// (Profile, SSH Keys, Access Tokens — the brand link leads back out).
+// /r/<repo> it carries only that repository's navigation (Members among
+// the first-class items), and the way back out is the breadcrumb atop
+// the content (group / repo, the merge-request pages appending their
+// section and iid); under /r/<repo>/settings and /settings it carries
+// the settings areas' own sections (the brand link leads back out).
 // The fold control lives at the sidebar's bottom edge, next to
 // the tagline; "[" folds it to an icon rail from anywhere.
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -16,7 +17,7 @@ import { BASE_URL } from "../api/client";
 import { useT } from "../i18n";
 import { useSession } from "../session";
 import { can, useMode } from "../mode";
-import { BranchesIcon, CodeIcon, GroupsIcon, HistoryIcon, KeyIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon, TokensIcon, UserIcon } from "./icons";
+import { BranchesIcon, CodeIcon, GroupsIcon, HistoryIcon, KeyIcon, MembersIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon, TokensIcon, UserIcon } from "./icons";
 import { NewMenu } from "./NewMenu";
 import { UserMenu } from "./UserMenu";
 
@@ -56,7 +57,7 @@ export function Layout(): ReactNode {
   // known page segments distinguish the shapes — segment two is a page
   // name exactly when the path is one-level.
   const segs = loc.pathname.match(/^\/r\/([^/]+)(?:\/([^/]+))?/);
-  const PAGE_SEGS = new Set(["tree", "history", "branches", "subtrees", "settings", "-"]);
+  const PAGE_SEGS = new Set(["tree", "history", "branches", "subtrees", "members", "settings", "-"]);
   const twoLevel = !!segs?.[2] && !PAGE_SEGS.has(segs[2]);
   const group = twoLevel ? segs[1] : "";
   const repo = twoLevel ? segs[2] : segs?.[1] || "";
@@ -70,12 +71,23 @@ export function Layout(): ReactNode {
     { to: "/merge_requests", label: t("Merge Requests"), icon: MergeIcon, hint: "M", active: under("/merge_requests"), enabled: can(mode, "mergeRequests") },
   ].filter((n) => n.enabled);
 
+  // The repository settings area's own pages (General, Branch Protection) —
+  // same contextual swap as the account settings: /r/<repo>/settings*
+  // carries this group instead of the repository navigation; the breadcrumb
+  // atop the content is the way back out.
+  const inRepoSettings = repo !== "" && loc.pathname.startsWith(base + "/settings");
+  const repoSettingsNav = [
+    { to: `${base}/settings`, label: t("General"), icon: SettingsIcon, enabled: true, active: at(`${base}/settings`) },
+    { to: `${base}/settings/branch-protection`, label: t("Branch Protection"), icon: BranchesIcon, enabled: true, active: under(`${base}/settings/branch-protection`) },
+  ];
+
   const repoNav = [
     { to: base, label: t("Overview"), icon: OverviewIcon, enabled: true, active: at(base) },
     { to: `${base}/tree`, label: t("Code"), icon: CodeIcon, enabled: can(mode, "code"), active: under(`${base}/tree`) || under(`${base}/blame`) },
-    { to: `${base}/history`, label: t("History"), icon: HistoryIcon, enabled: can(mode, "history"), active: under(`${base}/history`) || under(`${base}/commit`) },
+    { to: `${base}/history`, label: t("Commits"), icon: HistoryIcon, enabled: can(mode, "history"), active: under(`${base}/history`) || under(`${base}/commit`) },
     { to: `${base}/branches`, label: t("Branches"), icon: BranchesIcon, enabled: can(mode, "branches"), active: under(`${base}/branches`) },
     { to: `${base}/-/merge_requests`, label: t("Merge Requests"), icon: MergeIcon, enabled: can(mode, "mergeRequests"), active: under(`${base}/-/merge_requests`) },
+    { to: `${base}/members`, label: t("Members"), icon: MembersIcon, enabled: can(mode, "groups"), active: under(`${base}/members`) },
     { to: `${base}/subtrees`, label: t("Subtrees"), icon: SubtreesIcon, enabled: can(mode, "subtrees"), active: under(`${base}/subtrees`) },
     { to: `${base}/settings`, label: t("Settings"), icon: SettingsIcon, enabled: can(mode, "settings"), active: under(`${base}/settings`) },
   ].filter((n) => n.enabled);
@@ -152,6 +164,15 @@ export function Layout(): ReactNode {
                 {!collapsed && <div className="side-title">{t("Settings")}</div>}
                 {settingsNav.map((n) => item(n.to, n.label, n.icon, n.active))}
               </div>
+            ) : inRepoSettings ? (
+              <div className="side-group">
+                {!collapsed && (
+                  <div className="side-title">
+                    {group ? `${group} / ${repo}` : repo} · {t("Settings")}
+                  </div>
+                )}
+                {repoSettingsNav.map((n) => item(n.to, n.label, n.icon, n.active))}
+              </div>
             ) : repo === "" ? (
               <div className="side-group">{workspaceNav.map((n) => item(n.to, n.label, n.icon, n.active, n.hint))}</div>
             ) : (
@@ -170,17 +191,39 @@ export function Layout(): ReactNode {
           <div className="content-inner">
             {repo !== "" && (
               <div className="crumb-top">
-                <Link to="/">{t("Repositories")}</Link>
                 {group && (
                   <>
-                    {" / "}
                     <Link to={`/groups/${encodeURIComponent(group)}`}>{group}</Link>
+                    {" / "}
                   </>
                 )}
-                {" / "}
-                <Link to={base} className="crumb-here">
-                  {repo}
-                </Link>
+                {/* The merge-request pages carry their section in the trail:
+                    group / repo / Merge Requests / !iid — the deepest stop is
+                    the "here" one; every other repo page ends at the repo. */}
+                {(() => {
+                  const mr = loc.pathname.match(/\/-\/merge_requests(?:\/(\d+))?$/);
+                  return (
+                    <>
+                      <Link to={base} className={mr ? undefined : "crumb-here"}>
+                        {repo}
+                      </Link>
+                      {mr && (
+                        <>
+                          {" / "}
+                          <Link to={`${base}/-/merge_requests`} className={mr[1] ? undefined : "crumb-here"}>
+                            {t("Merge Requests")}
+                          </Link>
+                          {mr[1] && (
+                            <>
+                              {" / "}
+                              <span className="crumb-here">!{mr[1]}</span>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
             <Outlet />

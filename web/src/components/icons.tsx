@@ -138,3 +138,13 @@ export const KeyIcon = (): ReactNode => (
     <path d="M7 9 13 3M10.5 5.5 12 7M8.5 7.5 10 9" />
   </Svg>
 );
+
+// MembersIcon: two heads and shoulders — the repository's member table.
+export const MembersIcon = (): ReactNode => (
+  <Svg>
+    <circle cx="5.5" cy="5.25" r="2.25" />
+    <path d="M1.5 13c.45-2.1 2.1-3.25 4-3.25s3.55 1.15 4 3.25" />
+    <circle cx="11" cy="6" r="1.75" />
+    <path d="M10.4 9.9c1.9.2 3.5 1.3 4.1 3.1" />
+  </Svg>
+);
