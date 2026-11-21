@@ -112,6 +112,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	meta.HandleFunc("/internal/meta/delete-repo", s.hDeleteRepo)
 	meta.HandleFunc("/internal/meta/set-force-push", s.hSetForcePush)
 	meta.HandleFunc("/internal/meta/set-repo-parent", s.hSetRepoParent)
+	meta.HandleFunc("/internal/meta/set-repo-description", s.hSetRepoDescription)
 	meta.HandleFunc("/internal/meta/set-default-branch", s.hSetDefaultBranch)
 	meta.HandleFunc("/internal/meta/hooks", s.hHooks)
 	meta.HandleFunc("/internal/meta/hooks/delete", s.hDeleteHook)
@@ -476,6 +477,21 @@ func (s *Server) hSetRepoParent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Meta.SetRepoParent(r.Context(), req.Repo, req.Parent); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) hSetRepoDescription(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[struct {
+		Repo        string `json:"repo"`
+		Description string `json:"description"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if err := s.Meta.SetRepoDescription(r.Context(), req.Repo, req.Description); err != nil {
 		writeErr(w, err)
 		return
 	}

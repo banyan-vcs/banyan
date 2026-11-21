@@ -72,7 +72,8 @@ func ddlSQLite() []string {
 	default_branch TEXT NOT NULL,
 	storage_id     TEXT NOT NULL DEFAULT '',
 	force_push     INTEGER NOT NULL DEFAULT 0,
-	parent         TEXT NOT NULL DEFAULT ''
+	parent         TEXT NOT NULL DEFAULT '',
+	description    TEXT NOT NULL DEFAULT ''
 )`,
 		`CREATE TABLE IF NOT EXISTS timelines(
 	repo   TEXT NOT NULL,
@@ -142,7 +143,8 @@ func ddlMySQL() []string {
 	default_branch VARCHAR(120) NOT NULL,
 	storage_id     VARCHAR(64) NOT NULL DEFAULT '',
 	force_push     INTEGER NOT NULL DEFAULT 0,
-	parent         VARCHAR(190) NOT NULL DEFAULT ''
+	parent         VARCHAR(190) NOT NULL DEFAULT '',
+	description    VARCHAR(500) NOT NULL DEFAULT ''
 )`,
 		`CREATE TABLE IF NOT EXISTS timelines(
 	repo   VARCHAR(190) NOT NULL,
@@ -212,7 +214,8 @@ func ddlPostgres() []string {
 	default_branch TEXT NOT NULL,
 	storage_id     TEXT NOT NULL DEFAULT '',
 	force_push     INTEGER NOT NULL DEFAULT 0,
-	parent         TEXT NOT NULL DEFAULT ''
+	parent         TEXT NOT NULL DEFAULT '',
+	description    TEXT NOT NULL DEFAULT ''
 )`,
 		`CREATE TABLE IF NOT EXISTS timelines(
 	repo   TEXT NOT NULL,
@@ -694,6 +697,28 @@ func (s *SQLMetaStore) SetRepoParent(ctx context.Context, repo string, parent st
 			return err
 		}
 		return txq(tx).Model(&repoRow{}).Where("name = ?", repo).Update("parent", parent).Error
+	})
+}
+
+// SetRepoDescription sets the display one-liner; the fence and existence
+// checks ride the same transaction shape as the hierarchy link.
+func (s *SQLMetaStore) SetRepoDescription(ctx context.Context, repo string, description string) error {
+	return s.orm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ormFenceReject(tx, repo); err != nil {
+			return err
+		}
+		q := txq(tx).Model(&repoRow{}).Select("1").Where("name = ?", repo).Limit(1)
+		if s.d.rowLock != "" {
+			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var one int
+		switch err := q.Row().Scan(&one); {
+		case errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("%w: %s", ErrRepoNotFound, repo)
+		case err != nil:
+			return err
+		}
+		return txq(tx).Model(&repoRow{}).Where("name = ?", repo).Update("description", description).Error
 	})
 }
 
