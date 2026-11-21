@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
@@ -20,6 +22,9 @@ func basicReq(user, pass string) *http.Request {
 }
 
 func TestStoredPasswords(t *testing.T) {
+	// CI runner CPU: hashing at MinCost — see BcryptCost.
+	BcryptCost = bcrypt.MinCost
+	t.Cleanup(func() { BcryptCost = bcrypt.DefaultCost })
 	ms := meta.NewMemoryMetaStore()
 	hash, err := HashPassword("s3cret!")
 	if err != nil {

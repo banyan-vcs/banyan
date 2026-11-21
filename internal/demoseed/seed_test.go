@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/meta"
@@ -23,6 +24,9 @@ import (
 )
 
 func TestSeed(t *testing.T) {
+	// CI runner CPU: hashing at MinCost — see auth.BcryptCost.
+	auth.BcryptCost = bcrypt.MinCost
+	t.Cleanup(func() { auth.BcryptCost = bcrypt.DefaultCost })
 	ms := meta.NewMemoryMetaStore()
 	objects := storage.NewObjectService(ms, storage.NewLocalShardStore(t.TempDir()), []storage.Node{{ID: "t1", Local: true}}, model.SHA1)
 	svc := service.New(ms, objects, model.SHA1)

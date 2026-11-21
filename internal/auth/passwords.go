@@ -19,10 +19,18 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// BcryptCost is the hashing work factor. Tests may lower it (bcrypt.
+// MinCost): the default costs ~60-100ms per hash on purpose, and the
+// bcrypt-heavy batteries saturate the 2-vCPU CI runner's CPU while the
+// streamed-clone integration tests run in sibling packages — the
+// starvation showed up as mid-transfer clone failures (the pitfall-79
+// shape) that no code change caused.
+var BcryptCost = bcrypt.DefaultCost
+
 // HashPassword answers the bcrypt hash for storage (bootstrap, password
 // change, the demo seeder).
 func HashPassword(plain string) (string, error) {
-	h, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+	h, err := bcrypt.GenerateFromPassword([]byte(plain), BcryptCost)
 	if err != nil {
 		return "", err
 	}
