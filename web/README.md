@@ -71,11 +71,12 @@ go run ./cmd/banyand web -listen :3000 -gateway http://127.0.0.1:8080 \
 | Route | What it shows |
 |---|---|
 | `/login` | local form + one button per OAuth provider |
-| `/` | repository list: group folders (collapsible) over the project trees, ungrouped roots after |
+| `/` | the repository list, GitHub-shaped: name (group prefix), description (truncated), latest update |
 | `/groups` | every group with its member repositories and deletion |
 | `/merge_requests` | the workspace-wide request list (state filter; rows link into the repository's page) |
-| `/new?kind=repo\|group` | the topbar "+" target: a blank repository (name, parent nest, group label), an import from URL (with the job list), or a new group |
-| `/r/:repo` | branch list (**your** filtered view, parsed from the same ref advertisement git gets) + recent history |
+| `/new?kind=repo\|group` | the topbar "+" target: a blank repository (group required, name, description, optional parent nest), an import from URL (with the job list), or a new group |
+| `/r/:repo` or `/r/:group/:project` | every repository page answers both shapes — the group form is the canonical address, the one-level form keeps old links alive; the project segment is the physical id |
+| `/r/:repo` (legacy) | branch list (**your** filtered view, parsed from the same ref advertisement git gets) + recent history |
 | `/r/:repo/tree/…` | code browser: lazy one-level directory walk (`GET /api/v1/tree`), file contents with line numbers + syntax highlighting + binary detection + 64 KiB preview cap, branch switcher, blame links |
 | `/r/:repo/history/:ref` | branch history with cursor paging and a path filter |
 | `/r/:repo/commit/:oid` | commit metadata + the unified diff against its first parent |
