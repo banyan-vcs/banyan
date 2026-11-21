@@ -254,15 +254,16 @@ type sshKeyRow struct {
 
 func (sshKeyRow) TableName() string { return "ssh_keys" }
 
-// The account table (docs/design/data-model.md §18): is_admin is INTEGER
-// with an int row field (the PG-boolean pitfall — the tokens table's
-// revoked precedent), converted at the seam; the password column stores
-// the bcrypt hash.
+// The account table (docs/design/data-model.md §18): is_admin and
+// must_change_password are INTEGER with int row fields (the PG-boolean
+// pitfall — the tokens table's revoked precedent), converted at the seam;
+// the password column stores the bcrypt hash.
 type userRow struct {
-	Name      string `gorm:"column:username;primaryKey"`
-	Password  string `gorm:"column:password_hash;not null"`
-	Admin     int    `gorm:"column:is_admin;not null"`
-	CreatedAt int64  `gorm:"column:created_at;not null"`
+	Name       string `gorm:"column:username;primaryKey"`
+	Password   string `gorm:"column:password_hash;not null"`
+	Admin      int    `gorm:"column:is_admin;not null"`
+	MustChange int    `gorm:"column:must_change_password;not null"`
+	CreatedAt  int64  `gorm:"column:created_at;not null"`
 }
 
 func (userRow) TableName() string { return "users" }

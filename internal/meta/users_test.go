@@ -41,17 +41,33 @@ func TestUserStoreConformance(t *testing.T) {
 				t.Fatalf("listing: %+v err=%v", all, err)
 			}
 
-			// --- upsert: the password change rewrites in place, the flag sticks ---
-			if err := us.PutUser(ctx, User{Name: "alice", Password: "h3", CreatedAt: 3}); err != nil {
-				t.Fatalf("reseed alice: %v", err)
-			}
-			alice, err := us.UserByName(ctx, "alice")
-			if err != nil || alice.Password != "h3" || alice.Admin {
-				t.Fatalf("alice after reseed: %+v err=%v", alice, err)
-			}
-			if all, _ := us.Users(ctx); len(all) != 2 {
-				t.Fatalf("upsert must not add rows: %d", len(all))
-			}
+		// --- upsert: the password change rewrites in place, the flag sticks ---
+		if err := us.PutUser(ctx, User{Name: "alice", Password: "h3", CreatedAt: 3}); err != nil {
+			t.Fatalf("reseed alice: %v", err)
+		}
+		alice, err := us.UserByName(ctx, "alice")
+		if err != nil || alice.Password != "h3" || alice.Admin {
+			t.Fatalf("alice after reseed: %+v err=%v", alice, err)
+		}
+		if all, _ := us.Users(ctx); len(all) != 2 {
+			t.Fatalf("upsert must not add rows: %d", len(all))
+		}
+
+		// --- the must-change flag rides the row both ways (admin reset
+		// raises it; the user's own change rewrites the row without it) ---
+		alice.MustChangePassword = true
+		if err := us.PutUser(ctx, alice); err != nil {
+			t.Fatalf("raise must-change: %v", err)
+		}
+		if alice, err = us.UserByName(ctx, "alice"); err != nil || !alice.MustChangePassword {
+			t.Fatalf("must-change must stick: %+v err=%v", alice, err)
+		}
+		if err := us.PutUser(ctx, User{Name: "alice", Password: "h4", CreatedAt: 4}); err != nil {
+			t.Fatalf("user change clears: %v", err)
+		}
+		if alice, err = us.UserByName(ctx, "alice"); err != nil || alice.MustChangePassword {
+			t.Fatalf("a fresh rewrite carries no flag: %+v err=%v", alice, err)
+		}
 
 			// --- validation ---
 			if err := us.PutUser(ctx, User{Name: "", Password: "h"}); !errors.Is(err, ErrUserInvalid) {
