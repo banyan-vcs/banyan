@@ -1,8 +1,7 @@
 // styles.less — the console's design language. Light mode is the
 // monochrome (black / gray / white; primary buttons black,
 // secondary white); dark mode arrives automatically with the OS scheme and
-// the primary turns the brand yellow (#fcd854 family) on warm-dark
-// surfaces. The only chroma left is
+// the primary turns the brand yellow (#fcd854 family) on warm-dark surfaces. The only chroma left is
 // functional: the error red, the diff add/del washes, and the syntax
 // palette — every one of them token-driven per scheme. Class names are the
 // console's stable API; the tokens below are its whole personality.
@@ -37,8 +36,8 @@
 @d-soft: #1d1d20;          // neutral selection wash — yellow lives on controls only
 @d-soft-border: #3a3a33;
 
-// the yellow ramp: the light-mode brand stays black, dark mode
-// rides yellow-300/200; text on yellow is the warm near-black
+// the yellow ramp : the light-mode brand stays black, dark mode
+// rides yellow-300/200; text on yellow is their warm near-black
 @y-300: #fcd854;
 @y-200: #fde17b;
 @y-ink: #14140f;
@@ -60,33 +59,28 @@
 @hl-num-d: #79c0ff;
 @hl-var-d: #7ee787;
 
-:root {
-  /* text scale */
+// ---- the two schemes as mixins ----------------------------------------
+// The console follows the OS scheme automatically; html[data-theme] (the
+// three-state toggle in the topbar) forces one and outranks the media
+// query by specificity.
+
+.light-tokens() {
   --ink: @z-ink;
   --control: @z-control;
   --muted: @z-muted;
   --placeholder: @z-placeholder;
-
-  /* surfaces */
   --bg: @z-bg;
   --bg-subtle: @z-bg-subtle;
   --bg-control: @z-bg-control;
   --bg-control-hi: @z-bg-control-hi;
-
-  /* hairlines */
   --line: @z-line;
   --line-control: @z-line-control;
-
-  /* accent (the monochrome brand: near-black, hover pure black) */
   --accent: @z-ink;
   --accent-hi: #000000;
   --on-accent: #ffffff;
   --accent-soft: @z-soft;
   --accent-border: @z-soft-border;
   --accent-ring: rgba(24, 24, 27, 0.14);
-
-  /* semantic — error keeps its red (a functional signal, not decoration);
-     warnings read as quiet gray information */
   --error: #dc2626;
   --error-hi: #b91c1c;
   --error-soft: #fef2f2;
@@ -95,12 +89,8 @@
   --warn-bg: var(--bg-subtle);
   --warn-border: var(--line);
   --success: #16a34a;
-
-  /* diff */
   --add-bg: #e6ffec;
   --del-bg: #ffebe9;
-
-  /* syntax palette (github-light) */
   --hl-comment: @hl-comment-l;
   --hl-keyword: @hl-keyword-l;
   --hl-string: @hl-string-l;
@@ -108,63 +98,47 @@
   --hl-class: @hl-class-l;
   --hl-num: @hl-num-l;
   --hl-var: @hl-var-l;
+  color-scheme: light;
 }
 
-/* The SSO-subpage deployment keeps its own slightly-lighter ink so the
-   mode stays distinguishable — still monochrome. */
-body.gitlab {
-  --accent: #27272a;
-  --accent-hi: #09090b;
+.dark-tokens() {
+  --ink: @d-ink;
+  --control: @d-control;
+  --muted: @d-muted;
+  --placeholder: @d-placeholder;
+  --bg: @d-bg;
+  --bg-subtle: @d-bg-subtle;
+  --bg-control: @d-bg-control;
+  --bg-control-hi: @d-bg-control-hi;
+  --line: @d-line;
+  --line-control: @d-line-control;
+  /* the primary turns the brand yellow */
+  --accent: @y-300;
+  --accent-hi: @y-200;
+  --on-accent: @y-ink;
+  --accent-soft: @d-soft;
+  --accent-border: @d-soft-border;
+  --accent-ring: rgba(252, 216, 84, 0.22);
+  --error: #f07171;
+  --error-hi: #f38989;
+  --error-soft: #2a1414;
+  --error-border: #4c1d1d;
+  --success: #4ade80;
+  --add-bg: #17301f;
+  --del-bg: #3b1d1d;
+  --hl-comment: @hl-comment-d;
+  --hl-keyword: @hl-keyword-d;
+  --hl-string: @hl-string-d;
+  --hl-title: @hl-title-d;
+  --hl-class: @hl-class-d;
+  --hl-num: @hl-num-d;
+  --hl-var: @hl-var-d;
+  color-scheme: dark;
 }
 
-/* ---- automatic dark mode: warm-dark surfaces, yellow primary --------- */
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink: @d-ink;
-    --control: @d-control;
-    --muted: @d-muted;
-    --placeholder: @d-placeholder;
-
-    --bg: @d-bg;
-    --bg-subtle: @d-bg-subtle;
-    --bg-control: @d-bg-control;
-    --bg-control-hi: @d-bg-control-hi;
-
-    --line: @d-line;
-    --line-control: @d-line-control;
-
-    /* the primary turns the brand yellow */
-    --accent: @y-300;
-    --accent-hi: @y-200;
-    --on-accent: @y-ink;
-    --accent-soft: @d-soft;
-    --accent-border: @d-soft-border;
-    --accent-ring: rgba(252, 216, 84, 0.22);
-
-    --error: #f07171;
-    --error-hi: #f38989;
-    --error-soft: #2a1414;
-    --error-border: #4c1d1d;
-    --success: #4ade80;
-
-    --add-bg: #17301f;
-    --del-bg: #3b1d1d;
-
-    /* syntax palette (github-dark) */
-    --hl-comment: @hl-comment-d;
-    --hl-keyword: @hl-keyword-d;
-    --hl-string: @hl-string-d;
-    --hl-title: @hl-title-d;
-    --hl-class: @hl-class-d;
-    --hl-num: @hl-num-d;
-    --hl-var: @hl-var-d;
-
-    color-scheme: dark;
-  }
-
-  /* the diff-view component carries its own variables; aim them at the
-     same warm-dark scheme */
+// the diff-view component carries its own variables; aim them at the
+// warm-dark scheme whenever dark is in effect
+.dark-diff-view() {
   .diff-view {
     --diff-plain-content: @d-ink;
     --diff-plain-line: transparent;
@@ -181,6 +155,43 @@ body.gitlab {
     --diff-expand-content: @d-control;
     --diff-expand-line: @d-bg-control;
   }
+}
+
+:root {
+  .light-tokens();
+}
+
+/* ---- automatic dark mode: warm-dark surfaces, yellow primary --------- */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    .dark-tokens();
+  }
+  .dark-diff-view();
+}
+
+/* ---- the manual override (topbar toggle): auto → light → dark -------- */
+
+html[data-theme="light"] {
+  .light-tokens();
+}
+html[data-theme="dark"] {
+  .dark-tokens();
+  .dark-diff-view();
+}
+
+/* The SSO-subpage deployment keeps its own slightly-lighter ink so the
+   mode stays distinguishable — a light-mode distinction only, so the dark
+   scheme (and the toggle) is never overridden by it. */
+@media (prefers-color-scheme: light) {
+  body.gitlab {
+    --accent: #27272a;
+    --accent-hi: #09090b;
+  }
+}
+html[data-theme="light"] body.gitlab {
+  --accent: #27272a;
+  --accent-hi: #09090b;
 }
 
 * { box-sizing: border-box; }
@@ -393,6 +404,23 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 .btn.ghost.danger:hover { background: var(--error-soft); }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn.small { padding: 2px 8px; font-size: 12px; line-height: 18px; }
+
+/* the theme toggle in the topbar: an icon-only ghost button */
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--control);
+  cursor: pointer;
+  padding: 0;
+}
+.theme-btn:hover { color: var(--ink); background: var(--bg-control); }
+.theme-btn svg { width: 15px; height: 15px; }
 
 .error-box {
   background: var(--error-soft);
