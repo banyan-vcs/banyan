@@ -1,55 +1,186 @@
-/* styles.css — the console's design language, after bytebase: a light
-   shell (white top bar, gray sidebar, hairline borders, small radii, a
-   zinc/gray text scale) with the brand color as the only accent. banyan
-   green by default, GitLab purple when deployed as the SSO subpage
-   (body.gitlab). Class names are the console's stable API; the tokens
-   below are its whole personality. */
+// styles.less — the console's design language. Light mode is the
+// monochrome (black / gray / white; primary buttons black,
+// secondary white); dark mode arrives automatically with the OS scheme and
+// the primary turns the brand yellow (#fcd854 family) on warm-dark
+// surfaces. The only chroma left is
+// functional: the error red, the diff add/del washes, and the syntax
+// palette — every one of them token-driven per scheme. Class names are the
+// console's stable API; the tokens below are its whole personality.
+
+// ---- palette ramps (Less vars keep the two schemes one source) --------
+
+// light: cool zinc surfaces, ink text
+@z-ink: #18181b;
+@z-control: #52525b;
+@z-muted: #71717a;
+@z-placeholder: #a1a1aa;
+@z-bg: #ffffff;
+@z-bg-subtle: #f9fafb;
+@z-bg-control: #f3f4f6;
+@z-bg-control-hi: #e5e7eb;
+@z-line: #e5e7eb;
+@z-line-control: #d1d5db;
+@z-soft: #f4f4f5;
+@z-soft-border: #d4d4d8;
+
+// dark: warm-dark surfaces (cream-tinted neutrals, compressed)
+@d-bg: #121210;
+@d-bg-subtle: #17171a;
+@d-bg-control: #1c1c18;
+@d-bg-control-hi: #262622;
+@d-ink: #edede8;
+@d-control: #a8a89f;
+@d-muted: #8a8a80;
+@d-placeholder: #5f5f57;
+@d-line: #282823;
+@d-line-control: #3a3a33;
+@d-soft: #2d280c;          // the dark yellow-100 wash
+@d-soft-border: #4a4214;
+
+// the yellow ramp: the light-mode brand stays black, dark mode
+// rides yellow-300/200; text on yellow is the warm near-black
+@y-300: #fcd854;
+@y-200: #fde17b;
+@y-ink: #14140f;
+
+// github-light syntax palette
+@hl-comment-l: #6e7781;
+@hl-keyword-l: #cf222e;
+@hl-string-l: #0a3069;
+@hl-title-l: #8250df;
+@hl-class-l: #953800;
+@hl-num-l: #0550ae;
+@hl-var-l: #116329;
+// github-dark syntax palette
+@hl-comment-d: #8b949e;
+@hl-keyword-d: #ff7b72;
+@hl-string-d: #a5d6ff;
+@hl-title-d: #d2a8ff;
+@hl-class-d: #ffa657;
+@hl-num-d: #79c0ff;
+@hl-var-d: #7ee787;
 
 :root {
-  /* text scale (zinc) */
-  --ink: #18181b; /* main text */
-  --control: #52525b; /* secondary text, buttons, links */
-  --muted: #71717a; /* tertiary text, table heads */
-  --placeholder: #a1a1aa;
+  /* text scale */
+  --ink: @z-ink;
+  --control: @z-control;
+  --muted: @z-muted;
+  --placeholder: @z-placeholder;
 
   /* surfaces */
-  --bg: #ffffff; /* page + cards */
-  --bg-subtle: #f9fafb; /* table heads, code gutters, diff heads */
-  --bg-control: #f3f4f6; /* sidebar, hover washes */
-  --bg-control-hi: #e5e7eb;
+  --bg: @z-bg;
+  --bg-subtle: @z-bg-subtle;
+  --bg-control: @z-bg-control;
+  --bg-control-hi: @z-bg-control-hi;
 
   /* hairlines */
-  --line: #e5e7eb; /* block borders */
-  --line-control: #d1d5db; /* input / outline-button borders */
+  --line: @z-line;
+  --line-control: @z-line-control;
 
-  /* brand (banyan green) */
-  --accent: #15803d;
-  --accent-hi: #166534;
-  --accent-soft: #f0fdf4;
-  --accent-border: #bbe3c6;
-  --accent-ring: rgba(21, 128, 61, 0.16);
+  /* accent (the monochrome brand: near-black, hover pure black) */
+  --accent: @z-ink;
+  --accent-hi: #000000;
+  --on-accent: #ffffff;
+  --accent-soft: @z-soft;
+  --accent-border: @z-soft-border;
+  --accent-ring: rgba(24, 24, 27, 0.14);
 
-  /* semantic */
+  /* semantic — error keeps its red (a functional signal, not decoration);
+     warnings read as quiet gray information */
   --error: #dc2626;
   --error-hi: #b91c1c;
   --error-soft: #fef2f2;
   --error-border: #fecaca;
-  --warn-fg: #b45309;
-  --warn-bg: #fffbeb;
-  --warn-border: #fde68a;
+  --warn-fg: var(--control);
+  --warn-bg: var(--bg-subtle);
+  --warn-border: var(--line);
   --success: #16a34a;
 
   /* diff */
   --add-bg: #e6ffec;
   --del-bg: #ffebe9;
+
+  /* syntax palette (github-light) */
+  --hl-comment: @hl-comment-l;
+  --hl-keyword: @hl-keyword-l;
+  --hl-string: @hl-string-l;
+  --hl-title: @hl-title-l;
+  --hl-class: @hl-class-l;
+  --hl-num: @hl-num-l;
+  --hl-var: @hl-var-l;
 }
 
+/* The SSO-subpage deployment keeps its own slightly-lighter ink so the
+   mode stays distinguishable — still monochrome. */
 body.gitlab {
-  --accent: #5b46b8;
-  --accent-hi: #483698;
-  --accent-soft: #f4f0fc;
-  --accent-border: #d8cff0;
-  --accent-ring: rgba(91, 70, 184, 0.16);
+  --accent: #27272a;
+  --accent-hi: #09090b;
+}
+
+/* ---- automatic dark mode: warm-dark surfaces, yellow primary --------- */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: @d-ink;
+    --control: @d-control;
+    --muted: @d-muted;
+    --placeholder: @d-placeholder;
+
+    --bg: @d-bg;
+    --bg-subtle: @d-bg-subtle;
+    --bg-control: @d-bg-control;
+    --bg-control-hi: @d-bg-control-hi;
+
+    --line: @d-line;
+    --line-control: @d-line-control;
+
+    /* the primary turns the brand yellow */
+    --accent: @y-300;
+    --accent-hi: @y-200;
+    --on-accent: @y-ink;
+    --accent-soft: @d-soft;
+    --accent-border: @d-soft-border;
+    --accent-ring: rgba(252, 216, 84, 0.22);
+
+    --error: #f07171;
+    --error-hi: #f38989;
+    --error-soft: #2a1414;
+    --error-border: #4c1d1d;
+    --success: #4ade80;
+
+    --add-bg: #17301f;
+    --del-bg: #3b1d1d;
+
+    /* syntax palette (github-dark) */
+    --hl-comment: @hl-comment-d;
+    --hl-keyword: @hl-keyword-d;
+    --hl-string: @hl-string-d;
+    --hl-title: @hl-title-d;
+    --hl-class: @hl-class-d;
+    --hl-num: @hl-num-d;
+    --hl-var: @hl-var-d;
+
+    color-scheme: dark;
+  }
+
+  /* the diff-view component carries its own variables; aim them at the
+     same warm-dark scheme */
+  .diff-view {
+    --diff-plain-content: @d-ink;
+    --diff-plain-line: transparent;
+    --diff-border: @d-line;
+    --diff-hunk-content: @d-bg-control;
+    --diff-hunk-content-color: @d-control;
+    --diff-hunk-line: @d-bg-control-hi;
+    --diff-add-content: #b7e5c3;
+    --diff-add-content-highlight: #d3f2db;
+    --diff-add-line: #17301f;
+    --diff-del-content: #f0abab;
+    --diff-del-content-highlight: #f6c3c3;
+    --diff-del-line: #3b1d1d;
+    --diff-expand-content: @d-control;
+    --diff-expand-line: @d-bg-control;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -227,15 +358,16 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 .pill {
   display: inline-block;
   background: var(--accent-soft);
-  color: var(--accent-hi);
+  color: var(--ink);
   border-radius: 999px;
   padding: 1px 8px;
   font-size: 12px;
   font-weight: 500;
   margin-left: 6px;
 }
-.pill.warn { background: var(--warn-bg); color: var(--warn-fg); }
-.pill.ok { background: #ecfdf3; color: #15803d; }
+/* the "open" state is the one solid: accent fill, on-accent text */
+.pill.warn { background: var(--accent); color: var(--on-accent); }
+.pill.ok { background: var(--bg-control); color: var(--control); }
 
 .btn {
   display: inline-flex;
@@ -243,7 +375,7 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
   justify-content: center;
   gap: 6px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border: 1px solid transparent;
   border-radius: 4px;
   padding: 5px 12px;
@@ -253,9 +385,10 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
   cursor: pointer;
 }
 .btn:hover { background: var(--accent-hi); text-decoration: none; }
-.btn.ghost { background: var(--bg); color: var(--control); border-color: var(--line-control); }
+/* the secondary button is white with a gray hairline and full-strength text */
+.btn.ghost { background: var(--bg); color: var(--ink); border-color: var(--line-control); }
 .btn.ghost:hover { background: var(--bg-control); }
-.btn.danger { background: var(--error); }
+.btn.danger { background: var(--error); color: #ffffff; }
 .btn.danger:hover { background: var(--error-hi); }
 .btn.ghost.danger { background: var(--bg); color: var(--error); border-color: var(--error-border); }
 .btn.ghost.danger:hover { background: var(--error-soft); }
@@ -331,14 +464,14 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 .codetext { white-space: pre-wrap; word-break: break-all; }
 .warn-line { background: var(--warn-bg); color: var(--warn-fg); padding: 6px 12px; margin: 0; font-size: 12.5px; border-bottom: 1px solid var(--warn-border); }
 
-/* github-light token colors for highlight.js output */
-.hljs-comment, .hljs-quote { color: #6e7781; }
-.hljs-keyword, .hljs-selector-tag, .hljs-deletion { color: #cf222e; }
-.hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: #0a3069; }
-.hljs-title, .hljs-title.function_, .hljs-section, .hljs-name { color: #8250df; }
-.hljs-title.class_, .hljs-type, .hljs-built_in, .hljs-builtin-name { color: #953800; }
-.hljs-number, .hljs-literal, .hljs-symbol, .hljs-attr, .hljs-attribute, .hljs-meta { color: #0550ae; }
-.hljs-variable, .hljs-template-variable, .hljs-tag { color: #116329; }
+/* syntax token colors ride the scheme tokens (github-light / github-dark) */
+.hljs-comment, .hljs-quote { color: var(--hl-comment); }
+.hljs-keyword, .hljs-selector-tag, .hljs-deletion { color: var(--hl-keyword); }
+.hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--hl-string); }
+.hljs-title, .hljs-title.function_, .hljs-section, .hljs-name { color: var(--hl-title); }
+.hljs-title.class_, .hljs-type, .hljs-built_in, .hljs-builtin-name { color: var(--hl-class); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-attr, .hljs-attribute, .hljs-meta { color: var(--hl-num); }
+.hljs-variable, .hljs-template-variable, .hljs-tag { color: var(--hl-var); }
 .hljs-addition { background: var(--add-bg); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
@@ -467,21 +600,21 @@ button.link {
   border: 1px solid var(--line); background: none; color: inherit;
   padding: 3px 12px; border-radius: 14px; cursor: pointer; font: inherit; font-size: 13px;
 }
-.tab.active { background: var(--accent, #2d6a4f); border-color: var(--accent, #2d6a4f); color: #fff; }
+.tab.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .mr-new { margin: 8px 0 14px; }
-.mr-new summary { cursor: pointer; color: var(--ink-soft); margin-bottom: 6px; }
+.mr-new summary { cursor: pointer; color: var(--control); margin-bottom: 6px; }
 .mr-overview { display: grid; gap: 18px; margin-top: 10px; }
 .mr-overview section h3 { margin-bottom: 6px; }
 .act-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .approval-list { margin: 4px 0; padding-left: 18px; }
-.ok-text { color: #2d6a4f; }
+.ok-text { color: var(--ink); font-weight: 500; }
 .mr-diff { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
 .mr-diff-file { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.mr-diff-file.editing { border-color: var(--accent, #3d5a80); }
+.mr-diff-file.editing { border-color: var(--accent); }
 .mr-diff-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 0; border-bottom: 1px solid var(--line);
-  background: var(--bg-soft, #f6f8f6);
+  background: var(--bg-subtle);
 }
 .mr-diff-toggle {
   display: flex; flex: 1; justify-content: space-between; gap: 10px;
