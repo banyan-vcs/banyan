@@ -100,6 +100,7 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | fetch-objects / cat / restore 回填 | `POST /api/v1/objects`（批量定位）/ `GET /api/v1/objects?repo&oid` | Object.BatchMeta / Get | 批量**已有**，GET **已落地** |
 | 大 blob 批量下行（pending 回填） | `POST /api/v1/objects/batch {repo, oids[]}` | Object.Get ×N | **已落地**（2026-11-15；响应=objects 帧 zlib 流，缺失 oid 静默略过——客户端逐 oid 兜底；docs/operations/performance.md §9 D） |
 | commit（blob 上传） | `POST /api/v1/objects/content` | Object.Put | **已落地**；`Content-Type: application/x-banyan-objects-1` = 二进制 zlib 帧（JSON 体保留，老客户端不变） |
+| raw 文件（README 图片等） | `GET /api/v1/repos/<repo>/raw/<path>?rev=&sub=` | Resolve + Object.Get | **已落地**（2026-11-21；同一 oid 字节、按扩展名给展示 content-type，未知扩展 octet-stream 下载；全部响应 `nosniff`，SVG 加 `Content-Security-Policy: default-src 'none'` 防直航脚本——web 层代理转发该头） |
 | 协议能力广播 | `GET /api/v1/proto` | — | **已落地**（2026-11-15；`{"proto":2,"features":[...],"ssh":...,"web":...}`——登录路径地址随能力广播，匿名可读（login 本身需要它）；客户端缓存于 `.banyan/server.json`；404=proto 1。docs/client/cli.md §4.4） |
 | CLI 短时会话铸造 | `POST /api/v1/auth/cli-session` | auth.MintSession | **已落地**（2026-11-15，docs/gateway/authorization.md §8a：登录身份 → 为自己铸 12h/write 会话，明文只出现一次；web 控制台 /cli-auth 批准流的调用方。body 可选 `{"label":"<device>"}` 命名设备（吊销可定向）；**write 域才可铸造**——read 凭证 403） |
 | commit | `POST /api/v1/commit` | Commit.Create | **已落地** |

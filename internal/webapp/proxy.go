@@ -49,7 +49,10 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, pathname string) 
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "banyan read: " + err.Error()})
 		return
 	}
-	for _, h := range []string{"Content-Type", "X-Banyan-Type"} {
+	// Content-Security-Policy/X-Content-Type-Options forward so the raw
+	// face's SVG neutering (internal/rpc/raw.go) survives the web tier —
+	// a proxied image URL runs in the SPA's origin.
+	for _, h := range []string{"Content-Type", "X-Banyan-Type", "Content-Security-Policy", "X-Content-Type-Options"} {
 		if v := resp.Header.Get(h); v != "" {
 			w.Header().Set(h, v)
 		}
