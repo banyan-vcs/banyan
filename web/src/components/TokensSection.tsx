@@ -1,13 +1,15 @@
-// TokensPage.tsx — personal access tokens: mint (plaintext shown exactly
-// once), list your own, and — when the account is an admin — list and
-// revoke anyone's. Scopes are ceilings, never bypasses (docs/gateway/authorization.md §8).
+// TokensSection.tsx — the personal access tokens block, lifted out of the
+// old standalone page into personal settings: mint (plaintext shown
+// exactly once), list your own, and — when the account is an admin — list
+// and revoke anyone's. Scopes are ceilings, never bypasses
+// (docs/gateway/authorization.md §8).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { api } from "../api/client";
 import type { TokenInfo } from "../api/types";
 import { useSession } from "../session";
-import { ErrorBox, Spinner, whenStr } from "../components/ui";
+import { ErrorBox, Spinner, whenStr } from "./ui";
 
 interface MintResponse {
   token: string;
@@ -16,7 +18,7 @@ interface MintResponse {
   expires: number;
 }
 
-export function TokensPage(): ReactNode {
+export function TokensSection(): ReactNode {
   const { info } = useSession();
   const qc = useQueryClient();
   const [name, setName] = useState("");
@@ -58,7 +60,7 @@ export function TokensPage(): ReactNode {
 
   const table = (toks: TokenInfo[], title: string, showUser: boolean): ReactNode => (
     <section>
-      <h2>{title}</h2>
+      <h3>{title}</h3>
       {toks.length === 0 && <p className="muted pad">none yet.</p>}
       {toks.length > 0 && (
         <table>
@@ -69,7 +71,7 @@ export function TokensPage(): ReactNode {
               <th>scope</th>
               <th>created</th>
               <th>expires</th>
-              <th />
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -105,8 +107,8 @@ export function TokensPage(): ReactNode {
   );
 
   return (
-    <>
-      <h1>personal access tokens</h1>
+    <section>
+      <h2>access tokens</h2>
       <p className="muted">scopes are ceilings, never bypasses: a write-scoped token can read, an admin-scoped token can mint — none of them escapes the policies above.</p>
       {error && <div className="error-box">{error}</div>}
       <form
@@ -146,6 +148,6 @@ export function TokensPage(): ReactNode {
       {mine.isError && <ErrorBox error={mine.error} />}
       {mine.isSuccess && table((mine.data.tokens || []).filter((t) => !t.revoked).concat((mine.data.tokens || []).filter((t) => t.revoked)), `your tokens · ${info?.user ?? ""}`, false)}
       {all.isSuccess && table(all.data.tokens || [], "all tokens (admin)", true)}
-    </>
+    </section>
   );
 }

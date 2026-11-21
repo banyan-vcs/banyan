@@ -14,12 +14,12 @@ import { ImportPage } from "./pages/ImportPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MergeRequestPage } from "./pages/MergeRequestPage";
 import { MergeRequestsPage } from "./pages/MergeRequestsPage";
+import { ProfilePage } from "./pages/ProfilePage";
 import { ReposPage } from "./pages/ReposPage";
 import { RepoHomePage } from "./pages/RepoHomePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SubtreesPage } from "./pages/SubtreesPage";
 import { TreePage } from "./pages/TreePage";
-import { TokensPage } from "./pages/TokensPage";
 
 /** LegacyHistoryRef forwards pre-?ref= links (branch names in the path
  * segment) to the ?ref= form — shareable, slash-safe. */
@@ -75,7 +75,7 @@ export function AppRoutes(): ReactNode {
         <Route path="/r/:repo/branches" element={<Gate capability="branches"><BranchesPage /></Gate>} />
         <Route path="/r/:repo/subtrees" element={<SubtreesPage />} />
         <Route path="/r/:repo/settings" element={<Gate capability="settings"><SettingsPage /></Gate>} />
-        <Route path="/settings/tokens" element={<Gate capability="tokens"><TokensPage /></Gate>} />
+        <Route path="/settings/profile" element={<ProfilePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
