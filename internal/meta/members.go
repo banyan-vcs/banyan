@@ -30,15 +30,19 @@ const (
 	RankOwner     = "owner"
 )
 
-// RankVal answers the rank's ordering; unknown ranks sort below viewer.
+// RankVal answers the rank's ordering; "" (not a member) and unknown ranks
+// sort below viewer, so the policy gate never mistakes a stranger for a
+// viewer.
 func RankVal(rank string) int {
 	switch rank {
 	case RankOwner:
 		return 2
 	case RankDeveloper:
 		return 1
-	default:
+	case RankViewer:
 		return 0
+	default:
+		return -1
 	}
 }
 
