@@ -11,13 +11,17 @@
 才暴露：
 
 - 客户端面角色（role 为空 / all-in-one / gateway）在**既无
-  `auth.upstream` 又无 `auth.users`** 时启动即报错，错误信息直接给出
-  出路：`set dev: true for an unauthenticated local deployment`；
+  `auth.upstream` 又无 `auth.users`、也无持久元数据可承载账号表**时启动即
+  报错，错误信息直接给出出路：`set dev: true for an unauthenticated local
+  deployment`。**账号表即用户源**（2026-11-21，§2a）：持久 meta
+  （sqlite/mysql/postgres——生产 all-in-one 的缺省即 postgres）与
+  `demo: true` 都算已认证姿态，mem 不算（账号随进程蒸发）；
 - `gitaly.listen` 配置了而 `gitaly.token` 为空：同样拒启（gRPC 面同权
   严肃，docs/integration/gitaly-compat.md §3）；
 - `dev: true`（YAML）或 `-dev`（旗标）= **显式开发模式**：免认证本地
   跑，`-help` usage 与配置 Describe 均标注。demo 栈即此形态（单体
-  compose 挂 auth-demo.yaml 走正路；集群 demo 网关走 `-dev`）；
+  compose 挂 auth-demo.yaml 走正路；集群 demo 网关走 `-dev`）。dev 的
+  nil-means-open 语义不因持久 meta 而收窄——`-dev` 就是免认证；
 - refs/storage 角色不受此限——集群内部面（自有边界），客户端流量
   永远经网关；
 - **元数据同姿态**（2026-11-05）：生产（非 dev）下持有元数据的角色
@@ -28,8 +32,8 @@
   挡在 receive-pack），无认证时进程不再启动。
 
 §1 的"nil Service = 授权关闭"由此收窄：**nil 只在 dev 模式合法**。
-回归：TestProductionRequiresAuth（单测，8 情形：三种客户端角色 ×
-有/无认证、gitaly token 对、dev 出路）。
+回归：TestProductionRequiresAuth（单测：三种客户端角色 ×
+有/无认证、gitaly token 对、dev 出路、持久 meta 姿态）。
 
 ## 1. 抽象（internal/auth）
 
