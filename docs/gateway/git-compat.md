@@ -235,7 +235,7 @@ payload 契约。
 与授权决策（docs/gateway/authorization.md §7）。会话形态对照 `connect.c` / `serve.c`：
 
 ```
-连接 → 公钥认证（IdentifyKey → auth.Identity；无策略 = 拒绝）
+连接 → 公钥认证（IdentifyKey → auth.Identity；无策略 = 拒绝。两把钥匙表：元数据面用户密钥表（控制台自助，§7a）先答、配置 auth.keys 回落）
 channel "session"
   env GIT_PROTOCOL version=2        ← 客户端 SendEnv（v2 协商入口）
   exec "git-upload-pack '/r/demo.git'"

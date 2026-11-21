@@ -370,3 +370,13 @@ v2 的全部协议修复（协商终态 ACK、delete-refs、ng 行格式、竞�
 - **执行链**：`auth.MemberPolicy`（SubtreeRulePolicy 同缝装饰器）包住策略栈最外层——先过成员门，再走内层规则（scope 上限、保护分支、个人分支空间全部照常叠加）。banyand 的 static 与 SSO 分支装配；console-fronted（upstream 快照）分支不包——该拓扑的策略由 console 快照同步。
 - **API**：`GET/PUT /api/v1/groups/<name>/members`（PUT body `{user, rank}`，rank 空串=移除）与 `GET/PUT /api/v1/repos/<repo>/members`（GET 答有效视图 `members`+继承标记与直接表 `direct` 双数组）。读对任何认证成员开放（组织元数据，组列表先例）；写走 write-rank（建组同门）。
 - **表面**：组详情页 `/groups/<name>`（成员表+添加表单+组内仓库列表，组列表行与仓库面包屑组段均链入）；仓库设置页 members 区（有效表：继承行带标记不可移除、直接行可移除；添加表单的提权校验由服务端执行、错误即显）。
+
+## 17. 用户 SSH 密钥（ssh_keys，2026-11-21）
+
+git-over-SSH 传输（docs/gateway/git-compat.md §7b）的公钥自此有第二来源：
+元数据面一张 **用户密钥表**——控制台 Settings → SSH Keys 自助增删，与
+demo 策略 `auth.keys` 的配置钥匙共存（docs/gateway/authorization.md §7a）。
+
+- **数据**：`ssh_keys(fingerprint, username, key_type, key_blob, key_comment, added_at)`（0011 迁移）。fingerprint（SHA256 指纹）为主键——**一把密钥只属一个账号**，第二处注册即 ErrSSHKeyExists（400）；key_blob 存 authorized_keys 行的 base64 载荷，即 SSH 握手交给 `IdentifyKey` 的线上形态。username 列名随成员表（§16）；小表惯例无额外索引。SSHKeyStore 照 MemberStore 先例：独立接口、消费方 type-assert，remote-meta 网关零改动编译。
+- **识别**：`auth.KeyPolicy`（策略栈最外层装饰器）先查密钥表——命中即认证为**属主**，SSH 连接声明的用户名只是参考（hosted-git 惯例）；未命中或表出错回落内层策略，配置钥匙照常工作。删除按 (username, fingerprint) 属主限定——删不掉别人的钥匙；删除后指纹即刻可被他人注册。
+- **API 与门**：`GET /api/v1/auth/ssh-keys`（自己的，新者在前）、`POST {key}`（恰好一行 authorized_keys，服务端解析指纹化）、`DELETE ?fingerprint=`（查询参数——指纹是 base64 载荷可能含 `/`）。添加走 write-rank 门：SSH 密钥是**无 scope** 凭证，read PAT 不得铸造全权钥匙。密钥材料永不回显，指纹即名。

@@ -115,6 +115,26 @@ HttpOnly cookie）→ 仓库列表/建仓 → 仓库页**分支列表 = 登录�
 细节（会话形态/协商轮次）见 docs/gateway/git-compat.md §7b，T39 钉住。边界：SSH 传输要求
 auth 必须开启（无钥匙表可认证任何人——拒绝启动而非裸监听）。
 
+### 7a. 用户自管 SSH 密钥（2026-11-21，docs/design/data-model.md §17）
+
+§7 的钥匙表原只有配置文件一源（demo 策略 `auth.keys`）；自此元数据面多一张
+**用户密钥表** `ssh_keys`——控制台自助增删，与配置钥匙共存。识别顺序：密钥表先答
+（`auth.KeyPolicy` 装饰器，SubtreeRulePolicy/MemberPolicy 同缝），命中即认证为密钥
+**属主**——SSH 连接声明的用户名只是参考（hosted-git 惯例：URL 写 git@ 或 alice@，
+密钥单独定账号）；未命中（含表查询出错）回落内层策略——配置钥匙照常工作，坏表
+退化为内层裁决而非报错放行。一把密钥只属一个账号（fingerprint 主键全局唯一，
+第二处注册 400）；SSH 密钥是**无 scope**凭证，故添加走 write-rank 门（read PAT
+不得给自己铸造全权钥匙——token 铸造同款门）。内层规则（scope 上限、保护分支、
+成员门）对密钥认证的身份照常叠加；AdminChecker 转发但密钥表从不放大管理面。
+
+**API**（internal/rpc/sshkeys.go）：`GET /api/v1/auth/ssh-keys`（自己的密钥，新者
+在前，不回显密钥材料）；`POST`（body `{key}`——恰好一行 authorized_keys，
+x/crypto 解析并指纹化）；`DELETE ?fingerprint=`——指纹走查询参数而非路径段：
+它是 base64 载荷、可能含 `/`（tokens 的十六进制哈希没有这个麻烦）。banyand 的
+static 与 token-fronted 分支装配 KeyPolicy 于最外层；remote/upstream 拓扑维持
+快照同步钥匙。`banyan-auth` exec（§6a）随之对控制台用户生效——密钥换短时会话，
+CLI 登录不再需要配置钥匙。
+
 ## 8. Token 认证与可扩展性缝（2026-11-06，docs/project/roadmap.md M5）
 
 **PAT（personal access token）**：`banyan_` 前缀随机明文（crypto/rand，
