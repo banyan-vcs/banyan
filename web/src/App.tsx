@@ -79,6 +79,20 @@ export function AppRoutes(): ReactNode {
         <Route path="/r/:repo/branches" element={<Gate capability="branches"><BranchesPage /></Gate>} />
         <Route path="/r/:repo/subtrees" element={<SubtreesPage />} />
         <Route path="/r/:repo/settings" element={<Gate capability="settings"><SettingsPage /></Gate>} />
+        {/* the grouped shape (docs/design/data-model.md §15): /r/<group>/<project> —
+            the project segment is the physical id; react-router's static
+            segments outrank the legacy param routes, so both shapes coexist */}
+        <Route path="/r/:group/:project" element={<RepoHomePage />} />
+        <Route path="/r/:group/:project/tree" element={<Gate capability="code"><TreePage /></Gate>} />
+        <Route path="/r/:group/:project/tree/*" element={<Gate capability="code"><TreePage /></Gate>} />
+        <Route path="/r/:group/:project/history" element={<Gate capability="history"><HistoryPage /></Gate>} />
+        <Route path="/r/:group/:project/commit/:oid" element={<Gate capability="history"><CommitPage /></Gate>} />
+        <Route path="/r/:group/:project/blame/*" element={<Gate capability="code"><BlamePage /></Gate>} />
+        <Route path="/r/:group/:project/-/merge_requests" element={<Gate capability="mergeRequests"><MergeRequestsPage /></Gate>} />
+        <Route path="/r/:group/:project/-/merge_requests/:iid" element={<Gate capability="mergeRequests"><MergeRequestPage /></Gate>} />
+        <Route path="/r/:group/:project/branches" element={<Gate capability="branches"><BranchesPage /></Gate>} />
+        <Route path="/r/:group/:project/subtrees" element={<SubtreesPage />} />
+        <Route path="/r/:group/:project/settings" element={<Gate capability="settings"><SettingsPage /></Gate>} />
         <Route path="/settings/profile" element={<ProfilePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -6,11 +6,14 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, qs } from "../api/client";
 import type { LogResponse } from "../api/types";
 import { ErrorBox, Spinner, shortOid, whenStr } from "../components/ui";
+import { useRepoBase, useRepoId } from "../repo";
 
 const PAGE = 30;
 
 export function HistoryPage(): ReactNode {
-  const { repo = "", ref: routeRef = "" } = useParams();
+  const { ref: routeRef = "" } = useParams();
+  const repo = useRepoId();
+  const base = useRepoBase();
   const [params, setParams] = useSearchParams();
   // The ref rides ?ref= so branch names with slashes share cleanly (the
   // :ref path param could never match them).
@@ -59,7 +62,7 @@ export function HistoryPage(): ReactNode {
             {entries.map((e) => (
               <tr key={e.oid}>
                 <td>
-                  <Link to={`/r/${repo}/commit/${e.oid}`}>{e.subject}</Link>
+                  <Link to={`${base}/commit/${e.oid}`}>{e.subject}</Link>
                   <div className="muted">
                     {e.author} · {whenStr(e.when)} · {shortOid(e.oid)}
                     {e.parents > 1 ? " · merge" : ""}

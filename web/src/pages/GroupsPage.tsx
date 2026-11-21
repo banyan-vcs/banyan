@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import type { ReactNode } from "react";
 import { api } from "../api/client";
 import { partitionByGroup, type GroupsResponse } from "../api/groups";
+import { repoHref } from "../repo";
 import type { RepoInfo } from "../api/types";
 import { can, useMode } from "../mode";
 import { Empty, ErrorBox, Spinner, whenStr } from "../components/ui";
@@ -73,7 +74,7 @@ export function GroupsPage(): ReactNode {
                 <td>
                   {members.length === 0 && <span className="muted">—</span>}
                   {members.map((r) => (
-                    <Link key={r.id} to={`/r/${r.id}`} className="rowlink">
+                    <Link key={r.id} to={repoHref(r.id, assignments[r.id])} className="rowlink">
                       {r.id}
                     </Link>
                   ))}

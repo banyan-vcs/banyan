@@ -3,16 +3,18 @@
 // IIDs never reused). Open/merged/closed filtering via the state tabs; the
 // new-request form picks from the advertised branches.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { branchesOf, listRefs } from "../api/gitrefs";
 import { listMRs, openMR } from "../api/mrs";
 import { ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
+import { useRepoBase, useRepoId } from "../repo";
 
 const STATES = ["open", "merged", "closed"] as const;
 
 export function MergeRequestsPage(): ReactNode {
-  const { repo = "" } = useParams();
+  const repo = useRepoId();
+  const base = useRepoBase();
   const [params, setParams] = useSearchParams();
   const state = (params.get("state") || "open") as (typeof STATES)[number];
   const qc = useQueryClient();
@@ -114,7 +116,7 @@ export function MergeRequestsPage(): ReactNode {
               <tr key={mr.iid}>
                 <td className="mono">!{mr.iid}</td>
                 <td>
-                  <Link to={`/r/${repo}/-/merge_requests/${mr.iid}`}>{mr.title}</Link>{" "}
+                  <Link to={`${base}/-/merge_requests/${mr.iid}`}>{mr.title}</Link>{" "}
                   {mr.state !== "open" && <Pill>{mr.state}</Pill>}
                 </td>
                 <td className="mono muted">

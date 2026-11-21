@@ -8,9 +8,12 @@ import { parseUnifiedDiff } from "../api/diff";
 import type { LogResponse } from "../api/types";
 import { DiffView } from "../components/DiffView";
 import { ErrorBox, Spinner, whenStr } from "../components/ui";
+import { useRepoBase, useRepoId } from "../repo";
 
 export function CommitPage(): ReactNode {
-  const { repo = "", oid = "" } = useParams();
+  const { oid = "" } = useParams();
+  const repo = useRepoId();
+  const base = useRepoBase();
   const commit = useQuery({
     queryKey: ["log", repo, "", "", oid],
     queryFn: () => api<LogResponse>(`/api/v1/log${qs({ repo, from: oid, limit: 1 })}`),
@@ -44,7 +47,7 @@ export function CommitPage(): ReactNode {
               {entry.parentOids?.map((p) => (
                 <span key={p}>
                   {" · parent "}
-                  <Link to={`/r/${repo}/commit/${p}`} className="mono">
+                  <Link to={`${base}/commit/${p}`} className="mono">
                     {p.slice(0, 8)}
                   </Link>
                 </span>
@@ -56,7 +59,7 @@ export function CommitPage(): ReactNode {
           {diff.isError && <ErrorBox error={diff.error} />}
           {diff.isSuccess && <DiffView files={parseUnifiedDiff(diff.data)} />}
           <p className="pad">
-            <Link to={`/r/${repo}/history`}>← history</Link>
+            <Link to={`${base}/history`}>← history</Link>
           </p>
         </>
       )}

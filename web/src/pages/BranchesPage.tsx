@@ -1,14 +1,16 @@
 // BranchesPage.tsx — branch management: the list (your filtered view) plus
 // create/delete through the same ref CAS a git push rides (POST /api/v1/refs).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
 import { branchesOf, listRefs } from "../api/gitrefs";
 import { ErrorBox, Pill, Spinner, shortOid } from "../components/ui";
+import { useRepoBase, useRepoId } from "../repo";
 
 export function BranchesPage(): ReactNode {
-  const { repo = "" } = useParams();
+  const repo = useRepoId();
+  const base = useRepoBase();
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [from, setFrom] = useState("");
@@ -92,11 +94,11 @@ export function BranchesPage(): ReactNode {
             {branches.map((b) => (
               <tr key={b.name}>
                 <td>
-                  <Link to={`/r/${repo}/tree?ref=${encodeURIComponent(b.name)}`}>{b.name}</Link>
+                  <Link to={`${base}/tree?ref=${encodeURIComponent(b.name)}`}>{b.name}</Link>
                   {b.isDefault && <Pill>default</Pill>}
                 </td>
                 <td>
-                  <Link to={`/r/${repo}/commit/${b.oid}`} className="muted mono">
+                  <Link to={`${base}/commit/${b.oid}`} className="muted mono">
                     {shortOid(b.oid)}
                   </Link>
                 </td>

@@ -3,15 +3,17 @@
 // projected pill (refs/banyan/tree/<dir>), per-path activity, the two
 // clone recipes, and the runtime access rules (admin).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { api, qs } from "../api/client";
 import { useSession } from "../session";
+import { useRepoBase, useRepoId } from "../repo";
 import type { LogResponse, SubtreeListing, SubtreeRule, SubtreeSummary } from "../api/types";
 import { Empty, ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 
 export function SubtreesPage(): ReactNode {
-  const { repo = "" } = useParams();
+  const repo = useRepoId();
+  const base = useRepoBase();
   const qc = useQueryClient();
   const { info } = useSession();
   const [params, setParams] = useSearchParams();
@@ -161,7 +163,7 @@ git push origin ${listing.data?.defaultBranch || "main"}`}</code>
                       {activity.data.entries.map((e) => (
                         <tr key={e.oid}>
                           <td>
-                            <Link to={`/r/${repo}/commit/${e.oid}`}>{e.subject}</Link>
+                            <Link to={`${base}/commit/${e.oid}`}>{e.subject}</Link>
                             <div className="muted">
                               {e.author} · {whenStr(e.when)}
                             </div>

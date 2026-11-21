@@ -7,9 +7,12 @@ import { apiText, qs } from "../api/client";
 import { parseBlame } from "../api/blame";
 import { BlameView } from "../components/BlameView";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useRepoBase, useRepoId } from "../repo";
 
 export function BlamePage(): ReactNode {
-  const { repo = "", "*": splat = "" } = useParams();
+  const { "*": splat = "" } = useParams();
+  const repo = useRepoId();
+  const base = useRepoBase();
   const [params] = useSearchParams();
   const path = splat.replace(/^\/+/, "");
   const ref = params.get("ref") || "";
@@ -28,7 +31,7 @@ export function BlamePage(): ReactNode {
         {ref ? <span className="muted"> @ {ref}</span> : null}
       </h1>
       <p className="pad">
-        <Link to={`/r/${repo}/tree/${path}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>← back to the file</Link>
+        <Link to={`${base}/tree/${path}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`}>← back to the file</Link>
       </p>
       {blame.isPending && <Spinner />}
       {blame.isError && <ErrorBox error={blame.error} />}
