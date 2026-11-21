@@ -880,9 +880,17 @@ button.link {
   background: var(--bg-subtle);
 }
 .mr-diff-toggle {
-  display: flex; flex: 1; justify-content: space-between; gap: 10px;
+  display: flex; flex: 1; align-items: center; gap: 8px;
   padding: 6px 10px; border: none; background: none; cursor: pointer; font: inherit; text-align: left;
 }
+.mr-diff-toggle > .muted { margin-left: auto; }
+/* the fold caret: the header IS the toggle — the chevron points down while
+   the file is open and rotates right when collapsed, so a folded file
+   never reads as "missing" */
+.mr-diff-toggle .fold-caret { display: inline-flex; flex-shrink: 0; color: var(--muted); }
+.mr-diff-toggle .fold-caret svg { transition: transform 0.15s ease; }
+.mr-diff-file.collapsed .fold-caret svg { transform: rotate(-90deg); }
+.mr-diff-file.collapsed .mr-diff-toggle .mono { color: var(--control); }
 .mr-diff-head .btn { margin-right: 10px; }
 .mr-diff-file > div { overflow-x: auto; }
 .mr-edit { margin: 12px 0; }

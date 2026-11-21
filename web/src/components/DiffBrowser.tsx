@@ -42,10 +42,18 @@ export function DiffBrowser({
         </span>
         {onViewChange && (
           <span className="tab-row">
-            <button className={"tab" + (view === "split" ? " active" : "")} onClick={() => onViewChange("split")}>
+            <button
+              className={"tab" + (view === "split" ? " active" : "")}
+              onClick={() => onViewChange("split")}
+              title={t("side-by-side")}
+            >
               {t("split")}
             </button>
-            <button className={"tab" + (view === "unified" ? " active" : "")} onClick={() => onViewChange("unified")}>
+            <button
+              className={"tab" + (view === "unified" ? " active" : "")}
+              onClick={() => onViewChange("unified")}
+              title={t("inline")}
+            >
               {t("unified")}
             </button>
           </span>
@@ -56,10 +64,20 @@ export function DiffBrowser({
         const path = f.newPath === "/dev/null" ? f.oldPath : f.newPath;
         const name = f.oldPath === "/dev/null" || f.oldPath === f.newPath ? f.newPath : `${f.oldPath} → ${f.newPath}`;
         const editing = editingPath === path;
+        const isCollapsed = !!collapsed[key];
         return (
-          <section key={key} className={"mr-diff-file" + (editing ? " editing" : "")}>
+          <section key={key} className={"mr-diff-file" + (editing ? " editing" : "") + (isCollapsed ? " collapsed" : "")}>
             <div className="mr-diff-head">
-              <button className="mr-diff-toggle" onClick={() => setCollapsed((c) => ({ ...c, [key]: !c[key] }))}>
+              <button
+                className="mr-diff-toggle"
+                onClick={() => setCollapsed((c) => ({ ...c, [key]: !c[key] }))}
+                aria-expanded={!isCollapsed}
+              >
+                <span className="fold-caret" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 6l4 4 4-4" />
+                  </svg>
+                </span>
                 <span className="mono">{name}</span>
                 <span className="muted">
                   {f.binary ? t("binary") : f.newPath === "/dev/null" ? t("deleted") : t("{0} hunk(s)", f.hunks.length)}

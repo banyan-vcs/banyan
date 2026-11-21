@@ -108,6 +108,8 @@ export const zh: Record<string, string> = {
   "unrelated histories — no merge base to diff against.": "历史无关——没有可对照的合并基。",
   split: "分栏",
   unified: "单栏",
+  "side-by-side": "并排两栏对照（side-by-side）",
+  inline: "行内单栏对照（inline）",
   "{0} file(s) changed": "{0} 个文件变更",
   "{0} hunk(s)": "{0} 个块",
   binary: "二进制",
