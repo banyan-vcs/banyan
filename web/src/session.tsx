@@ -6,6 +6,7 @@ import { BASE_URL } from "./api/client";
 export interface SessionInfo {
   user: string;
   sso: boolean;
+  mustChange?: boolean; // the admin-reset fence: choose a new password first
   provider?: { id: string; kind: string };
 }
 

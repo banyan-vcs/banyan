@@ -2,11 +2,12 @@
 // basename; every repo page lives under /r/:repo. Pages the deployment's
 // capability list does not expose are gated to a note (the gitlab profile
 // narrows the console to the subtree features).
-import { Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { Navigate, Route, Routes, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useEffect, type ReactNode } from "react";
 import { Layout } from "./components/Layout";
 import { useT } from "./i18n";
 import { can, useMode } from "./mode";
+import { useSession } from "./session";
 import { BlamePage } from "./pages/BlamePage";
 import { BranchProtectionPage } from "./pages/BranchProtectionPage";
 import { BranchesPage } from "./pages/BranchesPage";
@@ -51,8 +52,24 @@ function Gate({ capability, children }: { capability: string; children: ReactNod
   );
 }
 
+/** mustChangeAllowed answers whether a pathname stays reachable behind
+ * the admin-reset fence: only the profile (its password form) and the
+ * login round-trip. Everything else — including token and SSH-key pages —
+ * redirects there until a self-chosen password is set.
+ */
+export function mustChangeAllowed(pathname: string): boolean {
+  return pathname === "/settings/profile" || pathname.startsWith("/login");
+}
+
 export function AppRoutes(): ReactNode {
   const nav = useNavigate();
+  const loc = useLocation();
+  const { info: session, loading } = useSession();
+  // The admin-reset fence: a reset-but-unchanged account may only reach
+  // the password page (mint faces also bounce server-side).
+  if (!loading && session?.mustChange && !mustChangeAllowed(loc.pathname)) {
+    return <Navigate to="/settings/profile" replace />;
+  }
   // API 401s route to the login page in-router (keeps the return target,
   // never reloads, and cannot loop on the login page itself).
   useEffect(() => {
