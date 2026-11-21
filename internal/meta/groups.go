@@ -89,6 +89,7 @@ func (m *MemoryMetaStore) DeleteGroup(_ context.Context, name string) error {
 		return fmt.Errorf("%w: %s", ErrGroupUnknown, name)
 	}
 	delete(m.groups, name)
+	delete(m.groupMembers, name) // members die with the group (the assignment precedent)
 	for repo, g := range m.repoGroups {
 		if g == name {
 			delete(m.repoGroups, repo)
@@ -155,9 +156,13 @@ func (s *SQLMetaStore) DeleteGroup(ctx context.Context, name string) error {
 	if res.RowsAffected == 0 {
 		return fmt.Errorf("%w: %s", ErrGroupUnknown, name)
 	}
-	// Assignments of a deleted group clear in the same breath — a repo
-	// never points at a missing group.
-	return s.orm.WithContext(ctx).Where("group_name = ?", name).Delete(&repoGroupRow{}).Error
+	// Assignments and members of a deleted group clear in the same breath —
+	// a repo never points at a missing group, and inherited grants never
+	// outlive their source.
+	if err := s.orm.WithContext(ctx).Where("group_name = ?", name).Delete(&repoGroupRow{}).Error; err != nil {
+		return err
+	}
+	return s.deleteGroupMembers(ctx, name)
 }
 
 func (s *SQLMetaStore) ListGroups(ctx context.Context) ([]GroupInfo, error) {

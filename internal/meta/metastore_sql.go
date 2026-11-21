@@ -495,6 +495,32 @@ PRIMARY KEY(repo)
 	}
 }
 
+// membersDDL answers the member tables (docs/design/data-model.md §16):
+// the group member table (inherited grants) and the repository's direct
+// member table. Composite primary keys double as the query paths
+// (group_name+ prefix, repo+ prefix), so no extra indexes — the small-table
+// precedent. The user column is username (USER is reserved on PostgreSQL).
+func membersDDL(dialect string) []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS repo_group_members(
+group_name  ` + nameCol(dialect) + ` NOT NULL,
+username    ` + nameCol(dialect) + ` NOT NULL,
+rank        ` + nameCol(dialect) + ` NOT NULL,
+added_by    ` + nameCol(dialect) + ` NOT NULL,
+added_at    BIGINT NOT NULL,
+PRIMARY KEY(group_name, username)
+)`,
+		`CREATE TABLE IF NOT EXISTS repo_members(
+repo        ` + nameCol(dialect) + ` NOT NULL,
+username    ` + nameCol(dialect) + ` NOT NULL,
+rank        ` + nameCol(dialect) + ` NOT NULL,
+added_by    ` + nameCol(dialect) + ` NOT NULL,
+added_at    BIGINT NOT NULL,
+PRIMARY KEY(repo, username)
+)`,
+	}
+}
+
 // nameCol/titleCol/shortCol spell the sized string columns per dialect —
 // MySQL cannot DEFAULT a TEXT column and keeps index-width-friendly
 // VARCHARs; the others take TEXT.

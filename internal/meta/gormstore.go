@@ -228,6 +228,23 @@ type repoGroupRow struct {
 
 func (repoGroupRow) TableName() string { return "repo_group_labels" }
 
+// The member tables (docs/design/data-model.md §16): username, not user —
+// USER is reserved on PostgreSQL and "user" reads badly in SQL either way
+// (the tokens table's owner column is the same dodge).
+type groupMemberRow struct {
+	GroupName string `gorm:"column:group_name;primaryKey"`
+	Member
+}
+
+func (groupMemberRow) TableName() string { return "repo_group_members" }
+
+type repoMemberRow struct {
+	Repo string `gorm:"primaryKey"`
+	Member
+}
+
+func (repoMemberRow) TableName() string { return "repo_members" }
+
 // --- open path ---
 
 // gormOpen mounts GORM on the existing pool (one pool, two query surfaces).
