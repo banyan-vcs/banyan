@@ -72,20 +72,22 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
 	mux.HandleFunc("/api/v1/merge-requests", s.authn(s.handleMergeRequestsAll)) // workspace-wide MR list
-	mux.HandleFunc("/api/v1/groups", s.authn(s.handleGroups))   // repo groups (docs/design/data-model.md §15)
-	mux.HandleFunc("/api/v1/groups/", s.authn(s.handleGroupSub)) // /api/v1/groups/<name>
-	mux.HandleFunc("/api/v1/imports", s.authn(s.handleImports)) // server-side repo import (docs/web/web-layer.md §4)
-	mux.HandleFunc("/api/v1/repos/", s.authn(s.handleRepoSub))  // /api/v1/repos/<repo>/placement
+	mux.HandleFunc("/api/v1/groups", s.authn(s.handleGroups))                   // repo groups (docs/design/data-model.md §15)
+	mux.HandleFunc("/api/v1/groups/", s.authn(s.handleGroupSub))                // /api/v1/groups/<name>
+	mux.HandleFunc("/api/v1/imports", s.authn(s.handleImports))                 // server-side repo import (docs/web/web-layer.md §4)
+	mux.HandleFunc("/api/v1/repos/", s.authn(s.handleRepoSub))                  // /api/v1/repos/<repo>/placement
 	mux.HandleFunc("/api/v1/cluster/nodes", s.authn(s.handleClusterNodes))
 	mux.HandleFunc("/api/v1/meta/backup", s.authn(s.handleMetaBackup))
 	mux.HandleFunc("/api/v1/resolve", s.authn(s.handleResolve))
 	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
-	mux.HandleFunc("/api/v1/auth/tokens", s.authn(s.handleTokens))   // PAT mint/list (docs/gateway/authorization.md §6)
-	mux.HandleFunc("/api/v1/auth/tokens/", s.authn(s.handleTokens))  // DELETE /<hash> revoke
-	mux.HandleFunc("/api/v1/auth/ssh-keys", s.authn(s.handleSSHKeys)) // user ssh keys (docs/gateway/authorization.md §7a)
-	mux.HandleFunc("/api/v1/auth/password", s.authn(s.handlePassword)) // password self-service (docs/gateway/authorization.md §2a)
-	mux.HandleFunc("/api/v1/diff", s.authn(s.handleDiff))           // path diff (docs/project/roadmap.md M2)
-	mux.HandleFunc("/api/v1/blame", s.authn(s.handleBlame))         // recursive blame (docs/project/roadmap.md M3)
+	mux.HandleFunc("/api/v1/auth/tokens", s.authn(s.handleTokens))                // PAT mint/list (docs/gateway/authorization.md §6)
+	mux.HandleFunc("/api/v1/auth/tokens/", s.authn(s.handleTokens))               // DELETE /<hash> revoke
+	mux.HandleFunc("/api/v1/auth/ssh-keys", s.authn(s.handleSSHKeys))             // user ssh keys (docs/gateway/authorization.md §7a)
+	mux.HandleFunc("/api/v1/auth/password", s.authn(s.handlePassword))            // password self-service (docs/gateway/authorization.md §2a)
+	mux.HandleFunc("/api/v1/auth/reset-password", s.authn(s.handleResetPassword)) // admin reset → random password + must-change (§2a)
+	mux.HandleFunc("/api/v1/auth/whoami", s.authn(s.handleWhoami))                // identity + must-change bit (the web tier's session face)
+	mux.HandleFunc("/api/v1/diff", s.authn(s.handleDiff))                         // path diff (docs/project/roadmap.md M2)
+	mux.HandleFunc("/api/v1/blame", s.authn(s.handleBlame))                       // recursive blame (docs/project/roadmap.md M3)
 }
 
 // authn wraps a handler with the authentication requirement (no-op without
@@ -123,7 +125,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errEnvelope{Error: errBody{Code: "INVALID_CREDENTIALS", Message: "wrong user or password"}})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"user": req.User})
+	writeJSON(w, http.StatusOK, map[string]any{"user": req.User, "mustChange": s.mustChangeOf(r, req.User)})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
