@@ -233,6 +233,10 @@ header .brand {
 }
 .spacer { flex: 1; }
 header .who { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--control); }
+/* the user's name opens personal settings — same quiet look as the text
+   around it, the hover says it is a link */
+.who-name { display: inline-flex; align-items: center; gap: 8px; color: var(--control); }
+.who-name:hover { color: var(--ink); text-decoration: none; }
 .user-dot {
   width: 24px;
   height: 24px;
@@ -405,22 +409,9 @@ th:hover, tbody tr:hover th { background: var(--bg-subtle); }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn.small { padding: 2px 8px; font-size: 12px; line-height: 18px; }
 
-/* the theme toggle in the topbar: an icon-only ghost button */
-.theme-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--line-control);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--control);
-  cursor: pointer;
-  padding: 0;
-}
-.theme-btn:hover { color: var(--ink); background: var(--bg-control); }
-.theme-btn svg { width: 15px; height: 15px; }
+/* the theme picker in personal settings: the chosen state is the solid
+   button, the others stay ghost */
+.theme-picker { display: flex; gap: 8px; margin: 10px 0 4px; flex-wrap: wrap; }
 
 .error-box {
   background: var(--error-soft);

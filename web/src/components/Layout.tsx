@@ -1,16 +1,16 @@
 // Layout.tsx — the application chrome, after bytebase: a light top bar
-// (brand, the logged-in user, logout) over a gray sidebar. The sidebar
-// carries the workspace links and, inside /r/<repo>, that repository's
-// navigation — narrowed by the deployment's advertised capabilities (the
-// gitlab profile surfaces the subtree features only).
+// (brand, the logged-in user — the name opens personal settings — logout)
+// over a gray sidebar. The sidebar carries the workspace links and, inside
+// /r/<repo>, that repository's navigation — narrowed by the deployment's
+// advertised capabilities (the gitlab profile surfaces the subtree
+// features only).
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, type ReactNode } from "react";
 import { BASE_URL } from "../api/client";
 import { useSession } from "../session";
 import { can, useMode } from "../mode";
-import { BranchesIcon, CodeIcon, HistoryIcon, ImportIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon, TokensIcon } from "./icons";
-import { ThemeToggle } from "./ThemeToggle";
+import { BranchesIcon, CodeIcon, HistoryIcon, ImportIcon, MergeIcon, OverviewIcon, RepositoriesIcon, SettingsIcon, SubtreesIcon } from "./icons";
 
 export function Layout(): ReactNode {
   const { info } = useSession();
@@ -60,11 +60,12 @@ export function Layout(): ReactNode {
           <img src={`${BASE_URL}avatar.png`} alt="" width="24" height="24" /> banyan
         </Link>
         <span className="spacer" />
-        <ThemeToggle />
         {info && (
           <span className="who">
-            <span className="user-dot">{info.user.slice(0, 1).toUpperCase()}</span>
-            {info.user}
+            <Link to="/settings/profile" className="who-name" title="personal settings">
+              <span className="user-dot">{info.user.slice(0, 1).toUpperCase()}</span>
+              {info.user}
+            </Link>
             {info.provider ? <span className="pill">{info.provider.id}</span> : null}
             <button className="btn ghost" onClick={() => logout.mutate()}>
               log out
@@ -79,7 +80,7 @@ export function Layout(): ReactNode {
               <div className="side-title">workspace</div>
               {item("/", "repositories", RepositoriesIcon, at("/"))}
               {can(mode, "import") && item("/settings/imports", "imports", ImportIcon, under("/settings/imports"))}
-              {can(mode, "tokens") && item("/settings/tokens", "tokens", TokensIcon, under("/settings/tokens"))}
+              {item("/settings/profile", "personal settings", SettingsIcon, under("/settings/profile"))}
             </div>
             {repo !== "" && (
               <div className="side-group">

@@ -1,9 +1,9 @@
-// theme.ts — the three-state theme control behind the topbar toggle:
-// auto (follow the OS scheme) / light / dark. The choice persists in
-// localStorage as "banyan.theme"; a forced scheme rides html[data-theme],
-// which outranks the prefers-color-scheme block by specificity. The click
-// order is auto → the opposite of what is effective → the remaining one →
-// auto, so three clicks always come home.
+// theme.ts — the three-state theme control behind personal settings
+// (appearance section): auto (follow the OS scheme) / light / dark. The
+// choice persists in localStorage as "banyan.theme"; a forced scheme rides
+// html[data-theme], which outranks the prefers-color-scheme block by
+// specificity. The index.html pre-paint snippet applies the stored choice
+// before first paint.
 export type ThemeChoice = "auto" | "light" | "dark";
 
 const KEY = "banyan.theme";
@@ -27,7 +27,9 @@ export function effectiveDark(): boolean {
   return systemDark();
 }
 
-function apply(choice: ThemeChoice): void {
+// setTheme is the settings picker's write: pick one of the three states
+// outright (the toggle's cycling order is gone with the toggle itself).
+export function setTheme(choice: ThemeChoice): void {
   const el = document.documentElement;
   if (choice === "light" || choice === "dark") el.setAttribute("data-theme", choice);
   else el.removeAttribute("data-theme");
@@ -37,17 +39,4 @@ function apply(choice: ThemeChoice): void {
   } catch {
     /* storage unavailable — the in-page switch still works for this view */
   }
-}
-
-export function nextTheme(): ThemeChoice {
-  const t = storedTheme();
-  if (t === "auto") return effectiveDark() ? "light" : "dark";
-  if (t === "light") return "dark";
-  return "auto";
-}
-
-export function cycleTheme(): ThemeChoice {
-  const next = nextTheme();
-  apply(next);
-  return next;
 }
