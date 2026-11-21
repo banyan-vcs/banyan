@@ -178,6 +178,13 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 			svc = &auth.SubtreeRulePolicy{Inner: svc, Rules: rs}
 			log.Printf("auth: subtree rules on (runtime directory access rules, docs/gateway/authorization.md §8)")
 		}
+		// The member ledger (docs/design/data-model.md §16): repositories
+		// with members (direct or inherited via their group) admit only
+		// those ranks; ungoverned repositories pass through unchanged.
+		if mm, ok := ms.(meta.MemberStore); ok {
+			svc = &auth.MemberPolicy{Inner: svc, Members: mm}
+			log.Printf("auth: member ledger on (group/repo member governance, docs/design/data-model.md §16)")
+		}
 		gw.Auth = svc
 		api.Auth = svc
 	case staticPolicy(cfg) != nil:
@@ -196,6 +203,14 @@ func runAllInOne(ctx context.Context, cfg *config.Config) {
 		if rs, ok := ms.(meta.SubtreeRuleStore); ok {
 			svc = &auth.SubtreeRulePolicy{Inner: svc, Rules: rs}
 			log.Printf("auth: subtree rules on (runtime directory access rules, docs/gateway/authorization.md §8)")
+		}
+		// The member ledger, outermost (docs/design/data-model.md §16): it
+		// decides admission, the inner layers keep shaping what admitted
+		// members may do. Not wired in the console-fronted branch — that
+		// topology syncs its policy from the console snapshot.
+		if mm, ok := ms.(meta.MemberStore); ok {
+			svc = &auth.MemberPolicy{Inner: svc, Members: mm}
+			log.Printf("auth: member ledger on (group/repo member governance, docs/design/data-model.md §16)")
 		}
 		gw.Auth = svc
 		api.Auth = svc

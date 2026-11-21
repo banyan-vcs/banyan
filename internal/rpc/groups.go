@@ -124,6 +124,15 @@ func (s *Server) handleGroupSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/groups/"), "/")
+	// The member table rides one segment deeper: /api/v1/groups/<name>/members.
+	if rest, ok := strings.CutSuffix(name, "/members"); ok {
+		if rest == "" || strings.Contains(rest, "/") {
+			writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/groups/<name>/members"}})
+			return
+		}
+		s.handleGroupMembers(w, r, rest)
+		return
+	}
 	if name == "" || strings.Contains(name, "/") {
 		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/groups/<name>"}})
 		return

@@ -704,8 +704,12 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 		s.handleBranchRules(w, r, parts)
 		return
 	}
+	if len(parts) >= 2 && parts[1] == "members" {
+		s.handleRepoMembers(w, r, parts[0])
+		return
+	}
 	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks" && parts[1] != "subtree-access" && parts[1] != "parent" && parts[1] != "group" && parts[1] != "description") {
-		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access|parent|group|description)"}})
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access|parent|group|description|members)"}})
 		return
 	}
 	// Repo management is admin territory (docs/gateway/authorization.md §5); size stays a plain
