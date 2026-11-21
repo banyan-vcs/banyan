@@ -86,6 +86,23 @@ admin/alice/bob 三账号（密码 `demo`——演示的凭据不该是秘密，
 mr-only 规则、alice 个人分支。种子全部走服务层 API（CreateCommit/ref
 CAS/OpenMR/EnsureTimeline——锚定首推同款），幂等重跑为无操作。
 
+**管理员重置与必须改密栅栏**（2026-11-21）：`POST /api/v1/auth/
+reset-password {user}`（admin）把一个表账号的密码换成**新随机值——响应
+里明文只出现这一次**，旧密码立即失效（缓存即刻清，自助改密同款），
+`must_change_password` 起立。CLI 面：`banyan user reset-password <name>`
+（凭据取自 `banyan login` 的会话，需 admin）。栅栏语义：
+
+- web 层 `/api/session` 折进 `GET /api/v1/auth/whoami` 的 mustChange 位
+  （管理员重置会落在**已登录浏览器**的下一次会话刷新上）；登录响应同带；
+- 控制台把一切路由重定向到 Settings → Profile 的密码表单（带说明横
+  幅），直到自助改密成功——token 与 SSH Keys 页也在拦下之列；
+- **持久凭据铸造面在服务端同拦**：must-change 状态下 mint PAT 与加
+  SSH key 答 403 `PASSWORD_CHANGE_REQUIRED`（随机密码不得铸造比自己
+  活得久的东西）；git push 与 CLI 短时会话照常——那是随机密码自身的
+  延伸，不是更长命的东西；
+- 用户自助改密（`current` = 随机密码）即付清栅栏并清除标志，admin 旗
+  标不动。
+
 ## 3. 个人分支命名空间：monorepo 分支过多解法
 
 约定 `refs/heads/<user>/<name>`（首段命中用户表即为个人分支）：

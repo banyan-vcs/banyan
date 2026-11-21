@@ -103,6 +103,8 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | raw 文件（README 图片等） | `GET /api/v1/repos/<repo>/raw/<path>?rev=&sub=` | Resolve + Object.Get | **已落地**（2026-11-21；同一 oid 字节、按扩展名给展示 content-type，未知扩展 octet-stream 下载；全部响应 `nosniff`，SVG 加 `Content-Security-Policy: default-src 'none'` 防直航脚本——web 层代理转发该头） |
 | 协议能力广播 | `GET /api/v1/proto` | — | **已落地**（2026-11-15；`{"proto":2,"features":[...],"ssh":...,"web":...}`——登录路径地址随能力广播，匿名可读（login 本身需要它）；客户端缓存于 `.banyan/server.json`；404=proto 1。docs/client/cli.md §4.4） |
 | CLI 短时会话铸造 | `POST /api/v1/auth/cli-session` | auth.MintSession | **已落地**（2026-11-15，docs/gateway/authorization.md §8a：登录身份 → 为自己铸 12h/write 会话，明文只出现一次；web 控制台 /cli-auth 批准流的调用方。body 可选 `{"label":"<device>"}` 命名设备（吊销可定向）；**write 域才可铸造**——read 凭证 403） |
+| 管理员密码重置 | `POST /api/v1/auth/reset-password {user}` | UserStore + auth | **已落地**（2026-11-21，authorization.md §2a：admin 重置表账号，随机密码**明文只在响应出现一次**、旧密码立即失效、must_change 起立——PAT/SSH-key 铸造面 403 直至自助改密；CLI 面 `banyan user reset-password`） |
+| 身份自查 | `GET /api/v1/auth/whoami` | Identify + UserStore | **已落地**（2026-11-21：`{user, mustChange}`——web 层 /api/session 折进此位，管理员重置落在已登录浏览器的下一次会话刷新上） |
 | commit | `POST /api/v1/commit` | Commit.Create | **已落地** |
 | sync | `POST /api/v1/sync` | Timeline.Sync | **已落地**（2026-11-08，docs/design/data-model.md §12 真分叉显式对齐；body `{repo, sub, branch?}`，与 commit 同推送授权门；409 `CONFLICT_SYNC_CONFLICT` 具名提交+路径，400 `SYNC_UNSUPPORTED`=merge 链） |
 | log | `POST /api/v1/log` | History.Log | **已有**（已下沉 service） |
