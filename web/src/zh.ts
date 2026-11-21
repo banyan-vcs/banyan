@@ -355,6 +355,13 @@ export const zh: Record<string, string> = {
 
   // ProfilePage.tsx
   "Appearance": "外观",
+  "Password": "密码",
+  "changing the password ends this session — log in again with the new one.":
+    "修改密码将结束本次会话——请用新密码重新登录。",
+  "password changed — log in again.": "密码已修改——请重新登录。",
+  "current password": "当前密码",
+  "new password (8+ characters)": "新密码（至少 8 位）",
+  "change password": "修改密码",
   auto: "自动",
   day: "白天",
   night: "黑夜",
