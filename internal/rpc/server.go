@@ -71,6 +71,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/sync", s.authn(s.handleSync)) // subtree→root alignment (docs/design/data-model.md §12)
 	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
+	mux.HandleFunc("/api/v1/groups", s.authn(s.handleGroups))   // repo groups (docs/design/data-model.md §15)
+	mux.HandleFunc("/api/v1/groups/", s.authn(s.handleGroupSub)) // /api/v1/groups/<name>
 	mux.HandleFunc("/api/v1/imports", s.authn(s.handleImports)) // server-side repo import (docs/web/web-layer.md §4)
 	mux.HandleFunc("/api/v1/repos/", s.authn(s.handleRepoSub))  // /api/v1/repos/<repo>/placement
 	mux.HandleFunc("/api/v1/cluster/nodes", s.authn(s.handleClusterNodes))
@@ -141,7 +143,7 @@ type errEnvelope struct {
 
 func statusFor(code string) int {
 	switch code {
-	case "CONFLICT_BASE_MOVED", "CONFLICT_REF_CAS", "CONFLICT_SYNC_CONFLICT", "CONFLICT_MR":
+	case "CONFLICT_BASE_MOVED", "CONFLICT_REF_CAS", "CONFLICT_SYNC_CONFLICT", "CONFLICT_MR", "CONFLICT_GROUP":
 		return http.StatusConflict
 	case "SYNC_UNSUPPORTED":
 		return http.StatusBadRequest
@@ -620,6 +622,7 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Name   string `json:"name"`
 			Parent string `json:"parent"`
+			Group  string `json:"group"`
 		}
 		if !decodeBody(w, r, &req) {
 			return
@@ -653,6 +656,19 @@ func (s *Server) handleRepos(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// The group label follows the same all-or-nothing rule: an unknown
+		// group rolls the create back too.
+		if req.Group != "" {
+			if gs := s.groupStore(); gs == nil {
+				_ = s.Meta.DeleteRepo(r.Context(), req.Name)
+				writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "groups not available on this deployment's metadata plane"}})
+				return
+			} else if err := gs.SetRepoGroup(r.Context(), req.Name, req.Group); err != nil {
+				_ = s.Meta.DeleteRepo(r.Context(), req.Name)
+				writeServiceErr(w, err)
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"name": req.Name, "parent": req.Parent})
 	default:
 		repos, err := s.Svc.ListRepos(r.Context())
@@ -677,13 +693,20 @@ func (s *Server) handleRepoSub(w http.ResponseWriter, r *http.Request) {
 		s.handleBranchRules(w, r, parts)
 		return
 	}
-	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks" && parts[1] != "subtree-access" && parts[1] != "parent") {
-		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access|parent)"}})
+	if len(parts) != 2 || (parts[1] != "placement" && parts[1] != "rename" && parts[1] != "force-push" && parts[1] != "size" && parts[1] != "hooks" && parts[1] != "subtree-access" && parts[1] != "parent" && parts[1] != "group") {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "want /api/v1/repos/<repo>/(placement|rename|force-push|size|hooks|subtree-access|parent|group)"}})
 		return
 	}
 	// Repo management is admin territory (docs/gateway/authorization.md §5); size stays a plain
-	// repo stat for any authenticated member.
-	if parts[1] != "size" && !s.requireAdmin(w, r, parts[0]) {
+	// repo stat for any authenticated member, and the group label is
+	// organizational metadata — write rank, the creation gate's rank (the
+	// parent link stays admin because re-homing reshapes the hierarchy the
+	// policy engine walks; a label never does).
+	if parts[1] != "size" && parts[1] != "group" && !s.requireAdmin(w, r, parts[0]) {
+		return
+	}
+	if parts[1] == "group" {
+		s.handleRepoGroup(w, r, parts[0])
 		return
 	}
 	if parts[1] == "parent" {
