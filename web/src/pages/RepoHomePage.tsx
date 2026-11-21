@@ -1,8 +1,11 @@
-// RepoHomePage.tsx — one repo's landing page: the branch list (THE USER'S
-// filtered view, parsed from the same ref advertisement git sees), the
-// default branch's recent history, and — when the repo sits in a project
-// hierarchy (docs/design/data-model.md §14) — a breadcrumb of its ancestors and its
-// direct sub-projects with an inline "create sub-project" form.
+// RepoHomePage.tsx — one repo's landing page in the v2 language: the
+// identity hero (dot-grid card: name, default branch and freshness as
+// chips, the registry description), the branch list (THE USER'S filtered
+// view, parsed from the same ref advertisement git sees), the default
+// branch's recent history as a node timeline — merge commits wear the
+// merge-node look — and, when the repo sits in a project hierarchy
+// (docs/design/data-model.md §14), a breadcrumb of its ancestors and its
+// direct sub-projects with an inline ghost-row "create sub-project" form.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -13,6 +16,7 @@ import type { LogResponse, RepoInfo } from "../api/types";
 import { can, useMode } from "../mode";
 import { useT } from "../i18n";
 import { Empty, ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
+import { BranchesIcon, HistoryIcon } from "../components/icons";
 import { ReadmeSection } from "../components/Readme";
 import { repoHref, useRepoBase, useRepoGroups, useRepoId } from "../repo";
 
@@ -32,12 +36,14 @@ export function RepoHomePage(): ReactNode {
   const defaultBranch = refs.data?.defaultBranch || branches[0]?.name || "";
 
   // The registry list rides the same cache as ReposPage — the hierarchy
-  // view (breadcrumb + children) costs no extra request.
+  // view (breadcrumb + children) and the hero's description/freshness
+  // cost no extra request.
   const registry = useQuery({
     queryKey: ["repos"],
     queryFn: () => api<{ repos: RepoInfo[] }>("/api/v1/repos"),
   });
   const list = registry.data?.repos ?? [];
+  const info = list.find((r) => r.id === repo);
   const ancestors = repoPath(list, repo).slice(0, -1); // root … parent
   const children = list.filter((r) => r.parent === repo);
 
@@ -64,10 +70,6 @@ export function RepoHomePage(): ReactNode {
 
   return (
     <>
-      <h1>
-        <code>{repo}</code>
-        {defaultBranch && <Pill>{t("default: {0}", defaultBranch)}</Pill>}
-      </h1>
       {ancestors.length > 0 && (
         <p className="muted breadcrumb">
           {ancestors.map((a) => (
@@ -79,6 +81,26 @@ export function RepoHomePage(): ReactNode {
         </p>
       )}
       {cloneBase === "" && null}
+      <section className="repo-hero">
+        <div className="hero-row">
+          <h1>
+            <code>{repo}</code>
+          </h1>
+          {defaultBranch && (
+            <span className="chip">
+              <BranchesIcon />
+              {defaultBranch}
+            </span>
+          )}
+          {info?.updatedAt ? (
+            <span className="chip">
+              <HistoryIcon />
+              {whenStr(info.updatedAt)}
+            </span>
+          ) : null}
+        </div>
+        {info?.description ? <p className="hero-desc">{info.description}</p> : null}
+      </section>
       <div className="two-col">
         <section>
           <h2>{t("Branches · Your View")}</h2>
@@ -119,14 +141,14 @@ export function RepoHomePage(): ReactNode {
         <section>
           {can(mode, "createRepos") && (
             <form
-              className="create-repo"
+              className="create-repo ghost-row"
               onSubmit={(e) => {
                 e.preventDefault();
                 if (subName.trim()) createSub.mutate(subName.trim());
               }}
             >
               <input placeholder={t("new sub-project under this repo")} value={subName} onChange={(e) => setSubName(e.target.value)} />
-              <button className="btn" type="submit" disabled={createSub.isPending}>
+              <button className="btn small" type="submit" disabled={createSub.isPending}>
                 {t("create sub-project")}
               </button>
               {subError && <span className="muted">{subError}</span>}
@@ -136,20 +158,26 @@ export function RepoHomePage(): ReactNode {
           {log.isPending && <Spinner />}
           {log.isError && <p className="muted pad">{t("no history yet.")}</p>}
           {log.isSuccess && (
-            <table>
-              <tbody>
-                {log.data.entries.map((e) => (
-                  <tr key={e.oid}>
-                    <td>
-                      <Link to={`${base}/commit/${e.oid}`}>{e.subject}</Link>
-                      <div className="muted">
-                        {e.author} · {whenStr(e.when)} · {shortOid(e.oid)}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="tl">
+              {log.data.entries.map((e) => (
+                <div key={e.oid} className={"tl-item" + (e.parents > 1 ? " merge" : "")}>
+                  <span className="tl-dot" aria-hidden="true" />
+                  <div>
+                    <Link to={`${base}/commit/${e.oid}`} className="tl-subject">
+                      {e.subject}
+                    </Link>
+                    <div className="tl-meta">
+                      <span>
+                        {e.author.split(" <")[0]} · {whenStr(e.when)}
+                      </span>
+                      <Link className="tl-oid" to={`${base}/commit/${e.oid}`}>
+                        {shortOid(e.oid)}
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
           {defaultBranch && (
             <p className="pad">
@@ -180,9 +208,9 @@ export function RepoHomePage(): ReactNode {
                   <td className="muted">{c.defaultBranch || "main"}</td>
                 </tr>
               ))}
-              </tbody>
-            </table>
-          )}
+            </tbody>
+          </table>
+        )}
       </section>
     </>
   );

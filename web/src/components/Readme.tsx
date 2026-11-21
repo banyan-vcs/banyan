@@ -24,8 +24,11 @@ export function ReadmeSection({ repo, rev, base }: { repo: string; rev: string; 
   if (readme.isPending) return <Spinner />;
   if (!readme.data) return null;
   return (
-    <section>
-      <h2>{readme.data.name}</h2>
+    <section className="readme-card">
+      <div className="readme-bar">
+        <span className="fname">{readme.data.name}</span>
+        <span className="ref">{rev}</span>
+      </div>
       <ReadmeBody text={readme.data.text} repo={repo} rev={rev} base={base} />
     </section>
   );
