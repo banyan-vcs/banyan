@@ -92,7 +92,16 @@ export function toDiffViewFiles(text: string): DiffViewFile[] {
     }
   }
   flushFile();
-  // drop a possible trailing empty line each hunk swallowed from split("\n")
-  for (const f of out) f.hunks = f.hunks.map((h) => h.replace(/\n+$/, ""));
+  // Each hunk string must carry its file header back: @git-diff-view's
+  // parser (GitHub Desktop lineage) only recognizes a @@ block once it has
+  // seen the ---/+++ pair — a bare @@ block is swallowed as header text
+  // and parses to ZERO hunks (the empty-diff bug). /dev/null rides the
+  // standard new/delete spellings. A trailing newline closes the last line.
+  const headerFor = (f: DiffViewFile): string => {
+    const oldP = !f.oldPath || f.oldPath === "/dev/null" ? "/dev/null" : `a/${f.oldPath}`;
+    const newP = !f.newPath || f.newPath === "/dev/null" ? "/dev/null" : `b/${f.newPath}`;
+    return `--- ${oldP}\n+++ ${newP}\n`;
+  };
+  for (const f of out) f.hunks = f.hunks.map((h) => headerFor(f) + h.replace(/\n+$/, "") + "\n");
   return out.filter((f) => f.hunks.length > 0 || f.binary);
 }
