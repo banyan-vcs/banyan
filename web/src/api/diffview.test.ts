@@ -1,7 +1,10 @@
 // diffview.test.ts — the adapter is load-bearing (the MR diff view rides
 // it), so the hunk extraction and language mapping are pinned against a
-// hand-checked two-file diff.
+// hand-checked two-file diff. The DiffFile integration test pins the
+// contract @git-diff-view actually parses: a hunk string without its
+// ---/+++ header parses to ZERO hunks (the empty-diff bug).
 import { describe, expect, it } from "vitest";
+import { DiffFile } from "@git-diff-view/core";
 import { langOf, toDiffViewFiles } from "./diffview";
 
 const sample = `commit abc
@@ -33,15 +36,27 @@ describe("toDiffViewFiles", () => {
     const go = files[0];
     expect(go.lang).toBe("go");
     expect(go.hunks).toHaveLength(1);
-    expect(go.hunks[0].startsWith("@@ -1,4 +1,5 @@")).toBe(true);
+    expect(go.hunks[0].startsWith("--- a/main.go\n+++ b/main.go\n@@ -1,4 +1,5 @@")).toBe(true);
     expect(go.hunks[0]).toContain('+import "fmt"');
-    expect(go.hunks[0].split("\n")).toHaveLength(6); // header + 5 body lines
+    expect(go.hunks[0].split("\n")).toHaveLength(9); // file header 2 + @@ + 5 body + trailing
     const tsx = files[1];
     expect(tsx.lang).toBe("tsx");
     expect(tsx.oldPath).toBe("/dev/null");
-    expect(tsx.hunks[0].split("\n")).toHaveLength(3);
+    expect(tsx.hunks[0].startsWith("--- /dev/null\n+++ b/web/src/x.tsx\n@@")).toBe(true);
+    expect(tsx.hunks[0].split("\n")).toHaveLength(6);
     expect(files[2].binary).toBe(true);
     expect(files[2].hunks).toHaveLength(0);
+  });
+
+  it("feeds a renderable DiffFile — the component's own parse path", () => {
+    for (const f of toDiffViewFiles(sample).filter((x) => !x.binary)) {
+      const df = new DiffFile(f.oldPath, "", f.newPath, "", f.hunks, f.lang, f.lang);
+      df.initRaw();
+      df.buildSplitDiffLines();
+      df.buildUnifiedDiffLines();
+      expect(df.fileLineLength, `${f.newPath} parsed to lines`).toBeGreaterThan(0);
+      expect(df.unifiedLineLength, `${f.newPath} built unified rows`).toBeGreaterThan(0);
+    }
   });
 
   it("counts the per-file diffstat from the hunk body sigils", () => {
@@ -70,7 +85,7 @@ describe("toDiffViewFiles", () => {
     const files = toDiffViewFiles(two);
     expect(files).toHaveLength(1);
     expect(files[0].hunks).toHaveLength(2);
-    expect(files[0].hunks[1].startsWith("@@ -10,2 +10,2 @@")).toBe(true);
+    expect(files[0].hunks[1].startsWith("--- a/f\n+++ b/f\n@@ -10,2 +10,2 @@")).toBe(true);
     expect(files[0].add).toBe(2);
     expect(files[0].del).toBe(2);
   });
