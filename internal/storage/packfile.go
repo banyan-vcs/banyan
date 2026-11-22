@@ -372,3 +372,56 @@ func syntheticPackOID(dp *DecodedPack) model.OID {
 	}
 	return model.ObjectOID("pack", buf.Bytes(), model.SHA1)
 }
+
+// VerifyPackShape walks one pack's entry stream (headers + discarded
+// bodies — one sequential pass, no object decoding, no delta resolution)
+// and reports whether the stream is exactly what its header claims: the
+// header's count of entries, the trailer right after the last entry, and
+// nothing beyond. This is the check go-git's Parser never makes: it stops
+// after the header count and treats the next 20 bytes as the trailer, so a
+// pack whose entry stream OVERSHOOTS its header (duplicate entries under
+// an undercounted header) parses "successfully" and would be registered
+// and served — git index-pack then rejects every clone of it. Callers:
+// every registration path (ingest gates) and the append-merge fast path
+// before trusting a base pack verbatim.
+func VerifyPackShape(raw []byte) error {
+	return verifyPackShape(packfile.NewScanner(bytes.NewReader(raw)), int64(len(raw)))
+}
+
+// VerifyPackShapeStream is VerifyPackShape over a seekable pack file
+// (r is rewound first); size is the file's byte length.
+func VerifyPackShapeStream(r io.ReadSeeker, size int64) error {
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	return verifyPackShape(packfile.NewScanner(r), size)
+}
+
+func verifyPackShape(sc *packfile.Scanner, size int64) error {
+	_, count, err := sc.Header()
+	if err != nil {
+		return err
+	}
+	for i := uint32(0); i < count; i++ {
+		if _, herr := sc.NextObjectHeader(); herr != nil {
+			return fmt.Errorf("entry %d header: %w", i, herr)
+		}
+		if _, _, berr := sc.NextObject(io.Discard); berr != nil {
+			return fmt.Errorf("entry %d body: %w", i, berr)
+		}
+	}
+	if _, cerr := sc.Checksum(); cerr != nil {
+		return fmt.Errorf("trailer: %w", cerr)
+	}
+	// The trailer read must land exactly at EOF: anything left is an entry
+	// stream the header never counted (SeekFromStart(0) reports the PREVIOUS
+	// position — where the trailer read ended).
+	end, serr := sc.SeekFromStart(0)
+	if serr != nil {
+		return serr
+	}
+	if end != size {
+		return fmt.Errorf("%d trailing bytes beyond the object stream (header says %d entries)", size-end, count)
+	}
+	return nil
+}

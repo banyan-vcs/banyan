@@ -350,3 +350,92 @@ func TestAppendMergePackValidToGit(t *testing.T) {
 	out, err := exec.Command("git", "index-pack", "--strict", packPath).CombinedOutput()
 	require.NoError(t, err, "git index-pack: %s", out)
 }
+
+// TestAppendMergeSQLSharedObjectStaysGitClean pins the ownership-vs-content
+// trap: SQLMetaStore.PutPack UPSERTS object rows keyed (repo, oid), so a
+// later pack carrying an object a base pack already
+// holds RE-POINTS that row: PackObjects(base) then under-reports the base
+// file. tryAppendMerge used to dedup against those rows while copying the
+// base's entry region verbatim — the shared object rode along AND got
+// re-appended as an "extra", so the merged pack's header undercounted its
+// real entries. git index-pack rejects that stream ("pack is corrupted
+// (SHA1 mismatch)") — a clone-shaped hard failure the demo stack hit for
+// real. The memory store keeps per-pack lists, which is why only the SQL
+// store reproduces. Oracle: git index-pack --strict over the merged file.
+func TestAppendMergeSQLSharedObjectStaysGitClean(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git CLI not available")
+	}
+	ctx := context.Background()
+	root := t.TempDir()
+	ms, err := meta.NewSQLiteMetaStore(filepath.Join(root, "meta.db"))
+	require.NoError(t, err)
+	defer ms.Close()
+	require.NoError(t, ms.CreateRepo(ctx, "r", model.SHA1))
+	local := NewLocalShardStore(root)
+	svc := NewObjectService(ms, local, []Node{{ID: "n1", Local: true}}, model.SHA1)
+
+	// The dominant push pack holds blobs A, B, C.
+	mkBlob := func(s string) (model.OID, []byte) {
+		b := []byte("shared-shape " + s)
+		return model.ObjectOID(model.BlobType, b, model.SHA1), b
+	}
+	oidA, bA := mkBlob("A")
+	oidB, bB := mkBlob("B")
+	oidC, bC := mkBlob("C")
+	var buf testBuffer
+	require.NoError(t, EncodePack(&buf, map[model.OID][]byte{oidA: bA, oidB: bB, oidC: bC}, nil, nil, nil))
+	_, err = svc.IngestPack(ctx, "r", buf.Bytes())
+	require.NoError(t, err)
+
+	// A synth batch whose object set shares C with the push pack — exactly
+	// what a woven rewrite re-rendering an identical tree does. Registering
+	// this pack re-points C's row in SQL meta.
+	svc.BeginSynthBatch("r")
+	svc.PutSynthetic("r", oidC, model.BlobType, bC)
+	oidD, bD := mkBlob("D")
+	svc.PutSynthetic("r", oidD, model.BlobType, bD)
+	svc.EndSynthBatch("r")
+	require.NoError(t, svc.FlushSynthBatch("r"))
+
+	// Precondition — the bug's fuel: registering the synth pack re-pointed
+	// C's row, so the push pack's meta rows list only A and B while its FILE
+	// still carries all three entries.
+	packs, err := ms.ListPacks(ctx, "r")
+	require.NoError(t, err)
+	require.Len(t, packs, 2, "push pack + synth pack")
+	var pushRows []model.OID
+	for _, p := range packs {
+		objs, perr := ms.PackObjects(ctx, "r", p.PackOID)
+		require.NoError(t, perr)
+		for _, o := range objs {
+			if o == oidA {
+				pushRows = objs
+			}
+		}
+	}
+	require.Len(t, pushRows, 2, "the push pack's meta rows list only A and B")
+	require.NotContains(t, pushRows, oidC, "C re-pointed to the synth pack")
+
+	res, err := svc.Consolidate(ctx, "r")
+	require.NoError(t, err)
+	require.Equal(t, 1, res.PacksAfter)
+
+	var packPath string
+	require.NoError(t, filepath.Walk(root, func(p string, _ os.FileInfo, err error) error {
+		if err == nil && strings.HasSuffix(p, ".pack") {
+			packPath = p
+		}
+		return nil
+	}))
+	require.NotEmpty(t, packPath, "merged pack file on disk")
+	out, err := exec.Command("git", "index-pack", "--strict", packPath).CombinedOutput()
+	require.NoError(t, err, "git index-pack: %s", out)
+
+	// Every object must still resolve from storage through the merged pack.
+	for oid, content := range map[model.OID][]byte{oidA: bA, oidB: bB, oidC: bC, oidD: bD} {
+		_, got, rerr := svc.Raw(ctx, "r", oid)
+		require.NoError(t, rerr, "read %s", oid)
+		require.Equal(t, content, got, "object %s", oid)
+	}
+}

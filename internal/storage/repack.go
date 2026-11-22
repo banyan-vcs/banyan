@@ -440,8 +440,11 @@ func (s *ObjectService) Consolidate(ctx context.Context, repo string) (RepackRes
 // are RELATIVE — a verbatim prefix copy keeps every delta valid, so the
 // dominant pack's (typically C-git-quality) deltas survive instead of
 // being re-delta'd by the Go encoder (which roughly doubled a real push
-// pack's bytes). ok=false with nil error means the shape did not qualify;
-// the caller re-encodes as before.
+// pack's bytes). Dedup follows the base FILE's decoded object set (meta
+// rows are ownership, not contents — see the baseObjs block), and the base
+// must pass VerifyPackShape before any byte is trusted verbatim.
+// ok=false with nil error means the shape did not qualify; the caller
+// re-encodes as before.
 func (s *ObjectService) tryAppendMerge(ctx context.Context, repo string, set []meta.PackInfo) (RepackResult, bool, error) {
 	var res RepackResult
 	if len(set) < 2 {
@@ -476,12 +479,34 @@ func (s *ObjectService) tryAppendMerge(ctx context.Context, repo string, set []m
 		return res, false, fmt.Errorf("append merge: base pack is not a v2 pack")
 	}
 	baseObjs := map[model.OID]bool{}
-	objs, oerr := s.Meta.PackObjects(ctx, repo, base.PackOID)
-	if oerr != nil {
-		return res, false, oerr
+	// The dedup set must describe the base FILE, not its meta rows: SQL
+	// meta upserts object rows by (repo, oid), so registering a later pack
+	// that carries an object the base already holds RE-POINTS that row —
+	// PackObjects(base) then under-reports the file while the verbatim copy
+	// below carries every entry. Deduping against the rows re-appends the
+	// shared object as an "extra" under an undercounted header — the merged
+	// pack then parses to go-git but git index-pack rejects every clone of
+	// it ("pack is corrupted (SHA1 mismatch)"; the demo stack hit this for
+	// real). The decoded file is the truth; the extra decode is bounded by
+	// the dominant-pack ceiling and stays strictly cheaper than the
+	// re-encode fallback (no re-delta, no re-encode of the base entries).
+	baseDecoded, derr := DecodePack(baseRaw)
+	if derr != nil {
+		return res, false, derr
 	}
-	for _, o := range objs {
-		baseObjs[o] = true
+	for _, oid := range baseDecoded.Order {
+		baseObjs[oid] = true
+	}
+	// The copy carries EVERY entry in the file, so the count this path
+	// writes must cover the whole entry stream. A base whose entries
+	// overshoot its parsed set (header undercount — corruption from an
+	// earlier merge, or a hostile push) must not ride the verbatim path:
+	// the re-encode fallback rebuilds a clean pack from the parsed set
+	// (the excess entries are always re-listings of set members, so the
+	// rebuild loses nothing unique).
+	if verr := VerifyPackShape(baseRaw); verr != nil {
+		log.Printf("repack %s: append merge falls back to re-encode: base pack %s: %v", repo, base.PackOID, verr)
+		return res, false, nil
 	}
 
 	type extraObj struct {

@@ -953,6 +953,13 @@ func (s *ObjectService) IngestPack(ctx context.Context, repo string, packBytes [
 	if err != nil {
 		return "", err
 	}
+	// Shape gate: registration is the moment a malformed pack would poison
+	// storage (go-git's Parser stops at the header count and never sees the
+	// trailing bytes, so a decode success alone proves nothing about the
+	// stream's tail). VerifyPackShape is the tail's auditor.
+	if serr := VerifyPackShape(packBytes); serr != nil {
+		return "", fmt.Errorf("ingest pack: %w", serr)
+	}
 	// idx v2: written when the observer collected full offset/crc data.
 	var idxBytes []byte
 	if len(dp.Offsets) == len(dp.Order) {
@@ -1009,6 +1016,12 @@ func (s *ObjectService) IngestPackFile(ctx context.Context, repo, path string, s
 	checksum, err := parser.Parse()
 	if err != nil {
 		return "", fmt.Errorf("scan pack: %w", err)
+	}
+	// Shape gate (see IngestPack): one extra sequential pass over the
+	// freshly spooled file — page-cache hot — rejects a stream whose entry
+	// count overshoots its header before registration makes it load-bearing.
+	if serr := VerifyPackShapeStream(f, size); serr != nil {
+		return "", fmt.Errorf("scan pack: %w", serr)
 	}
 	if len(obs.order) == 0 {
 		// A zero-object pack is legal wire traffic: the client pushes refs
