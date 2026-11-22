@@ -872,7 +872,16 @@ button.link {
 .approval-list { margin: 4px 0; padding-left: 18px; }
 .ok-text { color: var(--ink); font-weight: 500; }
 .mr-diff { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
-.mr-diff-file { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+// content-visibility: monster diffs (a 127-file push measured ~27k rows,
+// ~200k DOM nodes) spend most of their mount longtask on layout+paint of
+// sections the user can't see yet; the browser skips offscreen sections
+// (kept findable and scrollable — no hidden-content regression) and pays
+// as you scroll. contain-intrinsic-size keeps the scrollbar honest.
+.mr-diff-file {
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
+}
 .mr-diff-file.editing { border-color: var(--accent); }
 .mr-diff-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;

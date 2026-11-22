@@ -100,6 +100,10 @@ export function DiffBrowser({
                 diffViewMode={view === "unified" ? DiffModeEnum.Unified : DiffModeEnum.Split}
                 diffViewWrap={false}
                 diffViewFontSize={13}
+                // explicit and load-bearing: the component's initSyntax only
+                // fires when this prop is truthy — without it hunks render,
+                // rows number, but no token ever gets a color
+                diffViewHighlight={true}
               />
             )}
           </section>
