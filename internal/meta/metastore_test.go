@@ -89,10 +89,18 @@ func TestMetaStoreConformance(t *testing.T) {
 // dropAllTables wipes the schema on a shared cluster database so each
 // battery starts empty (the file backends get a fresh file). Every table
 // applySchema creates must be listed here — a missed table survives runs
-// and turns the shared-DB suites order-dependent.
+// and turns the shared-DB suites order-dependent (the users table did
+// exactly that: an earlier battery's account leaked into the store
+// conformance listing on the CI matrix).
 func dropAllTables(t *testing.T, s *SQLMetaStore) {
 	t.Helper()
-	for _, table := range []string{"mr_approvals", "merge_requests", "branch_rules", "rename_fence", "repo_pools", "repo_blobs", "hooks", "placement", "objects", "pack_nodes", "packs", "timelines", "repos", "tokens", "subtree_rules", "meta_migrations"} {
+	for _, table := range []string{
+		"mr_comments", "mr_approvals", "merge_requests", "branch_rules",
+		"rename_fence", "repo_pools", "repo_blobs", "hooks", "placement",
+		"objects", "pack_nodes", "packs", "timelines", "repos", "tokens",
+		"subtree_rules", "meta_migrations",
+		"ssh_keys", "repo_group_members", "repo_members", "repo_group_labels", "repo_groups", "users",
+	} {
 		if _, err := s.db.Exec("DROP TABLE IF EXISTS " + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
