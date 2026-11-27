@@ -869,8 +869,179 @@ button.link {
 .mr-overview { display: grid; gap: 18px; margin-top: 10px; }
 .mr-overview section h3 { margin-bottom: 6px; }
 .act-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
-.approval-list { margin: 4px 0; padding-left: 18px; }
+.approval-list { margin: 4px 0; padding-left: 0; list-style: none; }
+.approval-list li { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
 .ok-text { color: var(--ink); font-weight: 500; }
+
+/* ---- the review mechanics (v2 design, screens 09/10): avatars, the
+   discussion timeline, the conclusion bar, the inline line threads.
+   Color budget: avatars are ink on a subtle surface (never per-user
+   colors), verdicts use only the status green/red, stale is a dashed
+   border — no new hues anywhere. ---- */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-subtle);
+  color: var(--control);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  flex: none;
+  user-select: none;
+  object-fit: cover;
+}
+.avatar.av-16 { width: 16px; height: 16px; font-size: 9px; }
+.avatar.av-20 { width: 20px; height: 20px; font-size: 11px; }
+.avatar.av-26 { width: 26px; height: 26px; font-size: 13px; }
+.avatar.av-34 { width: 34px; height: 34px; font-size: 16px; }
+// the approval ring: the status green the merge box already speaks
+.avatar.ring-ok { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--success); }
+
+.mr-discussion { margin-top: 4px; }
+.mr-timeline { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+.thread-li { margin-top: 10px; }
+.mr-ev {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.mr-ev .avatar { align-self: center; }
+.mr-ev .ev-who { font-size: 12.5px; }
+.mr-ev .ev-at { margin-left: auto; font-size: 12px; white-space: nowrap; }
+.mr-ev.review { flex-wrap: wrap; }
+.ev-verdict { font-size: 13px; color: var(--control); }
+.ev-verdict.ok { color: var(--success); }
+.ev-verdict.err { color: var(--error); }
+.ev-body {
+  flex-basis: 100%;
+  margin: 2px 0 0 24px;
+  font-size: 13px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mr-thread {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 10px 12px;
+}
+.mr-thread.stale { border-style: dashed; }
+.thread-head { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
+.thread-body {
+  margin: 6px 0 0 28px;
+  font-size: 13px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.thread-reply {
+  margin: 8px 0 0 20px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+.thread-reply .thread-body { margin-left: 22px; }
+.chip-fileline { font-size: 11px; padding: 1px 7px; }
+.stale-badge { border-style: dashed; }
+.resolved-badge { color: var(--success); border-color: var(--success); }
+.resolved-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  margin-right: 6px;
+  flex: none;
+}
+.mr-thread.resolved { opacity: 0.75; }
+.thread-summary {
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--control);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+/* the conclusion bar under the change view */
+.mr-review-bar {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 12px 14px;
+}
+.mr-review-bar .avatar { margin-top: 2px; }
+.review-bar-main { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.verdict-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.verdict-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--control);
+}
+.verdict-choice.picked { border-color: var(--accent); color: var(--ink); }
+.verdict-choice.ok.picked { border-color: var(--success); color: var(--success); }
+.verdict-choice.err.picked { border-color: var(--error); color: var(--error); }
+.verdict-choice input { accent-color: var(--accent); margin: 0; }
+.mr-review-bar textarea,
+.diff-comment-box textarea {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.flex-sp { flex: 1; }
+
+/* the inline line-thread widget (the library's widget row) */
+.diff-comment-box {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 8px;
+  max-width: 760px;
+  box-shadow: var(--shadow);
+}
+.dc-thread .dc-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.dc-body {
+  margin: 3px 0 0 22px;
+  font-size: 13px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dc-form { display: flex; flex-direction: column; gap: 6px; }
+
+/* the profile page's avatar row */
+.avatar-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
 .mr-diff { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
 // content-visibility: monster diffs (a 127-file push measured ~27k rows,
 // ~200k DOM nodes) spend most of their mount longtask on layout+paint of

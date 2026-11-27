@@ -7,11 +7,13 @@
 // sections — SSH Keys and Access Tokens — behind the settings sidebar.
 // Everything here is per-user, never repo-scoped.
 import { useEffect, useState, type ReactNode } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { putMyAvatar } from "../api/users";
 import { useLocale, useT, type Locale, type LocaleChoice } from "../i18n";
 import { effectiveDark, setTheme, storedTheme, type ThemeChoice } from "../theme";
 import { useSession } from "../session";
+import { Avatar } from "../components/Avatar";
 
 const CHOICES: { value: ThemeChoice; label: string; hint: string }[] = [
   { value: "auto", label: "auto", hint: "day or night, whatever the OS says" },
@@ -93,6 +95,93 @@ function LanguageSection(): ReactNode {
   );
 }
 
+/** AvatarSection: the account's custom face (the v2 design's avatar spec —
+ * docs/design/merge-requests.md §review). The default is the name's first
+ * character, rendered client-side; this section uploads a replacement:
+ * the picker resizes to a 64px round-trip JPEG before it leaves the
+ * browser (the wire cap is 4000 chars), the preview shows exactly what
+ * lands, and clearing returns the initial. */
+function AvatarSection(): ReactNode {
+  const t = useT();
+  const { info: session } = useSession();
+  const qc = useQueryClient();
+  const [error, setError] = useState("");
+  const put = useMutation({
+    mutationFn: (avatarUrl: string) => putMyAvatar(avatarUrl),
+    onSuccess: (_r, avatarUrl) => {
+      setError("");
+      qc.setQueryData(["avatar", session?.user || ""], { user: session?.user || "", avatarUrl });
+      qc.invalidateQueries({ queryKey: ["avatar", session?.user || ""] });
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
+  // resizeToAvatar rounds an image file down to a 64×64 JPEG data URL —
+  // small enough that the base64 string fits the cap with room to spare.
+  const resizeToAvatar = (file: File, done: (dataUrl: string) => void, fail: (why: string) => void): void => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = (): void => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("no 2d context");
+        ctx.drawImage(img, 0, 0, 64, 64);
+        done(canvas.toDataURL("image/jpeg", 0.85));
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e));
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    img.onerror = (): void => {
+      URL.revokeObjectURL(url);
+      fail(t("not a readable image"));
+    };
+    img.src = url;
+  };
+  return (
+    <section>
+      <h2>{t("Avatar")}</h2>
+      <p className="muted">
+        {t("the default is your name's first character; a custom avatar replaces it everywhere (a failed load falls back to the initial).")}
+      </p>
+      <div className="avatar-row">
+        <Avatar name={session?.user || "?"} size={34} />
+        <label className="btn ghost">
+          {t("upload (resized to 64px)")}
+          <input
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              resizeToAvatar(
+                f,
+                (dataUrl) => {
+                  if (dataUrl.length > 4000) {
+                    setError(t("still too large after resizing — try a simpler image"));
+                    return;
+                  }
+                  put.mutate(dataUrl);
+                },
+                (why) => setError(why),
+              );
+            }}
+          />
+        </label>
+        <button className="btn ghost" onClick={() => put.mutate("")} disabled={put.isPending}>
+          {t("clear (back to the initial)")}
+        </button>
+      </div>
+      {error && <div className="error-box">{error}</div>}
+    </section>
+  );
+}
+
 /** PasswordSection: the server-managed account's self-service. The current
  * credential is re-verified server-side; config-file accounts answer with
  * the explaining refusal (their passwords are not managed here). On
@@ -154,6 +243,7 @@ export function ProfilePage(): ReactNode {
   return (
     <>
       <h1>{t("Profile")}</h1>
+      <AvatarSection />
       <AppearanceSection />
       <LanguageSection />
       <PasswordSection />
