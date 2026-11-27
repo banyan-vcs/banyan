@@ -53,15 +53,44 @@ advertised OID 为 merge_commit**（可分享链接必须在 fresh clone 里可�
 ## 4. API 与 URL
 
 - `GET|POST /api/v1/repos/{repo}/merge-requests[?state=]`；`GET …/{iid}`（活算
-  mergeable/conflicts/merge_base/approvals/rule）；`POST|DELETE …/{iid}/approve`；
-  `POST …/{iid}/merge`（409：CONFLICT_MR——冲突路径/目标移动/审批不足/状态）；
+  mergeable/conflicts/merge_base/approvals/rule/**blocking**）；`POST|DELETE …/{iid}/approve`；
+  `POST …/{iid}/merge`（409：CONFLICT_MR——冲突路径/目标移动/审批不足/**请求修改未解除**/状态）；
   `POST …/{iid}/close|reopen`。
+- **讨论与评审**（§4a）：`GET|POST …/{iid}/comments`（GET = 时间线数据集：ledger +
+  带时间戳审批事件；POST = 评论/回复/锚定评论，push 权限）；`POST
+  …/{iid}/comments/{id}/resolve`；`POST …/{iid}/review {verdict, body}`。
+- **头像**：`PUT /api/v1/me/avatar {avatarUrl}`（data:image/ 或 https://，上限 4000
+  字符，空串清除）；`GET /api/v1/users/{name}/avatar`（控制台按名取）。
 - **Web URL**：`/r/{repo}/-/merge_requests/{iid}`——`/-/` 是项目保留段约定（gitlab 档
   SPA 挂在 `/-/banyan`）；子视图走查询参数（`?tab=overview|diff`、
   `?view=split|unified`，view 另存 localStorage、URL 优先）——粘贴链接落在分享时的
   视图；未知 IID 页内 not found。history 的 ref 同轮改为 `?ref=`（`:ref` 路径参数永
   远匹配不到带 `/` 的分支名，旧链接 301 到查询参数形态）。
 - **CLI**：`banyan mr ls|open|show|approve|merge|close|reopen`（工作区 repo）。
+
+## 4a. 评审机制（讨论、锚、结论）
+
+一张表 `mr_comments(repo, iid, id, parent_id, author, body, kind, verdict, path,
+line, side, anchor_oid, resolved, resolved_by, created_at)`——ID 每 MR 单调（MAX+1
+锁序分配，`merge_requests` 的 IID 协议缩小重演），复合键即时间线顺序。
+
+- **评论与线程**：顶层为线程头，回复（parent_id）只挂头、继承头的锚；resolve 只翻
+  头（任何 push 权限成员可翻，v1）。merged/closed 的 MR 仍可评论——时间线即记录。
+- **行内锚**：`(path, line, side, anchor_oid)` 全有或全无；**anchor_oid 由服务端盖章**
+  （发表时的 source 活 tip——`AddMRComment` 的签名根本不收客户端锚，欺骗在构造上不可
+  能）。源分支推进后，锚 OID 落后于活 tip 的线程在概览时间线打**虚线"已过时"章钉在
+  原处**，不静默挪动；行内 widget 只渲染锚等于当前 tip 的线程（按锚重算位置的升级
+  记为 follow-up——需要 diff-between-anchors 计算，v1 用"新鲜才内联"的诚实简化）。
+- **评审结论**：`kind=review` 携带 verdict `approve|request-changes|comment`；**approve
+  同时记一笔审批**（一个动作两个效果）；**request-changes 与 approve 都拒绝作者**
+  （comment 结论作者可用）。**阻塞语义**：每位评审人的**最新一条** review 为
+  request-changes 即阻塞合并（merge 409 点名，MRDetail 的 `blocking` 列表供合并盒红
+  条）——同一评审人再提交任一非阻塞结论即解锁；**源分支推进永不解除结论**（与审批
+  不重置同一家族：评审的钥匙只在评审人手里）。
+- **头像**：`users.avatar_url`（data:image/ 或 https://，4000 字符上限——MySQL 列是有
+  尺寸 VARCHAR，TEXT 不能带 DEFAULT）；空 = 控制台渲染**名字首字符**（中文首字、拉丁
+  首字母保留大小写，墨色于浅底——**绝不按用户生成彩色 identicon**，色彩预算四类封
+  顶的明文规则）；加载失败回退首字符；审批态 = 头像绿描边（状态绿，非新色）。
 
 ## 5. 展示组件
 
@@ -81,8 +110,10 @@ advertised OID 为 merge_commit**（可分享链接必须在 fresh clone 里可�
 ## 6. 边界与诚实清单（v1）
 
 - 仅 root-anchor 分支（与 `UpdateRef` 同边界）；子树 MR 记 follow-up。
-- 审批不因 source 前进重置；合并取当时 source tip。
-- 无 labels/reviewers/评论/CI 状态。
+- 审批不因 source 前进重置；合并取当时 source tip；评审结论同族（§4a）。
+- 无 labels/CI 状态；评审人分档（必审/可选+推荐）记 follow-up——阻塞语义由
+  request-changes 结论承担，不需要必审名单也成立。
+- 过时锚不按锚重算位置（新鲜才内联 + 原位过时章，见 §4a）。
 - 合并记录 advertised OID（§2 织入事实）。
 - mr-only 规则不参与快照 v2——执法点即数据点，都在 gateway。
 - 预留-定稿间进程崩溃会留下 state=merged 而 merge_commit 为空的 MR（诚实窗口，

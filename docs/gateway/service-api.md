@@ -115,6 +115,8 @@ CLI 的稳定契约是这层 JSON API（版本化 `/api/v1`），与前端启停
 | cat（非 HEAD rev / 缓存脱靶） | `POST /api/v1/resolve` | Resolve | **已落地**（计划外增补：rev:path → 对象指针） |
 | branch / tag | `GET /api/v1/refs` / `POST /api/v1/refs` | Ref.List / Ref.CAS | **已落地**（POST 限根仓库） |
 | merge requests | `GET|POST /api/v1/repos/{repo}/merge-requests`、`…/{iid}[/approve|merge|close|reopen]` | — | **已落地**（2026-11-20，T99-T104；docs/design/merge-requests.md：服务端三方合并+审批门+保护档） |
+| MR 讨论/评审 | `GET|POST …/{iid}/comments`、`POST …/{iid}/comments/{id}/resolve`、`POST …/{iid}/review` | — | **已落地**（2026-11-27，T131；§4a：GET=ledger+带时间戳审批事件，POST 锚定评论**服务端盖章** anchor；review verdict approve 同记审批、request-changes 阻塞合并至同人复审） |
+| 头像 | `PUT /api/v1/me/avatar`、`GET /api/v1/users/{name}/avatar` | — | **已落地**（2026-11-27，T131；data:image/ 或 https:、4000 字符上限、空串清除=名字首字符默认） |
 | branch rules | `GET /api/v1/repos/{repo}/branch-rules[/{branch}]` | — | **已落地**（protected / mr-only 两档，admin 写；mr-only 三执法点拦直推；branch 段可含 `/`——尾段整体即分支名，如 `release/v2`） |
 | repo create/ls | `GET/POST /api/v1/repos` | Repo.List/Create | **已落地**（GET 列表含层级 `parent` 字段；POST body `{name, parent?}`——带 parent 即建子项目，link 失败回滚建仓、write-rank 门）|
 | 项目层级 | `GET/PUT /api/v1/repos/<repo>/parent` | Repo.Parent | **已落地**（2026-11-15，docs/design/data-model.md §14：GET `{repo,parent}`；PUT body `{parent}`——空串摘根；环/深度（≤16 级）由存储校验，INVALID_ARG；改挂为 admin 门）|
