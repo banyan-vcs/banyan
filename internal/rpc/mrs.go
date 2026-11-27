@@ -164,6 +164,111 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 
+	case len(rest) == 2 && rest[1] == "comments" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		// The discussion ledger (docs/design/merge-requests.md §review):
+		// GET answers the timeline's data set (ledger + timestamped
+		// approvals) behind the detail route's read posture; POST appends a
+		// comment or reply at push rank — the same floor the MR's own
+		// creation demands.
+		iid, ok := parseIid(w, rest[0])
+		if !ok {
+			return
+		}
+		if r.Method == http.MethodGet {
+			comments, approvals, err := s.Svc.MRDiscussion(r.Context(), repo, iid)
+			if err != nil {
+				writeServiceErr(w, err)
+				return
+			}
+			if comments == nil {
+				comments = []meta.MRComment{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"comments": comments, "approval_events": approvals})
+			return
+		}
+		user, ok := s.actingUser(w, r)
+		if !ok {
+			return
+		}
+		if !s.requirePush(w, r, repo, "", "") {
+			return
+		}
+		var req struct {
+			Body     string `json:"body"`
+			Path     string `json:"path"`
+			Side     string `json:"side"`
+			Line     int    `json:"line"`
+			ParentID int64  `json:"parent_id"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		c, err := s.Svc.AddMRComment(r.Context(), repo, iid, user, req.Body, req.Path, req.Side, req.Line, req.ParentID)
+		if err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, c)
+
+	case len(rest) == 4 && rest[1] == "comments" && rest[3] == "resolve" && r.Method == http.MethodPost:
+		// Resolve/unresolve a thread head (replies refuse in the service).
+		user, ok := s.actingUser(w, r)
+		if !ok {
+			return
+		}
+		if !s.requirePush(w, r, repo, "", "") {
+			return
+		}
+		iid, ok := parseIid(w, rest[0])
+		if !ok {
+			return
+		}
+		id, err := strconv.ParseInt(rest[2], 10, 64)
+		if err != nil || id <= 0 {
+			writeJSON(w, http.StatusBadRequest, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "comment id must be a positive integer"}})
+			return
+		}
+		var req struct {
+			Resolved bool `json:"resolved"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		if err := s.Svc.ResolveMRComment(r.Context(), repo, iid, id, user, req.Resolved); err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+
+	case len(rest) == 2 && rest[1] == "review" && r.Method == http.MethodPost:
+		// The conclusion bar's submission: verdict approve|request-changes|
+		// comment plus an optional body. Push rank here too — a verdict is
+		// a stronger statement than a remark.
+		user, ok := s.actingUser(w, r)
+		if !ok {
+			return
+		}
+		if !s.requirePush(w, r, repo, "", "") {
+			return
+		}
+		iid, ok := parseIid(w, rest[0])
+		if !ok {
+			return
+		}
+		var req struct {
+			Verdict string `json:"verdict"`
+			Body    string `json:"body"`
+		}
+		if !decodeBody(w, r, &req) {
+			return
+		}
+		c, err := s.Svc.SubmitMRReview(r.Context(), repo, iid, user, req.Verdict, req.Body)
+		if err != nil {
+			writeServiceErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, c)
+
 	case len(rest) == 2 && rest[1] == "merge" && r.Method == http.MethodPost:
 		user, ok := s.actingUser(w, r)
 		if !ok {
@@ -230,7 +335,7 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 
 	default:
 		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND",
-			Message: "want /repos/<repo>/merge-requests[/<iid>[/approve|merge|close|reopen]]"}})
+			Message: "want /repos/<repo>/merge-requests[/<iid>[/approve|merge|close|reopen|comments[/<id>/resolve]|review]]"}})
 	}
 }
 
