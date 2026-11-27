@@ -313,7 +313,8 @@ type MRView struct {
 	MergeBase         model.OID `json:"merge_base"`
 	Approvals         []string  `json:"approvals"`
 	RequiredApprovals int       `json:"required_approvals"`
-	RuleLevel         string    `json:"rule_level,omitempty"` // "" | protected | mr-only
+	RuleLevel         string    `json:"rule_level,omitempty"`  // "" | protected | mr-only
+	Blocking          []string  `json:"blocking,omitempty"`    // reviewers whose latest verdict is request-changes
 }
 
 // MRDetail answers one MR with live mergeability and the approvals
@@ -341,6 +342,12 @@ func (s *Service) MRDetail(ctx context.Context, repo string, iid int64) (MRView,
 	}
 	if view.State != meta.MRStateOpen {
 		return view, nil // merged/closed: the stored record is the answer
+	}
+	// The request-changes lock rides the detail (the merge box's red strip).
+	if cs, ok := s.Meta.(meta.MRCommentStore); ok {
+		if blocking, berr := s.mrBlocking(ctx, cs, repo, iid, mr.Author); berr == nil {
+			view.Blocking = blocking
+		}
 	}
 	if view.SourceTip, err = s.branchHead(ctx, repo, mr.Source); err == nil {
 		if pv, perr := s.PreviewMerge(ctx, repo, mr.Source, mr.Target); perr == nil {
@@ -430,6 +437,16 @@ func (s *Service) MergeMR(ctx context.Context, repo string, iid int64, merger, m
 	}
 	if mr.State != meta.MRStateOpen {
 		return meta.MRInfo{}, invalid("merge request !%d is %s", iid, mr.State)
+	}
+	// The request-changes lock: reviewers whose LATEST verdict blocks stand
+	// between the request and the merge until they review again (source
+	// advances never dismiss a verdict — the reviewer's key only).
+	if cs, ok := s.Meta.(meta.MRCommentStore); ok {
+		if blocking, berr := s.mrBlocking(ctx, cs, repo, iid, mr.Author); berr != nil {
+			return meta.MRInfo{}, berr
+		} else if reason := mrBlockingReason(blocking); reason != "" {
+			return meta.MRInfo{}, &ErrMRNotMergeable{Reason: reason}
+		}
 	}
 	// Approvals against the target's rule: mr-only demands its count; the
 	// other levels demand none here (their rank gates live at the API).
