@@ -8,6 +8,7 @@
 package rpc
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -46,7 +47,7 @@ func (s *Server) handleMyAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := us.UserByName(r.Context(), user)
 	if err != nil {
-		writeServiceErr(w, err)
+		writeUserUnknown(w, err)
 		return
 	}
 	u.AvatarURL = req.AvatarURL
@@ -55,6 +56,17 @@ func (s *Server) handleMyAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"user": user, "avatarUrl": req.AvatarURL})
+}
+
+// writeUserUnknown answers account-table misses with the explaining 404:
+// config-file accounts (static policy) have no row, and their face is the
+// name-initial default — not a server fault.
+func writeUserUnknown(w http.ResponseWriter, err error) {
+	if errors.Is(err, meta.ErrUserUnknown) {
+		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "no account row for this user — config-file accounts keep the name-initial default"}})
+		return
+	}
+	writeServiceErr(w, err)
 }
 
 // handleUserAvatar serves GET /api/v1/users/<name>/avatar behind the read
@@ -80,7 +92,7 @@ func (s *Server) handleUserAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := us.UserByName(r.Context(), name)
 	if err != nil {
-		writeServiceErr(w, err)
+		writeUserUnknown(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"user": name, "avatarUrl": u.AvatarURL})

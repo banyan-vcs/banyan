@@ -275,3 +275,116 @@ func TestMRTokenScopeCeiling(t *testing.T) {
 	require.Equal(t, 200, code, "%v", view)
 	require.Equal(t, "merged", view["state"])
 }
+
+// TestMRReviewMechanicsE2E (T111): the review flow over real git and two
+// identities (docs/design/merge-requests.md §4a) — an anchored line
+// comment (the server stamps the anchor), a reply, resolution, and the
+// request-changes lock: the merge bounces naming the blocker, the author's
+// push does NOT dismiss the verdict, the reviewer's re-approval unblocks,
+// and the discussion survives the merge. The avatar face rides along: PUT
+// stores, GET answers, bogus schemes refuse.
+func TestMRReviewMechanicsE2E(t *testing.T) {
+	support.NeedGit(t)
+	s, _ := newAuthServer(t)
+
+	src := t.TempDir()
+	support.Git(t, src, "init", "-q", "-b", "main", ".")
+	support.Write(t, filepath.Join(src, "f.txt"), "base\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "seed")
+	// main is snapshot-protected on this plane — seed it as admin, branch
+	// as alice (the MR's author).
+	support.Git(t, src, "push", "-q", credURL(s, "admin", "x", "/r/rev.git"), "main")
+	support.Git(t, src, "checkout", "-q", "-b", "feat")
+	support.Write(t, filepath.Join(src, "g.txt"), "feat\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "feat")
+	support.Git(t, src, "push", "-q", credURL(s, "alice", "a", "/r/rev.git"), "feat")
+
+	code, mr := mrAPI(t, s, "alice", "a", "POST", "/api/v1/repos/rev/merge-requests",
+		map[string]string{"source": "feat", "target": "main", "title": "review me"})
+	require.Equal(t, 201, code, "%v", mr)
+
+	// The anchored comment: alice names the line, the SERVER stamps the
+	// anchor with the live source tip (a client-claimed OID cannot exist).
+	code, anchored := mrAPI(t, s, "bob", "b", "POST", "/api/v1/repos/rev/merge-requests/1/comments",
+		map[string]any{"body": "the f.txt header", "path": "g.txt", "side": "new", "line": 1})
+	require.Equal(t, 201, code, "%v", anchored)
+	head := support.Git(t, src, "rev-parse", "feat")
+	require.Equal(t, strings.TrimSpace(head), anchored["anchor_oid"], "the anchor is the live source tip")
+	anchoredID, _ := anchored["id"].(float64)
+	require.NotZero(t, anchoredID)
+
+	// A reply rides the head; the head resolves.
+	code, reply := mrAPI(t, s, "alice", "a", "POST", "/api/v1/repos/rev/merge-requests/1/comments",
+		map[string]any{"body": "the follow-up renames it", "parent_id": anchoredID})
+	require.Equal(t, 201, code, "%v", reply)
+	code, res := mrAPI(t, s, "alice", "a", "POST", fmt.Sprintf("/api/v1/repos/rev/merge-requests/1/comments/%d/resolve", int(anchoredID)),
+		map[string]any{"resolved": true})
+	require.Equal(t, 200, code, "%v", res)
+
+	// bob requests changes; the merge bounces naming him. (admin drives the
+	// merge — main is owner-gated on this plane, and the lock must bite
+	// even the owner.)
+	code, rev := mrAPI(t, s, "bob", "b", "POST", "/api/v1/repos/rev/merge-requests/1/review",
+		map[string]any{"verdict": "request-changes", "body": "rename first"})
+	require.Equal(t, 201, code, "%v", rev)
+	code, res = mrAPI(t, s, "admin", "x", "POST", "/api/v1/repos/rev/merge-requests/1/merge", nil)
+	require.Equal(t, 409, code, "%v", res)
+	require.Contains(t, errmsg(res), "request-changes outstanding from bob")
+
+	// The detail exposes the blocking list for the red strip.
+	code, view := mrAPI(t, s, "alice", "a", "GET", "/api/v1/repos/rev/merge-requests/1", nil)
+	require.Equal(t, 200, code, "%v", view)
+	require.ElementsMatch(t, []any{"bob"}, view["blocking"].([]any))
+
+	// The author pushes; the verdict SURVIVES (the reviewer's key only).
+	support.Write(t, filepath.Join(src, "g.txt"), "renamed\n")
+	support.Git(t, src, "add", "-A")
+	support.Git(t, src, "commit", "-qm", "rename")
+	support.Git(t, src, "push", "-q", credURL(s, "alice", "a", "/r/rev.git"), "feat")
+	code, res = mrAPI(t, s, "admin", "x", "POST", "/api/v1/repos/rev/merge-requests/1/merge", nil)
+	require.Equal(t, 409, code, "%v", res)
+
+	// The anchored thread is now stale — the timeline keeps it in place
+	// with its badge (the anchor OID no longer matches the live tip).
+	code, view = mrAPI(t, s, "alice", "a", "GET", "/api/v1/repos/rev/merge-requests/1", nil)
+	require.Equal(t, 200, code, "%v", view)
+	require.NotEqual(t, strings.TrimSpace(head), view["source_tip"], "the source tip advanced")
+
+	// bob re-reviews approve; the approval rides along and the merge lands.
+	code, res = mrAPI(t, s, "bob", "b", "POST", "/api/v1/repos/rev/merge-requests/1/review",
+		map[string]any{"verdict": "approve", "body": "renamed, lgtm"})
+	require.Equal(t, 201, code, "%v", res)
+	code, merged := mrAPI(t, s, "admin", "x", "POST", "/api/v1/repos/rev/merge-requests/1/merge", nil)
+	require.Equal(t, 200, code, "%v", merged)
+	require.Equal(t, "merged", merged["state"])
+
+	// The discussion survives the merge: comments + timestamped approvals.
+	code, disc := mrAPI(t, s, "alice", "a", "GET", "/api/v1/repos/rev/merge-requests/1/comments", nil)
+	require.Equal(t, 200, code, "%v", disc)
+	comments := disc["comments"].([]any)
+	require.GreaterOrEqual(t, len(comments), 3)
+	events := disc["approval_events"].([]any)
+	require.Len(t, events, 1)
+	approver := events[0].(map[string]any)
+	require.Equal(t, "bob", approver["user"])
+
+	// The author's own verdict stays a comment.
+	code, res = mrAPI(t, s, "alice", "a", "POST", "/api/v1/repos/rev/merge-requests/1/review",
+		map[string]any{"verdict": "approve"})
+	require.Equal(t, 400, code, "%v", res)
+
+	// Avatars on this plane: config-file accounts (static policy, no users
+	// table rows) answer the explaining 404 — their face stays the
+	// name-initial default, and the scheme check still fires first.
+	code, res = mrAPI(t, s, "alice", "a", "PUT", "/api/v1/me/avatar",
+		map[string]string{"avatarUrl": "http://plain.example/x.png"})
+	require.Equal(t, 400, code, "%v", res)
+	code, res = mrAPI(t, s, "alice", "a", "PUT", "/api/v1/me/avatar",
+		map[string]string{"avatarUrl": "data:image/png;base64,AAAA"})
+	require.Equal(t, 404, code, "%v", res)
+	require.Contains(t, errmsg(res), "no account row")
+	code, res = mrAPI(t, s, "bob", "b", "GET", "/api/v1/users/alice/avatar", nil)
+	require.Equal(t, 404, code, "%v", res)
+}
