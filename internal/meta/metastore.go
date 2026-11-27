@@ -342,6 +342,8 @@ type MemoryMetaStore struct {
 	mrNextIID    map[string]int64               // repo → last allocated MR IID
 	mrApprovals  map[string]map[int64]map[string]int64 // repo → iid → user → approved-at
 	branchRules  map[string]map[string]BranchRule      // repo → branch → protection rule
+	mrComments      map[string]map[int64]map[int64]*MRComment // repo → iid → id → discussion entry
+	mrNextCommentID map[string]int64                    // repo\x00iid → last allocated comment ID
 	groups       map[string]*GroupInfo          // name → group (docs/design/data-model.md §15)
 	repoGroups   map[string]string              // repo → group name
 	groupMembers map[string]map[string]*Member  // group → user → member (docs/design/data-model.md §16)
@@ -369,6 +371,8 @@ func NewMemoryMetaStore() *MemoryMetaStore {
 		mrNextIID:    map[string]int64{},
 		mrApprovals:  map[string]map[int64]map[string]int64{},
 		branchRules:  map[string]map[string]BranchRule{},
+		mrComments:      map[string]map[int64]map[int64]*MRComment{},
+		mrNextCommentID: map[string]int64{},
 		groups:       map[string]*GroupInfo{},
 		groupMembers: map[string]map[string]*Member{},
 		repoMembers:  map[string]map[string]*Member{},

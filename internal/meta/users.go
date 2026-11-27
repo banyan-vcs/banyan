@@ -33,6 +33,7 @@ type User struct {
 	Password           string `json:"-" gorm:"column:password_hash;not null"`
 	Admin              bool   `json:"admin" gorm:"column:is_admin;not null"`
 	MustChangePassword bool   `json:"mustChangePassword" gorm:"column:must_change_password;not null"`
+	AvatarURL          string `json:"avatarUrl,omitempty" gorm:"column:avatar_url;not null;default:''"` // data: or https: URL; empty = name-initial default
 	CreatedAt          int64  `json:"createdAt" gorm:"column:created_at;not null"`
 }
 
@@ -48,12 +49,23 @@ type UserStore interface {
 	Users(ctx context.Context) ([]User, error)
 }
 
+// MaxAvatarURL bounds the avatar string: the MySQL column is a sized
+// VARCHAR (TEXT cannot DEFAULT there), so the cap is one number every
+// backend shares — 4000 chars of data: URL is a crisp 64px round-trip.
+const MaxAvatarURL = 4000
+
 func userValid(u User) error {
 	if u.Name == "" || len(u.Name) > 64 || strings.ContainsAny(u.Name, " \t\n") {
 		return fmt.Errorf("%w: name required, no whitespace, at most 64 bytes", ErrUserInvalid)
 	}
 	if u.Password == "" {
 		return fmt.Errorf("%w: password hash required", ErrUserInvalid)
+	}
+	if len(u.AvatarURL) > MaxAvatarURL {
+		return fmt.Errorf("%w: avatar too large (max %d chars)", ErrUserInvalid, MaxAvatarURL)
+	}
+	if u.AvatarURL != "" && !strings.HasPrefix(u.AvatarURL, "data:image/") && !strings.HasPrefix(u.AvatarURL, "https://") {
+		return fmt.Errorf("%w: avatar must be a data:image/ or https:// URL", ErrUserInvalid)
 	}
 	return nil
 }
@@ -97,7 +109,7 @@ func (s *SQLMetaStore) PutUser(ctx context.Context, u User) error {
 	if err := userValid(u); err != nil {
 		return err
 	}
-	row := userRow{Name: u.Name, Password: u.Password, CreatedAt: u.CreatedAt}
+	row := userRow{Name: u.Name, Password: u.Password, AvatarURL: u.AvatarURL, CreatedAt: u.CreatedAt}
 	if u.Admin {
 		row.Admin = 1
 	}
@@ -131,5 +143,5 @@ func (s *SQLMetaStore) Users(ctx context.Context) ([]User, error) {
 }
 
 func (r userRow) user() User {
-	return User{Name: r.Name, Password: r.Password, Admin: r.Admin != 0, MustChangePassword: r.MustChange != 0, CreatedAt: r.CreatedAt}
+	return User{Name: r.Name, Password: r.Password, Admin: r.Admin != 0, MustChangePassword: r.MustChange != 0, AvatarURL: r.AvatarURL, CreatedAt: r.CreatedAt}
 }
