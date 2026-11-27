@@ -27,6 +27,7 @@ export interface MRView extends MRInfo {
   approvals: string[];
   required_approvals: number;
   rule_level?: string;
+  blocking?: string[]; // reviewers whose latest verdict is request-changes
 }
 
 export interface BranchRule {
@@ -85,3 +86,63 @@ export const putBranchRule = (repo: string, branch: string, level: string, appro
 
 export const deleteBranchRule = (repo: string, branch: string): Promise<unknown> =>
   api(`/api/v1/repos/${encodeURIComponent(repo)}/branch-rules/${encodeURIComponent(branch)}`, { method: "DELETE" });
+
+// --- the discussion ledger (docs/design/merge-requests.md §review) ---
+
+export interface MRComment {
+  id: number;
+  repo: string;
+  iid: number;
+  parent_id?: number; // 0/absent = thread head
+  author: string;
+  body: string;
+  kind: "comment" | "review" | string;
+  verdict?: "approve" | "request-changes" | "comment" | string;
+  path?: string; // anchor: repo-relative path
+  line?: number; // anchor: line number on side
+  side?: "old" | "new" | string; // anchor: which pane
+  anchor_oid?: string; // anchor: the source tip the comment read
+  resolved: boolean;
+  resolved_by?: string;
+  created_at: number;
+}
+
+export interface MRApprovalEvent {
+  user: string;
+  at: number;
+}
+
+export interface MRDiscussion {
+  comments: MRComment[];
+  approval_events: MRApprovalEvent[];
+}
+
+export const getDiscussion = (repo: string, iid: number | string): Promise<MRDiscussion> =>
+  api<MRDiscussion>(`/api/v1/repos/${encodeURIComponent(repo)}/merge-requests/${iid}/comments`);
+
+export const addMRComment = (
+  repo: string,
+  iid: number | string,
+  body: { body: string; path?: string; side?: string; line?: number; parent_id?: number },
+): Promise<MRComment> =>
+  api<MRComment>(`/api/v1/repos/${encodeURIComponent(repo)}/merge-requests/${iid}/comments`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const resolveMRComment = (repo: string, iid: number | string, id: number, resolved: boolean): Promise<unknown> =>
+  api(`/api/v1/repos/${encodeURIComponent(repo)}/merge-requests/${iid}/comments/${id}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ resolved }),
+  });
+
+export const submitMRReview = (
+  repo: string,
+  iid: number | string,
+  verdict: "approve" | "request-changes" | "comment",
+  body = "",
+): Promise<MRComment> =>
+  api<MRComment>(`/api/v1/repos/${encodeURIComponent(repo)}/merge-requests/${iid}/review`, {
+    method: "POST",
+    body: JSON.stringify({ verdict, body }),
+  });

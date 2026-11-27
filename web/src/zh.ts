@@ -133,6 +133,45 @@ export const zh: Record<string, string> = {
   " — {0} needed": "——还需 {0} 票",
   "{0}/{1} — the author's own approval never counts.": "{0}/{1}——作者本人的审批永不计入。",
 
+  // the review mechanics (MrDiscussion / MrDiff / the avatar section)
+  "request-changes outstanding from {0} — their re-review is the key, a push never dismisses it.":
+    "{0} 的请求修改尚未解除——只有其重新评审是钥匙，推送不会清除。",
+  discussion: "讨论",
+  "no discussion yet — comments, replies and verdicts land here.": "还没有讨论——评论、回复与评审结论都会落在这里。",
+  "opened this merge request": "开启了此合并请求",
+  approved: "批准了此请求",
+  "merged this merge request": "合并了此请求",
+  "approved — request changes with a new review to withdraw": "已批准——如需撤回，请再提交一次请求修改",
+  "requested changes — this blocks the merge until re-reviewed": "请求修改——在其重新评审前阻塞合并",
+  reviewed: "评审了此请求",
+  "{0} — resolved by {1} · {2} reply(ies)": "{0}——由 {1} 解决 · {2} 条回复",
+  show: "展开",
+  outdated: "已过时",
+  resolved: "已解决",
+  resolve: "解决",
+  unresolve: "取消解决",
+  collapse: "收起",
+  "review verdict": "评审结论",
+  "request changes": "请求修改",
+  "comment only": "仅评论",
+  comment: "评论",
+  reply: "回复",
+  "the author's only verdict is a comment — approvals come from others.":
+    "作者可用的结论只有评论——批准来自他人。",
+  "leave a note with the verdict (optional)": "随结论留一句话（可选）",
+  "submit review": "提交评审",
+  "⌘/Ctrl-Enter files the review": "⌘/Ctrl-Enter 直接提交评审",
+  "comment on this line…": "评论这一行…",
+  "reply…": "回复…",
+  "start a new thread": "另起线程",
+  Avatar: "头像",
+  "the default is your name's first character; a custom avatar replaces it everywhere (a failed load falls back to the initial).":
+    "默认头像是名字的首字符；自定义头像会在全站替换它（加载失败时回退为首字符）。",
+  "upload (resized to 64px)": "上传（自动缩到 64px）",
+  "clear (back to the initial)": "清除（回到首字符）",
+  "not a readable image": "不是可读取的图片",
+  "still too large after resizing — try a simpler image": "缩放后仍然过大——换一张更简单的图片",
+
   // NewPage.tsx
   "Not in This Deployment": "此部署未提供",
   "this page is a standalone-console capability; this deployment (profile {0}) does not expose it.":

@@ -5,11 +5,20 @@
 // one collapsible section per file with its own diffstat. The MR change
 // view (MrDiff) passes its inline-edit affordance through fileExtra; the
 // per-file section classes stay .mr-diff* — one skin, two surfaces.
-import { DiffModeEnum, DiffView } from "@git-diff-view/react";
+import { DiffModeEnum, DiffView, SplitSide } from "@git-diff-view/react";
 import "@git-diff-view/react/styles/diff-view.css";
 import { useState, type ReactNode } from "react";
 import type { DiffViewFile } from "../api/diffview";
 import { useT } from "../i18n";
+
+// LineWidgetCtx is what a line's widget renderer sees: the pane the "+"
+// sat on (old = the pre-image, new = the post-image), the line number in
+// that pane's numbering, and the closer the form calls when it is done.
+export interface LineWidgetCtx {
+  side: "old" | "new";
+  lineNumber: number;
+  onClose: () => void;
+}
 
 export function DiffBrowser({
   files,
@@ -18,6 +27,7 @@ export function DiffBrowser({
   fileExtra,
   editingPath,
   emptyHint,
+  renderLineWidget,
 }: {
   files: DiffViewFile[];
   view: "split" | "unified";
@@ -25,6 +35,10 @@ export function DiffBrowser({
   fileExtra?: (f: DiffViewFile, path: string) => ReactNode;
   editingPath?: string;
   emptyHint?: string;
+  // When set, every content line grows the library's hover "+" and clicking
+  // it opens renderLineWidget's row at that line (the MR review's inline
+  // comment affordance; the commit page passes nothing and sees none).
+  renderLineWidget?: (path: string, ctx: LineWidgetCtx) => ReactNode;
 }): ReactNode {
   const t = useT();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -104,6 +118,14 @@ export function DiffBrowser({
                 // fires when this prop is truthy — without it hunks render,
                 // rows number, but no token ever gets a color
                 diffViewHighlight={true}
+                diffViewAddWidget={!!renderLineWidget}
+                renderWidgetLine={({ side, lineNumber, onClose }) =>
+                  renderLineWidget?.(path, {
+                    side: side === SplitSide.old ? "old" : "new",
+                    lineNumber,
+                    onClose,
+                  }) ?? null
+                }
               />
             )}
           </section>

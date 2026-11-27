@@ -9,12 +9,15 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { lazy, Suspense, useState, type ReactNode } from "react";
 import { apiText } from "../api/client";
 import { DIFF_VIEW_KEY, toDiffViewFiles } from "../api/diffview";
-import { approveMR, closeMR, getMR, mergeMR, reopenMR, unapproveMR } from "../api/mrs";
+import { addMRComment, approveMR, closeMR, getDiscussion, getMR, mergeMR, reopenMR, unapproveMR } from "../api/mrs";
 // The diff view (highlight.js grammars included) is the heaviest leaf in
 // the bundle — it code-splits behind the changes tab, as does the editor
 // the inline edit opens.
 const MrDiff = lazy(() => import("../components/MrDiff").then((m) => ({ default: m.MrDiff })));
 const MrFileEdit = lazy(() => import("../components/MrFileEdit").then((m) => ({ default: m.MrFileEdit })));
+const MrTimeline = lazy(() => import("../components/MrDiscussion").then((m) => ({ default: m.MrTimeline })));
+const MrReviewBar = lazy(() => import("../components/MrDiscussion").then((m) => ({ default: m.MrReviewBar })));
+import { Avatar } from "../components/Avatar";
 import { ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 import { useSession } from "../session";
 import { useRepoBase, useRepoId } from "../repo";
@@ -53,6 +56,28 @@ export function MergeRequestPage(): ReactNode {
 
   const mr = useQuery({ queryKey: ["mr", repo, iid], queryFn: () => getMR(repo, iid), retry: false });
   const view0 = mr.data;
+
+  // The discussion ledger + approval events — the timeline's data set.
+  const discussion = useQuery({
+    queryKey: ["mr-discussion", repo, iid],
+    queryFn: () => getDiscussion(repo, iid),
+    enabled: !!view0,
+    retry: false,
+  });
+  const comment = useMutation({
+    mutationFn: (a: { body: string; path?: string; side?: "old" | "new"; line?: number; parentID?: number }) =>
+      addMRComment(repo, iid, {
+        body: a.body,
+        path: a.path,
+        side: a.side,
+        line: a.line,
+        parent_id: a.parentID || 0,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["mr-discussion", repo, iid] });
+      qc.invalidateQueries({ queryKey: ["mr", repo, iid] });
+    },
+  });
 
   const diff = useQuery({
     queryKey: ["mr-diff", repo, iid, view0?.merge_base, view0?.source_tip],
@@ -104,6 +129,8 @@ export function MergeRequestPage(): ReactNode {
   const approvalsNeeded =
     view0?.rule_level === "mr-only" ? Math.max(view0.required_approvals, 1) : 0;
   const approvalsMet = !approvalsNeeded || (view0?.approvals?.length ?? 0) >= approvalsNeeded;
+  const blocking = view0?.blocking || [];
+  const blocked = open && blocking.length > 0;
 
   return (
     <>
@@ -111,7 +138,7 @@ export function MergeRequestPage(): ReactNode {
         !{view0?.iid} {view0?.title} {view0 && <Pill tone={open ? "warn" : "normal"}>{t(view0.state)}</Pill>}
       </h1>
       <p className="muted">
-        <code>{repo}</code> · <span className="mono">{view0?.source} → {view0?.target}</span> · {t("opened by {0}", view0?.author || "")}{" "}
+        <Avatar name={view0?.author || "?"} size={20} /> <code>{repo}</code> · <span className="mono">{view0?.source} → {view0?.target}</span> · {t("opened by {0}", view0?.author || "")}{" "}
         {whenStr(view0?.created_at)}
         {view0?.merge_commit && (
           <>
@@ -170,19 +197,43 @@ export function MergeRequestPage(): ReactNode {
                   onViewChange={setView}
                   onEdit={me ? setEditingPath : undefined}
                   editingPath={editingPath}
+                  comments={discussion.data?.comments}
+                  sourceTip={view0?.source_tip}
+                  canComment={!!me && open && !comment.isPending}
+                  onComment={
+                    me
+                      ? (body, path, side, line, parentID) =>
+                          comment.mutate({ body, path, side, line, parentID })
+                      : undefined
+                  }
                 />
+              </Suspense>
+            )}
+            {comment.error && (
+              <ErrorBox error={comment.error instanceof Error ? comment.error : String(comment.error)} />
+            )}
+            {me && open && view0 && (
+              <Suspense fallback={null}>
+                <MrReviewBar repo={repo} iid={iid} me={me} author={view0.author} onInvalidate={invalidate} />
               </Suspense>
             )}
           </>
         ))}
 
       {tab === "overview" && (
+        <>
         <div className="mr-overview">
           <section>
             <h3>{t("merge status")}</h3>
             {open ? (
               view0?.mergeable ? (
-                <p className="ok-text">{t("mergeable — no conflicts against {0}.", view0.target)}</p>
+                blocked ? (
+                  <div className="error-box">
+                    {t("request-changes outstanding from {0} — their re-review is the key, a push never dismisses it.", blocking.join(", "))}
+                  </div>
+                ) : (
+                  <p className="ok-text">{t("mergeable — no conflicts against {0}.", view0.target)}</p>
+                )
               ) : (
                 <div className="error-box">
                   {t("conflicts: ")}
@@ -201,7 +252,7 @@ export function MergeRequestPage(): ReactNode {
             )}
             {open && (
               <p className="act-row">
-                <button className="btn primary" disabled={!view0?.mergeable || !approvalsMet || act.isPending} onClick={() => act.mutate("merge")}>
+                <button className="btn primary" disabled={!view0?.mergeable || !approvalsMet || blocked || act.isPending} onClick={() => act.mutate("merge")}>
                   {t("merge")}
                 </button>
                 {me && me !== view0?.author && (
@@ -238,7 +289,10 @@ export function MergeRequestPage(): ReactNode {
             ) : (
               <ul className="approval-list">
                 {(view0?.approvals || []).map((u) => (
-                  <li key={u}>{u}</li>
+                  <li key={u}>
+                    <Avatar name={u} size={20} ring="ok" />
+                    <span className="mono">{u}</span>
+                  </li>
                 ))}
               </ul>
             )}
@@ -249,6 +303,26 @@ export function MergeRequestPage(): ReactNode {
             )}
           </section>
         </div>
+        {view0 && (
+          <Suspense fallback={<Spinner />}>
+            <MrTimeline
+              repo={repo}
+              iid={iid}
+              mr={{
+                author: view0.author,
+                created_at: view0.created_at,
+                state: view0.state,
+                merged_by: view0.merged_by || undefined,
+                updated_at: view0.updated_at,
+              }}
+              discussion={discussion.data}
+              sourceTip={view0.source_tip}
+              canAct={!!me}
+              onInvalidate={invalidate}
+            />
+          </Suspense>
+        )}
+        </>
       )}
     </>
   );
