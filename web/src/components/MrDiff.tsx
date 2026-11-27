@@ -31,7 +31,9 @@ function LineThreadBox({
 }): ReactNode {
   const t = useT();
   const [draft, setDraft] = useState("");
-  const [replyTo, setReplyTo] = useState(0); // 0 = a new head
+  // Opening a thread that already lives here starts in REPLY mode (the
+  // GitHub posture — the mockup's thread box); an empty line starts a head.
+  const [replyTo, setReplyTo] = useState(threads.length > 0 ? threads[0].id : 0); // 0 = a new head
   return (
     <div className="diff-comment-box">
       {threads.map((head) => (
