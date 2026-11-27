@@ -219,7 +219,8 @@ func (s *SQLMetaStore) CreateMRComment(ctx context.Context, in MRComment) (MRCom
 				return err
 			}
 			in.ID = id + 1
-			return txq(tx).Create(&mrCommentRow{MRComment: in}).Error
+			row := commentRow(in)
+			return txq(tx).Create(&row).Error
 		})
 		if err != nil {
 			if errors.Is(err, ErrMRUnknown) || errors.Is(err, ErrCommentUnknown) || !mrAllocationRetryable(err) {
@@ -244,7 +245,7 @@ func (s *SQLMetaStore) ListMRComments(ctx context.Context, repo string, iid int6
 	}
 	out := make([]MRComment, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, r.MRComment)
+		out = append(out, r.comment())
 	}
 	return out, nil
 }

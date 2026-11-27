@@ -210,13 +210,49 @@ type branchRuleRow struct {
 
 func (branchRuleRow) TableName() string { return "branch_rules" }
 
-// mrCommentRow embeds MRComment; resolved keeps the boolean-as-int shape
-// the other flags use (the PG-boolean pitfall).
+// mrCommentRow spells every column out — the embedded shape can't express
+// the boolean-as-int seam (the PG pitfall: a Go bool will not encode into
+// an INTEGER column), so Resolved is int here and converts at the seam.
 type mrCommentRow struct {
-	MRComment
+	Repo       string `gorm:"column:repo;primaryKey"`
+	IID        int64  `gorm:"column:iid;primaryKey"`
+	ID         int64  `gorm:"column:id;primaryKey"`
+	ParentID   int64  `gorm:"column:parent_id"`
+	Author     string
+	Body       string
+	Kind       string
+	Verdict    string
+	Path       string
+	Line       int
+	Side       string
+	AnchorOID  string `gorm:"column:anchor_oid"` // OID snake-cases to "o_id" (the registered trap)
+	Resolved   int
+	ResolvedBy string `gorm:"column:resolved_by"`
+	CreatedAt  int64  `gorm:"column:created_at"`
 }
 
 func (mrCommentRow) TableName() string { return "mr_comments" }
+
+func (r mrCommentRow) comment() MRComment {
+	return MRComment{
+		Repo: r.Repo, IID: r.IID, ID: r.ID, ParentID: r.ParentID, Author: r.Author,
+		Body: r.Body, Kind: r.Kind, Verdict: r.Verdict, Path: r.Path, Line: r.Line,
+		Side: r.Side, AnchorOID: r.AnchorOID, Resolved: r.Resolved != 0,
+		ResolvedBy: r.ResolvedBy, CreatedAt: r.CreatedAt,
+	}
+}
+
+func commentRow(c MRComment) mrCommentRow {
+	row := mrCommentRow{
+		Repo: c.Repo, IID: c.IID, ID: c.ID, ParentID: c.ParentID, Author: c.Author,
+		Body: c.Body, Kind: c.Kind, Verdict: c.Verdict, Path: c.Path, Line: c.Line,
+		Side: c.Side, AnchorOID: c.AnchorOID, ResolvedBy: c.ResolvedBy, CreatedAt: c.CreatedAt,
+	}
+	if c.Resolved {
+		row.Resolved = 1
+	}
+	return row
+}
 
 // groupRow embeds GroupInfo (docs/design/data-model.md §15). The tables
 // spell their names out — GROUPS is a reserved word on MySQL 8+ (window
