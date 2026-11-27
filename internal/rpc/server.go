@@ -86,6 +86,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/password", s.authn(s.handlePassword))            // password self-service (docs/gateway/authorization.md §2a)
 	mux.HandleFunc("/api/v1/auth/reset-password", s.authn(s.handleResetPassword)) // admin reset → random password + must-change (§2a)
 	mux.HandleFunc("/api/v1/auth/whoami", s.authn(s.handleWhoami))                // identity + must-change bit (the web tier's session face)
+	mux.HandleFunc("/api/v1/me/avatar", s.authn(s.handleMyAvatar))                // self-service avatar (the profile page's upload)
+	mux.HandleFunc("/api/v1/users/", s.authn(s.handleUserAvatar))                 // GET /api/v1/users/<name>/avatar (the console's per-name lookup)
 	mux.HandleFunc("/api/v1/diff", s.authn(s.handleDiff))                         // path diff (docs/project/roadmap.md M2)
 	mux.HandleFunc("/api/v1/blame", s.authn(s.handleBlame))                       // recursive blame (docs/project/roadmap.md M3)
 }
