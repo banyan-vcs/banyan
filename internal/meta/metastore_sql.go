@@ -472,6 +472,56 @@ PRIMARY KEY(repo, branch)
 	}
 }
 
+// mrCommentsDDL answers the discussion ledger (docs/design/merge-requests.md
+// §review): comments, replies, and review submissions in one table — the ID
+// allocates per merge request (MAX+1 under lock, the mrRow protocol), so the
+// composite key (repo, iid, id) is also the timeline order. The short
+// VARCHARs carry defaults for every dialect (MySQL cannot DEFAULT a TEXT
+// column) so the guarded re-run stays replayable.
+func mrCommentsDDL(dialect string) []string {
+	var oidType, userCol, sideCol, verdictCol, pathCol string
+	switch dialect {
+	case "mysql":
+		oidType = "VARCHAR(64) NOT NULL DEFAULT ''"
+		userCol = "VARCHAR(120) NOT NULL DEFAULT ''"
+		sideCol = "VARCHAR(8) NOT NULL DEFAULT ''"
+		verdictCol = "VARCHAR(16) NOT NULL DEFAULT ''"
+		pathCol = "VARCHAR(400) NOT NULL DEFAULT ''"
+	case "postgres":
+		oidType = "VARCHAR(64) NOT NULL DEFAULT ''"
+		userCol = "VARCHAR(120) NOT NULL DEFAULT ''"
+		sideCol = "VARCHAR(8) NOT NULL DEFAULT ''"
+		verdictCol = "VARCHAR(16) NOT NULL DEFAULT ''"
+		pathCol = "TEXT NOT NULL DEFAULT ''"
+	default:
+		oidType = "TEXT NOT NULL DEFAULT ''"
+		userCol = "TEXT NOT NULL DEFAULT ''"
+		sideCol = "TEXT NOT NULL DEFAULT ''"
+		verdictCol = "TEXT NOT NULL DEFAULT ''"
+		pathCol = "TEXT NOT NULL DEFAULT ''"
+	}
+	return []string{
+		`CREATE TABLE IF NOT EXISTS mr_comments(
+repo        ` + nameCol(dialect) + ` NOT NULL,
+iid         BIGINT NOT NULL,
+id          BIGINT NOT NULL,
+parent_id   BIGINT NOT NULL DEFAULT 0,
+author      ` + userCol + `,
+body        TEXT NOT NULL,
+kind        ` + shortCol(dialect) + ` NOT NULL,
+verdict     ` + verdictCol + `,
+path        ` + pathCol + `,
+line        INTEGER NOT NULL DEFAULT 0,
+side        ` + sideCol + `,
+anchor_oid  ` + oidType + `,
+resolved    INTEGER NOT NULL DEFAULT 0,
+resolved_by ` + userCol + `,
+created_at  BIGINT NOT NULL,
+PRIMARY KEY(repo, iid, id)
+)`,
+	}
+}
+
 // groupsDDL answers the group tables (docs/design/data-model.md §15): the
 // groups themselves and the repo→group assignment table. One optional label
 // per repo — natural keys, no auto-increment, the same shape on all three
@@ -549,12 +599,19 @@ PRIMARY KEY(fingerprint)
 // password change). No delete path: the writers are bootstrap, password
 // self-service, and the admin reset.
 func usersDDL(dialect string) []string {
+	// The avatar string is a sized VARCHAR on MySQL (TEXT cannot DEFAULT
+	// there) sized to MaxAvatarURL; the row-size budget stays comfortable.
+	avatarCol := "TEXT NOT NULL DEFAULT ''"
+	if dialect == "mysql" {
+		avatarCol = "VARCHAR(4000) NOT NULL DEFAULT ''"
+	}
 	return []string{
 		`CREATE TABLE IF NOT EXISTS users(
 username             ` + nameCol(dialect) + ` NOT NULL,
 password_hash        TEXT NOT NULL,
 is_admin             INTEGER NOT NULL DEFAULT 0,
 must_change_password INTEGER NOT NULL DEFAULT 0,
+avatar_url           ` + avatarCol + `,
 created_at           BIGINT NOT NULL,
 PRIMARY KEY(username)
 )`,

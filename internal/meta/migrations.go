@@ -122,6 +122,19 @@ var metaSteps = []ddl.Step{
 	// The must-change flag an administrator's password reset raises; the
 	// user's own password change clears it.
 	{Name: "0013-users-must-change", Up: usersMustChangeUp},
+	// The MR discussion ledger (docs/design/merge-requests.md §review):
+	// comments, replies, review submissions — same baseline/incremental
+	// split as the MR tables.
+	{Name: "0014-mr-comments", Up: mrCommentsUp},
+	// The account avatar: a data: or https: URL; empty = the name-initial
+	// default the console renders. MySQL sizes a VARCHAR (TEXT cannot
+	// DEFAULT there), the others take TEXT.
+	{Name: "0015-users-avatar", Up: func(q ddl.Q) error {
+		if q.Dialect() == "mysql" {
+			return addColumn(q, "users", "avatar_url", "VARCHAR(4000) NOT NULL DEFAULT ''")
+		}
+		return addColumn(q, "users", "avatar_url", "TEXT NOT NULL DEFAULT ''")
+	}},
 }
 
 // usersMustChangeUp is step 0013: the users.must_change_password column.
@@ -162,6 +175,16 @@ func usersUp(q ddl.Q) error {
 // groupTablesUp is step 0008: the groups and repo_groups tables.
 func groupTablesUp(q ddl.Q) error {
 	for _, stmt := range groupsDDL(q.Dialect()) {
+		if err := q.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mrCommentsUp is step 0014: the discussion ledger table.
+func mrCommentsUp(q ddl.Q) error {
+	for _, stmt := range mrCommentsDDL(q.Dialect()) {
 		if err := q.Exec(stmt); err != nil {
 			return err
 		}
@@ -216,5 +239,5 @@ func tableDDL(dialect string) []string {
 	default:
 		base = ddlSQLite()
 	}
-	return append(append(append(append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), groupsDDL(dialect)...), membersDDL(dialect)...), sshKeysDDL(dialect)...), usersDDL(dialect)...)
+	return append(append(append(append(append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), mrCommentsDDL(dialect)...), groupsDDL(dialect)...), membersDDL(dialect)...), sshKeysDDL(dialect)...), usersDDL(dialect)...)
 }

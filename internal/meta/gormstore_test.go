@@ -20,7 +20,7 @@ func TestRowModelsMatchSchema(t *testing.T) {
 	if err := ddl.AssertModelColumns(s.orm,
 		repoRow{}, timelineRow{}, packRow{}, packNodeRow{}, objectRow{}, placementRow{},
 		hookRow{}, repoBlobRow{}, repoPoolRow{}, renameFenceRow{}, tokenRow{}, subtreeRuleRow{},
-		mrRow{}, mrApprovalRow{}, branchRuleRow{}, groupRow{}, repoGroupRow{}, groupMemberRow{}, repoMemberRow{},
+		mrRow{}, mrApprovalRow{}, branchRuleRow{}, mrCommentRow{}, groupRow{}, repoGroupRow{}, groupMemberRow{}, repoMemberRow{},
 		sshKeyRow{}, userRow{},
 	); err != nil {
 		t.Fatal(err)

@@ -110,6 +110,17 @@ type MRStore interface {
 	RemoveApproval(ctx context.Context, repo string, iid int64, user string) error
 	// ListApprovals answers the MR's approvers, sorted by name.
 	ListApprovals(ctx context.Context, repo string, iid int64) ([]string, error)
+	// ListApprovalDetails answers the approvers WITH their timestamps —
+	// the discussion timeline's event rows (approval is an event, not just
+	// a count), sorted by name.
+	ListApprovalDetails(ctx context.Context, repo string, iid int64) ([]MRApproval, error)
+}
+
+// MRApproval is one recorded approval with its timestamp (the timeline's
+// event shape; ListApprovals stays the count-only view the merge gate reads).
+type MRApproval struct {
+	User string `json:"user"`
+	At   int64  `json:"at"`
 }
 
 // BranchRule is one branch's protection entry. Level RuleProtected mirrors
@@ -252,6 +263,20 @@ func (m *MemoryMetaStore) ListApprovals(_ context.Context, repo string, iid int6
 	}
 	sort.Strings(users)
 	return users, nil
+}
+
+func (m *MemoryMetaStore) ListApprovalDetails(_ context.Context, repo string, iid int64) ([]MRApproval, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.mrs[repo][iid]; !ok {
+		return nil, fmt.Errorf("%w: %s!%d", ErrMRUnknown, repo, iid)
+	}
+	out := make([]MRApproval, 0, len(m.mrApprovals[repo][iid]))
+	for u, at := range m.mrApprovals[repo][iid] {
+		out = append(out, MRApproval{User: u, At: at})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].User < out[j].User })
+	return out, nil
 }
 
 func (m *MemoryMetaStore) PutBranchRule(_ context.Context, r BranchRule) error {
@@ -445,6 +470,22 @@ func (s *SQLMetaStore) ListApprovals(ctx context.Context, repo string, iid int64
 		users = append(users, r.Username)
 	}
 	return users, nil
+}
+
+func (s *SQLMetaStore) ListApprovalDetails(ctx context.Context, repo string, iid int64) ([]MRApproval, error) {
+	if _, err := s.MRByIID(ctx, repo, iid); err != nil {
+		return nil, err
+	}
+	var rows []mrApprovalRow
+	if err := s.orm.WithContext(ctx).Model(&mrApprovalRow{}).
+		Where("repo = ? AND iid = ?", repo, iid).Order("username").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]MRApproval, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, MRApproval{User: r.Username, At: r.ApprovedAt})
+	}
+	return out, nil
 }
 
 func (s *SQLMetaStore) PutBranchRule(ctx context.Context, r BranchRule) error {

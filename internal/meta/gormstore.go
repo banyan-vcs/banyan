@@ -210,6 +210,14 @@ type branchRuleRow struct {
 
 func (branchRuleRow) TableName() string { return "branch_rules" }
 
+// mrCommentRow embeds MRComment; resolved keeps the boolean-as-int shape
+// the other flags use (the PG-boolean pitfall).
+type mrCommentRow struct {
+	MRComment
+}
+
+func (mrCommentRow) TableName() string { return "mr_comments" }
+
 // groupRow embeds GroupInfo (docs/design/data-model.md §15). The tables
 // spell their names out — GROUPS is a reserved word on MySQL 8+ (window
 // functions) and GROUP itself always was, so the entities live in
@@ -263,6 +271,7 @@ type userRow struct {
 	Password   string `gorm:"column:password_hash;not null"`
 	Admin      int    `gorm:"column:is_admin;not null"`
 	MustChange int    `gorm:"column:must_change_password;not null"`
+	AvatarURL  string `gorm:"column:avatar_url;not null;default:''"`
 	CreatedAt  int64  `gorm:"column:created_at;not null"`
 }
 
