@@ -291,17 +291,6 @@ header .brand {
 }
 .user-menu-pop button:hover { background: var(--bg-control); }
 .user-menu-pop button.user-menu-logout { color: var(--error); }
-.user-dot {
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--ink);
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
 
 .shell-body { display: flex; flex: 1; min-height: 0; }
 
@@ -1024,6 +1013,27 @@ button.link {
 
 /* the profile page's avatar row */
 .avatar-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
+
+/* the preset gallery (the visual design's avatar spec, screen 01): 24 flat
+   cartoon faces under the upload row — one face at a time, the same wire
+   an upload rides. The selected swatch wears the control border and the
+   input focus ring, the tokens the picker already speaks. */
+.pav-cap { font-size: 12px; color: var(--muted); margin: 14px 0 8px; }
+.pav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 8px; max-width: 620px; }
+.pav-item {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line-control);
+  border-radius: 999px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.pav-item img { width: 100%; height: 100%; display: block; }
+.pav-item:hover { transform: translateY(-1px); box-shadow: var(--shadow, 0 2px 8px rgba(0, 0, 0, 0.1)); }
+.pav-item.sel { border-color: var(--control); box-shadow: 0 0 0 3px var(--accent-ring); }
 .diff-browser { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
 
 /* The diff view's skin: the library's own palette retires — the console's

@@ -7,13 +7,14 @@
 // sections — SSH Keys and Access Tokens — behind the settings sidebar.
 // Everything here is per-user, never repo-scoped.
 import { useEffect, useState, type ReactNode } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { putMyAvatar } from "../api/users";
+import { getUserAvatar, putMyAvatar } from "../api/users";
 import { useLocale, useT, type Locale, type LocaleChoice } from "../i18n";
 import { effectiveDark, setTheme, storedTheme, type ThemeChoice } from "../theme";
 import { useSession } from "../session";
 import { Avatar } from "../components/Avatar";
+import { PRESET_AVATARS } from "../components/presetAvatars";
 
 const CHOICES: { value: ThemeChoice; label: string; hint: string }[] = [
   { value: "auto", label: "auto", hint: "day or night, whatever the OS says" },
@@ -97,14 +98,26 @@ function LanguageSection(): ReactNode {
 
 /** AvatarSection: the account's custom face (the v2 design's avatar spec —
  * docs/design/merge-requests.md §review). The default is the name's first
- * character, rendered client-side; this section uploads a replacement:
- * the picker resizes to a 64px round-trip JPEG before it leaves the
- * browser (the wire cap is 4000 chars), the preview shows exactly what
- * lands, and clearing returns the initial. */
-function AvatarSection(): ReactNode {
+ * character, rendered client-side; a replacement arrives two ways — an
+ * upload (the picker resizes to a 64px round-trip JPEG before it leaves
+ * the browser; the wire cap is 4000 chars) or one of the 24 presets from
+ * the visual design, which stores the SVG as the same data: URL an upload
+ * stores, so the two are mutually exclusive by construction: one column,
+ * one face. Clearing returns the initial. Exported for its test. */
+export function AvatarSection(): ReactNode {
   const t = useT();
   const { info: session } = useSession();
   const qc = useQueryClient();
+  const me = session?.user || "";
+  // the gallery's selected state reads the same cached row the mutation
+  // writes below — one query key, no second source of truth
+  const av = useQuery({
+    queryKey: ["avatar", me],
+    queryFn: () => getUserAvatar(me),
+    enabled: me !== "",
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
   const [error, setError] = useState("");
   const put = useMutation({
     mutationFn: (avatarUrl: string) => putMyAvatar(avatarUrl),
@@ -145,7 +158,7 @@ function AvatarSection(): ReactNode {
     <section>
       <h2>{t("Avatar")}</h2>
       <p className="muted">
-        {t("the default is your name's first character; a custom avatar replaces it everywhere (a failed load falls back to the initial).")}
+        {t("the default is your name's first character; an upload or a preset replaces it everywhere (a failed load falls back to the initial).")}
       </p>
       <div className="avatar-row">
         <Avatar name={session?.user || "?"} size={34} />
@@ -176,6 +189,25 @@ function AvatarSection(): ReactNode {
         <button className="btn ghost" onClick={() => put.mutate("")} disabled={put.isPending}>
           {t("clear (back to the initial)")}
         </button>
+      </div>
+      <div className="pav-cap">{t("or pick one of the 24 presets — same effect as an upload, one face at a time")}</div>
+      <div className="pav-grid">
+        {PRESET_AVATARS.map((p) => {
+          const sel = (av.data?.avatarUrl || "") === p.url;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              className={"pav-item" + (sel ? " sel" : "")}
+              title={t(p.title)}
+              aria-pressed={sel}
+              disabled={put.isPending}
+              onClick={() => put.mutate(p.url)}
+            >
+              <img src={p.url} alt="" />
+            </button>
+          );
+        })}
       </div>
       {error && <div className="error-box">{error}</div>}
     </section>
