@@ -17,6 +17,13 @@ export function avatarInitial(name: string): string {
   return "?";
 }
 
+// avatarSizeClass names the ladder slot in the stylesheet's vocabulary —
+// spelled in one place, so the emitted class and styles.less cannot drift
+// apart again (a rename once split them: every size fell back to the 20px base).
+export function avatarSizeClass(size: 16 | 20 | 26 | 34): string {
+  return `avatar-${size}`;
+}
+
 export function Avatar({
   name,
   size = 20,
@@ -36,7 +43,7 @@ export function Avatar({
     retry: false,
   });
   const url = av.data?.avatarUrl || "";
-  const cls = `avatar av-${size}` + (ring === "ok" ? " ring-ok" : "");
+  const cls = `avatar ${avatarSizeClass(size)}` + (ring === "ok" ? " ring-ok" : "");
   if (url && !failed) {
     return <img className={cls} src={url} alt="" title={title || name} onError={() => setFailed(true)} />;
   }
