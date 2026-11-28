@@ -9,22 +9,30 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
-func runUser(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return usageErr(stderr, "user: want reset-password <name>")
+func newUserCmd(stdout, stderr io.Writer) *cobra.Command {
+	parent := &cobra.Command{
+		Use:   "user",
+		Short: "account administration",
+		RunE: familyRun(stderr,
+			"user: want reset-password <name>",
+			"user: unknown subcommand %q (want reset-password)"),
 	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "reset-password":
-		if len(rest) != 1 {
-			return usageErr(stderr, "user reset-password: want <name>")
-		}
-		return runUserReset(rest[0], stdout, stderr)
-	default:
-		return usageErr(stderr, "user: unknown subcommand %q (want reset-password)", sub)
-	}
+	parent.AddCommand(&cobra.Command{
+		Use:   "reset-password <name>",
+		Short: "admin: reset one account (random password, shown once)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if code := runUserReset(args[0], stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
+	})
+	return parent
 }
 
 // runUserReset is a server-side admin act: no workspace involved, the

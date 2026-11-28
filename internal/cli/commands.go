@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/spf13/cobra"
+
 	"github.com/banyan-vcs/banyan/internal/cliproto"
 	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
@@ -85,30 +87,29 @@ func defaultAuthor() (name, email string) {
 
 // --- clone: minimal download — view tree + checkout blobs, never history ---
 
-func runClone(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	var rawurl, dir, sparseCSV, branch string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--sparse" && i+1 < len(args):
-			i++
-			sparseCSV = args[i]
-		case (a == "--branch" || a == "-b") && i+1 < len(args):
-			i++
-			branch = args[i]
-		case strings.HasPrefix(a, "-") && a != "-":
-			return usageErr(stderr, "clone: unknown flag %q", a)
-		case rawurl == "":
-			rawurl = a
-		case dir == "":
-			dir = a
-		default:
-			return usageErr(stderr, "clone: unexpected argument %q", a)
-		}
+func newCloneCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	var sparseCSV, branch string
+	cmd := &cobra.Command{
+		Use:   "clone <url>[/tree/<dir>] [dir]",
+		Short: "minimal clone — view tree + checkout blobs, never history",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			dir := ""
+			if len(args) == 2 {
+				dir = args[1]
+			}
+			if code := runClone(*wsRoot, args[0], dir, sparseCSV, branch, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
 	}
-	if rawurl == "" {
-		return usageErr(stderr, "clone: URL required (http://host/r/<repo>[/tree/<path>])")
-	}
+	cmd.Flags().StringVar(&sparseCSV, "sparse", "", "comma-separated subtree filter (download only these paths)")
+	cmd.Flags().StringVarP(&branch, "branch", "b", "", "branch to fetch (default: the repo's default)")
+	return cmd
+}
+
+func runClone(wsRoot, rawurl, dir, sparseCSV, branch string, stdout, stderr io.Writer) int {
 	base, repo, sub, user, pass, err := parseCloneURL(rawurl)
 	if err != nil {
 		return usageErr(stderr, "%v", err)
@@ -170,7 +171,16 @@ func runClone(wsRoot string, args []string, stdout, stderr io.Writer) int {
 
 // --- status: offline manifest vs working copy ---
 
-func runStatus(wsRoot string, args []string, stdout, stderr io.Writer) int {
+func newStatusCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "manifest vs worktree (offline)",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return runStatus(*wsRoot, stdout, stderr) }),
+	}
+}
+
+func runStatus(wsRoot string, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)
@@ -199,26 +209,21 @@ func runStatus(wsRoot string, args []string, stdout, stderr io.Writer) int {
 
 // --- commit: scan → upload new blobs → server-side assembly (docs/client/cli.md §4.2) ---
 
-func runCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
+func newCommitCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
 	var message, name, email string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-m" && i+1 < len(args):
-			i++
-			message = args[i]
-		case a == "--name" && i+1 < len(args):
-			i++
-			name = args[i]
-		case a == "--email" && i+1 < len(args):
-			i++
-			email = args[i]
-		case strings.HasPrefix(a, "-"):
-			return usageErr(stderr, "commit: unknown flag %q", a)
-		default:
-			return usageErr(stderr, "commit: unexpected argument %q", a)
-		}
+	cmd := &cobra.Command{
+		Use:   "commit -m <message> [--name n] [--email e]",
+		Short: "scan → upload → server-side assembly",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return runCommit(*wsRoot, message, name, email, stdout, stderr) }),
 	}
+	cmd.Flags().StringVarP(&message, "message", "m", "", "commit message (required)")
+	cmd.Flags().StringVar(&name, "name", "", "author name (default: $USER)")
+	cmd.Flags().StringVar(&email, "email", "", "author email (default: <name>@banyan.local)")
+	return cmd
+}
+
+func runCommit(wsRoot, message, name, email string, stdout, stderr io.Writer) int {
 	if message == "" {
 		return usageErr(stderr, "commit: -m <message> required")
 	}
@@ -323,7 +328,16 @@ func runCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
 
 // --- pull: server-side tree-diff — the download equals the checkout difference ---
 
-func runPull(wsRoot string, args []string, stdout, stderr io.Writer) int {
+func newPullCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "pull",
+		Short: "server tree-diff increment",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return runPull(*wsRoot, stdout, stderr) }),
+	}
+}
+
+func runPull(wsRoot string, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)
@@ -430,23 +444,28 @@ func pullCore(ws *workspace, st *status, c *client, stdout, stderr io.Writer) in
 
 // --- log: remote history, zero download ---
 
-func runLog(wsRoot string, args []string, stdout, stderr io.Writer) int {
+func newLogCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
 	limit := 20
-	var path string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-n" && i+1 < len(args):
-			i++
-			fmt.Sscanf(args[i], "%d", &limit)
-		case strings.HasPrefix(a, "-"):
-			return usageErr(stderr, "log: unknown flag %q", a)
-		case path == "":
-			path = a
-		default:
-			return usageErr(stderr, "log: unexpected argument %q", a)
-		}
+	cmd := &cobra.Command{
+		Use:   "log [path]",
+		Short: "remote history, zero download",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			path := ""
+			if len(args) == 1 {
+				path = args[0]
+			}
+			if code := runLog(*wsRoot, limit, path, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
 	}
+	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "entries to show")
+	return cmd
+}
+
+func runLog(wsRoot string, limit int, path string, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)
@@ -477,13 +496,24 @@ func runLog(wsRoot string, args []string, stdout, stderr io.Writer) int {
 
 // --- cat: rev:path → stdout (HEAD resolves locally from the cache) ---
 
-func runCat(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 {
-		return usageErr(stderr, "cat: exactly one argument ([rev:]<path>)")
+func newCatCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "cat [rev:]<path>",
+		Short: "object content (HEAD resolves locally)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if code := runCat(*wsRoot, args[0], stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
 	}
-	rev, path := "HEAD", args[0]
-	if i := strings.Index(args[0], ":"); i >= 0 {
-		rev, path = args[0][:i], args[0][i+1:]
+}
+
+func runCat(wsRoot, arg string, stdout, stderr io.Writer) int {
+	rev, path := "HEAD", arg
+	if i := strings.Index(arg, ":"); i >= 0 {
+		rev, path = arg[:i], arg[i+1:]
 	}
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
@@ -565,23 +595,34 @@ func catLocal(ws *workspace, c *client, rev, path string) ([]byte, error) {
 
 // --- fetch-objects: machine backfill into the cache ---
 
-func runFetchObjects(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return usageErr(stderr, "fetch-objects: at least one oid required")
+func newFetchObjectsCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "fetch-objects <oid>...",
+		Short: "backfill objects into the cache",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if code := runFetchObjects(*wsRoot, args, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
 	}
+}
+
+func runFetchObjects(wsRoot string, oids []string, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
 	c := wsClient(ws)
 	fetched := 0
-	if got, err := c.getObjectsBatch(ws.cfg.Repo, args); err == nil {
+	if got, err := c.getObjectsBatch(ws.cfg.Repo, oids); err == nil {
 		for oid, data := range got {
 			ws.cachePut(oid, data)
 			fetched++
 		}
 	}
-	for _, oid := range args { // whatever the batch missed (or an old server)
+	for _, oid := range oids { // whatever the batch missed (or an old server)
 		if _, ok := ws.cacheGet(oid); ok {
 			continue
 		}
@@ -598,18 +639,21 @@ func runFetchObjects(wsRoot string, args []string, stdout, stderr io.Writer) int
 
 // --- gc: prune the object cache to a byte cap ---
 
-func runGC(wsRoot string, args []string, stdout, stderr io.Writer) int {
+func newGCCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
 	maxMB := 1024
-	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "-max-mb" && i+1 < len(args):
-			i++
-			if _, err := fmt.Sscanf(args[i], "%d", &maxMB); err != nil || maxMB < 0 {
-				return usageErr(stderr, "gc: -max-mb wants a non-negative number")
-			}
-		default:
-			return usageErr(stderr, "gc: unknown argument %q", args[i])
-		}
+	cmd := &cobra.Command{
+		Use:   "gc",
+		Short: "prune the object cache to a byte cap (default 1024 MiB)",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return runGC(*wsRoot, maxMB, stdout, stderr) }),
+	}
+	cmd.Flags().IntVar(&maxMB, "max-mb", 1024, "cache cap in MiB (the legacy -max-mb spelling still parses)")
+	return cmd
+}
+
+func runGC(wsRoot string, maxMB int, stdout, stderr io.Writer) int {
+	if maxMB < 0 {
+		return usageErr(stderr, "gc: -max-mb wants a non-negative number")
 	}
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
@@ -622,7 +666,25 @@ func runGC(wsRoot string, args []string, stdout, stderr io.Writer) int {
 
 // --- branch / tag: remote refs listing ---
 
-func runRefsList(wsRoot string, args []string, stdout, stderr io.Writer, prefix string) int {
+func newBranchCmd(wsRoot *string, stdout, stderr io.Writer, prefix string) *cobra.Command {
+	name := "branch"
+	short := "list remote branches"
+	if prefix != "refs/heads/" {
+		name, short = "tag", "list remote tags"
+	}
+	return &cobra.Command{
+		Use:   name,
+		Short: short,
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return runRefsList(*wsRoot, stdout, stderr, prefix) }),
+	}
+}
+
+func newTagCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	return newBranchCmd(wsRoot, stdout, stderr, "refs/tags/")
+}
+
+func runRefsList(wsRoot string, stdout, stderr io.Writer, prefix string) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)
@@ -644,10 +706,25 @@ func runRefsList(wsRoot string, args []string, stdout, stderr io.Writer, prefix 
 
 // --- repo: registry listing ---
 
-func runRepo(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 || args[0] != "ls" {
-		return usageErr(stderr, "repo: only `repo ls` is supported")
+func newRepoCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	repo := &cobra.Command{
+		Use:   "repo",
+		Short: "registry commands (ls)",
+		RunE: func(_ *cobra.Command, args []string) error {
+			// Any non-ls spelling keeps the historical single message.
+			return &exitError{usageErr(stderr, "repo: only `repo ls` is supported")}
+		},
 	}
+	repo.AddCommand(&cobra.Command{
+		Use:   "ls",
+		Short: "list server repos (needs a workspace or BANYAN_SERVER)",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return runRepo(*wsRoot, stdout, stderr) }),
+	})
+	return repo
+}
+
+func runRepo(wsRoot string, stdout, stderr io.Writer) int {
 	var server string
 	if ws, err := loadWorkspace(wsRoot); err == nil {
 		server = ws.cfg.Server

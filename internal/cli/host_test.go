@@ -41,7 +41,7 @@ func TestLogoutRevokesServerSide(t *testing.T) {
 
 	putCred(srv.URL, credential{User: "alice", Token: "banyan_live", Method: "web", Expires: time.Now().Add(time.Hour).Unix()})
 	var out, errb strings.Builder
-	require.Equal(t, 0, runLogout("/nonexistent", []string{srv.URL}, &out, &errb))
+	require.Equal(t, 0, Run([]string{"-C", "/nonexistent", "logout", srv.URL}, &out, &errb))
 	assert.Contains(t, out.String(), "revoked the server-side session")
 	assert.Equal(t, "/api/v1/auth/tokens/"+meta.HashToken("banyan_live"), gotPath,
 		"logout self-revokes via the token's sha256 (own tokens only)")
@@ -51,7 +51,7 @@ func TestLogoutRevokesServerSide(t *testing.T) {
 	// An unreachable server must not block local logout (best-effort).
 	putCred("http://127.0.0.1:1", credential{User: "bob", Token: "banyan_dead", Method: "web", Expires: time.Now().Add(time.Hour).Unix()})
 	out.Reset()
-	assert.Equal(t, 0, runLogout("/nonexistent", []string{"http://127.0.0.1:1"}, &out, &errb))
+	assert.Equal(t, 0, Run([]string{"-C", "/nonexistent", "logout", "http://127.0.0.1:1"}, &out, &errb))
 	assert.NotContains(t, out.String(), "revoked")
 	assert.Nil(t, credForHost("http://127.0.0.1:1"))
 }
@@ -97,7 +97,7 @@ func TestHostLsAndUse(t *testing.T) {
 
 	// Empty store: an informational zero, not an error.
 	var out, errb strings.Builder
-	assert.Equal(t, 0, runHost([]string{"ls"}, &out, &errb))
+	assert.Equal(t, 0, Run([]string{"host", "ls"}, &out, &errb))
 	assert.Contains(t, out.String(), "no configured servers")
 
 	future := time.Now().Add(time.Hour).Unix()
@@ -105,13 +105,13 @@ func TestHostLsAndUse(t *testing.T) {
 	putCred("http://b.corp", credential{User: "bob", Token: "banyan_b", Method: "web", Expires: future})
 
 	out.Reset()
-	assert.Equal(t, 0, runHost([]string{"ls"}, &out, &errb))
+	assert.Equal(t, 0, Run([]string{"host", "ls"}, &out, &errb))
 	assert.Contains(t, out.String(), "* http://a.corp  alice via ssh") // the default is marked
 	assert.Contains(t, out.String(), "  http://b.corp  bob via web")
 	assert.Contains(t, out.String(), "switch with: banyan host use")
 
 	out.Reset()
-	assert.Equal(t, 0, runHost([]string{"ls", "--json"}, &out, &errb))
+	assert.Equal(t, 0, Run([]string{"host", "ls", "--json"}, &out, &errb))
 	var rows []struct {
 		Server  string `json:"server"`
 		Default bool   `json:"default"`
@@ -124,18 +124,18 @@ func TestHostLsAndUse(t *testing.T) {
 
 	// Explicit switch, unknown host, and the non-interactive hint.
 	out.Reset()
-	assert.Equal(t, 0, runHost([]string{"use", "http://b.corp/"}, &out, &errb))
+	assert.Equal(t, 0, Run([]string{"host", "use", "http://b.corp/"}, &out, &errb))
 	assert.Contains(t, out.String(), "default server: http://b.corp")
 	assert.Equal(t, "http://b.corp", loadConfig().DefaultHost)
 
 	out.Reset()
 	errb.Reset()
-	assert.Equal(t, 2, runHost([]string{"use", "http://unknown.io"}, &out, &errb))
+	assert.Equal(t, 2, Run([]string{"host", "use", "http://unknown.io"}, &out, &errb))
 	assert.Contains(t, errb.String(), "not a configured server")
 
 	out.Reset()
 	errb.Reset()
-	assert.Equal(t, 2, runHost([]string{"use"}, &out, &errb))
+	assert.Equal(t, 2, Run([]string{"host", "use"}, &out, &errb))
 	assert.Contains(t, errb.String(), "pass the server")
 }
 

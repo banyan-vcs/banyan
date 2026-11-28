@@ -11,12 +11,20 @@ package cli
 import (
 	"fmt"
 	"io"
+
+	"github.com/spf13/cobra"
 )
 
-func runSync(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 {
-		return usageErr(stderr, "sync: unexpected argument %q", args[0])
+func newSyncCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "sync",
+		Short: "subtree→root alignment (server-side rebase, then pull)",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return runSync(*wsRoot, stdout, stderr) }),
 	}
+}
+
+func runSync(wsRoot string, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)

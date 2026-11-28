@@ -16,44 +16,38 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
-func runImport(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	var src, dst string
-	branch := "main"
-	segmentBytes := int64(3 << 30)
-	dryRun := false
-	i := 0
-	for i < len(args) {
-		a := args[i]
-		switch {
-		case a == "--branch" && i+1 < len(args):
-			branch = args[i+1]
-			i += 2
-		case a == "--segment-bytes" && i+1 < len(args):
-			n, err := parseBytes(args[i+1])
-			if err != nil {
-				return usageErr(stderr, "import: --segment-bytes %q: %v", args[i+1], err)
+func newImportCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	var branch, segmentBytesRaw string
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "import <local-repo> <server-url>",
+		Short: "bulk-migrate a local git repo, segment by segment",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if code := runImport(*wsRoot, args[0], args[1], branch, segmentBytesRaw, dryRun, stdout, stderr); code != 0 {
+				return &exitError{code}
 			}
-			segmentBytes = n
-			i += 2
-		case a == "--dry-run":
-			dryRun = true
-			i++
-		case strings.HasPrefix(a, "--"):
-			return usageErr(stderr, "import: unknown flag %q", a)
-		case src == "":
-			src = a
-			i++
-		case dst == "":
-			dst = a
-			i++
-		default:
-			return usageErr(stderr, "import: unexpected argument %q", a)
-		}
+			return nil
+		},
 	}
-	if src == "" || dst == "" {
-		return usageErr(stderr, "import: <local-repo> <server-url> required (credentials ride the URL, e.g. http://admin:pass@host/r/repo.git)")
+	cmd.Flags().StringVar(&branch, "branch", "main", "the branch to import")
+	cmd.Flags().StringVar(&segmentBytesRaw, "segment-bytes", "3G", "per-push byte budget (K/M/G suffixes, binary)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "plan the segments without pushing")
+	return cmd
+}
+
+func runImport(wsRoot, src, dst, branch, segmentBytesRaw string, dryRun bool, stdout, stderr io.Writer) int {
+	segmentBytes := int64(3 << 30)
+	if segmentBytesRaw != "" {
+		n, err := parseBytes(segmentBytesRaw)
+		if err != nil {
+			return usageErr(stderr, "import: --segment-bytes %q: %v", segmentBytesRaw, err)
+		}
+		segmentBytes = n
 	}
 	if segmentBytes < 16<<10 {
 		return usageErr(stderr, "import: --segment-bytes must be ≥ 16KiB")

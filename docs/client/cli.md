@@ -253,6 +253,16 @@ ssh_host_keys:               # SSH TOFU 主机指纹钉扎（变更即拒）
 - 非交互默认（无提示式向导），只读命令幂等；
 - 退出码：`0` 成功 / `1` 冲突 / `2` 服务端错误 / `3` 网络错误——脚本可分支。
 
+### 5a. 命令分发（spf13/cobra，2026-11-28 落地）
+
+命令树由 spf13/cobra 构建（internal/cli）：`banyan --help` /
+`banyan help <command>` 生成帮助，`banyan completion <shell>` 出补全脚本。
+行为契约不变：`Run(argv, stdout, stderr) int` 接缝、退出码语义、
+"error:" 前缀诊断都保留；单横线长旗标（`banyan gc -max-mb 64` 这类
+历史拼法）与双横线等价解析；全局 `-C` / `--config` 现在可出现在
+子命令之后（旧解析器只认前置）。`merge-request` 是规范拼写，
+`mergeRequest` 作为别名保留（初版分发词）。
+
 ## 6. 与 git 客户端的关系（`--git` 姿态，保留原案）
 
 ```

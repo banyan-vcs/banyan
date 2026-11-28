@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/banyan-vcs/banyan/internal/cliproto"
 )
 
@@ -115,46 +117,81 @@ func stackBlobPath(root, oid string) string {
 	return filepath.Join(root, stackBlobs, oid)
 }
 
-// runStack dispatches the stack subcommands.
-func runStack(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return usageErr(stderr, "stack: subcommand required (push | ls | pop | drop | commit)")
+// newStackCmd builds the stack family (push | ls | pop | drop | commit).
+func newStackCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	parent := &cobra.Command{
+		Use:   "stack",
+		Short: "a local queue of path-scoped changesets",
+		RunE: familyRun(stderr,
+			"stack: subcommand required (push | ls | pop | drop | commit)",
+			"stack: unknown subcommand %q (push | ls | pop | drop | commit)"),
 	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "push":
-		return stackPush(wsRoot, rest, stdout, stderr)
-	case "ls":
-		return stackList(wsRoot, stdout, stderr)
-	case "pop":
-		return stackPop(wsRoot, stdout, stderr)
-	case "drop":
-		return stackDrop(wsRoot, rest, stdout, stderr)
-	case "commit":
-		return stackCommit(wsRoot, rest, stdout, stderr)
-	default:
-		return usageErr(stderr, "stack: unknown subcommand %q (push | ls | pop | drop | commit)", sub)
+	var message string
+	push := &cobra.Command{
+		Use:   "push -m <message> [path...]",
+		Short: "capture dirty paths as a queued changeset",
+		RunE: func(_ *cobra.Command, args []string) error {
+			if code := stackPush(*wsRoot, message, args, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
 	}
+	push.Flags().StringVarP(&message, "message", "m", "", "entry message (required)")
+	parent.AddCommand(push)
+	parent.AddCommand(&cobra.Command{
+		Use:   "ls",
+		Short: "list queued entries (oldest first)",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return stackList(*wsRoot, stdout, stderr) }),
+	})
+	parent.AddCommand(&cobra.Command{
+		Use:   "pop",
+		Short: "re-apply the top entry to the working tree",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return stackPop(*wsRoot, stdout, stderr) }),
+	})
+	parent.AddCommand(&cobra.Command{
+		Use:   "drop <id>",
+		Short: "remove one queued entry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			id, err := strconv.Atoi(args[0])
+			if err != nil {
+				return &exitError{usageErr(stderr, "stack drop: bad id %q", args[0])}
+			}
+			if code := stackDrop(*wsRoot, id, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
+	})
+	parent.AddCommand(&cobra.Command{
+		Use:   "commit [<id>]",
+		Short: "land entries oldest-first via /api/v1/commit",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			wantID := 0
+			if len(args) == 1 {
+				id, err := strconv.Atoi(args[0])
+				if err != nil {
+					return &exitError{usageErr(stderr, "stack commit: bad id %q", args[0])}
+				}
+				wantID = id
+			}
+			if code := stackCommit(*wsRoot, wantID, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
+	})
+	return parent
 }
 
 // stackPush captures the selected dirty paths as one entry and reverts them
 // locally. Path args match exactly or by directory prefix; with no args the
 // whole dirty set (modified + deleted + untracked) is captured.
-func stackPush(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	var message string
-	var paths []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-m" && i+1 < len(args):
-			i++
-			message = args[i]
-		case strings.HasPrefix(a, "-"):
-			return usageErr(stderr, "stack push: unknown flag %q", a)
-		default:
-			paths = append(paths, a)
-		}
-	}
+func stackPush(wsRoot, message string, paths []string, stdout, stderr io.Writer) int {
 	if message == "" {
 		return usageErr(stderr, "stack push: -m <message> required")
 	}
@@ -398,14 +435,7 @@ func stackPop(wsRoot string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func stackDrop(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 {
-		return usageErr(stderr, "stack drop: <id> required")
-	}
-	id, err := strconv.Atoi(args[0])
-	if err != nil {
-		return usageErr(stderr, "stack drop: bad id %q", args[0])
-	}
+func stackDrop(wsRoot string, id int, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)
@@ -432,21 +462,7 @@ func stackDrop(wsRoot string, args []string, stdout, stderr io.Writer) int {
 // it holds, so a moved base fails the first landing with CONFLICT_BASE_MOVED
 // — "pull, retry" then lands everything on the fresh base. Landed entries are
 // consumed; untouched ones survive the failure verbatim.
-func stackCommit(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	wantID := 0
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case !strings.HasPrefix(a, "-") && wantID == 0:
-			id, err := strconv.Atoi(a)
-			if err != nil {
-				return usageErr(stderr, "stack commit: bad id %q", a)
-			}
-			wantID = id
-		default:
-			return usageErr(stderr, "stack commit: unexpected argument %q", a)
-		}
-	}
+func stackCommit(wsRoot string, wantID int, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)

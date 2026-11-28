@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 const snapshotsDir = ".banyan/snapshots"
@@ -37,52 +39,68 @@ type snapshotDoc struct {
 	Message   string               `json:"message,omitempty"`
 	Commit    string               `json:"commit"` // manifest at save time
 	Tree      string               `json:"tree"`
-	Files     map[string]fileState `json:"files"`                // tracked state at save
-	Modified  []string             `json:"modified,omitempty"`   // dirty at save — bytes in files/
-	Deleted   []string             `json:"deleted,omitempty"`    // tracked, missing at save
+	Files     map[string]fileState `json:"files"`               // tracked state at save
+	Modified  []string             `json:"modified,omitempty"`  // dirty at save — bytes in files/
+	Deleted   []string             `json:"deleted,omitempty"`   // tracked, missing at save
 	Untracked []untrackedSnapshot  `json:"untracked,omitempty"` // not tracked at save — bytes in files/
 }
 
-// runSnapshot dispatches the snapshot subcommands (save is the default).
-func runSnapshot(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	sub := "save"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		sub, args = args[0], args[1:]
+// newSnapshotCmd builds the snapshot family. Save is the default subcommand:
+// bare `snapshot -m msg` still checkpoints, so the save flags ride the
+// parent as persistent flags — one definition serves both spellings.
+func newSnapshotCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	var message, name string
+	parent := &cobra.Command{
+		Use:   "snapshot",
+		Short: "checkpoint the working state (offline; save is the default)",
+		RunE:  cmdRun(func() int { return snapSave(*wsRoot, message, name, stdout, stderr) }),
 	}
-	switch sub {
-	case "save":
-		return snapSave(wsRoot, args, stdout, stderr)
-	case "ls":
-		return snapList(wsRoot, stdout, stderr)
-	case "apply":
-		return snapApply(wsRoot, args, stdout, stderr)
-	case "drop":
-		return snapDrop(wsRoot, args, stdout, stderr)
-	default:
-		return usageErr(stderr, "snapshot: unknown subcommand %q (save | ls | apply | drop)", sub)
+	parent.PersistentFlags().StringVarP(&message, "message", "m", "", "checkpoint description")
+	parent.PersistentFlags().StringVarP(&name, "name", "n", "", "checkpoint name (default: snap-<N>)")
+	parent.AddCommand(&cobra.Command{
+		Use:   "save",
+		Short: "checkpoint the working state (offline)",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return snapSave(*wsRoot, message, name, stdout, stderr) }),
+	})
+	parent.AddCommand(&cobra.Command{
+		Use:   "ls",
+		Short: "list checkpoints",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return snapList(*wsRoot, stdout, stderr) }),
+	})
+	var force bool
+	apply := &cobra.Command{
+		Use:   "apply <name>",
+		Short: "restore a checkpoint byte for byte",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if code := snapApply(*wsRoot, args[0], force, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
 	}
+	apply.Flags().BoolVar(&force, "force", false, "apply onto a dirty tree")
+	parent.AddCommand(apply)
+	parent.AddCommand(&cobra.Command{
+		Use:   "drop <name>",
+		Short: "remove a checkpoint",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if code := snapDrop(*wsRoot, args[0], stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
+	})
+	return parent
 }
 
 // snapSave checkpoints the current working state. The working tree is left
 // untouched — unlike git stash there is no implicit revert; restore is an
 // explicit `snapshot apply`.
-func snapSave(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	var message, name string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-m" && i+1 < len(args):
-			i++
-			message = args[i]
-		case (a == "-n" || a == "--name") && i+1 < len(args):
-			i++
-			name = args[i]
-		case strings.HasPrefix(a, "-"):
-			return usageErr(stderr, "snapshot save: unknown flag %q", a)
-		default:
-			return usageErr(stderr, "snapshot save: unexpected argument %q", a)
-		}
-	}
+func snapSave(wsRoot, message, name string, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)
@@ -233,23 +251,7 @@ func loadSnapshot(root, name string) (*snapshotDoc, error) {
 // server, if the cache was pruned). Tracked files that landed after the
 // snapshot disappear locally (the server keeps them); untracked files created
 // since are left alone. Refuses a dirty tree unless --force.
-func snapApply(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	var name string
-	force := false
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--force":
-			force = true
-		case !strings.HasPrefix(a, "-") && name == "":
-			name = a
-		default:
-			return usageErr(stderr, "snapshot apply: unexpected argument %q", a)
-		}
-	}
-	if name == "" {
-		return usageErr(stderr, "snapshot apply: <name> required")
-	}
+func snapApply(wsRoot, name string, force bool, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)
@@ -346,15 +348,11 @@ func writeFileState(root, rel string, data []byte, mode string) error {
 	return os.WriteFile(dst, data, perm)
 }
 
-func snapDrop(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 {
-		return usageErr(stderr, "snapshot drop: <name> required")
-	}
+func snapDrop(wsRoot, name string, stdout, stderr io.Writer) int {
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
 		return cmdErr(stderr, err)
 	}
-	name := args[0]
 	if !validSnapshotName(name) {
 		return usageErr(stderr, "snapshot drop: invalid name %q", name)
 	}

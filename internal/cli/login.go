@@ -35,29 +35,35 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/term"
 
+	"github.com/spf13/cobra"
+
 	"github.com/banyan-vcs/banyan/internal/meta"
 )
 
-func runLogin(wsRoot string, args []string, stdout, stderr io.Writer) int {
+func newLoginCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
 	var server, user string
-	status, jsonOut := false, false
-	for i := 0; i < len(args); i++ {
-		switch {
-		case (args[i] == "--user" || args[i] == "-u") && i+1 < len(args):
-			i++
-			user = args[i]
-		case args[i] == "--status":
-			status = true
-		case args[i] == "--json":
-			jsonOut = true
-		case strings.HasPrefix(args[i], "-") && args[i] != "-":
-			return usageErr(stderr, "login: unknown flag %q", args[i])
-		case server == "":
-			server = args[i]
-		default:
-			return usageErr(stderr, "login: unexpected argument %q", args[i])
-		}
+	var status, jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "login [server]",
+		Short: "SSH key → 12h session (web approval fallback; no permanent tokens)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				server = args[0]
+			}
+			if code := runLogin(*wsRoot, server, user, status, jsonOut, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
 	}
+	cmd.Flags().StringVarP(&user, "user", "u", "", "username (default: $USER)")
+	cmd.Flags().BoolVar(&status, "status", false, "report sessions across hosts (network-verified)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "--status as JSON (same rows as host ls --json)")
+	return cmd
+}
+
+func runLogin(wsRoot, server, user string, status, jsonOut bool, stdout, stderr io.Writer) int {
 	explicit := server != ""
 	srv, err := serverArgFrom(wsRoot, server)
 	if err != nil {
@@ -473,14 +479,25 @@ func revokeSession(server string, cred *credential) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-func runLogout(wsRoot string, args []string, stdout, stderr io.Writer) int {
-	var server string
-	if len(args) > 0 {
-		if strings.HasPrefix(args[0], "-") {
-			return usageErr(stderr, "logout: unexpected flag %q", args[0])
-		}
-		server = args[0]
+func newLogoutCmd(wsRoot *string, stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout [server]",
+		Short: "drop the stored session credential",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			server := ""
+			if len(args) == 1 {
+				server = args[0]
+			}
+			if code := runLogout(*wsRoot, server, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
 	}
+}
+
+func runLogout(wsRoot, server string, stdout, stderr io.Writer) int {
 	if server == "" && len(sortedHostKeys(loadConfig())) > 1 {
 		// Multiple islands and no target: pick one rather than silently
 		// dropping the workspace/default host.

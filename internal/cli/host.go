@@ -11,22 +11,44 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
-func runHost(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return usageErr(stderr, "host: want ls or use")
+func newHostCmd(stdout, stderr io.Writer) *cobra.Command {
+	parent := &cobra.Command{
+		Use:   "host",
+		Short: "configured servers (gh-style multi-host)",
+		RunE: familyRun(stderr,
+			"host: want ls or use",
+			"host: unknown subcommand %q (ls | use)"),
 	}
-	switch args[0] {
-	case "ls":
-		return hostList(args[1:], stdout, stderr)
-	case "use":
-		return hostUse(args[1:], stdout, stderr)
-	default:
-		return usageErr(stderr, "host: unknown subcommand %q (ls | use)", args[0])
+	var jsonOut bool
+	ls := &cobra.Command{
+		Use:   "ls",
+		Short: "list configured servers (the default marked *)",
+		Args:  cobra.NoArgs,
+		RunE:  cmdRun(func() int { return hostList(jsonOut, stdout, stderr) }),
 	}
+	ls.Flags().BoolVar(&jsonOut, "json", false, "one JSON object per server")
+	parent.AddCommand(ls)
+	parent.AddCommand(&cobra.Command{
+		Use:   "use [server]",
+		Short: "switch the default server (numbered menu when omitted)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			server := ""
+			if len(args) == 1 {
+				server = args[0]
+			}
+			if code := hostUse(server, stdout, stderr); code != 0 {
+				return &exitError{code}
+			}
+			return nil
+		},
+	})
+	return parent
 }
 
 // hostRow is one line of `host ls`/`login --status` output, text or JSON.
@@ -44,15 +66,7 @@ func writeHostRows(stdout io.Writer, rows []hostRow) {
 	fmt.Fprintln(stdout, string(raw))
 }
 
-func hostList(args []string, stdout, stderr io.Writer) int {
-	jsonOut := false
-	for _, a := range args {
-		if a == "--json" {
-			jsonOut = true
-		} else {
-			return usageErr(stderr, "host ls: unknown flag %q", a)
-		}
-	}
+func hostList(jsonOut bool, stdout, stderr io.Writer) int {
 	cfg := loadConfig()
 	keys := sortedHostKeys(cfg)
 	if jsonOut {
@@ -92,18 +106,15 @@ func hostClockState(e *hostEntry) string {
 	return "valid"
 }
 
-func hostUse(args []string, stdout, stderr io.Writer) int {
+func hostUse(server string, stdout, stderr io.Writer) int {
 	cfg := loadConfig()
 	keys := sortedHostKeys(cfg)
 	if len(keys) == 0 {
 		return cmdErr(stderr, fmt.Errorf("host use: no configured servers (banyan login <url> first)"))
 	}
 	var key string
-	if len(args) > 0 {
-		if len(args) > 1 || strings.HasPrefix(args[0], "-") {
-			return usageErr(stderr, "host use: want one server URL")
-		}
-		key = serverKey(args[0])
+	if server != "" {
+		key = serverKey(server)
 	} else {
 		items := make([]string, len(keys))
 		for i, k := range keys {
