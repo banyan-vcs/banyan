@@ -1,11 +1,11 @@
-// mrs.go — the merge-request API face (docs/design/merge-requests.md):
+// mergerequests.go — the merge-request API face (docs/design/merge-requests.md):
 // /api/v1/repos/<repo>/merge-requests[/<iid>[/<action>]], the branch
 // protection rules at /api/v1/repos/<repo>/branch-rules[/<branch>], and
 // the workspace-wide list at /api/v1/merge-requests (the console sidebar's
 // cross-repo view). Read routes answer any authenticated caller; every
 // mutation needs push rank, and the merge action additionally mirrors the
 // target rule's direct-push semantics (a protected target merges at owner
-// rank, the exact permission a direct push would demand). The mr-only
+// rank, the exact permission a direct push would demand). The merge-request-only
 // level takes no extra rank gate here by design: its gate IS the approval
 // count, enforced in the service.
 package rpc
@@ -38,25 +38,25 @@ func (s *Server) actingUser(w http.ResponseWriter, r *http.Request) (string, boo
 	return id.User, true
 }
 
-// mrOnly reports whether the branch carries an mr-only rule — shared by
+// mergeRequestOnly reports whether the branch carries an merge-request-only rule — shared by
 // the commit and ref-CAS endpoints with the git wire's receive-pack gate
-// (nobody pushes an mr-only branch directly, docs/design/merge-requests.md).
-func (s *Server) mrOnly(ctx context.Context, repo, branch string) bool {
+// (nobody pushes an merge-request-only branch directly, docs/design/merge-requests.md).
+func (s *Server) mergeRequestOnly(ctx context.Context, repo, branch string) bool {
 	rs, ok := s.Meta.(meta.BranchRuleStore)
 	if !ok || branch == "" {
 		return false
 	}
 	rule, has, err := rs.BranchRuleOf(ctx, repo, branch)
-	return err == nil && has && rule.Level == meta.RuleMROnly
+	return err == nil && has && rule.Level == meta.RuleMergeRequestOnly
 }
 
-// handleMergeRequests serves the repo's MR collection and per-request
+// handleMergeRequests serves the repo's merge request collection and per-request
 // actions. parts is the path after /api/v1/repos/ (["<repo>",
 // "merge-requests", ...]).
-// rejectMROnly answers the 403 every direct write to an mr-only branch gets.
-func (s *Server) rejectMROnly(w http.ResponseWriter, branch string) {
+// rejectMergeRequestOnly answers the 403 every direct write to an merge-request-only branch gets.
+func (s *Server) rejectMergeRequestOnly(w http.ResponseWriter, branch string) {
 	writeJSON(w, http.StatusForbidden, errEnvelope{Error: errBody{
-		Code: "FORBIDDEN", Message: branch + " is mr-only: merge via a merge request"}})
+		Code: "FORBIDDEN", Message: branch + " is merge-request-only: merge via a merge request"}})
 }
 
 // handleMergeRequestsAll serves GET /api/v1/merge-requests — the
@@ -69,7 +69,7 @@ func (s *Server) handleMergeRequestsAll(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusMethodNotAllowed, errEnvelope{Error: errBody{Code: "INVALID_ARG", Message: "GET"}})
 		return
 	}
-	st, ok := s.Meta.(meta.MRStore)
+	st, ok := s.Meta.(meta.MergeRequestStore)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND", Message: "merge requests not available on this deployment's metadata plane"}})
 		return
@@ -80,14 +80,14 @@ func (s *Server) handleMergeRequestsAll(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	state := r.URL.Query().Get("state")
-	out := []meta.MRInfo{}
+	out := []meta.MergeRequestInfo{}
 	for _, repo := range repos {
-		mrs, err := st.ListMRs(r.Context(), repo.ID, state)
+		mergeRequests, err := st.ListMergeRequests(r.Context(), repo.ID, state)
 		if err != nil {
 			writeServiceErr(w, err)
 			return
 		}
-		out = append(out, mrs...)
+		out = append(out, mergeRequests...)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
 	writeJSON(w, http.StatusOK, map[string]any{"merge_requests": out})
@@ -98,12 +98,12 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 	rest := parts[2:] // iid / action segments; empty = the collection
 	switch {
 	case len(rest) == 0 && r.Method == http.MethodGet: // list
-		mrs, err := s.Svc.ListMRs(r.Context(), repo, r.URL.Query().Get("state"))
+		mergeRequests, err := s.Svc.ListMergeRequests(r.Context(), repo, r.URL.Query().Get("state"))
 		if err != nil {
 			writeServiceErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "merge_requests": mrs})
+		writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "merge_requests": mergeRequests})
 
 	case len(rest) == 0 && r.Method == http.MethodPost: // open
 		user, ok := s.actingUser(w, r)
@@ -122,19 +122,19 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		mr, err := s.Svc.OpenMR(r.Context(), repo, req.Source, req.Target, req.Title, req.Description, user)
+		mergeRequest, err := s.Svc.OpenMergeRequest(r.Context(), repo, req.Source, req.Target, req.Title, req.Description, user)
 		if err != nil {
 			writeServiceErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, mr)
+		writeJSON(w, http.StatusCreated, mergeRequest)
 
 	case len(rest) == 1 && r.Method == http.MethodGet: // detail
 		iid, ok := parseIid(w, rest[0])
 		if !ok {
 			return
 		}
-		view, err := s.Svc.MRDetail(r.Context(), repo, iid)
+		view, err := s.Svc.MergeRequestDetail(r.Context(), repo, iid)
 		if err != nil {
 			writeServiceErr(w, err)
 			return
@@ -154,11 +154,11 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 			return
 		}
 		if r.Method == http.MethodPost {
-			if err := s.Svc.ApproveMR(r.Context(), repo, iid, user, time.Now().Unix()); err != nil {
+			if err := s.Svc.ApproveMergeRequest(r.Context(), repo, iid, user, time.Now().Unix()); err != nil {
 				writeServiceErr(w, err)
 				return
 			}
-		} else if err := s.Svc.UnapproveMR(r.Context(), repo, iid, user); err != nil {
+		} else if err := s.Svc.UnapproveMergeRequest(r.Context(), repo, iid, user); err != nil {
 			writeServiceErr(w, err)
 			return
 		}
@@ -168,20 +168,20 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 		// The discussion ledger (docs/design/merge-requests.md §review):
 		// GET answers the timeline's data set (ledger + timestamped
 		// approvals) behind the detail route's read posture; POST appends a
-		// comment or reply at push rank — the same floor the MR's own
+		// comment or reply at push rank — the same floor the merge request's own
 		// creation demands.
 		iid, ok := parseIid(w, rest[0])
 		if !ok {
 			return
 		}
 		if r.Method == http.MethodGet {
-			comments, approvals, err := s.Svc.MRDiscussion(r.Context(), repo, iid)
+			comments, approvals, err := s.Svc.MergeRequestDiscussion(r.Context(), repo, iid)
 			if err != nil {
 				writeServiceErr(w, err)
 				return
 			}
 			if comments == nil {
-				comments = []meta.MRComment{}
+				comments = []meta.MergeRequestComment{}
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"comments": comments, "approval_events": approvals})
 			return
@@ -203,7 +203,7 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		c, err := s.Svc.AddMRComment(r.Context(), repo, iid, user, req.Body, req.Path, req.Side, req.Line, req.ParentID)
+		c, err := s.Svc.AddMergeRequestComment(r.Context(), repo, iid, user, req.Body, req.Path, req.Side, req.Line, req.ParentID)
 		if err != nil {
 			writeServiceErr(w, err)
 			return
@@ -234,7 +234,7 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		if err := s.Svc.ResolveMRComment(r.Context(), repo, iid, id, user, req.Resolved); err != nil {
+		if err := s.Svc.ResolveMergeRequestComment(r.Context(), repo, iid, id, user, req.Resolved); err != nil {
 			writeServiceErr(w, err)
 			return
 		}
@@ -262,7 +262,7 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		c, err := s.Svc.SubmitMRReview(r.Context(), repo, iid, user, req.Verdict, req.Body)
+		c, err := s.Svc.SubmitMergeRequestReview(r.Context(), repo, iid, user, req.Verdict, req.Body)
 		if err != nil {
 			writeServiceErr(w, err)
 			return
@@ -279,20 +279,20 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 			return
 		}
 		// The merge gate mirrors the direct-push semantics of whatever
-		// protects the target — with one precedence: an mr-only rule
+		// protects the target — with one precedence: an merge-request-only rule
 		// SUPERSEDES other protection at the merge path (its declared way
-		// in is the MR with N approvals; demanding owner rank on top would
-		// make mr-only meaningless under a default-protected main). Every
+		// in is the merge request with N approvals; demanding owner rank on top would
+		// make merge-request-only meaningless under a default-protected main). Every
 		// other case takes the branch-aware CanPush: owner rank on
 		// snapshot- or rule-protected targets, ordinary rank otherwise.
-		target, err := s.Svc.MRTarget(r.Context(), repo, iid)
+		target, err := s.Svc.MergeRequestTarget(r.Context(), repo, iid)
 		if err != nil {
 			writeServiceErr(w, err)
 			return
 		}
 		gate := target
 		if rs, ok := s.Meta.(meta.BranchRuleStore); ok {
-			if rule, has, rerr := rs.BranchRuleOf(r.Context(), repo, target); rerr == nil && has && rule.Level == meta.RuleMROnly {
+			if rule, has, rerr := rs.BranchRuleOf(r.Context(), repo, target); rerr == nil && has && rule.Level == meta.RuleMergeRequestOnly {
 				gate = "" // ordinary push rank; the approval count is the gate
 			}
 		}
@@ -305,12 +305,12 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 		if r.Body != nil {
 			_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req) // optional body
 		}
-		mr, err := s.Svc.MergeMR(r.Context(), repo, iid, user, req.Message, time.Now().Unix())
+		mergeRequest, err := s.Svc.MergeMergeRequest(r.Context(), repo, iid, user, req.Message, time.Now().Unix())
 		if err != nil {
 			writeServiceErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, mr)
+		writeJSON(w, http.StatusOK, mergeRequest)
 
 	case len(rest) == 2 && (rest[1] == "close" || rest[1] == "reopen") && r.Method == http.MethodPost:
 		if !s.requirePush(w, r, repo, "", "") {
@@ -320,18 +320,18 @@ func (s *Server) handleMergeRequests(w http.ResponseWriter, r *http.Request, par
 		if !ok {
 			return
 		}
-		var mr meta.MRInfo
+		var mergeRequest meta.MergeRequestInfo
 		var err error
 		if rest[1] == "close" {
-			mr, err = s.Svc.CloseMR(r.Context(), repo, iid, time.Now().Unix())
+			mergeRequest, err = s.Svc.CloseMergeRequest(r.Context(), repo, iid, time.Now().Unix())
 		} else {
-			mr, err = s.Svc.ReopenMR(r.Context(), repo, iid, time.Now().Unix())
+			mergeRequest, err = s.Svc.ReopenMergeRequest(r.Context(), repo, iid, time.Now().Unix())
 		}
 		if err != nil {
 			writeServiceErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, mr)
+		writeJSON(w, http.StatusOK, mergeRequest)
 
 	default:
 		writeJSON(w, http.StatusNotFound, errEnvelope{Error: errBody{Code: "NOT_FOUND",
@@ -375,8 +375,8 @@ func (s *Server) handleBranchRules(w http.ResponseWriter, r *http.Request, parts
 			return
 		}
 		approvals := req.Approvals
-		if approvals == 0 && req.Level == meta.RuleMROnly {
-			approvals = 1 // the mr-only default when the caller omits it
+		if approvals == 0 && req.Level == meta.RuleMergeRequestOnly {
+			approvals = 1 // the merge-request-only default when the caller omits it
 		}
 		if err := rs.PutBranchRule(r.Context(), meta.BranchRule{Repo: repo, Branch: branch, Level: req.Level, Approvals: approvals}); err != nil {
 			writeServiceErr(w, err)

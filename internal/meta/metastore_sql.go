@@ -418,13 +418,13 @@ func firstLine(s string) string {
 	return s
 }
 
-// mrsDDL answers the merge-request tables (docs/design/merge-requests.md):
-// the MR ledger, its approvals, and the branch protection rules. Identity
+// mergeRequestsDDL answers the merge-request tables (docs/design/merge-requests.md):
+// the merge request ledger, its approvals, and the branch protection rules. Identity
 // is natural composite keys — (repo, iid) with per-repo monotonically
 // allocated IIDs, (repo, iid, username), (repo, branch) — no auto-increment
 // anywhere, so all three dialects share one shape. Branch names get the
 // same VARCHAR(400) headroom subtree paths use.
-func mrsDDL(dialect string) []string {
+func mergeRequestsDDL(dialect string) []string {
 	var oidType, textType string
 	switch dialect {
 	case "mysql", "postgres":
@@ -455,7 +455,7 @@ created_at   BIGINT NOT NULL,
 updated_at   BIGINT NOT NULL,
 PRIMARY KEY(repo, iid)
 )`,
-		`CREATE TABLE IF NOT EXISTS mr_approvals(
+		`CREATE TABLE IF NOT EXISTS merge_request_approvals(
 repo        ` + nameCol(dialect) + ` NOT NULL,
 iid         BIGINT NOT NULL,
 username    ` + userCol + `,
@@ -463,22 +463,22 @@ approved_at BIGINT NOT NULL,
 PRIMARY KEY(repo, iid, username)
 )`,
 		`CREATE TABLE IF NOT EXISTS branch_rules(
-repo      ` + nameCol(dialect) + ` NOT NULL,
-branch    ` + titleCol(dialect) + ` NOT NULL,
-level     ` + shortCol(dialect) + ` NOT NULL,
-approvals INTEGER NOT NULL DEFAULT 1,
-PRIMARY KEY(repo, branch)
+	repo      ` + nameCol(dialect) + ` NOT NULL,
+	branch    ` + titleCol(dialect) + ` NOT NULL,
+	level     ` + levelCol(dialect) + ` NOT NULL,
+	approvals INTEGER NOT NULL DEFAULT 1,
+	PRIMARY KEY(repo, branch)
 )`,
 	}
 }
 
-// mrCommentsDDL answers the discussion ledger (docs/design/merge-requests.md
+// mergeRequestCommentsDDL answers the discussion ledger (docs/design/merge-requests.md
 // §review): comments, replies, and review submissions in one table — the ID
-// allocates per merge request (MAX+1 under lock, the mrRow protocol), so the
+// allocates per merge request (MAX+1 under lock, the mergeRequestRow protocol), so the
 // composite key (repo, iid, id) is also the timeline order. The short
 // VARCHARs carry defaults for every dialect (MySQL cannot DEFAULT a TEXT
 // column) so the guarded re-run stays replayable.
-func mrCommentsDDL(dialect string) []string {
+func mergeRequestCommentsDDL(dialect string) []string {
 	var oidType, userCol, sideCol, verdictCol, pathCol string
 	switch dialect {
 	case "mysql":
@@ -501,7 +501,7 @@ func mrCommentsDDL(dialect string) []string {
 		pathCol = "TEXT NOT NULL DEFAULT ''"
 	}
 	return []string{
-		`CREATE TABLE IF NOT EXISTS mr_comments(
+		`CREATE TABLE IF NOT EXISTS merge_request_comments(
 repo        ` + nameCol(dialect) + ` NOT NULL,
 iid         BIGINT NOT NULL,
 id          BIGINT NOT NULL,
@@ -640,6 +640,16 @@ func shortCol(dialect string) string {
 		return "TEXT"
 	}
 	return "VARCHAR(16)"
+}
+
+// levelCol spells the branch-rule level column: the levels spell themselves
+// out ("merge-request-only" is 19 wide), past the state-sized shortCol —
+// the MySQL strict-mode 1406 the conformance matrix catches.
+func levelCol(dialect string) string {
+	if dialect == "sqlite" {
+		return "TEXT"
+	}
+	return "VARCHAR(24)"
 }
 
 func (s *SQLMetaStore) Close() error { return s.db.Close() }

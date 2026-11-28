@@ -2,9 +2,9 @@
 // deployment boots into a populated world — known demo accounts, a
 // playground repository whose README is the guide, two directory-timeline
 // subtrees, three merge requests (open+mergeable, conflicting, merged), an
-// mr-only release rule, a personal branch, a group with inherited member
+// merge-request-only release rule, a personal branch, a group with inherited member
 // grants. Everything rides the SAME service APIs the console and the thin
-// CLI use (PutObjects → CreateCommit, OpenMR/ApproveMR/MergeMR, the
+// CLI use (PutObjects → CreateCommit, OpenMergeRequest/ApproveMergeRequest/MergeMergeRequest, the
 // timeline CAS) — no shell-outs, no wire forgery, so the seed doubles as
 // an executable walkthrough of the write path.
 //
@@ -77,7 +77,7 @@ func Seed(ctx context.Context, svc *service.Service, guideDir string) error {
 	if err := c.content(ctx); err != nil {
 		return err
 	}
-	if err := brs.PutBranchRule(ctx, meta.BranchRule{Repo: "demo", Branch: "release", Level: meta.RuleMROnly, Approvals: 1}); err != nil {
+	if err := brs.PutBranchRule(ctx, meta.BranchRule{Repo: "demo", Branch: "release", Level: meta.RuleMergeRequestOnly, Approvals: 1}); err != nil {
 		return err
 	}
 
@@ -238,11 +238,11 @@ func (c *seeder) content(ctx context.Context) error {
 	if _, err := c.commit(ctx, repo, "", "hello", main1, "add the TypeScript greeter", "alice", map[string]string{"src/greet.ts": greetTs}); err != nil {
 		return fmt.Errorf("branch hello commit: %w", err)
 	}
-	mr1, err := c.svc.OpenMR(ctx, repo, "hello", "main", "use the TypeScript greeter", "", "alice")
+	mergeRequest1, err := c.svc.OpenMergeRequest(ctx, repo, "hello", "main", "use the TypeScript greeter", "", "alice")
 	if err != nil {
 		return fmt.Errorf("open !1: %w", err)
 	}
-	if err := c.svc.ApproveMR(ctx, repo, mr1.IID, "bob", time.Now().Unix()); err != nil {
+	if err := c.svc.ApproveMergeRequest(ctx, repo, mergeRequest1.IID, "bob", time.Now().Unix()); err != nil {
 		return fmt.Errorf("approve !1: %w", err)
 	}
 
@@ -268,7 +268,7 @@ func (c *seeder) content(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("main retitle: %w", err)
 	}
-	if _, err := c.svc.OpenMR(ctx, repo, "conflict", "main", "retitle the working notes", "", "bob"); err != nil {
+	if _, err := c.svc.OpenMergeRequest(ctx, repo, "conflict", "main", "retitle the working notes", "", "bob"); err != nil {
 		return fmt.Errorf("open !2: %w", err)
 	}
 
@@ -279,18 +279,18 @@ func (c *seeder) content(ctx context.Context) error {
 	if _, err := c.commit(ctx, repo, "", "changelog", main2, "start the changelog", "alice", map[string]string{"docs/CHANGELOG.md": changelogMd}); err != nil {
 		return fmt.Errorf("branch changelog commit: %w", err)
 	}
-	mr3, err := c.svc.OpenMR(ctx, repo, "changelog", "main", "start the changelog", "", "alice")
+	mergeRequest3, err := c.svc.OpenMergeRequest(ctx, repo, "changelog", "main", "start the changelog", "", "alice")
 	if err != nil {
 		return fmt.Errorf("open !3: %w", err)
 	}
-	if err := c.svc.ApproveMR(ctx, repo, mr3.IID, "bob", time.Now().Unix()); err != nil {
+	if err := c.svc.ApproveMergeRequest(ctx, repo, mergeRequest3.IID, "bob", time.Now().Unix()); err != nil {
 		return fmt.Errorf("approve !3: %w", err)
 	}
-	if _, err := c.svc.MergeMR(ctx, repo, mr3.IID, "admin", "", time.Now().Unix()); err != nil {
+	if _, err := c.svc.MergeMergeRequest(ctx, repo, mergeRequest3.IID, "admin", "", time.Now().Unix()); err != nil {
 		return fmt.Errorf("merge !3: %w", err)
 	}
 
-	// release under the mr-only rule; alice/wip shows the personal
+	// release under the merge-request-only rule; alice/wip shows the personal
 	// namespace (only alice and admins see it).
 	mainTip, err := c.svc.Views.RootTip(ctx, repo, "main")
 	if err != nil {

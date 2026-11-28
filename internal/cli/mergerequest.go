@@ -1,4 +1,4 @@
-// mr.go — the merge-request command family (docs/design/merge-requests.md,
+// mergerequests.go — the merge-request command family (docs/design/merge-requests.md,
 // docs/client/cli.md §6): ls / open / show / approve / merge / close /
 // reopen, all against the workspace's repo. The server owns the merge
 // (3-way over the raw timeline heads, approvals counted, protection rules
@@ -12,9 +12,9 @@ import (
 	"strings"
 )
 
-func runMR(wsRoot string, args []string, stdout, stderr io.Writer) int {
+func runMergeRequest(wsRoot string, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return usageErr(stderr, "mr: want ls|open|show|approve|merge|close|reopen")
+		return usageErr(stderr, "merge-request: want ls|open|show|approve|merge|close|reopen")
 	}
 	ws, err := loadWorkspace(wsRoot)
 	if err != nil {
@@ -28,22 +28,22 @@ func runMR(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		if len(rest) == 1 {
 			state = rest[0]
 		} else if len(rest) > 1 {
-			return usageErr(stderr, "mr ls: want [state]")
+			return usageErr(stderr, "merge-request ls: want [state]")
 		}
-		mrs, err := c.mrList(ws.cfg.Repo, state)
+		mergeRequests, err := c.mergeRequestList(ws.cfg.Repo, state)
 		if err != nil {
 			return cmdErr(stderr, err)
 		}
-		for _, m := range mrs {
+		for _, m := range mergeRequests {
 			fmt.Fprintf(stdout, "!%-3d %-7s %-24.24s %s → %s (%s)\n",
 				m.IID, m.State, m.Title, m.Source, m.Target, m.Author)
 		}
 		return 0
 	case "open":
 		if len(rest) < 3 {
-			return usageErr(stderr, "mr open: want <source> <target> <title...>")
+			return usageErr(stderr, "merge-request open: want <source> <target> <title...>")
 		}
-		m, err := c.mrOpen(ws.cfg.Repo, rest[0], rest[1], strings.Join(rest[2:], " "))
+		m, err := c.mergeRequestOpen(ws.cfg.Repo, rest[0], rest[1], strings.Join(rest[2:], " "))
 		if err != nil {
 			return cmdErr(stderr, err)
 		}
@@ -51,13 +51,13 @@ func runMR(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "show":
 		if len(rest) != 1 {
-			return usageErr(stderr, "mr show: want <iid>")
+			return usageErr(stderr, "merge-request show: want <iid>")
 		}
 		iid, err := strconv.ParseInt(rest[0], 10, 64)
 		if err != nil || iid <= 0 {
-			return usageErr(stderr, "mr show: iid must be a positive integer")
+			return usageErr(stderr, "merge-request show: iid must be a positive integer")
 		}
-		v, err := c.mrGet(ws.cfg.Repo, iid)
+		v, err := c.mergeRequestGet(ws.cfg.Repo, iid)
 		if err != nil {
 			return cmdErr(stderr, err)
 		}
@@ -81,25 +81,25 @@ func runMR(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "approve":
 		if len(rest) != 1 {
-			return usageErr(stderr, "mr approve: want <iid>")
+			return usageErr(stderr, "merge-request approve: want <iid>")
 		}
 		iid, err := strconv.ParseInt(rest[0], 10, 64)
 		if err != nil || iid <= 0 {
-			return usageErr(stderr, "mr approve: iid must be a positive integer")
+			return usageErr(stderr, "merge-request approve: iid must be a positive integer")
 		}
-		if err := c.mrPostVoid(ws.cfg.Repo, iid, "approve"); err != nil {
+		if err := c.mergeRequestPostVoid(ws.cfg.Repo, iid, "approve"); err != nil {
 			return cmdErr(stderr, err)
 		}
 		return 0
 	case "merge":
 		if len(rest) != 1 {
-			return usageErr(stderr, "mr merge: want <iid> (the default message lands server-side)")
+			return usageErr(stderr, "merge-request merge: want <iid> (the default message lands server-side)")
 		}
 		iid, err := strconv.ParseInt(rest[0], 10, 64)
 		if err != nil || iid <= 0 {
-			return usageErr(stderr, "mr merge: iid must be a positive integer")
+			return usageErr(stderr, "merge-request merge: iid must be a positive integer")
 		}
-		m, err := c.mrMerge(ws.cfg.Repo, iid, "")
+		m, err := c.mergeRequestMerge(ws.cfg.Repo, iid, "")
 		if err != nil {
 			return cmdErr(stderr, err)
 		}
@@ -107,17 +107,17 @@ func runMR(wsRoot string, args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "close", "reopen":
 		if len(rest) != 1 {
-			return usageErr(stderr, "mr %s: want <iid>", sub)
+			return usageErr(stderr, "merge-request %s: want <iid>", sub)
 		}
 		iid, err := strconv.ParseInt(rest[0], 10, 64)
 		if err != nil || iid <= 0 {
-			return usageErr(stderr, "mr %s: iid must be a positive integer", sub)
+			return usageErr(stderr, "merge-request %s: iid must be a positive integer", sub)
 		}
-		if err := c.mrPostVoid(ws.cfg.Repo, iid, sub); err != nil {
+		if err := c.mergeRequestPostVoid(ws.cfg.Repo, iid, sub); err != nil {
 			return cmdErr(stderr, err)
 		}
 		return 0
 	default:
-		return usageErr(stderr, "mr: unknown subcommand %q", sub)
+		return usageErr(stderr, "merge-request: unknown subcommand %q", sub)
 	}
 }

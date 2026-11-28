@@ -86,7 +86,7 @@ func (os *operationService) UserRebaseToRef(ctx context.Context, req *gitalypb.U
 	return &gitalypb.UserRebaseToRefResponse{CommitId: rebased.String()}, nil
 }
 
-// UserRebaseConfirmable is the two-phase MR rebase: the header names the
+// UserRebaseConfirmable is the two-phase merge request rebase: the header names the
 // branch being rebased (BranchSha) and the branch it lands on
 // (RemoteBranch — same-repo only on this node); apply answers the rebased
 // tip, the client confirmation moves the branch.

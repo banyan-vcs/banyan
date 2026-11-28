@@ -15,8 +15,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/meta"
+	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/view"
 )
@@ -69,7 +69,7 @@ func Translate(err error) (code string, data any) {
 		errors.Is(err, model.ErrObjectNotFound),
 		errors.Is(err, meta.ErrPackNotFound),
 		errors.Is(err, meta.ErrTimelineUnknown),
-		errors.Is(err, meta.ErrMRUnknown),
+		errors.Is(err, meta.ErrMergeRequestUnknown),
 		errors.Is(err, meta.ErrGroupUnknown),
 		errors.Is(err, meta.ErrMemberUnknown),
 		errors.Is(err, meta.ErrSSHKeyUnknown),
@@ -77,18 +77,18 @@ func Translate(err error) (code string, data any) {
 		return "NOT_FOUND", nil
 	case errors.Is(err, meta.ErrGroupExists):
 		return "CONFLICT_GROUP", nil
-	case errors.Is(err, meta.ErrMRState):
-		return "CONFLICT_MR", nil
+	case errors.Is(err, meta.ErrMergeRequestState):
+		return "CONFLICT_MERGE_REQUEST", nil
 	case errors.Is(err, meta.ErrRepoCycle),
 		errors.Is(err, meta.ErrRepoDepth),
-		errors.Is(err, meta.ErrMRInvalid),
+		errors.Is(err, meta.ErrMergeRequestInvalid),
 		errors.Is(err, meta.ErrBranchRuleInvalid),
 		errors.Is(err, meta.ErrGroupInvalid),
 		errors.Is(err, meta.ErrMemberInvalid),
 		errors.Is(err, meta.ErrMemberRank),
 		errors.Is(err, meta.ErrSSHKeyInvalid),
 		errors.Is(err, meta.ErrSSHKeyExists):
-		// A refused hierarchy link or a failed MR/rule/group/member/key
+		// A refused hierarchy link or a failed merge request/rule/group/member/key
 		// validation is a client-input problem, not a server fault — the
 		// parent the caller picked loops or nests too deep
 		// (docs/design/data-model.md §14), or the merge request / branch
@@ -101,9 +101,9 @@ func Translate(err error) (code string, data any) {
 		if errors.As(err, &conflict) {
 			return "CONFLICT_SYNC_CONFLICT", map[string]any{"commit": string(conflict.Commit), "paths": conflict.Paths}
 		}
-		var nm *ErrMRNotMergeable
+		var nm *ErrMergeRequestNotMergeable
 		if errors.As(err, &nm) {
-			return "CONFLICT_MR", map[string]any{"reason": nm.Reason, "conflicts": nm.Conflicts}
+			return "CONFLICT_MERGE_REQUEST", map[string]any{"reason": nm.Reason, "conflicts": nm.Conflicts}
 		}
 		var unsupported *ErrSyncUnsupported
 		if errors.As(err, &unsupported) {

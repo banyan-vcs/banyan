@@ -110,7 +110,7 @@ type hookRow struct {
 	Events    string
 	URL       string `gorm:"column:url"`
 	Secret    string
-	TimeoutMS int    `gorm:"column:timeout_ms"`
+	TimeoutMS int `gorm:"column:timeout_ms"`
 }
 
 func (hookRow) TableName() string { return "hooks" }
@@ -166,17 +166,17 @@ type subtreeRuleRow struct {
 
 func (subtreeRuleRow) TableName() string { return "subtree_rules" }
 
-// mrRow embeds MRInfo so the domain type stays the wire shape; every column
+// mergeRequestRow embeds MergeRequestInfo so the domain type stays the wire shape; every column
 // name is the plain snake-case of the field (no renames to trap on).
-type mrRow struct {
-	MRInfo
+type mergeRequestRow struct {
+	MergeRequestInfo
 }
 
-func (mrRow) TableName() string { return "merge_requests" }
+func (mergeRequestRow) TableName() string { return "merge_requests" }
 
-// updates is the TransitionMR write set: every column except the composite
+// updates is the TransitionMergeRequest write set: every column except the composite
 // key (repo, iid).
-func (m MRInfo) updates() map[string]any {
+func (m MergeRequestInfo) updates() map[string]any {
 	return map[string]any{
 		"title":        m.Title,
 		"description":  m.Description,
@@ -192,14 +192,14 @@ func (m MRInfo) updates() map[string]any {
 	}
 }
 
-type mrApprovalRow struct {
+type mergeRequestApprovalRow struct {
 	Repo       string `gorm:"primaryKey"`
 	IID        int64  `gorm:"primaryKey;column:iid"`
 	Username   string `gorm:"primaryKey"`
 	ApprovedAt int64  `gorm:"column:approved_at"`
 }
 
-func (mrApprovalRow) TableName() string { return "mr_approvals" }
+func (mergeRequestApprovalRow) TableName() string { return "merge_request_approvals" }
 
 type branchRuleRow struct {
 	Repo      string `gorm:"primaryKey"`
@@ -210,10 +210,10 @@ type branchRuleRow struct {
 
 func (branchRuleRow) TableName() string { return "branch_rules" }
 
-// mrCommentRow spells every column out — the embedded shape can't express
+// mergeRequestCommentRow spells every column out — the embedded shape can't express
 // the boolean-as-int seam (the PG pitfall: a Go bool will not encode into
 // an INTEGER column), so Resolved is int here and converts at the seam.
-type mrCommentRow struct {
+type mergeRequestCommentRow struct {
 	Repo       string `gorm:"column:repo;primaryKey"`
 	IID        int64  `gorm:"column:iid;primaryKey"`
 	ID         int64  `gorm:"column:id;primaryKey"`
@@ -231,10 +231,10 @@ type mrCommentRow struct {
 	CreatedAt  int64  `gorm:"column:created_at"`
 }
 
-func (mrCommentRow) TableName() string { return "mr_comments" }
+func (mergeRequestCommentRow) TableName() string { return "merge_request_comments" }
 
-func (r mrCommentRow) comment() MRComment {
-	return MRComment{
+func (r mergeRequestCommentRow) comment() MergeRequestComment {
+	return MergeRequestComment{
 		Repo: r.Repo, IID: r.IID, ID: r.ID, ParentID: r.ParentID, Author: r.Author,
 		Body: r.Body, Kind: r.Kind, Verdict: r.Verdict, Path: r.Path, Line: r.Line,
 		Side: r.Side, AnchorOID: r.AnchorOID, Resolved: r.Resolved != 0,
@@ -242,8 +242,8 @@ func (r mrCommentRow) comment() MRComment {
 	}
 }
 
-func commentRow(c MRComment) mrCommentRow {
-	row := mrCommentRow{
+func commentRow(c MergeRequestComment) mergeRequestCommentRow {
+	row := mergeRequestCommentRow{
 		Repo: c.Repo, IID: c.IID, ID: c.ID, ParentID: c.ParentID, Author: c.Author,
 		Body: c.Body, Kind: c.Kind, Verdict: c.Verdict, Path: c.Path, Line: c.Line,
 		Side: c.Side, AnchorOID: c.AnchorOID, ResolvedBy: c.ResolvedBy, CreatedAt: c.CreatedAt,

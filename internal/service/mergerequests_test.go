@@ -16,9 +16,9 @@ import (
 	"github.com/banyan-vcs/banyan/internal/model"
 )
 
-// mrBranch commits files on top of head ("" = the repo's first commit on
+// mergeRequestBranch commits files on top of head ("" = the repo's first commit on
 // the branch), answering the new head.
-func mrBranch(t *testing.T, s *Service, repo, branch string, head model.OID, files map[string]string, msg string) model.OID {
+func mergeRequestBranch(t *testing.T, s *Service, repo, branch string, head model.OID, files map[string]string, msg string) model.OID {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := s.Meta.GetRepo(ctx, repo); err != nil {
@@ -40,9 +40,9 @@ func mrBranch(t *testing.T, s *Service, repo, branch string, head model.OID, fil
 func TestMergeBranchesClean(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"readme": "hi\n"}, "seed")
-	feat := mrBranch(t, s, "r", "feat", base, map[string]string{"feat.txt": "new\n"}, "feat work")
-	more := mrBranch(t, s, "r", "main", base, map[string]string{"other.txt": "also\n"}, "main moves on")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"readme": "hi\n"}, "seed")
+	feat := mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"feat.txt": "new\n"}, "feat work")
+	more := mergeRequestBranch(t, s, "r", "main", base, map[string]string{"other.txt": "also\n"}, "main moves on")
 
 	out, err := s.MergeBranches(ctx, "r", "feat", "main", "alice", "bob", "")
 	require.NoError(t, err)
@@ -74,9 +74,9 @@ func (s *Service) branchHeadOrDie(t *testing.T, repo, branch string) model.OID {
 func TestMergeBranchesConflicts(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "base\n"}, "seed")
-	mrBranch(t, s, "r", "feat", base, map[string]string{"f": "theirs\n"}, "feat edits f")
-	mrBranch(t, s, "r", "main", base, map[string]string{"f": "ours\n"}, "main edits f")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "base\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"f": "theirs\n"}, "feat edits f")
+	mergeRequestBranch(t, s, "r", "main", base, map[string]string{"f": "ours\n"}, "main edits f")
 
 	pv, err := s.PreviewMerge(ctx, "r", "feat", "main")
 	require.NoError(t, err)
@@ -85,7 +85,7 @@ func TestMergeBranchesConflicts(t *testing.T) {
 	require.Zero(t, pv.Commit, "preview lands nothing")
 
 	_, err = s.MergeBranches(ctx, "r", "feat", "main", "alice", "bob", "")
-	var nm *ErrMRNotMergeable
+	var nm *ErrMergeRequestNotMergeable
 	require.ErrorAs(t, err, &nm)
 	require.Equal(t, []string{"f"}, nm.Conflicts)
 	// The target timeline is untouched.
@@ -96,8 +96,8 @@ func TestMergeBranchesUnrelatedHistories(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
 	// Two root commits, no common ancestor: empty base, both trees merge.
-	mrBranch(t, s, "r", "main", "", map[string]string{"a": "1\n"}, "root a")
-	mrBranch(t, s, "r", "feat", "", map[string]string{"b": "2\n"}, "root b")
+	mergeRequestBranch(t, s, "r", "main", "", map[string]string{"a": "1\n"}, "root a")
+	mergeRequestBranch(t, s, "r", "feat", "", map[string]string{"b": "2\n"}, "root b")
 	out, err := s.MergeBranches(ctx, "r", "feat", "main", "alice", "bob", "")
 	require.NoError(t, err)
 	require.Zero(t, out.Base, "no merge base")
@@ -113,104 +113,104 @@ func mustTree(t *testing.T, s *Service, commit model.OID) model.OID {
 	return ci.Tree
 }
 
-func TestMRLifecycleApprovalGate(t *testing.T) {
+func TestMergeRequestLifecycleApprovalGate(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
 	rs, ok := s.Meta.(meta.BranchRuleStore)
 	require.True(t, ok)
-	require.NoError(t, rs.PutBranchRule(ctx, meta.BranchRule{Repo: "r", Branch: "main", Level: meta.RuleMROnly, Approvals: 2}))
+	require.NoError(t, rs.PutBranchRule(ctx, meta.BranchRule{Repo: "r", Branch: "main", Level: meta.RuleMergeRequestOnly, Approvals: 2}))
 
-	mr, err := s.OpenMR(ctx, "r", "feat", "main", "add g", "", "alice")
+	mergeRequest, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "add g", "", "alice")
 	require.NoError(t, err)
-	require.Equal(t, int64(1), mr.IID)
+	require.Equal(t, int64(1), mergeRequest.IID)
 
 	// Author cannot self-approve.
-	require.Error(t, s.ApproveMR(ctx, "r", 1, "alice", 1), "self-approval must bounce")
+	require.Error(t, s.ApproveMergeRequest(ctx, "r", 1, "alice", 1), "self-approval must bounce")
 
 	// Below the count: merge refuses.
-	_, err = s.MergeMR(ctx, "r", 1, "bob", "", 2)
-	var nm *ErrMRNotMergeable
+	_, err = s.MergeMergeRequest(ctx, "r", 1, "bob", "", 2)
+	var nm *ErrMergeRequestNotMergeable
 	require.ErrorAs(t, err, &nm)
 	require.Contains(t, nm.Reason, "approval")
 
 	// Two others approve; the gate opens.
-	require.NoError(t, s.ApproveMR(ctx, "r", 1, "bob", 3))
-	require.NoError(t, s.ApproveMR(ctx, "r", 1, "carol", 4))
-	merged, err := s.MergeMR(ctx, "r", 1, "bob", "", 5)
+	require.NoError(t, s.ApproveMergeRequest(ctx, "r", 1, "bob", 3))
+	require.NoError(t, s.ApproveMergeRequest(ctx, "r", 1, "carol", 4))
+	merged, err := s.MergeMergeRequest(ctx, "r", 1, "bob", "", 5)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateMerged, merged.State)
+	require.Equal(t, meta.MergeRequestStateMerged, merged.State)
 	require.NotZero(t, merged.MergeCommit)
 	require.Equal(t, "bob", merged.MergedBy)
 
-	// The detail view of a merged MR is the record, not a live recompute.
-	view, err := s.MRDetail(ctx, "r", 1)
+	// The detail view of a merged merge request is the record, not a live recompute.
+	view, err := s.MergeRequestDetail(ctx, "r", 1)
 	require.NoError(t, err)
 	require.False(t, view.Mergeable)
 	require.Equal(t, []string{"bob", "carol"}, view.Approvals)
 
-	// Merging again bounces on state; reopening a merged MR is not a thing.
-	_, err = s.MergeMR(ctx, "r", 1, "bob", "", 6)
+	// Merging again bounces on state; reopening a merged merge request is not a thing.
+	_, err = s.MergeMergeRequest(ctx, "r", 1, "bob", "", 6)
 	require.Error(t, err)
 }
 
-func TestMRAuthorSelfApprovalRefused(t *testing.T) {
+func TestMergeRequestAuthorSelfApprovalRefused(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
-	_, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	_, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
-	require.Error(t, s.ApproveMR(ctx, "r", 1, "alice", 1), "self-approval must bounce")
-	st := s.Meta.(meta.MRStore)
+	require.Error(t, s.ApproveMergeRequest(ctx, "r", 1, "alice", 1), "self-approval must bounce")
+	st := s.Meta.(meta.MergeRequestStore)
 	users, err := st.ListApprovals(ctx, "r", 1)
 	require.NoError(t, err)
 	require.Empty(t, users, "the refused approval must not be recorded")
 }
 
-func TestMRMergeConflictRollsBackToOpen(t *testing.T) {
+func TestMergeRequestMergeConflictRollsBackToOpen(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "base\n"}, "seed")
-	mrBranch(t, s, "r", "feat", base, map[string]string{"f": "theirs\n"}, "feat")
-	mrBranch(t, s, "r", "main", base, map[string]string{"f": "ours\n"}, "main")
-	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "base\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"f": "theirs\n"}, "feat")
+	mergeRequestBranch(t, s, "r", "main", base, map[string]string{"f": "ours\n"}, "main")
+	mergeRequest, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
 
-	var nm *ErrMRNotMergeable
-	_, merr := s.MergeMR(ctx, "r", mr.IID, "bob", "", 1)
+	var nm *ErrMergeRequestNotMergeable
+	_, merr := s.MergeMergeRequest(ctx, "r", mergeRequest.IID, "bob", "", 1)
 	require.ErrorAs(t, merr, &nm)
 	require.Equal(t, []string{"f"}, nm.Conflicts)
 
 	// The reservation rolled back: still open, still mergeable after the
 	// conflict is resolved on the source side.
-	got, err := s.MRByIIDDie(ctx, mr.IID)
-	require.Equal(t, meta.MRStateOpen, got.State)
-	mrBranch(t, s, "r", "feat", s.branchHeadOrDie(t, "r", "feat"), map[string]string{"f": "ours\n"}, "resolve to the target content")
-	require.NoError(t, s.ApproveMR(ctx, "r", mr.IID, "carol", 2))
-	merged, err := s.MergeMR(ctx, "r", mr.IID, "bob", "", 3)
+	got, err := s.MergeRequestByIIDDie(ctx, mergeRequest.IID)
+	require.Equal(t, meta.MergeRequestStateOpen, got.State)
+	mergeRequestBranch(t, s, "r", "feat", s.branchHeadOrDie(t, "r", "feat"), map[string]string{"f": "ours\n"}, "resolve to the target content")
+	require.NoError(t, s.ApproveMergeRequest(ctx, "r", mergeRequest.IID, "carol", 2))
+	merged, err := s.MergeMergeRequest(ctx, "r", mergeRequest.IID, "bob", "", 3)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateMerged, merged.State)
+	require.Equal(t, meta.MergeRequestStateMerged, merged.State)
 }
 
-func (s *Service) MRByIIDDie(ctx context.Context, iid int64) (meta.MRInfo, error) {
-	return s.Meta.(meta.MRStore).MRByIID(ctx, "r", iid)
+func (s *Service) MergeRequestByIIDDie(ctx context.Context, iid int64) (meta.MergeRequestInfo, error) {
+	return s.Meta.(meta.MergeRequestStore).MergeRequestByIID(ctx, "r", iid)
 }
 
-func TestMRConcurrentMergeSingleWinner(t *testing.T) {
+func TestMergeRequestConcurrentMergeSingleWinner(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
-	_, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	_, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
-	require.NoError(t, s.ApproveMR(ctx, "r", 1, "carol", 1))
+	require.NoError(t, s.ApproveMergeRequest(ctx, "r", 1, "carol", 1))
 
 	// Racer one merges; racer two hits the state gate.
-	first, err := s.MergeMR(ctx, "r", 1, "bob", "", 2)
+	first, err := s.MergeMergeRequest(ctx, "r", 1, "bob", "", 2)
 	require.NoError(t, err)
-	_, err = s.MergeMR(ctx, "r", 1, "carol", "", 3)
+	_, err = s.MergeMergeRequest(ctx, "r", 1, "carol", "", 3)
 	require.Error(t, err, "the second merge must lose")
 	require.Contains(t, err.Error(), "merged")
 
@@ -221,17 +221,17 @@ func TestMRConcurrentMergeSingleWinner(t *testing.T) {
 	require.Equal(t, model.OID(first.MergeCommit), adv)
 }
 
-func TestMRMissingBranches(t *testing.T) {
+func TestMergeRequestMissingBranches(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
 
-	_, err := s.OpenMR(ctx, "r", "nope", "main", "t", "", "alice")
+	_, err := s.OpenMergeRequest(ctx, "r", "nope", "main", "t", "", "alice")
 	require.ErrorIs(t, err, ErrBranchMissing)
-	_, err = s.OpenMR(ctx, "r", "main", "gone", "t", "", "alice")
+	_, err = s.OpenMergeRequest(ctx, "r", "main", "gone", "t", "", "alice")
 	require.ErrorIs(t, err, ErrBranchMissing)
 	// source == target is invalid before any branch lookup.
-	_, err = s.OpenMR(ctx, "r", "main", "main", "t", "", "alice")
+	_, err = s.OpenMergeRequest(ctx, "r", "main", "main", "t", "", "alice")
 	require.Error(t, err)
 
 	// The raw merge surface answers the same sentinel the lifecycle rides.
@@ -241,96 +241,96 @@ func TestMRMissingBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrBranchMissing)
 }
 
-// TestMRCloseReopenLifecycle: close and reopen move the state without
-// touching refs; every actor on a non-open MR — merge, approval, the state
+// TestMergeRequestCloseReopenLifecycle: close and reopen move the state without
+// touching refs; every actor on a non-open merge request — merge, approval, the state
 // hops themselves — bounces on the optimistic gate. Merged is terminal.
-func TestMRCloseReopenLifecycle(t *testing.T) {
+func TestMergeRequestCloseReopenLifecycle(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
 
-	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	mergeRequest, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
 
 	// Close: state only — the refs do not move.
-	closed, err := s.CloseMR(ctx, "r", mr.IID, 10)
+	closed, err := s.CloseMergeRequest(ctx, "r", mergeRequest.IID, 10)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateClosed, closed.State)
+	require.Equal(t, meta.MergeRequestStateClosed, closed.State)
 	require.NotZero(t, s.branchHeadOrDie(t, "r", "feat"))
 
-	// A closed MR accepts neither merge nor approval.
-	_, err = s.MergeMR(ctx, "r", mr.IID, "bob", "", 11)
+	// A closed merge request accepts neither merge nor approval.
+	_, err = s.MergeMergeRequest(ctx, "r", mergeRequest.IID, "bob", "", 11)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "closed")
-	require.Error(t, s.ApproveMR(ctx, "r", mr.IID, "bob", 12), "closed MRs take no approvals")
+	require.Error(t, s.ApproveMergeRequest(ctx, "r", mergeRequest.IID, "bob", 12), "closed merge requests take no approvals")
 
 	// Reopen restores open; the merge then lands through the ordinary gate.
-	reopened, err := s.ReopenMR(ctx, "r", mr.IID, 13)
+	reopened, err := s.ReopenMergeRequest(ctx, "r", mergeRequest.IID, 13)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateOpen, reopened.State)
-	require.NoError(t, s.ApproveMR(ctx, "r", mr.IID, "carol", 14))
-	merged, err := s.MergeMR(ctx, "r", mr.IID, "bob", "", 15)
+	require.Equal(t, meta.MergeRequestStateOpen, reopened.State)
+	require.NoError(t, s.ApproveMergeRequest(ctx, "r", mergeRequest.IID, "carol", 14))
+	merged, err := s.MergeMergeRequest(ctx, "r", mergeRequest.IID, "bob", "", 15)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateMerged, merged.State)
+	require.Equal(t, meta.MergeRequestStateMerged, merged.State)
 
 	// Merged is terminal: neither close nor reopen applies.
-	_, err = s.CloseMR(ctx, "r", mr.IID, 16)
-	require.ErrorIs(t, err, meta.ErrMRState)
-	_, err = s.ReopenMR(ctx, "r", mr.IID, 17)
-	require.ErrorIs(t, err, meta.ErrMRState)
+	_, err = s.CloseMergeRequest(ctx, "r", mergeRequest.IID, 16)
+	require.ErrorIs(t, err, meta.ErrMergeRequestState)
+	_, err = s.ReopenMergeRequest(ctx, "r", mergeRequest.IID, 17)
+	require.ErrorIs(t, err, meta.ErrMergeRequestState)
 }
 
-// TestMRApprovalWithdrawal: a withdrawn approval drops the count below the
+// TestMergeRequestApprovalWithdrawal: a withdrawn approval drops the count below the
 // rule's bar — the gate is live, not a stamp collected once.
-func TestMRApprovalWithdrawal(t *testing.T) {
+func TestMergeRequestApprovalWithdrawal(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
 	rs, ok := s.Meta.(meta.BranchRuleStore)
 	require.True(t, ok)
-	require.NoError(t, rs.PutBranchRule(ctx, meta.BranchRule{Repo: "r", Branch: "main", Level: meta.RuleMROnly, Approvals: 1}))
+	require.NoError(t, rs.PutBranchRule(ctx, meta.BranchRule{Repo: "r", Branch: "main", Level: meta.RuleMergeRequestOnly, Approvals: 1}))
 
-	_, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	_, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
-	require.NoError(t, s.ApproveMR(ctx, "r", 1, "bob", 1))
+	require.NoError(t, s.ApproveMergeRequest(ctx, "r", 1, "bob", 1))
 
 	// Withdrawn: the count falls below 1 and the merge bounces again.
-	require.NoError(t, s.UnapproveMR(ctx, "r", 1, "bob"))
-	var nm *ErrMRNotMergeable
-	_, err = s.MergeMR(ctx, "r", 1, "carol", "", 2)
+	require.NoError(t, s.UnapproveMergeRequest(ctx, "r", 1, "bob"))
+	var nm *ErrMergeRequestNotMergeable
+	_, err = s.MergeMergeRequest(ctx, "r", 1, "carol", "", 2)
 	require.ErrorAs(t, err, &nm)
 	require.Contains(t, nm.Reason, "approval")
 
 	// Re-approved, it lands.
-	require.NoError(t, s.ApproveMR(ctx, "r", 1, "bob", 3))
-	merged, err := s.MergeMR(ctx, "r", 1, "carol", "", 4)
+	require.NoError(t, s.ApproveMergeRequest(ctx, "r", 1, "bob", 3))
+	merged, err := s.MergeMergeRequest(ctx, "r", 1, "carol", "", 4)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateMerged, merged.State)
+	require.Equal(t, meta.MergeRequestStateMerged, merged.State)
 }
 
-// TestMRMergeTakesCurrentTip: approvals stand across source advances (the
+// TestMergeRequestMergeTakesCurrentTip: approvals stand across source advances (the
 // honest record — they are not reset), and the merge takes the tip at merge
 // time, not the head recorded at open.
-func TestMRMergeTakesCurrentTip(t *testing.T) {
+func TestMergeRequestMergeTakesCurrentTip(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	feat1 := mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat step 1")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	feat1 := mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat step 1")
 
-	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	mergeRequest, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
-	require.Equal(t, feat1, model.OID(mr.SourceHead), "the record keeps the head at open time")
+	require.Equal(t, feat1, model.OID(mergeRequest.SourceHead), "the record keeps the head at open time")
 
 	// The source moves on after open; the detail answers the live tip.
-	feat2 := mrBranch(t, s, "r", "feat", feat1, map[string]string{"h": "3\n"}, "feat step 2")
-	view, err := s.MRDetail(ctx, "r", mr.IID)
+	feat2 := mergeRequestBranch(t, s, "r", "feat", feat1, map[string]string{"h": "3\n"}, "feat step 2")
+	view, err := s.MergeRequestDetail(ctx, "r", mergeRequest.IID)
 	require.NoError(t, err)
 	require.Equal(t, feat2, view.SourceTip)
 	require.True(t, view.Mergeable)
 
-	merged, err := s.MergeMR(ctx, "r", mr.IID, "bob", "", 5)
+	merged, err := s.MergeMergeRequest(ctx, "r", mergeRequest.IID, "bob", "", 5)
 	require.NoError(t, err)
 	require.NotZero(t, merged.MergeCommit)
 	// The raw two-parent commit (the advertised fold is the record): its
@@ -345,17 +345,17 @@ func TestMRMergeTakesCurrentTip(t *testing.T) {
 	require.Equal(t, "3\n", files["h"])
 }
 
-// TestMRDetailRuleEcho: the detail surfaces the target's rule (level + the
+// TestMergeRequestDetailRuleEcho: the detail surfaces the target's rule (level + the
 // required count) so the UI renders the bar without a second round-trip.
-func TestMRDetailRuleEcho(t *testing.T) {
+func TestMergeRequestDetailRuleEcho(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
-	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	mergeRequest, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
 
-	view, err := s.MRDetail(ctx, "r", mr.IID)
+	view, err := s.MergeRequestDetail(ctx, "r", mergeRequest.IID)
 	require.NoError(t, err)
 	require.Empty(t, view.RuleLevel)
 	require.Zero(t, view.RequiredApprovals)
@@ -363,16 +363,16 @@ func TestMRDetailRuleEcho(t *testing.T) {
 	rs, ok := s.Meta.(meta.BranchRuleStore)
 	require.True(t, ok)
 	require.NoError(t, rs.PutBranchRule(ctx, meta.BranchRule{Repo: "r", Branch: "main", Level: meta.RuleProtected}))
-	view, err = s.MRDetail(ctx, "r", mr.IID)
+	view, err = s.MergeRequestDetail(ctx, "r", mergeRequest.IID)
 	require.NoError(t, err)
 	require.Equal(t, meta.RuleProtected, view.RuleLevel)
 	require.Zero(t, view.RequiredApprovals, "protection carries no approval bar")
 
-	require.NoError(t, rs.PutBranchRule(ctx, meta.BranchRule{Repo: "r", Branch: "main", Level: meta.RuleMROnly, Approvals: 2}))
-	require.NoError(t, s.ApproveMR(ctx, "r", mr.IID, "bob", 1))
-	view, err = s.MRDetail(ctx, "r", mr.IID)
+	require.NoError(t, rs.PutBranchRule(ctx, meta.BranchRule{Repo: "r", Branch: "main", Level: meta.RuleMergeRequestOnly, Approvals: 2}))
+	require.NoError(t, s.ApproveMergeRequest(ctx, "r", mergeRequest.IID, "bob", 1))
+	view, err = s.MergeRequestDetail(ctx, "r", mergeRequest.IID)
 	require.NoError(t, err)
-	require.Equal(t, meta.RuleMROnly, view.RuleLevel)
+	require.Equal(t, meta.RuleMergeRequestOnly, view.RuleLevel)
 	require.Equal(t, 2, view.RequiredApprovals)
 	require.Equal(t, []string{"bob"}, view.Approvals)
 }
@@ -383,9 +383,9 @@ func TestMRDetailRuleEcho(t *testing.T) {
 func TestMergeBranchesSourceBehindTarget(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
 	require.NoError(t, s.Meta.EnsureTimeline(ctx, model.Timeline{Repo: "r", Anchor: model.RootAnchor, Name: "feat"}, base, ""))
-	head2 := mrBranch(t, s, "r", "main", base, map[string]string{"g": "2\n"}, "main moves on")
+	head2 := mergeRequestBranch(t, s, "r", "main", base, map[string]string{"g": "2\n"}, "main moves on")
 
 	out, err := s.MergeBranches(ctx, "r", "feat", "main", "alice", "bob", "")
 	require.NoError(t, err)
@@ -405,10 +405,10 @@ func TestMergeBranchesSourceBehindTarget(t *testing.T) {
 // merger's head read and its landing CAS — the exact race the CAS fails
 // closed on (a sequential test cannot produce it; the wrapper injects it).
 // The capability interfaces embed so the service's type assertions
-// (MRStore, BranchRuleStore) keep finding a store through the wrapper.
+// (MergeRequestStore, BranchRuleStore) keep finding a store through the wrapper.
 type racingMeta struct {
 	meta.MetaStore
-	meta.MRStore
+	meta.MergeRequestStore
 	meta.BranchRuleStore
 	watch   model.Timeline
 	intrude model.OID
@@ -425,44 +425,44 @@ func (m *racingMeta) CASHead(ctx context.Context, tl model.Timeline, expected, n
 	return m.MetaStore.CASHead(ctx, tl, expected, next)
 }
 
-// TestMRMergeTargetMovedRollsBackAndRetries: a target that moves between
+// TestMergeRequestMergeTargetMovedRollsBackAndRetries: a target that moves between
 // the merge's head read and its CAS bounces as "moved — retry", the
 // reservation rolls back to open, nothing lands, and the retry re-derives
 // the same content over the moved head.
-func TestMRMergeTargetMovedRollsBackAndRetries(t *testing.T) {
+func TestMergeRequestMergeTargetMovedRollsBackAndRetries(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	feat := mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	feat := mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
 	// A commit that exists but is NOT on main — the racer lands it while the
 	// merge is between its head read and its CAS (a disjoint file, so the
 	// retry stays clean).
-	racer := mrBranch(t, s, "r", "racer", base, map[string]string{"h": "3\n"}, "concurrent writer")
+	racer := mergeRequestBranch(t, s, "r", "racer", base, map[string]string{"h": "3\n"}, "concurrent writer")
 
-	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	mergeRequest, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
 
 	real := s.Meta
-	s.Meta = &racingMeta{MetaStore: real, MRStore: real.(meta.MRStore), BranchRuleStore: real.(meta.BranchRuleStore),
+	s.Meta = &racingMeta{MetaStore: real, MergeRequestStore: real.(meta.MergeRequestStore), BranchRuleStore: real.(meta.BranchRuleStore),
 		watch: model.Timeline{Repo: "r", Anchor: model.RootAnchor, Name: "main"}, intrude: racer}
 
-	var nm *ErrMRNotMergeable
-	_, err = s.MergeMR(ctx, "r", mr.IID, "bob", "", 1)
+	var nm *ErrMergeRequestNotMergeable
+	_, err = s.MergeMergeRequest(ctx, "r", mergeRequest.IID, "bob", "", 1)
 	require.ErrorAs(t, err, &nm)
 	require.Contains(t, nm.Reason, "moved")
 
 	// The reservation rolled back — still open, the racer owns the head.
-	got, err := s.MRByIIDDie(ctx, mr.IID)
+	got, err := s.MergeRequestByIIDDie(ctx, mergeRequest.IID)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateOpen, got.State)
+	require.Equal(t, meta.MergeRequestStateOpen, got.State)
 	require.Empty(t, got.MergeCommit)
 	require.Equal(t, racer, s.branchHeadOrDie(t, "r", "main"))
 
 	// The retry re-derives over the moved head: racer is parent 1 now.
 	s.Meta = real
-	merged, err := s.MergeMR(ctx, "r", mr.IID, "bob", "", 2)
+	merged, err := s.MergeMergeRequest(ctx, "r", mergeRequest.IID, "bob", "", 2)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateMerged, merged.State)
+	require.Equal(t, meta.MergeRequestStateMerged, merged.State)
 	raw := s.branchHeadOrDie(t, "r", "main")
 	ci, err := s.Objects.CommitInfo("r", raw)
 	require.NoError(t, err)
@@ -478,32 +478,32 @@ func TestMRMergeTargetMovedRollsBackAndRetries(t *testing.T) {
 // ledger never filled in).
 type failingFinalize struct {
 	meta.MetaStore
-	meta.MRStore
+	meta.MergeRequestStore
 	meta.BranchRuleStore
 }
 
-func (m *failingFinalize) TransitionMR(ctx context.Context, repo string, iid int64, from string, patch func(*meta.MRInfo)) (meta.MRInfo, error) {
-	if from == meta.MRStateMerged {
-		return meta.MRInfo{}, fmt.Errorf("store hiccup")
+func (m *failingFinalize) TransitionMergeRequest(ctx context.Context, repo string, iid int64, from string, patch func(*meta.MergeRequestInfo)) (meta.MergeRequestInfo, error) {
+	if from == meta.MergeRequestStateMerged {
+		return meta.MergeRequestInfo{}, fmt.Errorf("store hiccup")
 	}
-	return m.MRStore.TransitionMR(ctx, repo, iid, from, patch)
+	return m.MergeRequestStore.TransitionMergeRequest(ctx, repo, iid, from, patch)
 }
 
-// TestMRFinalizeFailureWindow pins the honest window (docs/design/
+// TestMergeRequestFinalizeFailureWindow pins the honest window (docs/design/
 // merge-requests.md §边界): the ref moved and the merge stands, the error
 // says both facts, and the ledger holds merged with an empty merge_commit
 // — never a silent success, never a phantom landing.
-func TestMRFinalizeFailureWindow(t *testing.T) {
+func TestMergeRequestFinalizeFailureWindow(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
-	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	mergeRequest, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
 
 	real := s.Meta
-	s.Meta = &failingFinalize{MetaStore: real, MRStore: real.(meta.MRStore), BranchRuleStore: real.(meta.BranchRuleStore)}
-	_, err = s.MergeMR(ctx, "r", mr.IID, "bob", "", 1)
+	s.Meta = &failingFinalize{MetaStore: real, MergeRequestStore: real.(meta.MergeRequestStore), BranchRuleStore: real.(meta.BranchRuleStore)}
+	_, err = s.MergeMergeRequest(ctx, "r", mergeRequest.IID, "bob", "", 1)
 	s.Meta = real
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "finalizing")
@@ -514,75 +514,75 @@ func TestMRFinalizeFailureWindow(t *testing.T) {
 	ci, err := s.Objects.CommitInfo("r", raw)
 	require.NoError(t, err)
 	require.Len(t, ci.Parents, 2, "the landing happened")
-	got, err := s.MRByIIDDie(ctx, mr.IID)
+	got, err := s.MergeRequestByIIDDie(ctx, mergeRequest.IID)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateMerged, got.State)
+	require.Equal(t, meta.MergeRequestStateMerged, got.State)
 	require.Empty(t, got.MergeCommit, "the window: merged with no recorded commit")
 	require.Empty(t, got.MergedBy)
 }
 
-// TestMRDeletedSourceBranch: a source branch deleted after open (a push of
+// TestMergeRequestDeletedSourceBranch: a source branch deleted after open (a push of
 // :feat) — the detail answers honestly unmergeable rather than erroring
 // (the record is the shareable truth), and the merge bounces with the
 // branch sentinel, rolled back to open.
-func TestMRDeletedSourceBranch(t *testing.T) {
+func TestMergeRequestDeletedSourceBranch(t *testing.T) {
 	s := newService(t)
 	ctx := context.Background()
-	base := mrBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
-	featHead := mrBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
-	mr, err := s.OpenMR(ctx, "r", "feat", "main", "t", "", "alice")
+	base := mergeRequestBranch(t, s, "r", "main", "", map[string]string{"f": "1\n"}, "seed")
+	featHead := mergeRequestBranch(t, s, "r", "feat", base, map[string]string{"g": "2\n"}, "feat")
+	mergeRequest, err := s.OpenMergeRequest(ctx, "r", "feat", "main", "t", "", "alice")
 	require.NoError(t, err)
 
 	// Deletion is the zero-head CAS (the receive-pack form).
 	require.NoError(t, s.Meta.CASHead(ctx, model.Timeline{Repo: "r", Anchor: model.RootAnchor, Name: "feat"}, featHead, ""))
 
-	view, err := s.MRDetail(ctx, "r", mr.IID)
+	view, err := s.MergeRequestDetail(ctx, "r", mergeRequest.IID)
 	require.NoError(t, err, "the detail must not error on a deleted source")
-	require.Equal(t, meta.MRStateOpen, view.State)
+	require.Equal(t, meta.MergeRequestStateOpen, view.State)
 	require.Zero(t, view.SourceTip)
 	require.False(t, view.Mergeable)
 
-	_, err = s.MergeMR(ctx, "r", mr.IID, "bob", "", 1)
+	_, err = s.MergeMergeRequest(ctx, "r", mergeRequest.IID, "bob", "", 1)
 	require.ErrorIs(t, err, ErrBranchMissing)
-	got, err := s.MRByIIDDie(ctx, mr.IID)
+	got, err := s.MergeRequestByIIDDie(ctx, mergeRequest.IID)
 	require.NoError(t, err)
-	require.Equal(t, meta.MRStateOpen, got.State, "the failed merge rolls back")
+	require.Equal(t, meta.MergeRequestStateOpen, got.State, "the failed merge rolls back")
 }
 
-// TestMRConcurrentMergeVsClose: the optimistic gate gives the merge and
+// TestMergeRequestConcurrentMergeVsClose: the optimistic gate gives the merge and
 // the close exactly one winner, and the ledger agrees with the refs — a
 // merged winner moved the head and filled the record, a closed winner
 // touched nothing.
-func TestMRConcurrentMergeVsClose(t *testing.T) {
+func TestMergeRequestConcurrentMergeVsClose(t *testing.T) {
 	for round := 0; round < 3; round++ {
 		s := newService(t)
 		ctx := context.Background()
 		repo := fmt.Sprintf("r%d", round)
-		base := mrBranch(t, s, repo, "main", "", map[string]string{"f": "1\n"}, "seed")
-		mrBranch(t, s, repo, "feat", base, map[string]string{"g": "2\n"}, "feat")
-		mr, err := s.OpenMR(ctx, repo, "feat", "main", "t", "", "alice")
+		base := mergeRequestBranch(t, s, repo, "main", "", map[string]string{"f": "1\n"}, "seed")
+		mergeRequestBranch(t, s, repo, "feat", base, map[string]string{"g": "2\n"}, "feat")
+		mergeRequest, err := s.OpenMergeRequest(ctx, repo, "feat", "main", "t", "", "alice")
 		require.NoError(t, err)
 		before := s.branchHeadOrDie(t, repo, "main")
 
 		var wg sync.WaitGroup
 		var mergeErr, closeErr error
 		wg.Add(2)
-		go func() { defer wg.Done(); _, mergeErr = s.MergeMR(ctx, repo, mr.IID, "bob", "", 1) }()
-		go func() { defer wg.Done(); _, closeErr = s.CloseMR(ctx, repo, mr.IID, 2) }()
+		go func() { defer wg.Done(); _, mergeErr = s.MergeMergeRequest(ctx, repo, mergeRequest.IID, "bob", "", 1) }()
+		go func() { defer wg.Done(); _, closeErr = s.CloseMergeRequest(ctx, repo, mergeRequest.IID, 2) }()
 		wg.Wait()
 
 		require.True(t, (mergeErr == nil) != (closeErr == nil),
 			"exactly one winner: merge=%v close=%v", mergeErr, closeErr)
 
-		st := s.Meta.(meta.MRStore)
-		got, err := st.MRByIID(ctx, repo, mr.IID)
+		st := s.Meta.(meta.MergeRequestStore)
+		got, err := st.MergeRequestByIID(ctx, repo, mergeRequest.IID)
 		require.NoError(t, err)
 		if mergeErr == nil {
-			require.Equal(t, meta.MRStateMerged, got.State)
+			require.Equal(t, meta.MergeRequestStateMerged, got.State)
 			require.NotEmpty(t, got.MergeCommit)
 			require.NotEqual(t, before, s.branchHeadOrDie(t, repo, "main"), "the merge moved the ref")
 		} else {
-			require.Equal(t, meta.MRStateClosed, got.State)
+			require.Equal(t, meta.MergeRequestStateClosed, got.State)
 			require.Equal(t, before, s.branchHeadOrDie(t, repo, "main"), "a closed winner touches no ref")
 		}
 	}

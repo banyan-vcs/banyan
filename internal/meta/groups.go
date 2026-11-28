@@ -3,7 +3,7 @@
 // permission semantics, and never changes a repo's physical name or its
 // /api/v1/repos/<name> addressing; assignment is one optional label per
 // repo (the parent-hierarchy precedent: organizational metadata only).
-// GroupStore follows MRStore: deliberately NOT part of the MetaStore
+// GroupStore follows MergeRequestStore: deliberately NOT part of the MetaStore
 // composite; consumers type-assert (meta.(GroupStore)) so remote-meta
 // gateways compile unchanged.
 package meta
@@ -27,7 +27,7 @@ var ErrGroupExists = errors.New("group already exists")
 
 // ErrGroupInvalid is the store-level validation refusal (bad name) — a
 // client-input problem, so the JSON surface translates it to INVALID_ARG
-// rather than INTERNAL (the MR/rule sentinel precedent).
+// rather than INTERNAL (the merge request/rule sentinel precedent).
 var ErrGroupInvalid = errors.New("invalid group")
 
 // GroupInfo is one group. Names follow the repo rules (single path
@@ -141,7 +141,7 @@ func (s *SQLMetaStore) CreateGroup(ctx context.Context, g GroupInfo) error {
 	}
 	err := s.orm.WithContext(ctx).Create(&groupRow{GroupInfo: g}).Error
 	// TranslateError maps every dialect's unique violation to
-	// ErrDuplicatedKey (the mrAllocationRetryable precedent).
+	// ErrDuplicatedKey (the mergeRequestAllocationRetryable precedent).
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
 		return fmt.Errorf("%w: %s", ErrGroupExists, g.Name)
 	}

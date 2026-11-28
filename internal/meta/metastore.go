@@ -324,61 +324,61 @@ func ValidateReparent(repo, parent string, parentOf func(name string) (string, b
 // MemoryMetaStore is the single-node in-memory implementation (M1). WAL semantics
 // = atomic reads/writes under one mutex; object writes skip the WAL (CAS idempotent); only head/index commits enter it.
 type MemoryMetaStore struct {
-	mu           sync.Mutex
-	repos        map[string]RepoInfo
-	packs        map[string]map[model.OID][]string    // repo → packOID → nodes
-	packObjs     map[string]map[model.OID][]model.OID // repo → packOID → objects
-	index        map[string]map[model.OID]ObjectLocation
-	timelines    map[string]map[model.Timeline]model.TimelineState
-	placements   map[string]int                 // repo → replica target (0 = cluster default)
-	hooks        map[string]map[string]HookInfo // repo → hook ID → registration
-	repoBlobs    map[string]map[string][]byte   // repo → blob key → bytes (gitaly custom-hooks)
-	pools        map[string]PoolInfo            // member repo → pool record
-	renames      map[string]string              // fence: from → to (rename in flight, docs/storage/storage.md §6b)
-	retired      map[string]string              // tombstone: from → to (rename completed)
-	tokens       map[string]TokenInfo           // sha256 → token (docs/gateway/authorization.md §6)
-	subtreeRules map[string]map[string][]string // repo → anchor path → allowed users (docs/gateway/authorization.md §8)
-	mrs          map[string]map[int64]*MRInfo   // repo → iid → merge request (docs/design/merge-requests.md)
-	mrNextIID    map[string]int64               // repo → last allocated MR IID
-	mrApprovals  map[string]map[int64]map[string]int64 // repo → iid → user → approved-at
-	branchRules  map[string]map[string]BranchRule      // repo → branch → protection rule
-	mrComments      map[string]map[int64]map[int64]*MRComment // repo → iid → id → discussion entry
-	mrNextCommentID map[string]int64                    // repo\x00iid → last allocated comment ID
-	groups       map[string]*GroupInfo          // name → group (docs/design/data-model.md §15)
-	repoGroups   map[string]string              // repo → group name
-	groupMembers map[string]map[string]*Member  // group → user → member (docs/design/data-model.md §16)
-	repoMembers  map[string]map[string]*Member  // repo → user → direct member
-	sshKeys      map[string]*SSHKey             // fingerprint → user key (§17)
-	users        map[string]*User               // name → account (§18)
+	mu                        sync.Mutex
+	repos                     map[string]RepoInfo
+	packs                     map[string]map[model.OID][]string    // repo → packOID → nodes
+	packObjs                  map[string]map[model.OID][]model.OID // repo → packOID → objects
+	index                     map[string]map[model.OID]ObjectLocation
+	timelines                 map[string]map[model.Timeline]model.TimelineState
+	placements                map[string]int                                      // repo → replica target (0 = cluster default)
+	hooks                     map[string]map[string]HookInfo                      // repo → hook ID → registration
+	repoBlobs                 map[string]map[string][]byte                        // repo → blob key → bytes (gitaly custom-hooks)
+	pools                     map[string]PoolInfo                                 // member repo → pool record
+	renames                   map[string]string                                   // fence: from → to (rename in flight, docs/storage/storage.md §6b)
+	retired                   map[string]string                                   // tombstone: from → to (rename completed)
+	tokens                    map[string]TokenInfo                                // sha256 → token (docs/gateway/authorization.md §6)
+	subtreeRules              map[string]map[string][]string                      // repo → anchor path → allowed users (docs/gateway/authorization.md §8)
+	mergeRequests             map[string]map[int64]*MergeRequestInfo              // repo → iid → merge request (docs/design/merge-requests.md)
+	mergeRequestNextIID       map[string]int64                                    // repo → last allocated merge request IID
+	mergeRequestApprovals     map[string]map[int64]map[string]int64               // repo → iid → user → approved-at
+	branchRules               map[string]map[string]BranchRule                    // repo → branch → protection rule
+	mergeRequestComments      map[string]map[int64]map[int64]*MergeRequestComment // repo → iid → id → discussion entry
+	mergeRequestNextCommentID map[string]int64                                    // repo\x00iid → last allocated comment ID
+	groups                    map[string]*GroupInfo                               // name → group (docs/design/data-model.md §15)
+	repoGroups                map[string]string                                   // repo → group name
+	groupMembers              map[string]map[string]*Member                       // group → user → member (docs/design/data-model.md §16)
+	repoMembers               map[string]map[string]*Member                       // repo → user → direct member
+	sshKeys                   map[string]*SSHKey                                  // fingerprint → user key (§17)
+	users                     map[string]*User                                    // name → account (§18)
 }
 
 func NewMemoryMetaStore() *MemoryMetaStore {
 	return &MemoryMetaStore{
-		repos:        map[string]RepoInfo{},
-		packs:        map[string]map[model.OID][]string{},
-		packObjs:     map[string]map[model.OID][]model.OID{},
-		index:        map[string]map[model.OID]ObjectLocation{},
-		timelines:    map[string]map[model.Timeline]model.TimelineState{},
-		placements:   map[string]int{},
-		repoBlobs:    map[string]map[string][]byte{},
-		hooks:        map[string]map[string]HookInfo{},
-		tokens:       map[string]TokenInfo{},
-		pools:        map[string]PoolInfo{},
-		renames:      map[string]string{},
-		retired:      map[string]string{},
-		subtreeRules: map[string]map[string][]string{},
-		mrs:          map[string]map[int64]*MRInfo{},
-		mrNextIID:    map[string]int64{},
-		mrApprovals:  map[string]map[int64]map[string]int64{},
-		branchRules:  map[string]map[string]BranchRule{},
-		mrComments:      map[string]map[int64]map[int64]*MRComment{},
-		mrNextCommentID: map[string]int64{},
-		groups:       map[string]*GroupInfo{},
-		groupMembers: map[string]map[string]*Member{},
-		repoMembers:  map[string]map[string]*Member{},
-		sshKeys:      map[string]*SSHKey{},
-		users:        map[string]*User{},
-		repoGroups:   map[string]string{},
+		repos:                     map[string]RepoInfo{},
+		packs:                     map[string]map[model.OID][]string{},
+		packObjs:                  map[string]map[model.OID][]model.OID{},
+		index:                     map[string]map[model.OID]ObjectLocation{},
+		timelines:                 map[string]map[model.Timeline]model.TimelineState{},
+		placements:                map[string]int{},
+		repoBlobs:                 map[string]map[string][]byte{},
+		hooks:                     map[string]map[string]HookInfo{},
+		tokens:                    map[string]TokenInfo{},
+		pools:                     map[string]PoolInfo{},
+		renames:                   map[string]string{},
+		retired:                   map[string]string{},
+		subtreeRules:              map[string]map[string][]string{},
+		mergeRequests:             map[string]map[int64]*MergeRequestInfo{},
+		mergeRequestNextIID:       map[string]int64{},
+		mergeRequestApprovals:     map[string]map[int64]map[string]int64{},
+		branchRules:               map[string]map[string]BranchRule{},
+		mergeRequestComments:      map[string]map[int64]map[int64]*MergeRequestComment{},
+		mergeRequestNextCommentID: map[string]int64{},
+		groups:                    map[string]*GroupInfo{},
+		groupMembers:              map[string]map[string]*Member{},
+		repoMembers:               map[string]map[string]*Member{},
+		sshKeys:                   map[string]*SSHKey{},
+		users:                     map[string]*User{},
+		repoGroups:                map[string]string{},
 	}
 }
 

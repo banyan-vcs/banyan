@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
-	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/meta"
+	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 )
 
@@ -234,10 +234,10 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 			_ = WritePacket(out, []byte("ng "+u.Name+" permission denied\n"))
 			continue
 		}
-		if s.mrOnlyBranch(ctx, vr, name) {
-			// docs/design/merge-requests.md: an mr-only branch accepts NO
+		if s.mergeRequestOnlyBranch(ctx, vr, name) {
+			// docs/design/merge-requests.md: an merge-request-only branch accepts NO
 			// direct push — the merge-request path is the only way in.
-			_ = WritePacket(out, []byte("ng "+u.Name+" mr-only: merge via a merge request\n"))
+			_ = WritePacket(out, []byte("ng "+u.Name+" merge-request-only: merge via a merge request\n"))
 			continue
 		}
 		if name == "" {
@@ -336,7 +336,7 @@ func (s *Server) finishPush(ctx context.Context, id auth.Identity, br *bufio.Rea
 		pushAccepted.Add(1)
 		_ = s.fireHooks(ctx, vr, id.User, hookBytes, "post-receive", hookUpdates(applied), true)
 	}
-	// GitLab platform processing (events/pipelines/MR/cache expiry) rides
+	// GitLab platform processing (events/pipelines/merge request/cache expiry) rides
 	// the same post-receive point — sent even when every ref was declined,
 	// so Rails' reference counter pairs (empty changes are a no-op there).
 	s.gitlabPostReceive(vr, applied)
