@@ -61,7 +61,7 @@ pack 存储（散布 + 多副本）               ← 字节仓库：零共识�
 └──────────────────────────┘   └────────────────────────────────────┘
 ```
 
-- `banyand -role all-in-one(默认) | gateway | refs | storage`；
+- `banyand [serve] -role all-in-one(默认) | gateway | refs | storage`（serve 子命令显式；裸旗标历史拼法继续受支持）；
 - **一体化** = 三角色同进程（ref = 进程内 SQLite 直调；storage = 单节点，
   R=1）——无特例代码路径；
 - git smart HTTP v1 每请求自包含 ⇒ 网关无会话粘滞，任意增删。

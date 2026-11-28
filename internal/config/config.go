@@ -218,39 +218,123 @@ func Default() Config {
 	}
 }
 
+// ServeFlag describes one serve flag: name, kind, default, usage. Load's
+// stdlib set and the cobra serve command's pflag set both register from
+// this table, so the two spellings cannot drift.
+type ServeFlag struct {
+	Name  string
+	Kind  string // "string" | "int" | "bool"
+	Def   any
+	Usage string
+}
+
+// ServeFlags is the full serve surface: everything else (auth, ssh,
+// gitaly, cache, debug, workflow, storage.mode, budgets) is YAML-only.
+func ServeFlagTable() []ServeFlag {
+	d := Default()
+	return []ServeFlag{
+		{Name: "config", Kind: "string", Def: "", Usage: "YAML config file (flag values override file values)"},
+		{Name: "listen", Kind: "string", Def: d.Listen, Usage: "HTTP listen address"},
+		{Name: "root", Kind: "string", Def: d.Root, Usage: "local shard storage root"},
+		{Name: "init-repo", Kind: "string", Def: d.InitRepo, Usage: "repo name to create at startup (optional)"},
+		{Name: "meta", Kind: "string", Def: d.MetaBackend, Usage: "metadata backend: postgres (production default for all-in-one/refs) | mysql | sqlite (file) | mem (dev default; -dev)"},
+		{Name: "db", Kind: "string", Def: d.DBPath, Usage: "sqlite database path for -meta sqlite (default <root>/banyan.db)"},
+		{Name: "role", Kind: "string", Def: d.Role, Usage: "deployment role: all-in-one (default) | gateway | refs | storage (docs/storage/ha.md)"},
+		{Name: "node-id", Kind: "string", Def: d.NodeID, Usage: "storage role: cluster node identity"},
+		{Name: "advertise", Kind: "string", Def: d.Advertise, Usage: "storage role: address other roles dial (host:port; default 127.0.0.1:<listen port>)"},
+		{Name: "refs-addr", Kind: "string", Def: d.RefsAddr, Usage: "refs service address (gateway/storage roles)"},
+		{Name: "default-replicas", Kind: "int", Def: d.DefaultR, Usage: "cluster default replica target per repo"},
+		{Name: "write-acks", Kind: "string", Def: d.WriteAcks, Usage: "write acknowledgements: quorum (default) | all | one"},
+		{Name: "health-suspect-sec", Kind: "int", Def: d.SuspectSec, Usage: "node suspect threshold in seconds (docs/storage/ha.md §8.1)"},
+		{Name: "health-dead-sec", Kind: "int", Def: d.DeadSec, Usage: "node dead threshold in seconds"},
+		{Name: "recon-interval-sec", Kind: "int", Def: d.ReconSec, Usage: "reconciler interval in seconds"},
+		{Name: "recon-concurrency", Kind: "int", Def: d.ReconCurrency, Usage: "reconciler parallel pack copies"},
+		{Name: "heartbeat-sec", Kind: "int", Def: d.HeartbeatSec, Usage: "storage node heartbeat interval in seconds"},
+		{Name: "dev", Kind: "bool", Def: d.Dev, Usage: "development mode: unauthenticated git traffic, push auto-create, open gitaly frontend (production refuses these)"},
+	}
+}
+
+// FlagSource reads one parsed serve-flag set: a flag's value and whether
+// it was explicitly given (the precedence key). *pflag.FlagSet adapts in
+// one small wrapper in cmd/banyand.
+type FlagSource interface {
+	Changed(name string) bool
+	String(name string) string
+	Int(name string) int
+	Bool(name string) bool
+}
+
+// stdFlagSource adapts the stdlib set Load parses (Changed comes from
+// Visit — stdlib keeps no was-it-set bit).
+type stdFlagSource struct {
+	fs  *flag.FlagSet
+	set map[string]bool
+}
+
+func newStdFlagSource(fs *flag.FlagSet) *stdFlagSource {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	return &stdFlagSource{fs, set}
+}
+
+func (s *stdFlagSource) Changed(name string) bool { return s.set[name] }
+
+// value reads through flag.Getter (every stdlib value type implements it).
+func (s *stdFlagSource) value(name string) any {
+	f := s.fs.Lookup(name)
+	if f == nil {
+		return nil
+	}
+	if g, ok := f.Value.(flag.Getter); ok {
+		return g.Get()
+	}
+	return nil
+}
+
+func (s *stdFlagSource) String(name string) string {
+	str, _ := s.value(name).(string)
+	return str
+}
+
+func (s *stdFlagSource) Int(name string) int {
+	n, _ := s.value(name).(int)
+	return n
+}
+
+func (s *stdFlagSource) Bool(name string) bool {
+	b, _ := s.value(name).(bool)
+	return b
+}
+
 // Load parses args, applies the -config YAML file when given, and lets
 // explicitly-set flags win over the file (unset flags keep the file value,
 // which itself overrides the defaults). The result is validated and
 // normalized (meta default, db path resolution).
 func Load(args []string) (*Config, error) {
-	defaults := Default()
 	fs := flag.NewFlagSet("banyand", flag.ContinueOnError)
 	fs.SetOutput(&bytes.Buffer{})
-	configPath := fs.String("config", "", "YAML config file (flag values override file values)")
-	listen := fs.String("listen", defaults.Listen, "HTTP listen address")
-	root := fs.String("root", defaults.Root, "local shard storage root")
-	initRepo := fs.String("init-repo", defaults.InitRepo, "repo name to create at startup (optional)")
-	metaBackend := fs.String("meta", defaults.MetaBackend, `metadata backend: postgres (production default for all-in-one/refs) | mysql | sqlite (file) | mem (dev default; -dev)`)
-	dbPath := fs.String("db", defaults.DBPath, "sqlite database path for -meta sqlite (default <root>/banyan.db)")
-	role := fs.String("role", defaults.Role, `deployment role: all-in-one (default) | gateway | refs | storage (docs/storage/ha.md)`)
-	nodeID := fs.String("node-id", defaults.NodeID, "storage role: cluster node identity")
-	advertise := fs.String("advertise", defaults.Advertise, "storage role: address other roles dial (host:port; default 127.0.0.1:<listen port>)")
-	refsAddr := fs.String("refs-addr", defaults.RefsAddr, "refs service address (gateway/storage roles)")
-	defaultR := fs.Int("default-replicas", defaults.DefaultR, "cluster default replica target per repo")
-	writeAcks := fs.String("write-acks", defaults.WriteAcks, `write acknowledgements: quorum (default) | all | one`)
-	suspect := fs.Int("health-suspect-sec", defaults.SuspectSec, "node suspect threshold in seconds (docs/storage/ha.md §8.1)")
-	dead := fs.Int("health-dead-sec", defaults.DeadSec, "node dead threshold in seconds")
-	reconSec := fs.Int("recon-interval-sec", defaults.ReconSec, "reconciler interval in seconds")
-	reconCur := fs.Int("recon-concurrency", defaults.ReconCurrency, "reconciler parallel pack copies")
-	heartbeat := fs.Int("heartbeat-sec", defaults.HeartbeatSec, "storage node heartbeat interval in seconds")
-	dev := fs.Bool("dev", defaults.Dev, "development mode: unauthenticated git traffic, push auto-create, open gitaly frontend (production refuses these)")
+	for _, f := range ServeFlagTable() {
+		switch f.Kind {
+		case "int":
+			fs.Int(f.Name, f.Def.(int), f.Usage)
+		case "bool":
+			fs.Bool(f.Name, f.Def.(bool), f.Usage)
+		default:
+			fs.String(f.Name, f.Def.(string), f.Usage)
+		}
+	}
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
+	return LoadFromFlags(newStdFlagSource(fs))
+}
 
-	cfg := defaults
-	if *configPath != "" {
-		raw, err := os.ReadFile(*configPath)
+// LoadFromFlags is Load's core over any parsed FlagSource: defaults, then
+// the -config YAML file, then explicitly-set flags, then normalize.
+func LoadFromFlags(src FlagSource) (*Config, error) {
+	cfg := Default()
+	if path := src.String("config"); path != "" {
+		raw, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("config file: %w", err)
 		}
@@ -259,15 +343,13 @@ func Load(args []string) (*Config, error) {
 		dec := yaml.NewDecoder(bytes.NewReader(raw))
 		dec.KnownFields(true)
 		if err := dec.Decode(&cfg); err != nil {
-			return nil, fmt.Errorf("config file %s: %w", *configPath, err)
+			return nil, fmt.Errorf("config file %s: %w", path, err)
 		}
 	}
 
 	// Explicitly-set flags override the file.
-	set := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	apply := func(name string, dst any, val any) {
-		if set[name] {
+		if src.Changed(name) {
 			switch p := dst.(type) {
 			case *string:
 				*p = val.(string)
@@ -276,24 +358,24 @@ func Load(args []string) (*Config, error) {
 			}
 		}
 	}
-	apply("listen", &cfg.Listen, *listen)
-	apply("root", &cfg.Root, *root)
-	apply("init-repo", &cfg.InitRepo, *initRepo)
-	apply("meta", &cfg.MetaBackend, *metaBackend)
-	apply("db", &cfg.DBPath, *dbPath)
-	apply("role", &cfg.Role, *role)
-	apply("node-id", &cfg.NodeID, *nodeID)
-	apply("advertise", &cfg.Advertise, *advertise)
-	apply("refs-addr", &cfg.RefsAddr, *refsAddr)
-	apply("default-replicas", &cfg.DefaultR, *defaultR)
-	apply("write-acks", &cfg.WriteAcks, *writeAcks)
-	apply("health-suspect-sec", &cfg.SuspectSec, *suspect)
-	apply("health-dead-sec", &cfg.DeadSec, *dead)
-	apply("recon-interval-sec", &cfg.ReconSec, *reconSec)
-	apply("recon-concurrency", &cfg.ReconCurrency, *reconCur)
-	apply("heartbeat-sec", &cfg.HeartbeatSec, *heartbeat)
-	if set["dev"] {
-		cfg.Dev = *dev
+	apply("listen", &cfg.Listen, src.String("listen"))
+	apply("root", &cfg.Root, src.String("root"))
+	apply("init-repo", &cfg.InitRepo, src.String("init-repo"))
+	apply("meta", &cfg.MetaBackend, src.String("meta"))
+	apply("db", &cfg.DBPath, src.String("db"))
+	apply("role", &cfg.Role, src.String("role"))
+	apply("node-id", &cfg.NodeID, src.String("node-id"))
+	apply("advertise", &cfg.Advertise, src.String("advertise"))
+	apply("refs-addr", &cfg.RefsAddr, src.String("refs-addr"))
+	apply("default-replicas", &cfg.DefaultR, src.Int("default-replicas"))
+	apply("write-acks", &cfg.WriteAcks, src.String("write-acks"))
+	apply("health-suspect-sec", &cfg.SuspectSec, src.Int("health-suspect-sec"))
+	apply("health-dead-sec", &cfg.DeadSec, src.Int("health-dead-sec"))
+	apply("recon-interval-sec", &cfg.ReconSec, src.Int("recon-interval-sec"))
+	apply("recon-concurrency", &cfg.ReconCurrency, src.Int("recon-concurrency"))
+	apply("heartbeat-sec", &cfg.HeartbeatSec, src.Int("heartbeat-sec"))
+	if src.Changed("dev") {
+		cfg.Dev = src.Bool("dev")
 	}
 	return &cfg, cfg.normalize()
 }

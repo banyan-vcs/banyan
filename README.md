@@ -246,7 +246,9 @@ Docker 29.x; the same flows are pinned in-process by integration tests T23–T26
 ```bash
 go build ./... && go vet ./... && go test ./...   # ~65s (integration needs git on PATH)
 
-# Start the server. Config resolves as defaults < YAML (-config) < explicit flags;
+# Start the server. The subcommand is `banyand serve`; bare flags — the
+# historical spelling in the Dockerfile CMD and the compose files — stay
+# accepted. Config resolves as defaults < YAML (-config) < explicit flags;
 # unknown config keys are rejected. -dev = unauthenticated local mode — production
 # posture refuses to start without auth (see banyan.example.yaml).
 go run ./cmd/banyand -dev -listen 127.0.0.1:8097 -root ./banyand-data -meta sqlite

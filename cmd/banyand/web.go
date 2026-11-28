@@ -4,16 +4,18 @@
 // orchestration. Flags cover humans; the env fallbacks are the container
 // spellings the compose files and the GitLab demo provisioning already
 // write (PORT, BANYAN_URL, BASE_PATH, DIST_DIR, BANYAN_WEB_DB,
-// BANYAN_WEB_PROFILE).
+// BANYAN_WEB_PROFILE) — they apply AFTER the parse, so the environment
+// wins over the flag, exactly as before the cobra port.
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/spf13/cobra"
 
 	"github.com/banyan-vcs/banyan/internal/webapp"
 )
@@ -25,27 +27,46 @@ func envDefault(flagVal, envKey string) string {
 	return flagVal
 }
 
-func runWeb(args []string) {
-	fs := flag.NewFlagSet("banyand web", flag.ExitOnError)
-	listen := fs.String("listen", ":3000", "HTTP listen address")
-	gateway := fs.String("gateway", "http://127.0.0.1:8080", "gateway (banyand serve) base URL")
-	dbSpec := fs.String("db", "sqlite:./web/web.db", "web database: sqlite:<path> | mysql:<dsn> | postgres:<dsn> (a bare path is sqlite)")
-	dist := fs.String("dist", "./web/dist", "the SPA build directory")
-	basePath := fs.String("base-path", "", "URL prefix without trailing slash (e.g. /-/banyan behind GitLab nginx)")
-	profile := fs.String("profile", webapp.ProfileStandalone, webapp.ProfileStandalone+" | "+webapp.ProfileGitLab)
-	fs.Parse(args)
+type webOptions struct {
+	Listen   string
+	Gateway  string
+	DBSpec   string
+	Dist     string
+	BasePath string
+	Profile  string
+}
 
-	// PORT holds a bare port number in container-land.
-	if p := os.Getenv("PORT"); p != "" {
-		*listen = ":" + p
+func newWebCmd() *cobra.Command {
+	var o webOptions
+	cmd := &cobra.Command{
+		Use:   "web",
+		Short: "the web tier (internal/webapp): sessions, OAuth login, the SPA",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			// PORT holds a bare port number in container-land.
+			if p := os.Getenv("PORT"); p != "" {
+				o.Listen = ":" + p
+			}
+			o.Gateway = envDefault(o.Gateway, "BANYAN_URL")
+			o.Dist = envDefault(o.Dist, "DIST_DIR")
+			o.BasePath = envDefault(o.BasePath, "BASE_PATH")
+			o.DBSpec = envDefault(o.DBSpec, "BANYAN_WEB_DB")
+			o.Profile = envDefault(o.Profile, "BANYAN_WEB_PROFILE")
+			runWeb(o)
+			return nil
+		},
 	}
-	*gateway = envDefault(*gateway, "BANYAN_URL")
-	*dist = envDefault(*dist, "DIST_DIR")
-	*basePath = envDefault(*basePath, "BASE_PATH")
-	*dbSpec = envDefault(*dbSpec, "BANYAN_WEB_DB")
-	*profile = envDefault(*profile, "BANYAN_WEB_PROFILE")
+	fl := cmd.Flags()
+	fl.StringVar(&o.Listen, "listen", ":3000", "HTTP listen address")
+	fl.StringVar(&o.Gateway, "gateway", "http://127.0.0.1:8080", "gateway (banyand serve) base URL")
+	fl.StringVar(&o.DBSpec, "db", "sqlite:./web/web.db", "web database: sqlite:<path> | mysql:<dsn> | postgres:<dsn> (a bare path is sqlite)")
+	fl.StringVar(&o.Dist, "dist", "./web/dist", "the SPA build directory")
+	fl.StringVar(&o.BasePath, "base-path", "", "URL prefix without trailing slash (e.g. /-/banyan behind GitLab nginx)")
+	fl.StringVar(&o.Profile, "profile", webapp.ProfileStandalone, webapp.ProfileStandalone+" | "+webapp.ProfileGitLab)
+	return cmd
+}
 
-	db, err := webapp.OpenDB(*dbSpec)
+func runWeb(o webOptions) {
+	db, err := webapp.OpenDB(o.DBSpec)
 	if err != nil {
 		log.Fatalf("banyand web: %v", err)
 	}
@@ -59,15 +80,15 @@ func runWeb(args []string) {
 	_ = db.SweepOAuthStates()
 
 	srv := webapp.New(webapp.Options{
-		Gateway:  *gateway,
-		BasePath: *basePath,
-		DistDir:  filepath.FromSlash(*dist),
-		Profile:  *profile,
+		Gateway:  o.Gateway,
+		BasePath: o.BasePath,
+		DistDir:  filepath.FromSlash(o.Dist),
+		Profile:  o.Profile,
 		DB:       db,
 	})
 	mux := http.NewServeMux()
 	srv.Register(mux)
 	fmt.Fprintf(os.Stderr, "banyand web: serving %s (gateway=%s db=%s profile=%s base=%q)\n",
-		*listen, *gateway, *dbSpec, *profile, *basePath)
-	log.Fatal(http.ListenAndServe(*listen, mux))
+		o.Listen, o.Gateway, o.DBSpec, o.Profile, o.BasePath)
+	log.Fatal(http.ListenAndServe(o.Listen, mux))
 }

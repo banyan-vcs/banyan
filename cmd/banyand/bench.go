@@ -20,45 +20,70 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/banyan-vcs/banyan/internal/bench"
 )
 
-func runBench(args []string) {
-	fs := flag.NewFlagSet("banyand bench", flag.ExitOnError)
-	profile := fs.String("profile", "small", "seed profile: small | medium | large")
-	repo := fs.String("repo", "", "real-repository sample: mirror this local repo (all branches+tags) instead of a synthetic seed")
-	scenarios := fs.String("scenarios", "", "comma-separated scenario families to run (default all): "+strings.Join(bench.ScenarioFamilies, ", "))
-	runs := fs.Int("runs", 3, "runs per scenario (run 0 = cold lane, rest warm; minimum 3)")
-	save := fs.String("save", "", "write the report as a baseline JSON file")
-	check := fs.String("check", "", "compare against a baseline JSON; exit 1 on >20% regression")
-	md := fs.String("md", "", "write a Markdown comparison report")
-	csv := fs.String("csv", "", "write every raw sample as CSV (workload,tool,run,ms,bytes)")
-	workdir := fs.String("work", "", "working directory (default: temp)")
-	memlimit := fs.Int("memlimit", 0, "soft memory limit in MiB for the in-process server (GOMEMLIMIT semantics: the GC works harder as the heap nears it — a big real-sample materialization degrades instead of starving the machine); 0 = no limit")
-	fs.Parse(args)
+type benchOptions struct {
+	Profile   string
+	Repo      string
+	Scenarios string
+	Runs      int
+	Save      string
+	Check     string
+	MD        string
+	CSV       string
+	Workdir   string
+	MemLimit  int
+}
 
+func newBenchCmd() *cobra.Command {
+	var o benchOptions
+	cmd := &cobra.Command{
+		Use:   "bench",
+		Short: "the performance harness: banyan vs git http-backend (docs/operations/performance.md §3)",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			runBench(o)
+			return nil
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&o.Profile, "profile", "small", "seed profile: small | medium | large")
+	fl.StringVar(&o.Repo, "repo", "", "real-repository sample: mirror this local repo (all branches+tags) instead of a synthetic seed")
+	fl.StringVar(&o.Scenarios, "scenarios", "", "comma-separated scenario families to run (default all): "+strings.Join(bench.ScenarioFamilies, ", "))
+	fl.IntVar(&o.Runs, "runs", 3, "runs per scenario (run 0 = cold lane, rest warm; minimum 3)")
+	fl.StringVar(&o.Save, "save", "", "write the report as a baseline JSON file")
+	fl.StringVar(&o.Check, "check", "", "compare against a baseline JSON; exit 1 on >20% regression")
+	fl.StringVar(&o.MD, "md", "", "write a Markdown comparison report")
+	fl.StringVar(&o.CSV, "csv", "", "write every raw sample as CSV (workload,tool,run,ms,bytes)")
+	fl.StringVar(&o.Workdir, "work", "", "working directory (default: temp)")
+	fl.IntVar(&o.MemLimit, "memlimit", 0, "soft memory limit in MiB for the in-process server (GOMEMLIMIT semantics: the GC works harder as the heap nears it — a big real-sample materialization degrades instead of starving the machine); 0 = no limit")
+	return cmd
+}
+
+func runBench(o benchOptions) {
 	// The bench runs the server in-process, so an unbounded materialization
 	// (git.git-scale cold advertisement, docs/operations/performance.md §3b
 	// finding ④) grows until the OOM killer takes the whole run — and
 	// sometimes the machine's responsiveness with it. A soft limit turns
 	// that death into GC pressure.
-	if *memlimit > 0 {
-		debug.SetMemoryLimit(int64(*memlimit) << 20)
+	if o.MemLimit > 0 {
+		debug.SetMemoryLimit(int64(o.MemLimit) << 20)
 	}
 
-	families, okScen := parseScenarios(*scenarios)
+	families, okScen := parseScenarios(o.Scenarios)
 	if !okScen {
 		os.Exit(2) // parseScenarios already complained
 	}
 
-	dir := *workdir
+	dir := o.Workdir
 	if dir == "" {
 		t, err := os.MkdirTemp("", "banyand-bench-*")
 		if err != nil {
@@ -71,16 +96,16 @@ func runBench(args []string) {
 
 	var rep *bench.Report
 	var err error
-	if *repo != "" {
-		name := strings.TrimSuffix(filepath.Base(*repo), ".git")
-		rep, err = bench.RunReal(name, *repo, bench.Options{Runs: *runs, Workdir: dir, Scenarios: families})
+	if o.Repo != "" {
+		name := strings.TrimSuffix(filepath.Base(o.Repo), ".git")
+		rep, err = bench.RunReal(name, o.Repo, bench.Options{Runs: o.Runs, Workdir: dir, Scenarios: families})
 	} else {
-		p, ok := bench.Profiles[*profile]
+		p, ok := bench.Profiles[o.Profile]
 		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown profile %q (have small, medium, large)\n", *profile)
+			fmt.Fprintf(os.Stderr, "unknown profile %q (have small, medium, large)\n", o.Profile)
 			os.Exit(2)
 		}
-		rep, err = bench.Run(*profile, p, *runs, dir)
+		rep, err = bench.Run(o.Profile, p, o.Runs, dir)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bench: %v\n", err)
@@ -88,22 +113,22 @@ func runBench(args []string) {
 	}
 	fmt.Println(rep.Render())
 
-	if *save != "" {
-		if err := rep.Save(*save); err != nil {
-			fmt.Fprintf(os.Stderr, "save baseline: %v\n", *save)
+	if o.Save != "" {
+		if err := rep.Save(o.Save); err != nil {
+			fmt.Fprintf(os.Stderr, "save baseline: %v\n", o.Save)
 			os.Exit(2)
 		}
-		fmt.Printf("baseline saved: %s\n", *save)
+		fmt.Printf("baseline saved: %s\n", o.Save)
 	}
-	if *check != "" {
-		raw, err := os.ReadFile(*check)
+	if o.Check != "" {
+		raw, err := os.ReadFile(o.Check)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "read baseline: %v\n", *check)
+			fmt.Fprintf(os.Stderr, "read baseline: %v\n", o.Check)
 			os.Exit(2)
 		}
 		var baseline bench.Report
 		if err := json.Unmarshal(raw, &baseline); err != nil {
-			fmt.Fprintf(os.Stderr, "parse baseline: %v\n", *check)
+			fmt.Fprintf(os.Stderr, "parse baseline: %v\n", o.Check)
 			os.Exit(2)
 		}
 		if bad := rep.Check(&baseline); len(bad) > 0 {
@@ -115,19 +140,19 @@ func runBench(args []string) {
 		}
 		fmt.Println("SLO GREEN — 全部指标在基线 20% 以内")
 	}
-	if *md != "" {
-		if err := rep.WriteMarkdown(*md); err != nil {
-			fmt.Fprintf(os.Stderr, "write markdown: %v\n", *md)
+	if o.MD != "" {
+		if err := rep.WriteMarkdown(o.MD); err != nil {
+			fmt.Fprintf(os.Stderr, "write markdown: %v\n", o.MD)
 			os.Exit(2)
 		}
-		fmt.Printf("markdown report: %s\n", *md)
+		fmt.Printf("markdown report: %s\n", o.MD)
 	}
-	if *csv != "" {
-		if err := rep.WriteCSV(*csv); err != nil {
-			fmt.Fprintf(os.Stderr, "write csv: %v\n", *csv)
+	if o.CSV != "" {
+		if err := rep.WriteCSV(o.CSV); err != nil {
+			fmt.Fprintf(os.Stderr, "write csv: %v\n", o.CSV)
 			os.Exit(2)
 		}
-		fmt.Printf("raw samples: %s\n", *csv)
+		fmt.Printf("raw samples: %s\n", o.CSV)
 	}
 }
 

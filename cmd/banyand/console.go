@@ -11,48 +11,69 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 
+	"github.com/spf13/cobra"
+
 	"github.com/banyan-vcs/banyan/internal/console"
 )
 
-func runConsole(args []string) {
-	fs := flag.NewFlagSet("banyand console", flag.ExitOnError)
-	listen := fs.String("listen", ":8081", "HTTP listen address")
-	root := fs.String("root", "./data", "data root (console.db lives here unless -db)")
-	dbPath := fs.String("db", "", "console sqlite path (default <root>/console.db)")
-	gateway := fs.String("gateway", "http://127.0.0.1:8080", "gateway (banyand) base URL")
-	secret := fs.String("secret", "", "identity-signing secret shared with the gateway (required)")
-	bootstrap := fs.String("bootstrap-admin", "", "create this admin user on first boot and print a one-time PAT")
-	fs.Parse(args)
+type consoleOptions struct {
+	Listen    string
+	Root      string
+	DBPath    string
+	Gateway   string
+	Secret    string
+	Bootstrap string
+}
 
-	if *secret == "" {
+func newConsoleCmd() *cobra.Command {
+	var o consoleOptions
+	cmd := &cobra.Command{
+		Use:   "console",
+		Short: "the product-side control plane: users, tokens, the repository tree",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			runConsole(o)
+			return nil
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&o.Listen, "listen", ":8081", "HTTP listen address")
+	fl.StringVar(&o.Root, "root", "./data", "data root (console.db lives here unless -db)")
+	fl.StringVar(&o.DBPath, "db", "", "console sqlite path (default <root>/console.db)")
+	fl.StringVar(&o.Gateway, "gateway", "http://127.0.0.1:8080", "gateway (banyand) base URL")
+	fl.StringVar(&o.Secret, "secret", "", "identity-signing secret shared with the gateway (required)")
+	fl.StringVar(&o.Bootstrap, "bootstrap-admin", "", "create this admin user on first boot and print a one-time PAT")
+	return cmd
+}
+
+func runConsole(o consoleOptions) {
+	if o.Secret == "" {
 		log.Fatalf("banyand console: -secret is required (it must equal the gateway's auth.upstream_secret)")
 	}
-	if *dbPath == "" {
-		*dbPath = filepath.Join(*root, "console.db")
+	if o.DBPath == "" {
+		o.DBPath = filepath.Join(o.Root, "console.db")
 	}
 
-	db, err := console.Open(*dbPath)
+	db, err := console.Open(o.DBPath)
 	if err != nil {
 		log.Fatalf("banyand console: %v", err)
 	}
 	defer db.Close()
 
-	if *bootstrap != "" {
-		bootstrapAdmin(db, *bootstrap)
+	if o.Bootstrap != "" {
+		bootstrapAdmin(db, o.Bootstrap)
 	}
 
-	srv := console.NewServer(db, *gateway, []byte(*secret))
+	srv := console.NewServer(db, o.Gateway, []byte(o.Secret))
 	mux := http.NewServeMux()
 	srv.Register(mux)
-	fmt.Fprintf(os.Stderr, "banyand console: serving %s (db=%s gateway=%s)\n", *listen, *dbPath, *gateway)
-	log.Fatal(http.ListenAndServe(*listen, mux))
+	fmt.Fprintf(os.Stderr, "banyand console: serving %s (db=%s gateway=%s)\n", o.Listen, o.DBPath, o.Gateway)
+	log.Fatal(http.ListenAndServe(o.Listen, mux))
 }
 
 // bootstrapAdmin creates the named admin when missing and prints a fresh PAT

@@ -28,8 +28,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
 	"github.com/banyan-vcs/banyan/internal/config"
@@ -47,31 +51,143 @@ import (
 )
 
 func main() {
-	// Subcommand dispatch: a known leading word picks a control-plane
-	// subcommand; anything else (a flag, nothing) is the serving path —
-	// `banyand -config x` keeps working exactly as before.
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "serve":
-			os.Args = append(os.Args[:1], os.Args[2:]...)
-		case "console":
-			runConsole(os.Args[2:])
-			return
-		case "bench":
-			runBench(os.Args[2:])
-			return
-		case "web":
-			runWeb(os.Args[2:])
-			return
-		}
+	root := &cobra.Command{
+		Use:   "banyand",
+		Short: "banyan's server daemon (docs/storage/ha.md §2)",
+		Long: `One binary, four serving roles plus the control-plane subcommands —
+every server-side job ships in this one process.
+
+  serve    the storage-plane roles (the default: bare flags are the
+           historical spelling and stay accepted)
+             all-in-one (default)  git smart HTTP + JSON API + local
+                                   shards + local meta
+             gateway               the stateless frontend over the refs
+                                   service and the scattered store
+             refs                  the serialization point: meta RPC,
+                                   node health, replica reconciler
+             storage               a pack warehouse, heartbeating to refs
+  console  the product-side control plane (users, tokens, the logical
+           repository tree, the git front door)
+  bench    the performance harness (docs/operations/performance.md §3)
+  web      the web tier (internal/webapp): sessions, OAuth login, repo
+           import, the SPA
+
+Configuration resolves as defaults < YAML (-config) < explicit flags
+(internal/config).`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
-	runServe()
+	root.AddCommand(newServeCmd(), newWebCmd(), newConsoleCmd(), newBenchCmd())
+
+	argv := prependServe(os.Args[1:])
+	root.SetArgs(normalizeLegacyDash(argv))
+	ctx, stop := signalContext()
+	defer stop()
+	if err := root.ExecuteContext(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
 }
 
-func runServe() {
-	cfg, err := config.Load(os.Args[1:])
+// prependServe keeps the historical bare-flag spelling alive: an empty
+// argv or a leading flag is `banyand serve …` — the Dockerfile CMD, the
+// compose files and every documented command line ride on it. A help flag
+// is the exception: it must reach the ROOT command, not serve's help.
+func prependServe(argv []string) []string {
+	if len(argv) == 0 {
+		return []string{"serve"}
+	}
+	switch argv[0] {
+	case "-h", "-help", "--help":
+		return argv
+	}
+	if strings.HasPrefix(argv[0], "-") {
+		return append([]string{"serve"}, argv...)
+	}
+	return argv
+}
+
+// legacyLongDash matches the historical single-dash long flags (-config,
+// -listen): a dash, a lowercase letter, then at least one more
+// letter/digit/hyphen. True shorthands (-h) and negative numbers (a digit
+// first) do not match.
+var legacyLongDash = regexp.MustCompile(`^-[a-z][a-z0-9-]+$`)
+
+// normalizeLegacyDash rewrites single-dash long flags to their --form so
+// pflag accepts them verbatim. Tokens after the `--` terminator are
+// positional and pass through untouched.
+func normalizeLegacyDash(argv []string) []string {
+	out := make([]string, 0, len(argv))
+	positional := false
+	for _, a := range argv {
+		name := a
+		if i := strings.IndexByte(a, '='); i >= 0 { // -listen=:8080 → name -listen
+			name = a[:i]
+		}
+		switch {
+		case positional, a == "-", !strings.HasPrefix(a, "-"):
+			out = append(out, a)
+		case a == "--":
+			positional = true
+			out = append(out, a)
+		case strings.HasPrefix(a, "--") || !legacyLongDash.MatchString(name):
+			out = append(out, a)
+		default:
+			out = append(out, "-"+a)
+		}
+	}
+	return out
+}
+
+// newServeCmd builds the serving command: the 18-flag surface registers
+// from config.ServeFlagTable into pflag, then LoadFromFlags resolves
+// defaults < YAML < explicitly-set flags through the pflagSource adapter —
+// the exact precedence config.Load applies to the stdlib set.
+func newServeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "the storage-plane roles (all-in-one | gateway | refs | storage)",
+		RunE: func(c *cobra.Command, _ []string) error {
+			runServe(c)
+			return nil
+		},
+	}
+	registerServeFlags(cmd.Flags())
+	return cmd
+}
+
+// registerServeFlags mirrors config.ServeFlagTable into pflag — the same
+// table config.Load's stdlib set builds from, so the surfaces cannot drift.
+func registerServeFlags(fl *pflag.FlagSet) {
+	for _, f := range config.ServeFlagTable() {
+		switch f.Kind {
+		case "int":
+			fl.Int(f.Name, f.Def.(int), f.Usage)
+		case "bool":
+			fl.Bool(f.Name, f.Def.(bool), f.Usage)
+		default:
+			fl.String(f.Name, f.Def.(string), f.Usage)
+		}
+	}
+}
+
+// pflagSource adapts *pflag.FlagSet to config.FlagSource (Changed is
+// native; the typed getters cannot fail — every name registers from the
+// same table with the matching kind).
+type pflagSource struct{ fl *pflag.FlagSet }
+
+func (s pflagSource) Changed(name string) bool { return s.fl.Changed(name) }
+
+func (s pflagSource) String(name string) string { v, _ := s.fl.GetString(name); return v }
+
+func (s pflagSource) Int(name string) int { v, _ := s.fl.GetInt(name); return v }
+
+func (s pflagSource) Bool(name string) bool { v, _ := s.fl.GetBool(name); return v }
+
+func runServe(cmd *cobra.Command) {
+	cfg, err := config.LoadFromFlags(pflagSource{cmd.Flags()})
 	if err != nil {
-		log.Fatalf("%v\nusage: banyand [-config banyan.yaml] [-role all-in-one|gateway|refs|storage] [-listen addr] [-root dir] [-meta mem|sqlite] [-db path] [-refs-addr host:port] [-node-id id] [-init-repo name] [-dev]", err)
+		log.Fatalf("%v\nusage: banyand [serve] [-config banyan.yaml] [-role all-in-one|gateway|refs|storage] [-listen addr] [-root dir] [-meta mem|sqlite] [-db path] [-refs-addr host:port] [-node-id id] [-init-repo name] [-dev]", err)
 	}
 	fmt.Fprintf(os.Stderr, "banyand config: %s\n", cfg.Describe())
 	// Ops plane (docs/gateway/service-api.md §6): pprof family + runtime snapshot + expvar
@@ -84,10 +200,10 @@ func runServe() {
 	})
 
 	// One termination context for the whole process: SIGINT/SIGTERM cancels
-	// it, every role drains (in-flight pack streams finish) instead of
-	// dying mid-transfer — the posture a rolling restart needs.
-	ctx, stop := signalContext()
-	defer stop()
+	// it (main installs it around Execute), every role drains (in-flight
+	// pack streams finish) instead of dying mid-transfer — the posture a
+	// rolling restart needs.
+	ctx := cmd.Context()
 
 	switch cfg.Role {
 	case "storage":
