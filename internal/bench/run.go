@@ -639,8 +639,8 @@ func (r *Report) Render() string {
 			continue
 		}
 		br := ratio(bm.BytesOut, gm.BytesOut)
-		mr := ratio(bm.Milliseconds, gm.Milliseconds)
-		fmt.Fprintf(&b, "%-34s %18s %18s %10s %10s\n", n, fmtMetric(bm), fmtMetric(gm), br, mr)
+		mergeRequest := ratio(bm.Milliseconds, gm.Milliseconds)
+		fmt.Fprintf(&b, "%-34s %18s %18s %10s %10s\n", n, fmtMetric(bm), fmtMetric(gm), br, mergeRequest)
 	}
 	return b.String()
 }

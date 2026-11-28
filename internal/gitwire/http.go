@@ -12,8 +12,8 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/banyan-vcs/banyan/internal/auth"
-	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/meta"
+	"github.com/banyan-vcs/banyan/internal/model"
 	"github.com/banyan-vcs/banyan/internal/storage"
 	"github.com/banyan-vcs/banyan/internal/view"
 )
@@ -204,11 +204,11 @@ func newAbortBufWriter(w http.ResponseWriter) *bufWriter {
 	return b
 }
 
-// mrOnlyBranch reports whether the branch carries an mr-only rule
+// mergeRequestOnlyBranch reports whether the branch carries an merge-request-only rule
 // (docs/design/merge-requests.md): NOBODY pushes it directly — not even
 // admins — the merge-request path is the only way in. v1 scopes rules to
 // root-anchor branches.
-func (s *Server) mrOnlyBranch(ctx context.Context, vr VirtualRepo, branch string) bool {
+func (s *Server) mergeRequestOnlyBranch(ctx context.Context, vr VirtualRepo, branch string) bool {
 	if !vr.Sub.IsRoot() {
 		return false
 	}
@@ -217,7 +217,7 @@ func (s *Server) mrOnlyBranch(ctx context.Context, vr VirtualRepo, branch string
 		return false
 	}
 	rule, has, err := rs.BranchRuleOf(ctx, vr.Repo, branch)
-	return err == nil && has && rule.Level == meta.RuleMROnly
+	return err == nil && has && rule.Level == meta.RuleMergeRequestOnly
 }
 
 // abortStream kills the connection when a mid-serve stream can no longer be
@@ -408,7 +408,7 @@ func (s *Server) capabilities(service, defaultBranch string) string {
 		"delete-refs", // clients silently drop delete commands when this capability is absent (gitprotocol-pack)
 		"no-thin",     // storage-side packs are self-contained (docs/gateway/git-compat.md §2)
 		// -o push options: parsed after the command list and handed to the
-		// GitLab adapter (post_receive's push_options → MR-from-push etc.).
+		// GitLab adapter (post_receive's push_options → merge request-from-push etc.).
 		"push-options",
 	}, " ")
 }

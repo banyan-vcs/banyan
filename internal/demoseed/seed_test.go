@@ -5,7 +5,7 @@ package demoseed
 // the demo repository labeled into the platform group with inherited
 // member grants, two directory timelines visible as subtrees, three merge
 // requests in the three states (one open+clean, one open+conflicting, one
-// merged), the mr-only release rule, the personal branch — and a re-run is
+// merged), the merge-request-only release rule, the personal branch — and a re-run is
 // a no-op.
 import (
 	"context"
@@ -72,20 +72,20 @@ func TestSeed(t *testing.T) {
 	}
 
 	// --- the merge-request trio: open+clean (approved), open+conflicting, merged ---
-	mrs, err := svc.ListMRs(ctx, "demo", "")
+	mergeRequests, err := svc.ListMergeRequests(ctx, "demo", "")
 	require.NoError(t, err)
-	require.Len(t, mrs, 3)
+	require.Len(t, mergeRequests, 3)
 	var clean, conflicting, merged int
-	for _, m := range mrs {
+	for _, m := range mergeRequests {
 		switch m.State {
-		case meta.MRStateMerged:
+		case meta.MergeRequestStateMerged:
 			merged++
 			assert.Equal(t, "admin", m.MergedBy)
 			assert.NotEmpty(t, m.MergeCommit)
-		case meta.MRStateOpen:
+		case meta.MergeRequestStateOpen:
 			// mergeability is a FIELD, not an error: PreviewMerge answers
 			// conflicts inside the outcome (docs/design/merge-requests.md).
-			detail, derr := svc.MRDetail(ctx, "demo", m.IID)
+			detail, derr := svc.MergeRequestDetail(ctx, "demo", m.IID)
 			require.NoError(t, derr)
 			if len(detail.Conflicts) > 0 {
 				conflicting++
@@ -106,7 +106,7 @@ func TestSeed(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rules, 1)
 	assert.Equal(t, "release", rules[0].Branch)
-	assert.Equal(t, meta.RuleMROnly, rules[0].Level)
+	assert.Equal(t, meta.RuleMergeRequestOnly, rules[0].Level)
 	refs, err := svc.ListRefs(ctx, "demo", "")
 	require.NoError(t, err)
 	branchNames := map[string]bool{}
@@ -122,9 +122,9 @@ func TestSeed(t *testing.T) {
 
 	// --- idempotence: a re-run neither doubles nor errors ---
 	require.NoError(t, Seed(ctx, svc, t.TempDir()))
-	mrs2, err := svc.ListMRs(ctx, "demo", "")
+	mergeRequests2, err := svc.ListMergeRequests(ctx, "demo", "")
 	require.NoError(t, err)
-	assert.Len(t, mrs2, 3)
+	assert.Len(t, mergeRequests2, 3)
 	users2, _ := us.Users(ctx)
 	assert.Len(t, users2, 3)
 }

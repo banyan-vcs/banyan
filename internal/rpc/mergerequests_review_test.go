@@ -20,9 +20,9 @@ import (
 	"github.com/banyan-vcs/banyan/internal/service"
 )
 
-// seedMRRepo lands main + feat with one file each through the real commit
+// seedMergeRequestRepo lands main + feat with one file each through the real commit
 // path, then opens the merge request over the JSON face.
-func seedMRRepo(t *testing.T, s *Server, hsURL string) int64 {
+func seedMergeRequestRepo(t *testing.T, s *Server, hsURL string) int64 {
 	t.Helper()
 	ctx := context.Background()
 	require.NoError(t, s.Svc.Meta.CreateRepo(ctx, "r", model.SHA1))
@@ -45,14 +45,14 @@ func seedMRRepo(t *testing.T, s *Server, hsURL string) int64 {
 	resp := apiAs(t, hsURL, http.MethodPost, "/api/v1/repos/r/merge-requests",
 		"alice", map[string]string{"source": "feat", "target": "main", "title": "feat → main"})
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
-	var mr meta.MRInfo
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&mr))
-	return mr.IID
+	var mergeRequest meta.MergeRequestInfo
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&mergeRequest))
+	return mergeRequest.IID
 }
 
-func TestMRReviewFlow(t *testing.T) {
+func TestMergeRequestReviewFlow(t *testing.T) {
 	s, _, hs := newAuthStack(t)
-	seedMRRepo(t, s, hs.URL)
+	seedMergeRequestRepo(t, s, hs.URL)
 
 	// alice (author) comments overview-level; boss anchors a line comment.
 	resp := apiAs(t, hs.URL, http.MethodPost, "/api/v1/repos/r/merge-requests/1/comments",
@@ -61,7 +61,7 @@ func TestMRReviewFlow(t *testing.T) {
 	resp = apiAs(t, hs.URL, http.MethodPost, "/api/v1/repos/r/merge-requests/1/comments",
 		"boss", map[string]any{"body": "name it features", "path": "feat.go", "side": "new", "line": 1})
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
-	var anchored meta.MRComment
+	var anchored meta.MergeRequestComment
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&anchored))
 	assert.NotEmpty(t, anchored.AnchorOID, "the face stamps the anchor server-side")
 	st, err := s.Svc.Meta.Timeline(context.Background(), model.Timeline{Repo: "r", Anchor: model.RootAnchor, Name: "feat"})
@@ -111,8 +111,8 @@ func TestMRReviewFlow(t *testing.T) {
 	resp = apiAs(t, hs.URL, http.MethodGet, "/api/v1/repos/r/merge-requests/1/comments", "alice", nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var disc struct {
-		Comments       []meta.MRComment `json:"comments"`
-		ApprovalEvents []meta.MRApproval `json:"approval_events"`
+		Comments       []meta.MergeRequestComment  `json:"comments"`
+		ApprovalEvents []meta.MergeRequestApproval `json:"approval_events"`
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&disc))
 	assert.GreaterOrEqual(t, len(disc.Comments), 3, "the discussion survives the merge")

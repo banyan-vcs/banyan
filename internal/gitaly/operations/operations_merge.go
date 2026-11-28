@@ -177,7 +177,7 @@ func conflictFiles(paths []string) [][]byte {
 	return out
 }
 
-// UserMergeBranch is the two-phase MR merge: apply (compute the merge
+// UserMergeBranch is the two-phase merge request merge: apply (compute the merge
 // commit, answer its OID), then a client confirmation that CASes it onto
 // the branch. An aborted second message leaves the objects orphaned — the
 // same quarantine semantics upstream has.

@@ -40,7 +40,7 @@ func metaIndexesUp(q ddl.Q) error {
 		"CREATE INDEX idx_tokens_owner ON tokens(owner, created_at)"); err != nil {
 		return err
 	}
-	// ListMRs(repo, state) filters and orders by IID.
+	// ListMergeRequests(repo, state) filters and orders by IID.
 	return q.EnsureIndex("idx_merge_requests_state",
 		"CREATE INDEX idx_merge_requests_state ON merge_requests(repo, state, iid)")
 }
@@ -97,10 +97,10 @@ var metaSteps = []ddl.Step{
 	{Name: "0006-indexes", Up: metaIndexesUp},
 	// The merge-request tables (docs/design/merge-requests.md). Fresh
 	// databases already carry them in 0001's living tableDDL; this step
-	// lands them on pre-MR deployments (IF NOT EXISTS makes replay a no-op).
-	{Name: "0007-mr-tables", Up: mrTablesUp},
+	// lands them on pre-merge request deployments (IF NOT EXISTS makes replay a no-op).
+	{Name: "0007-mr-tables", Up: mergeRequestTablesUp},
 	// The group tables (docs/design/data-model.md §15) — same baseline/
-	// incremental split as the MR tables.
+	// incremental split as the merge request tables.
 	{Name: "0008-group-tables", Up: groupTablesUp},
 	// The repository display one-liner (the list page shows it truncated).
 	{Name: "0009-repos-description", Up: func(q ddl.Q) error {
@@ -122,10 +122,10 @@ var metaSteps = []ddl.Step{
 	// The must-change flag an administrator's password reset raises; the
 	// user's own password change clears it.
 	{Name: "0013-users-must-change", Up: usersMustChangeUp},
-	// The MR discussion ledger (docs/design/merge-requests.md §review):
+	// The merge request discussion ledger (docs/design/merge-requests.md §review):
 	// comments, replies, review submissions — same baseline/incremental
-	// split as the MR tables.
-	{Name: "0014-mr-comments", Up: mrCommentsUp},
+	// split as the merge request tables.
+	{Name: "0014-mr-comments", Up: mergeRequestCommentsUp},
 	// The account avatar: a data: or https: URL; empty = the name-initial
 	// default the console renders. MySQL sizes a VARCHAR (TEXT cannot
 	// DEFAULT there), the others take TEXT.
@@ -134,6 +134,47 @@ var metaSteps = []ddl.Step{
 			return addColumn(q, "users", "avatar_url", "VARCHAR(4000) NOT NULL DEFAULT ''")
 		}
 		return addColumn(q, "users", "avatar_url", "TEXT NOT NULL DEFAULT ''")
+	}},
+	// The abbreviation cleanup: the discussion and approval tables spell
+	// "merge request" out (mr_comments → merge_request_comments,
+	// mr_approvals → merge_request_approvals) and the branch-rule level
+	// value follows (mr-only → merge-request-only). Fresh databases never
+	// see the old names — 0001's living DDL creates the new ones — so the
+	// guards no-op there; a database that recorded the old names (the steps
+	// above keep their historical ledger names for replay) moves them here.
+	{Name: "0016-merge-request-table-names", Up: func(q ddl.Q) error {
+		for _, rename := range [][2]string{
+			{"mr_comments", "merge_request_comments"},
+			{"mr_approvals", "merge_request_approvals"},
+		} {
+			old, want := rename[0], rename[1]
+			hasOld, err := q.HasTable(old)
+			if err != nil {
+				return err
+			}
+			hasNew, err := q.HasTable(want)
+			if err != nil {
+				return err
+			}
+			if hasOld && !hasNew {
+				if err := q.Exec("ALTER TABLE " + old + " RENAME TO " + want); err != nil {
+					return err
+				}
+			}
+		}
+		// The level value grew past shortCol's width — bring older schemas
+		// along (idempotent: re-stating the same width is a no-op alter).
+		switch q.Dialect() {
+		case "mysql":
+			if err := q.Exec("ALTER TABLE branch_rules MODIFY level VARCHAR(24) NOT NULL"); err != nil {
+				return err
+			}
+		case "postgres":
+			if err := q.Exec("ALTER TABLE branch_rules ALTER COLUMN level TYPE VARCHAR(24)"); err != nil {
+				return err
+			}
+		}
+		return q.Exec("UPDATE branch_rules SET level='merge-request-only' WHERE level='mr-only'")
 	}},
 }
 
@@ -182,9 +223,9 @@ func groupTablesUp(q ddl.Q) error {
 	return nil
 }
 
-// mrCommentsUp is step 0014: the discussion ledger table.
-func mrCommentsUp(q ddl.Q) error {
-	for _, stmt := range mrCommentsDDL(q.Dialect()) {
+// mergeRequestCommentsUp is step 0014: the discussion ledger table.
+func mergeRequestCommentsUp(q ddl.Q) error {
+	for _, stmt := range mergeRequestCommentsDDL(q.Dialect()) {
 		if err := q.Exec(stmt); err != nil {
 			return err
 		}
@@ -192,11 +233,11 @@ func mrCommentsUp(q ddl.Q) error {
 	return nil
 }
 
-// mrTablesUp is step 0007: the three MR tables plus the ListMRs index
+// mergeRequestTablesUp is step 0007: the three merge request tables plus the ListMergeRequests index
 // (existence-guarded — metaIndexesUp carries the same index for the
 // baseline track, pinned equal by TestBaselineEqualsIncremental).
-func mrTablesUp(q ddl.Q) error {
-	for _, stmt := range mrsDDL(q.Dialect()) {
+func mergeRequestTablesUp(q ddl.Q) error {
+	for _, stmt := range mergeRequestsDDL(q.Dialect()) {
 		if err := q.Exec(stmt); err != nil {
 			return err
 		}
@@ -239,5 +280,5 @@ func tableDDL(dialect string) []string {
 	default:
 		base = ddlSQLite()
 	}
-	return append(append(append(append(append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mrsDDL(dialect)...), mrCommentsDDL(dialect)...), groupsDDL(dialect)...), membersDDL(dialect)...), sshKeysDDL(dialect)...), usersDDL(dialect)...)
+	return append(append(append(append(append(append(append(base, tokensDDL(dialect), subtreeRulesDDL(dialect)), mergeRequestsDDL(dialect)...), mergeRequestCommentsDDL(dialect)...), groupsDDL(dialect)...), membersDDL(dialect)...), sshKeysDDL(dialect)...), usersDDL(dialect)...)
 }

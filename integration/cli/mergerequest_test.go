@@ -1,4 +1,4 @@
-// cli_mr_test.go — the mr command family end to end (docs/client/cli.md
+// cli_mergerequest_test.go — the merge-request command family end to end (docs/client/cli.md
 // §3.10): the thin workspace drives the lifecycle — open (answering the
 // shareable /-/merge_requests URL), ls with the state filter, show with
 // live mergeability and the landed record, close/reopen, merge —
@@ -18,7 +18,7 @@ import (
 	"github.com/banyan-vcs/banyan/integration/support"
 )
 
-func TestCLIMR(t *testing.T) {
+func TestCLIMergeRequest(t *testing.T) {
 	support.NeedGit(t)
 	s := support.NewServer(t)
 	seed := support.SeedRepo(t, s, "mrc") // README.md + lib/a.txt + lib/nested/SHARED.txt on main
@@ -35,46 +35,46 @@ func TestCLIMR(t *testing.T) {
 	require.Equal(t, 0, code, "clone 失败\nstdout:%s\nstderr:%s", out, errOut)
 
 	// open answers the IID and the shareable web URL.
-	out, errOut, code = runCLI(t, "-C", ws, "mr", "open", "feat", "main", "add", "feat", "work")
-	require.Equal(t, 0, code, "mr open 失败\nstdout:%s\nstderr:%s", out, errOut)
+	out, errOut, code = runCLI(t, "-C", ws, "mergeRequest", "open", "feat", "main", "add", "feat", "work")
+	require.Equal(t, 0, code, "merge-request open 失败\nstdout:%s\nstderr:%s", out, errOut)
 	assert.Contains(t, out, "!1")
 	assert.Contains(t, out, s.URL+"/r/mrc/-/merge_requests/1", "open 应答可分享 URL")
 
 	// ls lists it; the state filters narrow it.
-	out, _, code = runCLI(t, "-C", ws, "mr", "ls")
+	out, _, code = runCLI(t, "-C", ws, "mergeRequest", "ls")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "!1")
 	assert.Contains(t, out, "feat → main")
-	out, _, code = runCLI(t, "-C", ws, "mr", "ls", "open")
+	out, _, code = runCLI(t, "-C", ws, "mergeRequest", "ls", "open")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "add feat work")
 
 	// show answers live mergeability.
-	out, _, code = runCLI(t, "-C", ws, "mr", "show", "1")
+	out, _, code = runCLI(t, "-C", ws, "mergeRequest", "show", "1")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "mergeable: no conflicts")
 
 	// The dev plane has one identity — the author cannot self-approve.
-	out, errOut, code = runCLI(t, "-C", ws, "mr", "approve", "1")
+	out, errOut, code = runCLI(t, "-C", ws, "mergeRequest", "approve", "1")
 	assert.Equal(t, 2, code, "自批应退出码 2\nstdout:%s\nstderr:%s", out, errOut)
 	assert.Contains(t, errOut, "author")
 
 	// close hides it from the open list, blocks the merge; reopen restores.
-	out, errOut, code = runCLI(t, "-C", ws, "mr", "close", "1")
-	require.Equal(t, 0, code, "mr close 失败\nstdout:%s\nstderr:%s", out, errOut)
-	out, _, _ = runCLI(t, "-C", ws, "mr", "ls", "open")
-	assert.NotContains(t, out, "!1", "closed MR 不在 open 列表")
-	out, _, _ = runCLI(t, "-C", ws, "mr", "ls", "closed")
+	out, errOut, code = runCLI(t, "-C", ws, "mergeRequest", "close", "1")
+	require.Equal(t, 0, code, "merge-request close 失败\nstdout:%s\nstderr:%s", out, errOut)
+	out, _, _ = runCLI(t, "-C", ws, "mergeRequest", "ls", "open")
+	assert.NotContains(t, out, "!1", "closed merge request 不在 open 列表")
+	out, _, _ = runCLI(t, "-C", ws, "mergeRequest", "ls", "closed")
 	assert.Contains(t, out, "!1")
-	out, errOut, code = runCLI(t, "-C", ws, "mr", "merge", "1")
-	assert.Equal(t, 2, code, "closed MR 合并应退出码 2\nstdout:%s\nstderr:%s", out, errOut)
+	out, errOut, code = runCLI(t, "-C", ws, "mergeRequest", "merge", "1")
+	assert.Equal(t, 2, code, "closed merge request 合并应退出码 2\nstdout:%s\nstderr:%s", out, errOut)
 	assert.Contains(t, errOut, "closed")
-	out, errOut, code = runCLI(t, "-C", ws, "mr", "reopen", "1")
-	require.Equal(t, 0, code, "mr reopen 失败\nstdout:%s\nstderr:%s", out, errOut)
+	out, errOut, code = runCLI(t, "-C", ws, "mergeRequest", "reopen", "1")
+	require.Equal(t, 0, code, "merge-request reopen 失败\nstdout:%s\nstderr:%s", out, errOut)
 
 	// merge lands; the printed OID is what the advertised main resolves to.
-	out, errOut, code = runCLI(t, "-C", ws, "mr", "merge", "1")
-	require.Equal(t, 0, code, "mr merge 失败\nstdout:%s\nstderr:%s", out, errOut)
+	out, errOut, code = runCLI(t, "-C", ws, "mergeRequest", "merge", "1")
+	require.Equal(t, 0, code, "merge-request merge 失败\nstdout:%s\nstderr:%s", out, errOut)
 	mergeOID := ""
 	for _, ln := range strings.Split(out, "\n") {
 		if fields := strings.Fields(ln); len(fields) == 4 && fields[1] == "merged" && fields[2] == "as" {
@@ -88,23 +88,23 @@ func TestCLIMR(t *testing.T) {
 	assert.Equal(t, "feat work\n", support.ReadFile(t, filepath.Join(g, "feat.txt")), "合并后的 clone 应携带 feat 内容")
 
 	// show renders the landed record; ls agrees on the state.
-	out, _, code = runCLI(t, "-C", ws, "mr", "show", "1")
+	out, _, code = runCLI(t, "-C", ws, "mergeRequest", "show", "1")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "merged as "+mergeOID)
 	assert.Contains(t, out, "by local")
-	out, _, _ = runCLI(t, "-C", ws, "mr", "ls", "merged")
+	out, _, _ = runCLI(t, "-C", ws, "mergeRequest", "ls", "merged")
 	assert.Contains(t, out, "!1")
 
-	// Argument and lookup failures: usage exits 2, an unknown MR too.
+	// Argument and lookup failures: usage exits 2, an unknown merge request too.
 	for _, args := range [][]string{
-		{"mr"},
-		{"mr", "bogus"},
-		{"mr", "show", "abc"},
-		{"mr", "merge"},
-		{"mr", "show", "99"},
+		{"mergeRequest"},
+		{"mergeRequest", "bogus"},
+		{"mergeRequest", "show", "abc"},
+		{"mergeRequest", "merge"},
+		{"mergeRequest", "show", "99"},
 	} {
 		out, errOut, code = runCLI(t, append([]string{"-C", ws}, args...)...)
-		assert.Equal(t, 2, code, "mr %v 应退出码 2\nstdout:%s\nstderr:%s", args, out, errOut)
+		assert.Equal(t, 2, code, "merge-request %v 应退出码 2\nstdout:%s\nstderr:%s", args, out, errOut)
 		assert.NotEmpty(t, errOut)
 	}
 }

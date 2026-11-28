@@ -31,6 +31,7 @@ type Q interface {
 	Dialect() string // "sqlite" | "mysql" | "postgres"
 	Exec(stmt string, args ...any) error
 	HasColumn(table, column string) (bool, error)
+	HasTable(table string) (bool, error)
 	IndexExists(name string) (bool, error)
 	// Names answers a single-column string query — the row lists data
 	// backfills iterate (e.g. the rows missing a column to fill).
@@ -221,6 +222,26 @@ func (q q) IndexExists(name string) (bool, error) {
 		stmt = "SELECT COUNT(*) FROM pg_indexes WHERE indexname=?"
 	}
 	if err := q.tx.Raw(stmt, name).Row().Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// HasTable reports whether the table exists — the guard a rename step is
+// written against (the old name moves only when the new one is not already
+// there, so fresh and migrated databases converge on one shape).
+func (q q) HasTable(table string) (bool, error) {
+	var n int
+	var stmt string
+	switch q.dialect {
+	case "sqlite":
+		stmt = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?"
+	case "mysql":
+		stmt = "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?"
+	default: // postgres
+		stmt = "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_NAME=?"
+	}
+	if err := q.tx.Raw(stmt, table).Row().Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
 	return n > 0, nil

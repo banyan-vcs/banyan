@@ -95,7 +95,7 @@ func TestMetaStoreConformance(t *testing.T) {
 func dropAllTables(t *testing.T, s *SQLMetaStore) {
 	t.Helper()
 	for _, table := range []string{
-		"mr_comments", "mr_approvals", "merge_requests", "branch_rules",
+		"merge_request_comments", "merge_request_approvals", "merge_requests", "branch_rules",
 		"rename_fence", "repo_pools", "repo_blobs", "hooks", "placement",
 		"objects", "pack_nodes", "packs", "timelines", "repos", "tokens",
 		"subtree_rules", "meta_migrations",

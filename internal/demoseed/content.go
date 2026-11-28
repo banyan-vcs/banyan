@@ -35,7 +35,7 @@ secret). SSH keys: **Settings → SSH Keys**, then clone
    log in as alice and merge it), ` + "`!2`" + ` conflicts on purpose (open it,
    watch the live conflict banner, resolve it inline from the diff view),
    ` + "`!3`" + ` is already merged (the two-parent commit shows in the history).
-3. **Branch protection** — ` + "`release`" + ` carries an mr-only rule: direct
+3. **Branch protection** — ` + "`release`" + ` carries an merge-request-only rule: direct
    pushes bounce for everyone (try it), only a merge request with one
    approval gets in. See **Settings → Branch Protection**.
 4. **Members** — the **Members** page lists alice (owner) and bob (viewer),
@@ -58,7 +58,7 @@ git push origin tour
 
 Branch names are single segments in banyan (the timeline model) — ` + "`tour`" + `,
 not ` + "`feature/tour`" + `. Open the pushed branch as a merge request from the
-console, or try pushing to ` + "`release`" + ` and watch the mr-only rule bounce it.
+console, or try pushing to ` + "`release`" + ` and watch the merge-request-only rule bounce it.
 
 Have fun — the tree becomes a forest.
 `

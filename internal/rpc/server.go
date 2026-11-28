@@ -71,7 +71,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/sync", s.authn(s.handleSync)) // subtree→root alignment (docs/design/data-model.md §12)
 	mux.HandleFunc("/api/v1/refs", s.authn(s.handleRefs))
 	mux.HandleFunc("/api/v1/repos", s.authn(s.handleRepos))
-	mux.HandleFunc("/api/v1/merge-requests", s.authn(s.handleMergeRequestsAll)) // workspace-wide MR list
+	mux.HandleFunc("/api/v1/merge-requests", s.authn(s.handleMergeRequestsAll)) // workspace-wide merge request list
 	mux.HandleFunc("/api/v1/groups", s.authn(s.handleGroups))                   // repo groups (docs/design/data-model.md §15)
 	mux.HandleFunc("/api/v1/groups/", s.authn(s.handleGroupSub))                // /api/v1/groups/<name>
 	mux.HandleFunc("/api/v1/imports", s.authn(s.handleImports))                 // server-side repo import (docs/web/web-layer.md §4)
@@ -150,7 +150,7 @@ type errEnvelope struct {
 
 func statusFor(code string) int {
 	switch code {
-	case "CONFLICT_BASE_MOVED", "CONFLICT_REF_CAS", "CONFLICT_SYNC_CONFLICT", "CONFLICT_MR", "CONFLICT_GROUP":
+	case "CONFLICT_BASE_MOVED", "CONFLICT_REF_CAS", "CONFLICT_SYNC_CONFLICT", "CONFLICT_MERGE_REQUEST", "CONFLICT_GROUP":
 		return http.StatusConflict
 	case "SYNC_UNSUPPORTED":
 		return http.StatusBadRequest
@@ -539,8 +539,8 @@ func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePush(w, r, req.Repo, req.Sub, branch) {
 		return
 	}
-	if s.mrOnly(r.Context(), req.Repo, branch) {
-		s.rejectMROnly(w, branch)
+	if s.mergeRequestOnly(r.Context(), req.Repo, branch) {
+		s.rejectMergeRequestOnly(w, branch)
 		return
 	}
 	res, err := s.Svc.CreateCommit(r.Context(), req)
@@ -603,8 +603,8 @@ func (s *Server) handleRefs(w http.ResponseWriter, r *http.Request) {
 		if !s.requirePush(w, r, req.Repo, "", branch) {
 			return
 		}
-		if branch != req.Name && s.mrOnly(r.Context(), req.Repo, branch) {
-			s.rejectMROnly(w, branch)
+		if branch != req.Name && s.mergeRequestOnly(r.Context(), req.Repo, branch) {
+			s.rejectMergeRequestOnly(w, branch)
 			return
 		}
 		if err := s.Svc.UpdateRef(r.Context(), req); err != nil {

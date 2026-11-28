@@ -143,9 +143,9 @@ func TestGitalyRewriteHistory(t *testing.T) {
 	side, err := cs.FindCommit(ctx, &gitalypb.FindCommitRequest{Repository: repo, Revision: []byte("refs/heads/side")})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("two"), side.GetCommit().GetSubject())
-	mrTip, err := cs.FindCommit(ctx, &gitalypb.FindCommitRequest{Repository: repo, Revision: []byte("refs/merge-requests/1/head")})
+	mergeRequestTip, err := cs.FindCommit(ctx, &gitalypb.FindCommitRequest{Repository: repo, Revision: []byte("refs/merge-requests/1/head")})
 	require.NoError(t, err)
-	assert.Equal(t, []byte("two"), mrTip.GetCommit().GetSubject())
+	assert.Equal(t, []byte("two"), mergeRequestTip.GetCommit().GetSubject())
 }
 
 func TestGitalyRewriteHistoryValidation(t *testing.T) {

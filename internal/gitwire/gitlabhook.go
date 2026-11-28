@@ -1,6 +1,6 @@
 // gitlabhook.go — the post-receive → GitLab internal API adapter (docs/integration/gitaly-compat.md
 // §8's registered open gap): when banyan is a GitLab storage node, the
-// platform's push processing (activity events, pipelines, MR-from-push,
+// platform's push processing (activity events, pipelines, merge request-from-push,
 // repository cache expiry) lives behind /api/v4/internal/{pre,post}_receive
 // — the callback a stock gitaly runs through its hook manager. This is the
 // same contract gitlab-shell speaks: a JWT (HS256, iss=gitlab-shell,

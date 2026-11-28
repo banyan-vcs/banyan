@@ -15,7 +15,7 @@ import (
 )
 
 // Remote-fetch surface. FetchSourceBranch copies a branch inside the banyan
-// object plane (same-instance, GitLab's MR precondition probe). FetchRemote
+// object plane (same-instance, GitLab's merge request precondition probe). FetchRemote
 // and CreateRepositoryFromURL speak the real git smart-HTTP protocol through
 // internal/importer — the only place banyan acts as a git *client*.
 

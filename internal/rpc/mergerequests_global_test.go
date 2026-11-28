@@ -15,23 +15,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGlobalMRList(t *testing.T) {
+func TestGlobalMergeRequestList(t *testing.T) {
 	_, ms, hs := newAuthStack(t)
 	ctx := context.Background()
 	require.NoError(t, ms.CreateRepo(ctx, "alpha", model.SHA1))
 	require.NoError(t, ms.CreateRepo(ctx, "beta", model.SHA1))
 	seed := func(repo, source, title string, state string, updated int64) {
-		_, err := ms.CreateMR(ctx, meta.MRInfo{
+		_, err := ms.CreateMergeRequest(ctx, meta.MergeRequestInfo{
 			Repo: repo, Source: source, Target: "main", Title: title,
 			State: state, Author: "alice", SourceHead: "ab" + title[:1], CreatedAt: updated - 1, UpdatedAt: updated,
 		})
 		require.NoError(t, err)
 	}
-	seed("alpha", "feat-a", "oldest", meta.MRStateOpen, 5)
-	seed("beta", "feat-b", "newest", meta.MRStateOpen, 9)
-	seed("alpha", "feat-c", "closed one", meta.MRStateClosed, 7)
+	seed("alpha", "feat-a", "oldest", meta.MergeRequestStateOpen, 5)
+	seed("beta", "feat-b", "newest", meta.MergeRequestStateOpen, 9)
+	seed("alpha", "feat-c", "closed one", meta.MergeRequestStateClosed, 7)
 
-	get := func(state string) []meta.MRInfo {
+	get := func(state string) []meta.MergeRequestInfo {
 		t.Helper()
 		url := "/api/v1/merge-requests"
 		if state != "" {
@@ -40,10 +40,10 @@ func TestGlobalMRList(t *testing.T) {
 		resp := apiAs(t, hs.URL, http.MethodGet, url, "alice", nil)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		var out struct {
-			MRs []meta.MRInfo `json:"merge_requests"`
+			MergeRequests []meta.MergeRequestInfo `json:"merge_requests"`
 		}
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-		return out.MRs
+		return out.MergeRequests
 	}
 
 	// All states, newest update first, every row carrying its repo.

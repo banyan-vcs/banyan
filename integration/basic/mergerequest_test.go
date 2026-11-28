@@ -1,8 +1,8 @@
-// MR functional e2e (docs/design/merge-requests.md): real git pushes, the
+// merge request functional e2e (docs/design/merge-requests.md): real git pushes, the
 // JSON API, and the landed merge verified through real git — two parents,
 // both sides' files, the target ref at the merge commit. Runs on the dev
 // plane (nil policy, the "local" identity); the protection matrix —
-// mr-only rejections and protected-target rank gates — lives in
+// merge-request-only rejections and protected-target rank gates — lives in
 // integration/authz where the static policy is wired.
 package basic
 
@@ -50,28 +50,28 @@ func TestMergeRequestE2E(t *testing.T) {
 	support.Write(t, filepath.Join(src, "readme.md"), "seed\n")
 	support.Git(t, src, "add", "-A")
 	support.Git(t, src, "commit", "-qm", "seed")
-	support.Git(t, src, "push", "-q", s.URL+"/r/mr.git", "main")
+	support.Git(t, src, "push", "-q", s.URL+"/r/flow.git", "main")
 
 	support.Git(t, src, "checkout", "-q", "-b", "feat")
 	support.Write(t, filepath.Join(src, "feat.txt"), "feat work\n")
 	support.Git(t, src, "add", "-A")
 	support.Git(t, src, "commit", "-qm", "feat")
-	support.Git(t, src, "push", "-q", s.URL+"/r/mr.git", "feat")
+	support.Git(t, src, "push", "-q", s.URL+"/r/flow.git", "feat")
 
-	// Open the MR over the API.
-	code, mr := apiCall(t, s, "POST", "/api/v1/repos/mr/merge-requests",
+	// Open the merge request over the API.
+	code, mergeRequest := apiCall(t, s, "POST", "/api/v1/repos/flow/merge-requests",
 		map[string]string{"source": "feat", "target": "main", "title": "add feat"})
-	require.Equal(t, 201, code, "%v", mr)
-	require.Equal(t, float64(1), mr["iid"])
-	require.Equal(t, "open", mr["state"])
+	require.Equal(t, 201, code, "%v", mergeRequest)
+	require.Equal(t, float64(1), mergeRequest["iid"])
+	require.Equal(t, "open", mergeRequest["state"])
 
 	// The detail answers live mergeability.
-	code, view := apiCall(t, s, "GET", "/api/v1/repos/mr/merge-requests/1", nil)
+	code, view := apiCall(t, s, "GET", "/api/v1/repos/flow/merge-requests/1", nil)
 	require.Equal(t, 200, code, "%v", view)
 	require.Equal(t, true, view["mergeable"], "%v", view)
 
 	// No rule on main: the merge needs no approvals. Land it.
-	code, merged := apiCall(t, s, "POST", "/api/v1/repos/mr/merge-requests/1/merge", nil)
+	code, merged := apiCall(t, s, "POST", "/api/v1/repos/flow/merge-requests/1/merge", nil)
 	require.Equal(t, 200, code, "%v", merged)
 	require.Equal(t, "merged", merged["state"])
 	mergeOID, _ := merged["merge_commit"].(string)
@@ -81,26 +81,26 @@ func TestMergeRequestE2E(t *testing.T) {
 	// the woven view folds the raw two-parent commit (docs/design/merge-requests.md),
 	// so the recorded OID must resolve in a fresh clone and carry both sides.
 	require.NotEmpty(t, mergeOID)
-	out := support.Git(t, t.TempDir(), "ls-remote", s.URL+"/r/mr.git", "refs/heads/main")
+	out := support.Git(t, t.TempDir(), "ls-remote", s.URL+"/r/flow.git", "refs/heads/main")
 	require.Contains(t, out, mergeOID, "main must advertise the recorded merge commit: %s", out)
 
 	dst := t.TempDir()
-	support.Git(t, dst, "clone", "-q", s.URL+"/r/mr.git", "repo")
+	support.Git(t, dst, "clone", "-q", s.URL+"/r/flow.git", "repo")
 	work := filepath.Join(dst, "repo")
 	require.FileExists(t, filepath.Join(work, "feat.txt"))
 	require.FileExists(t, filepath.Join(work, "readme.md"))
 	head := support.Git(t, work, "rev-parse", "origin/main")
 	require.Equal(t, mergeOID, strings.TrimSpace(head))
 
-	// The MR list answers state-filtered.
-	code, list := apiCall(t, s, "GET", "/api/v1/repos/mr/merge-requests?state=merged", nil)
+	// The merge request list answers state-filtered.
+	code, list := apiCall(t, s, "GET", "/api/v1/repos/flow/merge-requests?state=merged", nil)
 	require.Equal(t, 200, code)
 	require.Len(t, list["merge_requests"], 1)
-	code, _ = apiCall(t, s, "GET", "/api/v1/repos/mr/merge-requests?state=open", nil)
+	code, _ = apiCall(t, s, "GET", "/api/v1/repos/flow/merge-requests?state=open", nil)
 	require.Equal(t, 200, code)
 }
 
-// TestMergeRequestConflictE2E: a conflicting MR refuses to merge with the
+// TestMergeRequestConflictE2E: a conflicting merge request refuses to merge with the
 // conflict paths, stays open, and merges after the source side resolves.
 func TestMergeRequestConflictE2E(t *testing.T) {
 	support.NeedGit(t)
@@ -124,16 +124,16 @@ func TestMergeRequestConflictE2E(t *testing.T) {
 	support.Git(t, src, "commit", "-qam", "ours")
 	support.Git(t, src, "push", "-q", s.URL+"/r/conf.git", "main")
 
-	code, mr := apiCall(t, s, "POST", "/api/v1/repos/conf/merge-requests",
+	code, mergeRequest := apiCall(t, s, "POST", "/api/v1/repos/conf/merge-requests",
 		map[string]string{"source": "feat", "target": "main", "title": "conflicting"})
-	require.Equal(t, 201, code, "%v", mr)
+	require.Equal(t, 201, code, "%v", mergeRequest)
 
 	code, view := apiCall(t, s, "GET", "/api/v1/repos/conf/merge-requests/1", nil)
 	require.Equal(t, 200, code)
 	require.Equal(t, false, view["mergeable"])
 	require.Contains(t, fmt.Sprint(view["conflicts"]), "f.txt")
 
-	// Merge bounces with 409 + the conflict path; the MR stays open.
+	// Merge bounces with 409 + the conflict path; the merge request stays open.
 	code, out := apiCall(t, s, "POST", "/api/v1/repos/conf/merge-requests/1/merge", nil)
 	require.Equal(t, 409, code, "%v", out)
 	code, view = apiCall(t, s, "GET", "/api/v1/repos/conf/merge-requests/1", nil)
@@ -164,96 +164,96 @@ func TestMergeRequestLifecycleE2E(t *testing.T) {
 	support.Write(t, filepath.Join(src, "readme.md"), "seed\n")
 	support.Git(t, src, "add", "-A")
 	support.Git(t, src, "commit", "-qm", "seed")
-	support.Git(t, src, "push", "-q", s.URL+"/r/mrl.git", "main")
+	support.Git(t, src, "push", "-q", s.URL+"/r/lifecycle.git", "main")
 	support.Git(t, src, "checkout", "-q", "-b", "feat")
 	support.Write(t, filepath.Join(src, "feat.txt"), "feat\n")
 	support.Git(t, src, "add", "-A")
 	support.Git(t, src, "commit", "-qm", "feat")
-	support.Git(t, src, "push", "-q", s.URL+"/r/mrl.git", "feat")
+	support.Git(t, src, "push", "-q", s.URL+"/r/lifecycle.git", "feat")
 
 	// Unknown and malformed IIDs answer 404 / 400 — the shareable-record
 	// semantics of a permanent URL space.
-	code, res := apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests/99", nil)
+	code, res := apiCall(t, s, "GET", "/api/v1/repos/lifecycle/merge-requests/99", nil)
 	require.Equal(t, 404, code, "%v", res)
 	require.Contains(t, fmt.Sprint(res["error"]), "NOT_FOUND")
-	code, res = apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests/abc", nil)
+	code, res = apiCall(t, s, "GET", "/api/v1/repos/lifecycle/merge-requests/abc", nil)
 	require.Equal(t, 400, code, "%v", res)
-	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/merge", nil)
-	require.Equal(t, 404, code, "merging an unknown MR is 404, not 409", "%v", res)
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/lifecycle/merge-requests/1/merge", nil)
+	require.Equal(t, 404, code, "merging an unknown merge request is 404, not 409", "%v", res)
 
-	code, mr := apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests",
+	code, mergeRequest := apiCall(t, s, "POST", "/api/v1/repos/lifecycle/merge-requests",
 		map[string]string{"source": "feat", "target": "main", "title": "lifecycle"})
-	require.Equal(t, 201, code, "%v", mr)
+	require.Equal(t, 201, code, "%v", mergeRequest)
 
 	// The dev plane's single identity is the author: self-approval bounces,
 	// and the withdrawal is an idempotent no-op that never 404s.
-	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/approve", nil)
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/lifecycle/merge-requests/1/approve", nil)
 	require.Equal(t, 400, code, "%v", res)
 	require.Contains(t, fmt.Sprint(res["error"]), "author")
-	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/mrl/merge-requests/1/approve", nil)
+	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/lifecycle/merge-requests/1/approve", nil)
 	require.Equal(t, 200, code, "un-approve is idempotent", "%v", res)
 
 	// Close: state only, filtered in the list; the merge needs open.
-	code, closed := apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/close", nil)
+	code, closed := apiCall(t, s, "POST", "/api/v1/repos/lifecycle/merge-requests/1/close", nil)
 	require.Equal(t, 200, code, "%v", closed)
 	require.Equal(t, "closed", closed["state"])
-	code, list := apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests?state=closed", nil)
+	code, list := apiCall(t, s, "GET", "/api/v1/repos/lifecycle/merge-requests?state=closed", nil)
 	require.Equal(t, 200, code)
 	require.Len(t, list["merge_requests"], 1)
-	code, list = apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests?state=open", nil)
+	code, list = apiCall(t, s, "GET", "/api/v1/repos/lifecycle/merge-requests?state=open", nil)
 	require.Equal(t, 200, code)
 	require.Empty(t, list["merge_requests"])
-	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/merge", nil)
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/lifecycle/merge-requests/1/merge", nil)
 	require.Equal(t, 400, code, "%v", res)
 	require.Contains(t, fmt.Sprint(res["error"]), "closed")
 
 	// Reopen, then the merge lands; merged is terminal for close/reopen.
-	code, reopened := apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/reopen", nil)
+	code, reopened := apiCall(t, s, "POST", "/api/v1/repos/lifecycle/merge-requests/1/reopen", nil)
 	require.Equal(t, 200, code, "%v", reopened)
 	require.Equal(t, "open", reopened["state"])
-	code, merged := apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/merge", nil)
+	code, merged := apiCall(t, s, "POST", "/api/v1/repos/lifecycle/merge-requests/1/merge", nil)
 	require.Equal(t, 200, code, "%v", merged)
 	require.Equal(t, "merged", merged["state"])
 	require.NotEmpty(t, merged["merge_commit"])
 
-	code, view := apiCall(t, s, "GET", "/api/v1/repos/mrl/merge-requests/1", nil)
+	code, view := apiCall(t, s, "GET", "/api/v1/repos/lifecycle/merge-requests/1", nil)
 	require.Equal(t, 200, code)
 	require.Equal(t, "merged", view["state"])
 	require.Equal(t, false, view["mergeable"], "the merged detail is the record, not a live recompute")
 	require.Equal(t, "local", view["merged_by"])
-	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/close", nil)
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/lifecycle/merge-requests/1/close", nil)
 	require.Equal(t, 409, code, "%v", res)
-	code, res = apiCall(t, s, "POST", "/api/v1/repos/mrl/merge-requests/1/reopen", nil)
-	require.Equal(t, 409, code, "a merged MR never reopens", "%v", res)
+	code, res = apiCall(t, s, "POST", "/api/v1/repos/lifecycle/merge-requests/1/reopen", nil)
+	require.Equal(t, 409, code, "a merged merge request never reopens", "%v", res)
 
-	// Branch-rule CRUD (the settings page's surface): the mr-only default
+	// Branch-rule CRUD (the settings page's surface): the merge-request-only default
 	// approval count kicks in when the caller omits it, a bad level bounces,
 	// and delete is idempotent.
-	code, rule := apiCall(t, s, "PUT", "/api/v1/repos/mrl/branch-rules/release",
-		map[string]any{"level": "mr-only"})
+	code, rule := apiCall(t, s, "PUT", "/api/v1/repos/lifecycle/branch-rules/release",
+		map[string]any{"level": "merge-request-only"})
 	require.Equal(t, 200, code, "%v", rule)
-	require.Equal(t, float64(1), rule["approvals"], "mr-only defaults to one approval")
-	code, res = apiCall(t, s, "PUT", "/api/v1/repos/mrl/branch-rules/bad",
+	require.Equal(t, float64(1), rule["approvals"], "merge-request-only defaults to one approval")
+	code, res = apiCall(t, s, "PUT", "/api/v1/repos/lifecycle/branch-rules/bad",
 		map[string]any{"level": "nope"})
 	require.Equal(t, 400, code, "%v", res)
-	code, rules := apiCall(t, s, "GET", "/api/v1/repos/mrl/branch-rules", nil)
+	code, rules := apiCall(t, s, "GET", "/api/v1/repos/lifecycle/branch-rules", nil)
 	require.Equal(t, 200, code)
 	require.Len(t, rules["rules"], 1)
-	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/mrl/branch-rules/release", nil)
+	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/lifecycle/branch-rules/release", nil)
 	require.Equal(t, 200, code, "%v", res)
-	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/mrl/branch-rules/release", nil)
+	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/lifecycle/branch-rules/release", nil)
 	require.Equal(t, 200, code, "rule delete is idempotent", "%v", res)
-	code, rules = apiCall(t, s, "GET", "/api/v1/repos/mrl/branch-rules", nil)
+	code, rules = apiCall(t, s, "GET", "/api/v1/repos/lifecycle/branch-rules", nil)
 	require.Equal(t, 200, code)
 	require.Empty(t, rules["rules"])
 }
 
-// TestMRBranchRuleExactMatchE2E: rules address branches by exact name —
+// TestMergeRequestBranchRuleExactMatchE2E: rules address branches by exact name —
 // the slashy name rides the path's tail segments (release/v2), only that
 // branch is fenced (release and release/v2/feature push freely), and the
 // fence is a ROOT-timeline affair: the subtree face of the same repo
 // (/tree/lib) never consults it.
-func TestMRBranchRuleExactMatchE2E(t *testing.T) {
+func TestMergeRequestBranchRuleExactMatchE2E(t *testing.T) {
 	support.NeedGit(t)
 	s, _, _ := support.NewServerPlane(t)
 
@@ -274,7 +274,7 @@ func TestMRBranchRuleExactMatchE2E(t *testing.T) {
 
 	// The slashy name is the path tail — the rule round-trips verbatim.
 	code, rule := apiCall(t, s, "PUT", "/api/v1/repos/sle/branch-rules/release/v2",
-		map[string]any{"level": "mr-only"})
+		map[string]any{"level": "merge-request-only"})
 	require.Equal(t, 200, code, "%v", rule)
 	require.Equal(t, "release/v2", rule["branch"])
 
@@ -285,7 +285,7 @@ func TestMRBranchRuleExactMatchE2E(t *testing.T) {
 	support.Git(t, src, "commit", "-qam", "bump")
 	out, err := support.GitTry(src, "push", s.URL+"/r/sle.git", "release/v2")
 	require.Error(t, err, "the ruled branch must bounce: %s", out)
-	require.Contains(t, out, "mr-only: merge via a merge request")
+	require.Contains(t, out, "merge-request-only: merge via a merge request")
 
 	support.Git(t, src, "checkout", "-q", "release/v3")
 	support.Write(t, filepath.Join(src, "release-v3.txt"), "y\n")
@@ -296,11 +296,11 @@ func TestMRBranchRuleExactMatchE2E(t *testing.T) {
 	support.Git(t, src, "commit", "-qam", "bump")
 	support.Git(t, src, "push", "-q", s.URL+"/r/sle.git", "hotfix")
 
-	// The fence is root-timeline only: mr-only on main fences the root face
+	// The fence is root-timeline only: merge-request-only on main fences the root face
 	// but the subtree face of the same repo pushes freely (the subtree owns
 	// its own timelines; the woven root view derives, no root CAS happens).
 	code, res := apiCall(t, s, "PUT", "/api/v1/repos/sle/branch-rules/main",
-		map[string]any{"level": "mr-only"})
+		map[string]any{"level": "merge-request-only"})
 	require.Equal(t, 200, code, "%v", res)
 	sub := support.CloneRepo(t, s, s.TreeURL("sle", "lib"))
 	support.Write(t, filepath.Join(sub, "a.txt"), "a-sub\n")
@@ -315,7 +315,7 @@ func TestMRBranchRuleExactMatchE2E(t *testing.T) {
 	support.Git(t, src, "commit", "-qam", "root direct attempt")
 	out, err = support.GitTry(src, "push", s.URL+"/r/sle.git", "main")
 	require.Error(t, err, "the root face stays fenced: %s", out)
-	require.Contains(t, out, "mr-only: merge via a merge request")
+	require.Contains(t, out, "merge-request-only: merge via a merge request")
 
 	// A slashy rule deletes by the same tail form.
 	code, res = apiCall(t, s, "DELETE", "/api/v1/repos/sle/branch-rules/release/v2", nil)

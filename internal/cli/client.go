@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"strconv"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -526,7 +526,7 @@ func (c *client) getObject(repo, oid string) ([]byte, error) {
 
 // --- merge requests (docs/design/merge-requests.md) ---
 
-type mrInfo struct {
+type mergeRequestInfo struct {
 	IID         int64  `json:"iid"`
 	Title       string `json:"title"`
 	Source      string `json:"source"`
@@ -538,8 +538,8 @@ type mrInfo struct {
 	URL         string `json:"url"`
 }
 
-type mrView struct {
-	mrInfo
+type mergeRequestView struct {
+	mergeRequestInfo
 	Mergeable         bool     `json:"mergeable"`
 	Conflicts         []string `json:"conflicts"`
 	Approvals         []string `json:"approvals"`
@@ -547,13 +547,13 @@ type mrView struct {
 	RuleLevel         string   `json:"rule_level"`
 }
 
-func (c *client) mrList(repo, state string) ([]mrInfo, error) {
+func (c *client) mergeRequestList(repo, state string) ([]mergeRequestInfo, error) {
 	q := url.Values{"repo": {repo}}
 	if state != "" {
 		q.Set("state", state)
 	}
 	var out struct {
-		MergeRequests []mrInfo `json:"merge_requests"`
+		MergeRequests []mergeRequestInfo `json:"merge_requests"`
 	}
 	if err := c.getJSON("/api/v1/repos/"+url.PathEscape(repo)+"/merge-requests?"+q.Encode(), &out); err != nil {
 		return nil, err
@@ -561,8 +561,8 @@ func (c *client) mrList(repo, state string) ([]mrInfo, error) {
 	return out.MergeRequests, nil
 }
 
-func (c *client) mrGet(repo string, iid int64) (*mrView, error) {
-	var out mrView
+func (c *client) mergeRequestGet(repo string, iid int64) (*mergeRequestView, error) {
+	var out mergeRequestView
 	path := "/api/v1/repos/" + url.PathEscape(repo) + "/merge-requests/" + strconv.FormatInt(iid, 10)
 	if err := c.getJSON(path, &out); err != nil {
 		return nil, err
@@ -570,8 +570,8 @@ func (c *client) mrGet(repo string, iid int64) (*mrView, error) {
 	return &out, nil
 }
 
-func (c *client) mrOpen(repo, source, target, title string) (*mrInfo, error) {
-	var out mrInfo
+func (c *client) mergeRequestOpen(repo, source, target, title string) (*mergeRequestInfo, error) {
+	var out mergeRequestInfo
 	body := map[string]string{"source": source, "target": target, "title": title}
 	if err := c.post("/api/v1/repos/"+url.PathEscape(repo)+"/merge-requests", body, &out); err != nil {
 		return nil, err
@@ -586,13 +586,13 @@ func (c *client) mrOpen(repo, source, target, title string) (*mrInfo, error) {
 	return &out, nil
 }
 
-func (c *client) mrPostVoid(repo string, iid int64, action string) error {
+func (c *client) mergeRequestPostVoid(repo string, iid int64, action string) error {
 	path := "/api/v1/repos/" + url.PathEscape(repo) + "/merge-requests/" + strconv.FormatInt(iid, 10) + "/" + action
 	return c.post(path, map[string]string{}, nil)
 }
 
-func (c *client) mrMerge(repo string, iid int64, message string) (*mrInfo, error) {
-	var out mrInfo
+func (c *client) mergeRequestMerge(repo string, iid int64, message string) (*mergeRequestInfo, error) {
+	var out mergeRequestInfo
 	path := "/api/v1/repos/" + url.PathEscape(repo) + "/merge-requests/" + strconv.FormatInt(iid, 10) + "/merge"
 	if err := c.post(path, map[string]string{"message": message}, &out); err != nil {
 		return nil, err
