@@ -1,13 +1,15 @@
 // UserMenu.tsx — the avatar at the top bar's right end: click or
 // right-click opens the account menu (the signed-in identity up top,
 // settings and log out below). The bar itself carries no
-// username text — the avatar is the whole account surface.
+// username text — the avatar is the whole account surface — and it is the
+// shared Avatar, so an upload or a preset shows here the moment it lands.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BASE_URL } from "../api/client";
 import { useT } from "../i18n";
 import { useSession } from "../session";
+import { Avatar } from "./Avatar";
 
 export function UserMenu(): ReactNode {
   const { info } = useSession();
@@ -44,7 +46,6 @@ export function UserMenu(): ReactNode {
   }, [open]);
 
   if (!info) return null;
-  const initial = info.user.slice(0, 1).toUpperCase();
   return (
     <div
       className="user-menu"
@@ -56,12 +57,12 @@ export function UserMenu(): ReactNode {
       }}
     >
       <button className="avatar-btn" title={t("{0} — Settings & Log Out", info.user)} aria-haspopup="menu" aria-expanded={open}>
-        <span className="user-dot">{initial}</span>
+        <Avatar name={info.user} size={26} />
       </button>
       {open && (
         <div className="user-menu-pop" role="menu" onClick={(e) => e.stopPropagation()}>
           <div className="user-menu-head">
-            <span className="user-dot">{initial}</span>
+            <Avatar name={info.user} size={26} />
             <span className="user-menu-name">{info.user}</span>
             {info.provider ? <span className="pill">{info.provider.id}</span> : null}
           </div>
