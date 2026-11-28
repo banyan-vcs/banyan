@@ -2,9 +2,9 @@
 // @git-diff-view/react (lowlight / highlight.js — the same engine the blob
 // view rides, no WASM, fully bundled). A toolbar carries the whole-change
 // stat and the split/unified toggle (when the caller manages the view);
-// one collapsible section per file with its own diffstat. The MR change
-// view (MrDiff) passes its inline-edit affordance through fileExtra; the
-// per-file section classes stay .mr-diff* — one skin, two surfaces.
+// one collapsible section per file with its own diffstat. The merge request change
+// view (MergeRequestDiff) passes its inline-edit affordance through fileExtra; the
+// per-file section classes stay .diff-browser* — one skin, two surfaces.
 import { DiffModeEnum, DiffView, SplitSide } from "@git-diff-view/react";
 import "@git-diff-view/react/styles/diff-view.css";
 import { useState, type ReactNode } from "react";
@@ -36,7 +36,7 @@ export function DiffBrowser({
   editingPath?: string;
   emptyHint?: string;
   // When set, every content line grows the library's hover "+" and clicking
-  // it opens renderLineWidget's row at that line (the MR review's inline
+  // it opens renderLineWidget's row at that line (the merge request review's inline
   // comment affordance; the commit page passes nothing and sees none).
   renderLineWidget?: (path: string, ctx: LineWidgetCtx) => ReactNode;
 }): ReactNode {
@@ -48,7 +48,7 @@ export function DiffBrowser({
   const add = files.reduce((n, f) => n + f.add, 0);
   const del = files.reduce((n, f) => n + f.del, 0);
   return (
-    <div className="mr-diff">
+    <div className="diff-browser">
       <div className="diff-tool">
         <span className="muted">{t("{0} file(s) changed", files.length)}</span>
         <span className="diffstat">
@@ -80,10 +80,10 @@ export function DiffBrowser({
         const editing = editingPath === path;
         const isCollapsed = !!collapsed[key];
         return (
-          <section key={key} className={"mr-diff-file" + (editing ? " editing" : "") + (isCollapsed ? " collapsed" : "")}>
-            <div className="mr-diff-head">
+          <section key={key} className={"diff-file" + (editing ? " editing" : "") + (isCollapsed ? " collapsed" : "")}>
+            <div className="diff-file-head">
               <button
-                className="mr-diff-toggle"
+                className="diff-file-toggle"
                 onClick={() => setCollapsed((c) => ({ ...c, [key]: !c[key] }))}
                 aria-expanded={!isCollapsed}
               >

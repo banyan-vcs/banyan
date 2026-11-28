@@ -201,22 +201,22 @@ export function Layout(): ReactNode {
                     group / repo / Merge Requests / !iid — the deepest stop is
                     the "here" one; every other repo page ends at the repo. */}
                 {(() => {
-                  const mr = loc.pathname.match(/\/-\/merge_requests(?:\/(\d+))?$/);
+                  const mergeRequest = loc.pathname.match(/\/-\/merge_requests(?:\/(\d+))?$/);
                   return (
                     <>
-                      <Link to={base} className={mr ? undefined : "crumb-here"}>
+                      <Link to={base} className={mergeRequest ? undefined : "crumb-here"}>
                         {repo}
                       </Link>
-                      {mr && (
+                      {mergeRequest && (
                         <>
                           {" / "}
-                          <Link to={`${base}/-/merge_requests`} className={mr[1] ? undefined : "crumb-here"}>
+                          <Link to={`${base}/-/merge_requests`} className={mergeRequest[1] ? undefined : "crumb-here"}>
                             {t("Merge Requests")}
                           </Link>
-                          {mr[1] && (
+                          {mergeRequest[1] && (
                             <>
                               {" / "}
-                              <span className="crumb-here">!{mr[1]}</span>
+                              <span className="crumb-here">!{mergeRequest[1]}</span>
                             </>
                           )}
                         </>

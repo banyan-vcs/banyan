@@ -1,4 +1,4 @@
-// MrDiscussion.tsx — the MR's review mechanics on the page
+// MergeRequestDiscussion.tsx — the merge request's review mechanics on the page
 // (docs/design/merge-requests.md §review): the timeline (events + threads
 // in one order) and the conclusion bar. Threads anchor display on the
 // head's anchor_oid: when it matches the live source tip the file:line
@@ -10,8 +10,8 @@
 // people's by construction), and ⌘/Ctrl-Enter files whatever is typed.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import type { MRComment, MRDiscussion } from "../api/mrs";
-import { resolveMRComment, submitMRReview } from "../api/mrs";
+import type { MergeRequestComment, MergeRequestDiscussion } from "../api/mergerequests";
+import { resolveMergeRequestComment, submitMergeRequestReview } from "../api/mergerequests";
 import { Avatar } from "./Avatar";
 import { useT } from "../i18n";
 import { whenStr } from "./ui";
@@ -21,24 +21,24 @@ import { whenStr } from "./ui";
 export type TimelineRow =
   | { kind: "event"; at: number; who: string; what: "created" | "approved" | "merged"; verdict?: never }
   | { kind: "review"; at: number; who: string; what: "review"; verdict: string; body: string }
-  | { kind: "thread"; at: number; who: string; what: "thread"; head: MRComment; replies: MRComment[] };
+  | { kind: "thread"; at: number; who: string; what: "thread"; head: MergeRequestComment; replies: MergeRequestComment[] };
 
 // buildTimeline folds the discussion into the rendered order: events from
 // the ledger's shape (reviews are events, not threads), threads as heads
 // with their replies tucked in, everything ascending by time. Exported for
 // the vitest battery.
-export function buildTimeline(mr: {
+export function buildTimeline(mergeRequest: {
   author: string;
   created_at: number;
   state: string;
   merged_by?: string;
   updated_at: number;
-}, d: MRDiscussion): TimelineRow[] {
-  const rows: TimelineRow[] = [{ kind: "event", at: mr.created_at, who: mr.author, what: "created" }];
+}, d: MergeRequestDiscussion): TimelineRow[] {
+  const rows: TimelineRow[] = [{ kind: "event", at: mergeRequest.created_at, who: mergeRequest.author, what: "created" }];
   for (const ev of d.approval_events || []) {
     rows.push({ kind: "event", at: ev.at, who: ev.user, what: "approved" });
   }
-  const replies = new Map<number, MRComment[]>();
+  const replies = new Map<number, MergeRequestComment[]>();
   for (const c of d.comments || []) {
     if (c.parent_id) {
       replies.set(c.parent_id, [...(replies.get(c.parent_id) || []), c]);
@@ -53,8 +53,8 @@ export function buildTimeline(mr: {
       rows.push({ kind: "thread", at: c.created_at, who: c.author, what: "thread", head: c, replies: replies.get(c.id) || [] });
     }
   }
-  if (mr.state === "merged" && mr.merged_by) {
-    rows.push({ kind: "event", at: mr.updated_at, who: mr.merged_by, what: "merged" });
+  if (mergeRequest.state === "merged" && mergeRequest.merged_by) {
+    rows.push({ kind: "event", at: mergeRequest.updated_at, who: mergeRequest.merged_by, what: "merged" });
   }
   rows.sort((a, b) => a.at - b.at);
   return rows;
@@ -62,7 +62,7 @@ export function buildTimeline(mr: {
 
 // threadIsStale answers whether an anchored thread's tip is behind the
 // live one — the dashed badge, never a silent move.
-export function threadIsStale(head: MRComment, sourceTip: string): boolean {
+export function threadIsStale(head: MergeRequestComment, sourceTip: string): boolean {
   return !!head.anchor_oid && !!sourceTip && head.anchor_oid !== sourceTip;
 }
 
@@ -81,11 +81,11 @@ function EventRow({ row }: { row: Extract<TimelineRow, { what: "created" | "appr
         ? t("approved")
         : t("merged this merge request");
   return (
-    <li className="mr-ev">
+    <li className="merge-request-event">
       <Avatar name={row.who} size={16} />
-      <span className="mono ev-who">{row.who}</span>
+      <span className="mono event-who">{row.who}</span>
       <span className="muted">{label}</span>
-      <span className="muted ev-at">{whenStr(row.at)}</span>
+      <span className="muted event-at">{whenStr(row.at)}</span>
     </li>
   );
 }
@@ -100,12 +100,12 @@ function ReviewEventRow({ row }: { row: Extract<TimelineRow, { what: "review" }>
         ? t("requested changes — this blocks the merge until re-reviewed")
         : t("reviewed");
   return (
-    <li className="mr-ev review">
+    <li className="merge-request-event review">
       <Avatar name={row.who} size={16} />
-      <span className="mono ev-who">{row.who}</span>
-      <span className={"ev-verdict " + tone}>{label}</span>
-      <span className="muted ev-at">{whenStr(row.at)}</span>
-      {row.body && <p className="ev-body">{row.body}</p>}
+      <span className="mono event-who">{row.who}</span>
+      <span className={"event-verdict " + tone}>{label}</span>
+      <span className="muted event-at">{whenStr(row.at)}</span>
+      {row.body && <p className="event-body">{row.body}</p>}
     </li>
   );
 }
@@ -128,7 +128,7 @@ function ThreadRow({
   const anchored = !!head.anchor_oid;
   if (head.resolved && !open) {
     return (
-      <li className="mr-thread resolved-collapsed">
+      <li className="merge-request-thread resolved-collapsed">
         <button className="thread-summary" onClick={() => setOpen(true)}>
           <span className="resolved-dot" aria-hidden="true" />
           {t("{0} — resolved by {1} · {2} reply(ies)", head.author, head.resolved_by || "", replies.length)}
@@ -138,7 +138,7 @@ function ThreadRow({
     );
   }
   return (
-    <li className={"mr-thread" + (head.resolved ? " resolved" : "") + (stale ? " stale" : "")}>
+    <li className={"merge-request-thread" + (head.resolved ? " resolved" : "") + (stale ? " stale" : "")}>
       <div className="thread-head">
         <Avatar name={head.author} size={20} />
         <span className="mono">{head.author}</span>
@@ -175,32 +175,32 @@ function ThreadRow({
   );
 }
 
-export function MrTimeline(props: {
+export function MergeRequestTimeline(props: {
   repo: string;
   iid: number | string;
-  mr: { author: string; created_at: number; state: string; merged_by?: string; updated_at: number };
-  discussion?: MRDiscussion;
+  mergeRequest: { author: string; created_at: number; state: string; merged_by?: string; updated_at: number };
+  discussion?: MergeRequestDiscussion;
   sourceTip: string;
   canAct: boolean;
   onInvalidate: () => void;
 }): ReactNode {
   const qc = useQueryClient();
   const resolve = useMutation({
-    mutationFn: (a: { id: number; resolved: boolean }) => resolveMRComment(props.repo, props.iid, a.id, a.resolved),
+    mutationFn: (a: { id: number; resolved: boolean }) => resolveMergeRequestComment(props.repo, props.iid, a.id, a.resolved),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["mr-discussion", props.repo, String(props.iid)] });
+      qc.invalidateQueries({ queryKey: ["merge-request-discussion", props.repo, String(props.iid)] });
       props.onInvalidate();
     },
   });
-  const rows = props.discussion ? buildTimeline(props.mr, props.discussion) : [];
+  const rows = props.discussion ? buildTimeline(props.mergeRequest, props.discussion) : [];
   const t = useT();
   return (
-    <section className="mr-discussion">
+    <section className="merge-request-discussion">
       <h3>{t("discussion")}</h3>
       {rows.length === 0 ? (
         <p className="muted">{t("no discussion yet — comments, replies and verdicts land here.")}</p>
       ) : (
-        <ul className="mr-timeline">
+        <ul className="merge-request-timeline">
           {rows.map((row, i) =>
             row.kind === "event" ? (
               <EventRow key={"e" + i} row={row} />
@@ -223,9 +223,9 @@ export function MrTimeline(props: {
   );
 }
 
-// MrReviewBar — the conclusion bar under the change view: one verdict, an
+// MergeRequestReviewBar — the conclusion bar under the change view: one verdict, an
 // optional body, one submission. The author's verdict set is comment only.
-export function MrReviewBar({
+export function MergeRequestReviewBar({
   repo,
   iid,
   me,
@@ -244,10 +244,10 @@ export function MrReviewBar({
   const [verdict, setVerdict] = useState<"approve" | "request-changes" | "comment">("comment");
   const [body, setBody] = useState("");
   const submit = useMutation({
-    mutationFn: () => submitMRReview(repo, iid, verdict, body),
+    mutationFn: () => submitMergeRequestReview(repo, iid, verdict, body),
     onSuccess: () => {
       setBody("");
-      qc.invalidateQueries({ queryKey: ["mr-discussion", repo, String(iid)] });
+      qc.invalidateQueries({ queryKey: ["merge-request-discussion", repo, String(iid)] });
       onInvalidate();
     },
   });
@@ -258,7 +258,7 @@ export function MrReviewBar({
     { v: "comment", label: t("comment only"), tone: "" },
   ];
   return (
-    <section className="mr-review-bar">
+    <section className="merge-request-review-bar">
       <Avatar name={me} size={26} />
       <div className="review-bar-main">
         <div className="verdict-row" role="radiogroup" aria-label={t("review verdict")}>

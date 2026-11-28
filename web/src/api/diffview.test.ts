@@ -1,4 +1,4 @@
-// diffview.test.ts — the adapter is load-bearing (the MR diff view rides
+// diffview.test.ts — the adapter is load-bearing (the merge request diff view rides
 // it), so the hunk extraction and language mapping are pinned against a
 // hand-checked two-file diff. The DiffFile integration test pins the
 // contract @git-diff-view actually parses: a hunk string without its

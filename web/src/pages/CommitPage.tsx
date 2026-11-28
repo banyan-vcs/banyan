@@ -1,6 +1,6 @@
 // CommitPage.tsx — commit metadata plus the diff against its first parent
 // (GET /api/v1/diff, byte-pinned against git diff), browsed on the shared
-// GitHub-style DiffBrowser — split/unified with the MR change view's
+// GitHub-style DiffBrowser — split/unified with the merge request change view's
 // memory, syntax highlighting, per-file diffstat and folding.
 import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useState, type ReactNode } from "react";
@@ -13,7 +13,7 @@ import { useRepoBase, useRepoId } from "../repo";
 import { useT } from "../i18n";
 
 // The diff browser (highlight.js grammars included) is the heaviest leaf
-// in the bundle — it code-splits behind the diff, exactly like the MR face.
+// in the bundle — it code-splits behind the diff, exactly like the merge request face.
 const DiffBrowser = lazy(() => import("../components/DiffBrowser").then((m) => ({ default: m.DiffBrowser })));
 
 export function CommitPage(): ReactNode {
@@ -22,7 +22,7 @@ export function CommitPage(): ReactNode {
   const repo = useRepoId();
   const base = useRepoBase();
   // One split/unified memory across the diff surfaces; the commit page
-  // defaults to unified (git's own presentation), the MR face to split.
+  // defaults to unified (git's own presentation), the merge request face to split.
   const [view, setView] = useState<"split" | "unified">(() =>
     localStorage.getItem(DIFF_VIEW_KEY) === "split" ? "split" : "unified",
   );

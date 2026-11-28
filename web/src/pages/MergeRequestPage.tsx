@@ -9,14 +9,14 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { lazy, Suspense, useState, type ReactNode } from "react";
 import { apiText } from "../api/client";
 import { DIFF_VIEW_KEY, toDiffViewFiles } from "../api/diffview";
-import { addMRComment, approveMR, closeMR, getDiscussion, getMR, mergeMR, reopenMR, unapproveMR } from "../api/mrs";
+import { addMergeRequestComment, approveMergeRequest, closeMergeRequest, getDiscussion, getMergeRequest, mergeMergeRequest, reopenMergeRequest, unapproveMergeRequest } from "../api/mergerequests";
 // The diff view (highlight.js grammars included) is the heaviest leaf in
 // the bundle — it code-splits behind the changes tab, as does the editor
 // the inline edit opens.
-const MrDiff = lazy(() => import("../components/MrDiff").then((m) => ({ default: m.MrDiff })));
-const MrFileEdit = lazy(() => import("../components/MrFileEdit").then((m) => ({ default: m.MrFileEdit })));
-const MrTimeline = lazy(() => import("../components/MrDiscussion").then((m) => ({ default: m.MrTimeline })));
-const MrReviewBar = lazy(() => import("../components/MrDiscussion").then((m) => ({ default: m.MrReviewBar })));
+const MergeRequestDiff = lazy(() => import("../components/MergeRequestDiff").then((m) => ({ default: m.MergeRequestDiff })));
+const MergeRequestFileEdit = lazy(() => import("../components/MergeRequestFileEdit").then((m) => ({ default: m.MergeRequestFileEdit })));
+const MergeRequestTimeline = lazy(() => import("../components/MergeRequestDiscussion").then((m) => ({ default: m.MergeRequestTimeline })));
+const MergeRequestReviewBar = lazy(() => import("../components/MergeRequestDiscussion").then((m) => ({ default: m.MergeRequestReviewBar })));
 import { Avatar } from "../components/Avatar";
 import { ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 import { useSession } from "../session";
@@ -54,19 +54,19 @@ export function MergeRequestPage(): ReactNode {
   // the moment the commit lands.
   const [editingPath, setEditingPath] = useState("");
 
-  const mr = useQuery({ queryKey: ["mr", repo, iid], queryFn: () => getMR(repo, iid), retry: false });
-  const view0 = mr.data;
+  const mergeRequest = useQuery({ queryKey: ["mergeRequest", repo, iid], queryFn: () => getMergeRequest(repo, iid), retry: false });
+  const view0 = mergeRequest.data;
 
   // The discussion ledger + approval events — the timeline's data set.
   const discussion = useQuery({
-    queryKey: ["mr-discussion", repo, iid],
+    queryKey: ["merge-request-discussion", repo, iid],
     queryFn: () => getDiscussion(repo, iid),
     enabled: !!view0,
     retry: false,
   });
   const comment = useMutation({
     mutationFn: (a: { body: string; path?: string; side?: "old" | "new"; line?: number; parentID?: number }) =>
-      addMRComment(repo, iid, {
+      addMergeRequestComment(repo, iid, {
         body: a.body,
         path: a.path,
         side: a.side,
@@ -74,13 +74,13 @@ export function MergeRequestPage(): ReactNode {
         parent_id: a.parentID || 0,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["mr-discussion", repo, iid] });
-      qc.invalidateQueries({ queryKey: ["mr", repo, iid] });
+      qc.invalidateQueries({ queryKey: ["merge-request-discussion", repo, iid] });
+      qc.invalidateQueries({ queryKey: ["mergeRequest", repo, iid] });
     },
   });
 
   const diff = useQuery({
-    queryKey: ["mr-diff", repo, iid, view0?.merge_base, view0?.source_tip],
+    queryKey: ["diff-browser", repo, iid, view0?.merge_base, view0?.source_tip],
     enabled: tab === "diff" && !!view0 && view0.state === "open" && !!view0.merge_base,
     queryFn: (): Promise<string> =>
       apiText(
@@ -90,26 +90,26 @@ export function MergeRequestPage(): ReactNode {
   });
 
   const invalidate = (): void => {
-    qc.invalidateQueries({ queryKey: ["mr", repo, iid] });
-    qc.invalidateQueries({ queryKey: ["mrs", repo] });
+    qc.invalidateQueries({ queryKey: ["mergeRequest", repo, iid] });
+    qc.invalidateQueries({ queryKey: ["merge-requests", repo] });
   };
   const act = useMutation({
     mutationFn: async (what: "approve" | "unapprove" | "merge" | "close" | "reopen") => {
       const msg = what === "merge" && view0?.state === "open" ? window.prompt(t("merge commit message (empty = default)")) ?? null : undefined;
       if (what === "merge" && msg === null) return; // cancelled
-      if (what === "approve") await approveMR(repo, iid);
-      if (what === "unapprove") await unapproveMR(repo, iid);
-      if (what === "merge") await mergeMR(repo, iid, msg || "");
-      if (what === "close") await closeMR(repo, iid);
-      if (what === "reopen") await reopenMR(repo, iid);
+      if (what === "approve") await approveMergeRequest(repo, iid);
+      if (what === "unapprove") await unapproveMergeRequest(repo, iid);
+      if (what === "merge") await mergeMergeRequest(repo, iid, msg || "");
+      if (what === "close") await closeMergeRequest(repo, iid);
+      if (what === "reopen") await reopenMergeRequest(repo, iid);
     },
     onSuccess: invalidate,
   });
   const err = act.error ? (act.error instanceof Error ? act.error.message : String(act.error)) : "";
 
-  if (mr.isPending) return <Spinner />;
-  if (mr.isError) {
-    const msg = mr.error instanceof Error ? mr.error.message : String(mr.error);
+  if (mergeRequest.isPending) return <Spinner />;
+  if (mergeRequest.isError) {
+    const msg = mergeRequest.error instanceof Error ? mergeRequest.error.message : String(mergeRequest.error);
     return (
       <>
         <h1>
@@ -118,7 +118,7 @@ export function MergeRequestPage(): ReactNode {
         {/not found|404/i.test(msg) ? (
           <p className="muted pad">{t("no merge request !{0} in {1} — IIDs are never reused, so this link points at nothing.", iid, repo)}</p>
         ) : (
-          <ErrorBox error={mr.error} />
+          <ErrorBox error={mergeRequest.error} />
         )}
       </>
     );
@@ -127,7 +127,7 @@ export function MergeRequestPage(): ReactNode {
   const open = view0?.state === "open";
   const approvedByMe = !!view0?.approvals?.includes(me);
   const approvalsNeeded =
-    view0?.rule_level === "mr-only" ? Math.max(view0.required_approvals, 1) : 0;
+    view0?.rule_level === "merge-request-only" ? Math.max(view0.required_approvals, 1) : 0;
   const approvalsMet = !approvalsNeeded || (view0?.approvals?.length ?? 0) >= approvalsNeeded;
   const blocking = view0?.blocking || [];
   const blocked = open && blocking.length > 0;
@@ -153,7 +153,7 @@ export function MergeRequestPage(): ReactNode {
           </>
         )}
       </p>
-      {view0?.description && <p className="mr-desc">{view0.description}</p>}
+      {view0?.description && <p className="mergeRequest-desc">{view0.description}</p>}
       {err && <ErrorBox error={err} />}
 
       <div className="tab-row">
@@ -176,12 +176,12 @@ export function MergeRequestPage(): ReactNode {
             {diff.isError && <ErrorBox error={diff.error} />}
             {editingPath && view0 && (
               <Suspense fallback={<Spinner label={t("loading editor…")} />}>
-                <MrFileEdit
+                <MergeRequestFileEdit
                   repo={repo}
                   branch={view0.source}
                   base={view0.source_tip}
                   path={editingPath}
-                  defaultMessage={`update ${editingPath} via MR !${iid}`}
+                  defaultMessage={`update ${editingPath} via merge request !${iid}`}
                   onDone={() => {
                     setEditingPath("");
                     invalidate();
@@ -191,7 +191,7 @@ export function MergeRequestPage(): ReactNode {
             )}
             {diff.data && (
               <Suspense fallback={<Spinner />}>
-                <MrDiff
+                <MergeRequestDiff
                   files={toDiffViewFiles(diff.data)}
                   view={view}
                   onViewChange={setView}
@@ -214,7 +214,7 @@ export function MergeRequestPage(): ReactNode {
             )}
             {me && open && view0 && (
               <Suspense fallback={null}>
-                <MrReviewBar repo={repo} iid={iid} me={me} author={view0.author} onInvalidate={invalidate} />
+                <MergeRequestReviewBar repo={repo} iid={iid} me={me} author={view0.author} onInvalidate={invalidate} />
               </Suspense>
             )}
           </>
@@ -222,7 +222,7 @@ export function MergeRequestPage(): ReactNode {
 
       {tab === "overview" && (
         <>
-        <div className="mr-overview">
+        <div className="merge-request-overview">
           <section>
             <h3>{t("merge status")}</h3>
             {open ? (
@@ -305,10 +305,10 @@ export function MergeRequestPage(): ReactNode {
         </div>
         {view0 && (
           <Suspense fallback={<Spinner />}>
-            <MrTimeline
+            <MergeRequestTimeline
               repo={repo}
               iid={iid}
-              mr={{
+              mergeRequest={{
                 author: view0.author,
                 created_at: view0.created_at,
                 state: view0.state,

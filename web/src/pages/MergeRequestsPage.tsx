@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { branchesOf, listRefs } from "../api/gitrefs";
-import { listMRs, openMR } from "../api/mrs";
+import { listMergeRequests, openMergeRequest } from "../api/mergerequests";
 import { ErrorBox, Pill, Spinner, shortOid, whenStr } from "../components/ui";
 import { useRepoBase, useRepoId } from "../repo";
 import { useT } from "../i18n";
@@ -25,18 +25,18 @@ export function MergeRequestsPage(): ReactNode {
   const [title, setTitle] = useState("");
   const [error, setError] = useState("");
 
-  const mrs = useQuery({ queryKey: ["mrs", repo, state], queryFn: () => listMRs(repo, state), retry: false });
+  const mergeRequests = useQuery({ queryKey: ["merge-requests", repo, state], queryFn: () => listMergeRequests(repo, state), retry: false });
   const refs = useQuery({ queryKey: ["refs", repo], queryFn: () => listRefs(repo), retry: false });
   const branches = branchesOf(refs.data || { refs: [], capabilities: "", defaultBranch: "" });
 
   const create = useMutation({
-    mutationFn: () => openMR(repo, { source, target, title }),
-    onSuccess: (mr) => {
+    mutationFn: () => openMergeRequest(repo, { source, target, title }),
+    onSuccess: (mergeRequest) => {
       setTitle("");
       setError("");
-      qc.invalidateQueries({ queryKey: ["mrs", repo] });
+      qc.invalidateQueries({ queryKey: ["merge-requests", repo] });
       window.location.hash = ""; // stay; the list refreshes and the new row links on
-      void mr;
+      void mergeRequest;
     },
     onError: (e) => setError(e instanceof Error ? e.message : String(e)),
   });
@@ -58,7 +58,7 @@ export function MergeRequestsPage(): ReactNode {
         ))}
       </div>
 
-      <details className="mr-new">
+      <details className="merge-request-new">
         <summary>{t("new merge request")}</summary>
         <form
           className="create-branch"
@@ -97,12 +97,12 @@ export function MergeRequestsPage(): ReactNode {
       </details>
       {error && <ErrorBox error={error} />}
 
-      {mrs.isPending && <Spinner />}
-      {mrs.isError && <ErrorBox error={mrs.error} />}
-      {mrs.isSuccess && (mrs.data || []).length === 0 && (
+      {mergeRequests.isPending && <Spinner />}
+      {mergeRequests.isError && <ErrorBox error={mergeRequests.error} />}
+      {mergeRequests.isSuccess && (mergeRequests.data || []).length === 0 && (
         <p className="muted pad">{t("no {0} merge requests.", t(state))}</p>
       )}
-      {(mrs.data || []).length > 0 && (
+      {(mergeRequests.data || []).length > 0 && (
         <table>
           <thead>
             <tr>
@@ -114,20 +114,20 @@ export function MergeRequestsPage(): ReactNode {
             </tr>
           </thead>
           <tbody>
-            {(mrs.data || []).map((mr) => (
-              <tr key={mr.iid}>
-                <td className="mono">!{mr.iid}</td>
+            {(mergeRequests.data || []).map((mergeRequest) => (
+              <tr key={mergeRequest.iid}>
+                <td className="mono">!{mergeRequest.iid}</td>
                 <td>
-                  <Link to={`${base}/-/merge_requests/${mr.iid}`}>{mr.title}</Link>{" "}
-                  {mr.state !== "open" && <Pill>{t(mr.state)}</Pill>}
+                  <Link to={`${base}/-/merge_requests/${mergeRequest.iid}`}>{mergeRequest.title}</Link>{" "}
+                  {mergeRequest.state !== "open" && <Pill>{t(mergeRequest.state)}</Pill>}
                 </td>
                 <td className="mono muted">
-                  {mr.source} → {mr.target}
+                  {mergeRequest.source} → {mergeRequest.target}
                 </td>
-                <td>{mr.author}</td>
-                <td className="muted" title={String(mr.updated_at)}>
-                  {whenStr(mr.updated_at)}
-                  {mr.merge_commit ? ` · ${shortOid(mr.merge_commit)}` : ""}
+                <td>{mergeRequest.author}</td>
+                <td className="muted" title={String(mergeRequest.updated_at)}>
+                  {whenStr(mergeRequest.updated_at)}
+                  {mergeRequest.merge_commit ? ` · ${shortOid(mergeRequest.merge_commit)}` : ""}
                 </td>
               </tr>
             ))}

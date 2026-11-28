@@ -26,7 +26,7 @@ export function langOf(path: string): string {
   return LANGS[base.slice(dot + 1).toLowerCase()] || "plaintext";
 }
 
-/** The localStorage key both diff surfaces (commit, MR) remember the
+/** The localStorage key both diff surfaces (commit, merge request) remember the
  * split/unified choice under — one preference follows the user across
  * pages. */
 export const DIFF_VIEW_KEY = "banyan.diff.view";

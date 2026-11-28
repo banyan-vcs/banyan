@@ -1,14 +1,14 @@
-// MrDiscussion.test.tsx — the review mechanics' pure seams: the timeline
+// MergeRequestDiscussion.test.tsx — the review mechanics' pure seams: the timeline
 // fold (events / reviews / threads in one ascending order, replies tucked
 // under their heads) and the staleness rule (an anchored thread whose tip
 // fell behind the live one wears the badge — never a silent move). The
 // avatar initial rule rides along: first code point, case kept.
 import { describe, expect, it } from "vitest";
-import { buildTimeline, threadIsStale } from "./MrDiscussion";
+import { buildTimeline, threadIsStale } from "./MergeRequestDiscussion";
 import { avatarInitial } from "./Avatar";
-import type { MRComment } from "../api/mrs";
+import type { MergeRequestComment } from "../api/mergerequests";
 
-const c = (over: Partial<MRComment>): MRComment => ({
+const c = (over: Partial<MergeRequestComment>): MergeRequestComment => ({
   id: 0,
   repo: "r",
   iid: 1,

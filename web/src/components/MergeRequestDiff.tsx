@@ -1,4 +1,4 @@
-// MrDiff.tsx — the MR shell over the shared DiffBrowser: every file that
+// MergeRequestDiff.tsx — the merge request shell over the shared DiffBrowser: every file that
 // exists on the source side carries an edit affordance — the inline edit
 // that lands on the source branch right from the change view — and, when
 // the page hands the discussion over, every line grows the review "+" :
@@ -9,7 +9,7 @@
 // split/unified, folding) lives in DiffBrowser, shared with the commit page.
 import { useState, type ReactNode } from "react";
 import type { DiffViewFile } from "../api/diffview";
-import type { MRComment } from "../api/mrs";
+import type { MergeRequestComment } from "../api/mergerequests";
 import { DiffBrowser, type LineWidgetCtx } from "./DiffBrowser";
 import { Avatar } from "./Avatar";
 import { useT } from "../i18n";
@@ -24,7 +24,7 @@ function LineThreadBox({
   onComment,
   onClose,
 }: {
-  threads: MRComment[]; // heads at this line, fresh (anchor == live tip)
+  threads: MergeRequestComment[]; // heads at this line, fresh (anchor == live tip)
   canComment: boolean;
   onComment: (body: string, parentID: number) => void;
   onClose: () => void;
@@ -37,19 +37,19 @@ function LineThreadBox({
   return (
     <div className="diff-comment-box">
       {threads.map((head) => (
-        <div className="dc-thread" key={head.id}>
-          <div className="dc-head">
+        <div className="diff-comment-thread" key={head.id}>
+          <div className="diff-comment-head">
             <Avatar name={head.author} size={16} />
             <span className="mono">{head.author}</span>
             <span className="muted">{whenStr(head.created_at)}</span>
             {head.resolved && <span className="chip resolved-badge">{t("resolved")}</span>}
           </div>
-          <div className="dc-body">{head.body}</div>
+          <div className="diff-comment-body">{head.body}</div>
         </div>
       ))}
       {canComment && (
         <form
-          className="dc-form"
+          className="diff-comment-form"
           onSubmit={(e) => {
             e.preventDefault();
             if (!draft.trim()) return;
@@ -91,7 +91,7 @@ function LineThreadBox({
   );
 }
 
-export function MrDiff({
+export function MergeRequestDiff({
   files,
   view,
   onViewChange,
@@ -109,13 +109,13 @@ export function MrDiff({
   editingPath?: string;
   // The discussion (all comments) + the live source tip: fresh anchored
   // heads inline-render; replies ride their heads.
-  comments?: MRComment[];
+  comments?: MergeRequestComment[];
   sourceTip?: string;
   canComment?: boolean;
   onComment?: (body: string, path: string, side: "old" | "new", line: number, parentID: number) => void;
 }): ReactNode {
   // replies index: parent id → rows (for showing a thread's tail inline).
-  const replies = new Map<number, MRComment[]>();
+  const replies = new Map<number, MergeRequestComment[]>();
   for (const c of comments || []) {
     if (c.parent_id) replies.set(c.parent_id, [...(replies.get(c.parent_id) || []), c]);
   }

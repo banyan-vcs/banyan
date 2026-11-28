@@ -2,7 +2,7 @@
 // plain BlobView by default, the Monaco editor as a toggle (full
 // tokenization), and an edit mode that commits through the server-side
 // assembly (blob upload + POST /api/v1/commit) — the same publish path the
-// thin CLI rides, so every protection (protected, mr-only, scopes)
+// thin CLI rides, so every protection (protected, merge-request-only, scopes)
 // applies unchanged. Monaco is code-split behind the toggle.
 import { useMutation } from "@tanstack/react-query";
 import { lazy, Suspense, useState, type ReactNode } from "react";
