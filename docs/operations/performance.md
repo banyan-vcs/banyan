@@ -548,7 +548,7 @@ P2-4 扇出下沉：归 HA-2（主节点写+节点间扇出）；P2-5 同目录�
 
 ## 5. 架构判据记录：pack 磁盘存储 vs per-object 对象存储（2026-10-24 review 定稿）
 
-场景化 review（MR diff / clone 与增量效率 / 磁盘 IO 对比）的结论：
+场景化 review（merge request diff / clone 与增量效率 / 磁盘 IO 对比）的结论：
 
 **对 banyan 的定位（git 兼容协议边界 + 自托管本地盘 + monorepo 密度），
 pack 是正确的架构；per-object 为"服务端计算 + 客户端点取 + 三层缓存"的

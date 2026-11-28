@@ -86,7 +86,7 @@ go run ./cmd/banyand web -listen :3000 -gateway http://127.0.0.1:8080 \
 | `/r/:repo/subtrees` | subtree management: directory timelines, branch heads, per-path activity, admin access rules |
 | `/r/:repo/members` | the repository's member table, a first-class destination: the effective table with inherited rows marked (direct grants strictly above the inherited rank) and the direct add form |
 | `/r/:repo/settings` | the settings area's General page: size, description, group label, rename, repack |
-| `/r/:repo/settings/branch-protection` | the settings area's Branch Protection page: the force-push switch and the per-branch rules (protected / mr-only) |
+| `/r/:repo/settings/branch-protection` | the settings area's Branch Protection page: the force-push switch and the per-branch rules (protected / merge-request-only) |
 | `/settings/profile` | the settings area's Profile section: the theme (auto / day / night), the language (auto / 中文 / English) and the password change (server-managed accounts; config-file accounts get the explaining refusal — the change ends the session). Behind an administrator's reset every route lands here until a self-chosen password is set (the must-change fence) |
 | `/settings/ssh-keys` | the settings area's SSH Keys section: paste one authorized_keys line, list (type / fingerprint / comment / added — the key material never echoes), remove your own. The keys authenticate git-over-SSH as their owner (`ssh://git@host/<repo>.git`) |
 | `/settings/tokens` | the settings area's Access Tokens section: mint (plaintext shown exactly once), list your own, list and revoke anyone's with admin |

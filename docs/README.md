@@ -4,7 +4,7 @@
 
 | 目录 | 内容 |
 |---|---|
-| [design/](design/overview.md) | 总览与叙事：[overview](design/overview.md) · [big-picture](design/big-picture.md)（锚定提交/织入）· [data-model](design/data-model.md) · [derived-data](design/derived-data.md)（派生视图）· [workflow](design/workflow.md)（M4 目录级工作流）· [merge-requests](design/merge-requests.md)（MR+分支保护） |
+| [design/](design/overview.md) | 总览与叙事：[overview](design/overview.md) · [big-picture](design/big-picture.md)（锚定提交/织入）· [data-model](design/data-model.md) · [derived-data](design/derived-data.md)（派生视图）· [workflow](design/workflow.md)（M4 目录级工作流）· [merge-requests](design/merge-requests.md)（合并请求+分支保护） |
 | [storage/](storage/storage.md) | 存储面：[storage](storage/storage.md)（pack 分片/多副本）· [indexing-packing](storage/indexing-packing.md) · [ha](storage/ha.md)（集群/一致性） |
 | [gateway/](gateway/git-compat.md) | 网关面：[git-compat](gateway/git-compat.md)（smart HTTP/SSH 兼容）· [service-api](gateway/service-api.md)（JSON API/gitaly 装配）· [authorization](gateway/authorization.md)（授权模型：静态/远程快照/SSO/多 OAuth provider §8d） |
 | [web/](web/web-layer.md) | web 层：[web-layer](web/web-layer.md)（`banyand web`：三层独立站、会话库、OAuth、导入、gitlab 档位）· [console](web/console.md)（产品端控制面 `banyand console`，M6 设计稿） |

@@ -176,7 +176,7 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
       `Gitlab-Shell-Api-Request` 头——调 `/internal/{pre,post}_receive`；
       身份免费来自 gRPC 请求自带的 GlId/GlRepository（workhorse/gitlab-shell
       填）。live 实证：经 GitLab 的 push 后**零干预**读面即刻刷新、
-      PostReceiveWorker 跑完（事件/pipeline/MR-from-push/缓存过期全通））
+      PostReceiveWorker 跑完（事件/pipeline/merge request-from-push/缓存过期全通））
 - [x] pre-receive 的 `/allowed` 策略门（2026-11-07，T86：ref 级推送策略
       ——保护分支为首——在 Rails，workhorse 前门看不见 pack 里的 ref；
       banyan 在 ref 移动前同形调 `/internal/allowed`，拒绝消息（401+
@@ -189,7 +189,7 @@ GitLab 侧配置即可起步（L2）；banyan 侧待建（L3）——
 - [x] GitLab 集成收尾三件（2026-11-07 深夜，T87：① **push options 端到端**
       ——receive-pack 广告+解析 `push-options` 选项段，经
       `post_receive.push_options` 上报，`-o merge_request.create` 活体实开
-      MR；② **receive.maxInputSize 强制**——/allowed verdict 的
+      merge request；② **receive.maxInputSize 强制**——/allowed verdict 的
       git_config_options 下发 GitLab "Maximum push size" 设置，门对照
       spool 尺寸拒超限包（live：1MB 设 2MB 包拒）；③ **第九缝**——
       SSHUploadPackWithSidechannel 的 sidechannel 会话输出须包 pkt-line
