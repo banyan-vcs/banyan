@@ -3,9 +3,11 @@
 // under their heads) and the staleness rule (an anchored thread whose tip
 // fell behind the live one wears the badge — never a silent move). The
 // avatar initial rule rides along: first code point, case kept.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildTimeline, threadIsStale } from "./MergeRequestDiscussion";
-import { avatarInitial } from "./Avatar";
+import { avatarInitial, avatarSizeClass } from "./Avatar";
 import type { MergeRequestComment } from "../api/mergerequests";
 
 const c = (over: Partial<MergeRequestComment>): MergeRequestComment => ({
@@ -86,5 +88,16 @@ describe("avatarInitial", () => {
     expect(avatarInitial("Bob")).toBe("B");
     expect(avatarInitial("炽天")).toBe("炽");
     expect(avatarInitial("")).toBe("?");
+  });
+});
+
+// The size ladder is a two-sided contract: the class the component emits
+// must be the class styles.less sizes.
+describe("avatar size ladder", () => {
+  it("emits the classes the stylesheet sizes", () => {
+    const css = readFileSync(join(__dirname, "..", "styles.less"), "utf8");
+    for (const size of [16, 20, 26, 34] as const) {
+      expect(css).toContain(`.avatar.${avatarSizeClass(size)} {`);
+    }
   });
 });
