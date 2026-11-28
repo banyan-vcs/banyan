@@ -4,6 +4,8 @@
 // html[data-theme], which outranks the prefers-color-scheme block by
 // specificity. The index.html pre-paint snippet applies the stored choice
 // before first paint.
+import { useEffect, useState } from "react";
+
 export type ThemeChoice = "auto" | "light" | "dark";
 
 const KEY = "banyan.theme";
@@ -39,4 +41,28 @@ export function setTheme(choice: ThemeChoice): void {
   } catch {
     /* storage unavailable — the in-page switch still works for this view */
   }
+}
+
+// useEffectiveDark answers whether the console currently renders its dark
+// scheme, and keeps answering as the answer changes — the OS scheme flips
+// under "auto", and the picker's write lands on html[data-theme] without a
+// reload. Third-party surfaces that cannot read our CSS tokens (the diff
+// view's own data-theme attribute) ride this hook.
+export function useEffectiveDark(): boolean {
+  const [dark, setDark] = useState(effectiveDark);
+  useEffect(() => {
+    const update = (): void => setDark(effectiveDark());
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", update);
+    // the picker writes both localStorage and the attribute; watching the
+    // attribute catches every path that changes the answer
+    const obs = new MutationObserver(update);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    update();
+    return () => {
+      mq.removeEventListener("change", update);
+      obs.disconnect();
+    };
+  }, []);
+  return dark;
 }

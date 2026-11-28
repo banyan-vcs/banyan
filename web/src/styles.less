@@ -161,26 +161,10 @@
   color-scheme: dark;
 }
 
-// the diff-view component carries its own variables; aim them at the
-// warm-dark scheme whenever dark is in effect
-.dark-diff-view() {
-  .diff-view {
-    --diff-plain-content: @d-ink;
-    --diff-plain-line: transparent;
-    --diff-border: @d-line;
-    --diff-hunk-content: @d-bg-control;
-    --diff-hunk-content-color: @d-control;
-    --diff-hunk-line: @d-bg-control-hi;
-    --diff-add-content: #b7e5c3;
-    --diff-add-content-highlight: #d3f2db;
-    --diff-add-line: #17301f;
-    --diff-del-content: #f0abab;
-    --diff-del-content-highlight: #f6c3c3;
-    --diff-del-line: #3b1d1d;
-    --diff-expand-content: @d-control;
-    --diff-expand-line: @d-bg-control;
-  }
-}
+// the diff-view component's own variables are dressed below, where the
+// shared diff surface lives (the selectors stack one attribute above the
+// library's own [data-theme] rules, so the async chunk's load order can
+// never flip the skin back).
 
 :root {
   .light-tokens();
@@ -192,7 +176,6 @@
   :root {
     .dark-tokens();
   }
-  .dark-diff-view();
 }
 
 /* ---- the manual override (topbar toggle): auto → light → dark -------- */
@@ -202,7 +185,6 @@ html[data-theme="light"] {
 }
 html[data-theme="dark"] {
   .dark-tokens();
-  .dark-diff-view();
 }
 
 /* The SSO-subpage deployment keeps its own slightly-lighter ink so the
@@ -1043,6 +1025,55 @@ button.link {
 /* the profile page's avatar row */
 .avatar-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
 .diff-browser { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
+
+/* The diff view's skin: the library's own palette retires — the console's
+   tokens dress it (the github syntax ramps already in --hl-*, the status
+   add/del washes, neutral hunks, the mockup's control-gray "+"). The
+   wrapper's data-theme is driven by the diffViewTheme prop (DiffBrowser);
+   these selectors stack one attribute above the library's [data-theme]
+   rules so the async chunk's stylesheet can never re-override them. */
+.diff-browser .diff-tailwindcss-wrapper[data-theme] .diff-style-root {
+  --diff-border--: var(--line);
+  --diff-plain-content--: var(--bg);
+  --diff-plain-lineNumber--: var(--bg-subtle);
+  --diff-plain-lineNumber-color--: var(--placeholder);
+  --diff-expand-content--: var(--bg-control);
+  --diff-expand-lineNumber--: var(--bg-control);
+  --diff-expand-lineNumber-color--: var(--muted);
+  --diff-empty-content--: var(--bg-subtle);
+  --diff-hunk-content--: var(--bg-control);
+  --diff-hunk-lineNumber--: var(--bg-control);
+  --diff-hunk-lineNumber-hover--: var(--control);
+  --diff-hunk-content-color--: var(--muted);
+  --diff-add-content--: var(--add-bg);
+  --diff-add-content-highlight--: color-mix(in srgb, var(--add-bg) 85%, var(--ink));
+  --diff-add-lineNumber--: color-mix(in srgb, var(--add-bg) 70%, var(--bg));
+  --diff-del-content--: var(--del-bg);
+  --diff-del-content-highlight--: color-mix(in srgb, var(--del-bg) 85%, var(--ink));
+  --diff-del-lineNumber--: color-mix(in srgb, var(--del-bg) 70%, var(--bg));
+  /* the hover "+" — a control, not a status: the mockup's control-gray
+     circle, never the library's GitHub blue */
+  --diff-add-widget--: var(--control);
+  --diff-add-widget-color--: var(--bg);
+}
+/* row text rides the scheme's ink, not the library's pure black/white */
+.diff-browser .diff-tailwindcss-wrapper[data-theme] [data-state="plain"],
+.diff-browser .diff-tailwindcss-wrapper[data-theme] [data-state="diff"],
+.diff-browser .diff-tailwindcss-wrapper[data-theme] [data-state="hunk"] {
+  color: var(--ink);
+}
+/* syntax tokens wear the same ramps the blob view wears (the library's
+   built-in palette is a different github generation) */
+.diff-browser .diff-tailwindcss-wrapper[data-theme] .diff-line-syntax-raw {
+  .hljs-comment, .hljs-quote { color: var(--hl-comment); }
+  .hljs-keyword, .hljs-selector-tag, .hljs-deletion { color: var(--hl-keyword); }
+  .hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--hl-string); }
+  .hljs-title, .hljs-title.function_, .hljs-section, .hljs-name { color: var(--hl-title); }
+  .hljs-title.class_, .hljs-type, .hljs-built_in, .hljs-builtin-name { color: var(--hl-class); }
+  .hljs-number, .hljs-literal, .hljs-symbol, .hljs-attr, .hljs-attribute, .hljs-meta { color: var(--hl-num); }
+  .hljs-variable, .hljs-template-variable, .hljs-tag { color: var(--hl-var); }
+  .hljs-addition { background: var(--add-bg); }
+}
 // content-visibility: monster diffs (a 127-file push measured ~27k rows,
 // ~200k DOM nodes) spend most of their mount longtask on layout+paint of
 // sections the user can't see yet; the browser skips offscreen sections
