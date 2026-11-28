@@ -1,5 +1,5 @@
-// MrFileEdit.tsx — inline edit of one file straight from the merge
-// request's change view: the Monaco editor opens the blob at the MR's
+// MergeRequestFileEdit.tsx — inline edit of one file straight from the merge
+// request's change view: the Monaco editor opens the blob at the merge request's
 // source tip and saves through the server-side assembly (blob upload +
 // commit CAS'd against that tip), so the landing meets the same branch
 // protections a push would, and the diff, mergeability and approvals
@@ -20,7 +20,7 @@ interface ResolveResult {
   size: number;
 }
 
-export function MrFileEdit({
+export function MergeRequestFileEdit({
   repo,
   branch,
   base,
@@ -29,7 +29,7 @@ export function MrFileEdit({
   onDone,
 }: {
   repo: string;
-  branch: string; // the MR's source branch — where the edit lands
+  branch: string; // the merge request's source branch — where the edit lands
   base: string; // the source tip the commit CASes against
   path: string;
   defaultMessage: string;
@@ -40,13 +40,13 @@ export function MrFileEdit({
   // advances it, so the next edit of the same path fetches fresh content
   // instead of hitting the stale cache.
   const resolved = useQuery({
-    queryKey: ["mr-edit-resolve", repo, branch, base, path],
+    queryKey: ["merge-request-edit-resolve", repo, branch, base, path],
     queryFn: () =>
       api<ResolveResult>("/api/v1/resolve", { method: "POST", body: JSON.stringify({ repo, rev: branch, path }) }),
     retry: false,
   });
   const blob = useQuery({
-    queryKey: ["mr-edit-blob", repo, base, resolved.data?.oid],
+    queryKey: ["merge-request-edit-blob", repo, base, resolved.data?.oid],
     queryFn: () => api<ArrayBuffer>(`/api/v1/objects?repo=${encodeURIComponent(repo)}&oid=${resolved.data?.oid || ""}`),
     enabled: resolved.data?.type === "blob",
     retry: false,
@@ -88,7 +88,7 @@ export function MrFileEdit({
     );
 
   return (
-    <div className="file-panel mr-edit">
+    <div className="file-panel merge-request-edit">
       <div className="file-panel-bar">
         <span className="muted mono">{path}</span>
         <span className="spacer" />

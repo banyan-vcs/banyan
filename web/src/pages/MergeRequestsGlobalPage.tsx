@@ -5,7 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import type { ReactNode } from "react";
-import { listAllMRs } from "../api/mrs";
+import { listAllMergeRequests } from "../api/mergerequests";
 import { repoHref, useRepoGroups } from "../repo";
 import { useT } from "../i18n";
 import { Empty, ErrorBox, Pill, Spinner, whenStr } from "../components/ui";
@@ -18,9 +18,9 @@ export function MergeRequestsGlobalPage(): ReactNode {
   const [params, setParams] = useSearchParams();
   const state = STATES.includes(params.get("state") || "") ? params.get("state")! : "open";
 
-  const mrs = useQuery({
-    queryKey: ["mrs-all", state],
-    queryFn: () => listAllMRs(state === "all" ? "" : state),
+  const mergeRequests = useQuery({
+    queryKey: ["merge-requests-all", state],
+    queryFn: () => listAllMergeRequests(state === "all" ? "" : state),
   });
 
   const setState = (s: string): void => {
@@ -39,10 +39,10 @@ export function MergeRequestsGlobalPage(): ReactNode {
           </button>
         ))}
       </div>
-      {mrs.isPending && <Spinner />}
-      {mrs.isError && <ErrorBox error={mrs.error} />}
-      {mrs.isSuccess && (mrs.data || []).length === 0 && <Empty>{t("nothing here — requests opened from a repository's page land in this list too.")}</Empty>}
-      {mrs.isSuccess && (mrs.data || []).length > 0 && (
+      {mergeRequests.isPending && <Spinner />}
+      {mergeRequests.isError && <ErrorBox error={mergeRequests.error} />}
+      {mergeRequests.isSuccess && (mergeRequests.data || []).length === 0 && <Empty>{t("nothing here — requests opened from a repository's page land in this list too.")}</Empty>}
+      {mergeRequests.isSuccess && (mergeRequests.data || []).length > 0 && (
         <table>
           <thead>
             <tr>
@@ -55,28 +55,28 @@ export function MergeRequestsGlobalPage(): ReactNode {
             </tr>
           </thead>
           <tbody>
-            {(mrs.data || []).map((mr) => (
-              <tr key={`${mr.repo}#${mr.iid}`}>
+            {(mergeRequests.data || []).map((mergeRequest) => (
+              <tr key={`${mergeRequest.repo}#${mergeRequest.iid}`}>
                 <td>
-                  <Link to={repoHref(mr.repo, groups[mr.repo]) + `/-/merge_requests/${mr.iid}`}>
-                    <strong>!{mr.iid}</strong> {mr.title}
+                  <Link to={repoHref(mergeRequest.repo, groups[mergeRequest.repo]) + `/-/merge_requests/${mergeRequest.iid}`}>
+                    <strong>!{mergeRequest.iid}</strong> {mergeRequest.title}
                   </Link>
                 </td>
                 <td>
-                  <Link to={repoHref(mr.repo, groups[mr.repo])} className="rowlink">
-                    {mr.repo}
+                  <Link to={repoHref(mergeRequest.repo, groups[mergeRequest.repo])} className="rowlink">
+                    {mergeRequest.repo}
                   </Link>
                 </td>
                 <td className="muted mono">
-                  {mr.source} → {mr.target}
+                  {mergeRequest.source} → {mergeRequest.target}
                 </td>
                 <td>
-                  {mr.state === "open" && <Pill tone="warn">{t("open")}</Pill>}
-                  {mr.state === "merged" && <Pill tone="ok">{t("merged")}</Pill>}
-                  {mr.state === "closed" && <span className="muted">{t("closed")}</span>}
+                  {mergeRequest.state === "open" && <Pill tone="warn">{t("open")}</Pill>}
+                  {mergeRequest.state === "merged" && <Pill tone="ok">{t("merged")}</Pill>}
+                  {mergeRequest.state === "closed" && <span className="muted">{t("closed")}</span>}
                 </td>
-                <td>{mr.author}</td>
-                <td className="muted">{whenStr(mr.updated_at)}</td>
+                <td>{mergeRequest.author}</td>
+                <td className="muted">{whenStr(mergeRequest.updated_at)}</td>
               </tr>
             ))}
           </tbody>

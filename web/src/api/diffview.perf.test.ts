@@ -1,7 +1,7 @@
 // diffview.perf.test.ts — a locally-gated bench, not a CI test: it only
 // wakes when DIFF_BENCH_FILE points at a real unified diff (e.g. the
 // 127-file banyan-web.patch corpus from `git diff A..B`). It prints the
-// phase costs of the pipeline the browser pays on every commit/MR page —
+// phase costs of the pipeline the browser pays on every commit/merge request page —
 // adapter parse, core initRaw (hunk parse + content compose), initSyntax
 // (lowlight over the composed file), and the split/unified row builders —
 // so rendering regressions have numbers, not anecdotes. With

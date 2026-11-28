@@ -1,6 +1,6 @@
 // commitEdit.test.ts — the blob-oid composition is load-bearing: a missing
 // set() offset once made the content overwrite the header, so every web
-// edit (tree and MR alike) landed as "hash mismatch" on the server. The
+// edit (tree and merge request alike) landed as "hash mismatch" on the server. The
 // helper is pinned against git's reference values, node-computed here.
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";

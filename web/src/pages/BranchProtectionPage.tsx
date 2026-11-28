@@ -1,13 +1,13 @@
 // BranchProtectionPage.tsx — the repository settings area's protection
 // page (/r/<repo>/settings/branch-protection): the force-push switch (the
 // subtree rollback guard) and the per-branch protection rules (protected /
-// mr-only). Split out of the general settings page — the guards are their
+// merge-request-only). Split out of the general settings page — the guards are their
 // own concern; both still require the admin rank (a 403 downgrades the
 // switch to read-only).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { branchesOf, listRefs } from "../api/gitrefs";
-import { branchRules, deleteBranchRule, putBranchRule } from "../api/mrs";
+import { branchRules, deleteBranchRule, putBranchRule } from "../api/mergerequests";
 import { useT } from "../i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 import { api } from "../api/client";
@@ -19,7 +19,7 @@ export function BranchProtectionPage(): ReactNode {
   const qc = useQueryClient();
   const [error, setError] = useState("");
   const [ruleBranch, setRuleBranch] = useState("");
-  const [ruleLevel, setRuleLevel] = useState("mr-only");
+  const [ruleLevel, setRuleLevel] = useState("merge-request-only");
   const [ruleApprovals, setRuleApprovals] = useState(1);
 
   const force = useQuery({
@@ -88,7 +88,7 @@ export function BranchProtectionPage(): ReactNode {
           {t(
             "{0} keeps the direct-push semantics (owner rank); {1} accepts no direct push at all — merge requests with the approval count are the only way in.",
             <code>protected</code>,
-            <code>mr-only</code>
+            <code>merge-request-only</code>
           )}
         </p>
         {rules.isPending && <Spinner />}
@@ -109,7 +109,7 @@ export function BranchProtectionPage(): ReactNode {
                   <td>
                     <code>{r.level}</code>
                   </td>
-                  <td>{r.level === "mr-only" ? r.approvals : "—"}</td>
+                  <td>{r.level === "merge-request-only" ? r.approvals : "—"}</td>
                   <td>
                     <button className="btn ghost danger" disabled={delRule.isPending} onClick={() => delRule.mutate(r.branch)}>
                       {t("clear")}
@@ -137,10 +137,10 @@ export function BranchProtectionPage(): ReactNode {
             ))}
           </select>
           <select value={ruleLevel} onChange={(e) => setRuleLevel(e.target.value)}>
-            <option value="mr-only">mr-only</option>
+            <option value="merge-request-only">merge-request-only</option>
             <option value="protected">protected</option>
           </select>
-          {ruleLevel === "mr-only" && (
+          {ruleLevel === "merge-request-only" && (
             <input
               type="number"
               min={1}

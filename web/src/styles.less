@@ -692,7 +692,7 @@ form.rule-form .group-desc { flex: 1; min-width: 220px; }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
 
-/* diff — the shared DiffBrowser (its per-file sections ride the .mr-diff
+/* diff — the shared DiffBrowser (its per-file sections ride the .diff-browser
    rules below); the toolbar carries the whole-change stat and the toggle */
 .diff-tool { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; }
 .diff-tool .tab-row { margin: 0 0 0 auto; }
@@ -864,10 +864,10 @@ button.link {
   padding: 3px 12px; border-radius: 14px; cursor: pointer; font: inherit; font-size: 13px;
 }
 .tab.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.mr-new { margin: 8px 0 14px; }
-.mr-new summary { cursor: pointer; color: var(--control); margin-bottom: 6px; }
-.mr-overview { display: grid; gap: 18px; margin-top: 10px; }
-.mr-overview section h3 { margin-bottom: 6px; }
+.merge-request-new { margin: 8px 0 14px; }
+.merge-request-new summary { cursor: pointer; color: var(--control); margin-bottom: 6px; }
+.merge-request-overview { display: grid; gap: 18px; margin-top: 10px; }
+.merge-request-overview section h3 { margin-bottom: 6px; }
 .act-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .approval-list { margin: 4px 0; padding-left: 0; list-style: none; }
 .approval-list li { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
@@ -894,31 +894,31 @@ button.link {
   user-select: none;
   object-fit: cover;
 }
-.avatar.av-16 { width: 16px; height: 16px; font-size: 9px; }
-.avatar.av-20 { width: 20px; height: 20px; font-size: 11px; }
-.avatar.av-26 { width: 26px; height: 26px; font-size: 13px; }
-.avatar.av-34 { width: 34px; height: 34px; font-size: 16px; }
+.avatar.avatar-16 { width: 16px; height: 16px; font-size: 9px; }
+.avatar.avatar-20 { width: 20px; height: 20px; font-size: 11px; }
+.avatar.avatar-26 { width: 26px; height: 26px; font-size: 13px; }
+.avatar.avatar-34 { width: 34px; height: 34px; font-size: 16px; }
 // the approval ring: the status green the merge box already speaks
 .avatar.ring-ok { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--success); }
 
-.mr-discussion { margin-top: 4px; }
-.mr-timeline { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+.merge-request-discussion { margin-top: 4px; }
+.merge-request-timeline { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
 .thread-li { margin-top: 10px; }
-.mr-ev {
+.merge-request-event {
   display: flex;
   align-items: baseline;
   gap: 8px;
   padding: 3px 0;
   font-size: 13px;
 }
-.mr-ev .avatar { align-self: center; }
-.mr-ev .ev-who { font-size: 12.5px; }
-.mr-ev .ev-at { margin-left: auto; font-size: 12px; white-space: nowrap; }
-.mr-ev.review { flex-wrap: wrap; }
-.ev-verdict { font-size: 13px; color: var(--control); }
-.ev-verdict.ok { color: var(--success); }
-.ev-verdict.err { color: var(--error); }
-.ev-body {
+.merge-request-event .avatar { align-self: center; }
+.merge-request-event .event-who { font-size: 12.5px; }
+.merge-request-event .event-at { margin-left: auto; font-size: 12px; white-space: nowrap; }
+.merge-request-event.review { flex-wrap: wrap; }
+.event-verdict { font-size: 13px; color: var(--control); }
+.event-verdict.ok { color: var(--success); }
+.event-verdict.err { color: var(--error); }
+.event-body {
   flex-basis: 100%;
   margin: 2px 0 0 24px;
   font-size: 13px;
@@ -926,13 +926,13 @@ button.link {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.mr-thread {
+.merge-request-thread {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bg);
   padding: 10px 12px;
 }
-.mr-thread.stale { border-style: dashed; }
+.merge-request-thread.stale { border-style: dashed; }
 .thread-head { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
 .thread-body {
   margin: 6px 0 0 28px;
@@ -963,7 +963,7 @@ button.link {
   margin-right: 6px;
   flex: none;
 }
-.mr-thread.resolved { opacity: 0.75; }
+.merge-request-thread.resolved { opacity: 0.75; }
 .thread-summary {
   background: none;
   border: 1px dashed var(--line);
@@ -977,7 +977,7 @@ button.link {
 }
 
 /* the conclusion bar under the change view */
-.mr-review-bar {
+.merge-request-review-bar {
   display: flex;
   gap: 12px;
   margin-top: 16px;
@@ -986,7 +986,7 @@ button.link {
   background: var(--bg);
   padding: 12px 14px;
 }
-.mr-review-bar .avatar { margin-top: 2px; }
+.merge-request-review-bar .avatar { margin-top: 2px; }
 .review-bar-main { flex: 1; display: flex; flex-direction: column; gap: 8px; }
 .verdict-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .verdict-choice {
@@ -1004,7 +1004,7 @@ button.link {
 .verdict-choice.ok.picked { border-color: var(--success); color: var(--success); }
 .verdict-choice.err.picked { border-color: var(--error); color: var(--error); }
 .verdict-choice input { accent-color: var(--accent); margin: 0; }
-.mr-review-bar textarea,
+.merge-request-review-bar textarea,
 .diff-comment-box textarea {
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -1030,50 +1030,50 @@ button.link {
   max-width: 760px;
   box-shadow: var(--shadow);
 }
-.dc-thread .dc-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
-.dc-body {
+.diff-comment-thread .diff-comment-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.diff-comment-body {
   margin: 3px 0 0 22px;
   font-size: 13px;
   color: var(--ink);
   white-space: pre-wrap;
   word-break: break-word;
 }
-.dc-form { display: flex; flex-direction: column; gap: 6px; }
+.diff-comment-form { display: flex; flex-direction: column; gap: 6px; }
 
 /* the profile page's avatar row */
 .avatar-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
-.mr-diff { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
+.diff-browser { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
 // content-visibility: monster diffs (a 127-file push measured ~27k rows,
 // ~200k DOM nodes) spend most of their mount longtask on layout+paint of
 // sections the user can't see yet; the browser skips offscreen sections
 // (kept findable and scrollable — no hidden-content regression) and pays
 // as you scroll. contain-intrinsic-size keeps the scrollbar honest.
-.mr-diff-file {
+.diff-file {
   border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
   content-visibility: auto;
   contain-intrinsic-size: auto 160px;
 }
-.mr-diff-file.editing { border-color: var(--accent); }
-.mr-diff-head {
+.diff-file.editing { border-color: var(--accent); }
+.diff-file-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 0; border-bottom: 1px solid var(--line);
   background: var(--bg-subtle);
 }
-.mr-diff-toggle {
+.diff-file-toggle {
   display: flex; flex: 1; align-items: center; gap: 8px;
   padding: 6px 10px; border: none; background: none; cursor: pointer; font: inherit; text-align: left;
 }
-.mr-diff-toggle > .muted { margin-left: auto; }
+.diff-file-toggle > .muted { margin-left: auto; }
 /* the fold caret: the header IS the toggle — the chevron points down while
    the file is open and rotates right when collapsed, so a folded file
    never reads as "missing" */
-.mr-diff-toggle .fold-caret { display: inline-flex; flex-shrink: 0; color: var(--muted); }
-.mr-diff-toggle .fold-caret svg { transition: transform 0.15s ease; }
-.mr-diff-file.collapsed .fold-caret svg { transform: rotate(-90deg); }
-.mr-diff-file.collapsed .mr-diff-toggle .mono { color: var(--control); }
-.mr-diff-head .btn { margin-right: 10px; }
-.mr-diff-file > div { overflow-x: auto; }
-.mr-edit { margin: 12px 0; }
+.diff-file-toggle .fold-caret { display: inline-flex; flex-shrink: 0; color: var(--muted); }
+.diff-file-toggle .fold-caret svg { transition: transform 0.15s ease; }
+.diff-file.collapsed .fold-caret svg { transform: rotate(-90deg); }
+.diff-file.collapsed .diff-file-toggle .mono { color: var(--control); }
+.diff-file-head .btn { margin-right: 10px; }
+.diff-file > div { overflow-x: auto; }
+.merge-request-edit { margin: 12px 0; }
 
 /* --- README markdown (docs/web/web-layer.md) --- */
 .md-body { line-height: 1.6; }
