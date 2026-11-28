@@ -9,6 +9,7 @@ import { DiffModeEnum, DiffView, SplitSide } from "@git-diff-view/react";
 import "@git-diff-view/react/styles/diff-view.css";
 import { useState, type ReactNode } from "react";
 import type { DiffViewFile } from "../api/diffview";
+import { useEffectiveDark } from "../theme";
 import { useT } from "../i18n";
 
 // LineWidgetCtx is what a line's widget renderer sees: the pane the "+"
@@ -41,6 +42,11 @@ export function DiffBrowser({
   renderLineWidget?: (path: string, ctx: LineWidgetCtx) => ReactNode;
 }): ReactNode {
   const t = useT();
+  // The library keeps its own data-theme attribute (its built-in light and
+  // dark palettes key off it); without the prop it stays "light" forever —
+  // the dark console wore a white diff island. The hook follows both the
+  // manual override and the OS scheme, live.
+  const dark = useEffectiveDark();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   if (files.length === 0) {
     return <p className="muted pad">{emptyHint || t("no changes")}</p>;
@@ -114,6 +120,7 @@ export function DiffBrowser({
                 diffViewMode={view === "unified" ? DiffModeEnum.Unified : DiffModeEnum.Split}
                 diffViewWrap={false}
                 diffViewFontSize={13}
+                diffViewTheme={dark ? "dark" : "light"}
                 // explicit and load-bearing: the component's initSyntax only
                 // fires when this prop is truthy — without it hunks render,
                 // rows number, but no token ever gets a color
