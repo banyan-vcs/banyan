@@ -269,7 +269,7 @@ RPC（ServiceDesc Methods + Streams 合计口径）全部有实现；切片十�
 - UserUpdateBranch 的 newrev/oldrev 非全 hex 时按上游 Internal 报错。
 - **合并提交的线性化孪生（双视图）**：UserMergeBranch 落地的两父合并
   提交在广告侧被织入引擎线性化为树全同的孪生提交（根视图线性模型，
-  docs/design/data-model.md §13）。BranchUpdate 答原始合并 OID（FindCommit 可读、MR
+  docs/design/data-model.md §13）。BranchUpdate 答原始合并 OID（FindCommit 可读、merge request
   merge_commit_sha 链接有效）；分支 tip 读取显示孪生（fetch 主分支
   看到线性历史）。**按合并 OID 的协议级 fetch** 不可用（孪生不可达
   该 OID）——GetBlob/FindCommit 等 RPC 直读不受影响。UserMergeToRef
@@ -579,7 +579,7 @@ gitlab-shell 的 internal API 契约——JWT（HS256、iss=gitlab-shell、60s
 TTL）以共享 `gitlab_shell_secret` 签名进 `Gitlab-Shell-Api-Request` 头，
 `/internal/pre_receive` 配对引用计数、`/internal/post_receive`（changes
 行式载荷 + identifier/user_id/protocol）触发 Rails 的缓存过期/事件/
-pipeline/MR-from-push。**身份零映射**：协议请求自带 GlId/GlRepository
+pipeline/merge request-from-push。**身份零映射**：协议请求自带 GlId/GlRepository
 （workhorse/gitlab-shell 填，smarthttp/SSH 两面都有），gitaly 桥经
 内部头穿到接收路径。live 实证：经 GitLab 的 push 后零干预读面即刻刷新、
 PostReceiveWorker 完成。
@@ -622,7 +622,7 @@ sidebandSessionWriter 包装（32KiB 分片、band1）；receive 面不受影响
 **push options + 推送大小上限（T87，同轮）**：① receive-pack 广告
 `push-options` 能力并解析选项段（命令表 flush 后、pack 前），经
 `post_receive.push_options` 上报——`-o merge_request.create` 端到端活体
-（MR #1 实开）；纯 banyan 部署解析后暂存 `vr.PushOptions`。② /allowed
+（merge request #1 实开）；纯 banyan 部署解析后暂存 `vr.PushOptions`。② /allowed
 verdict 的 `git_config_options` 携带 `receive.maxInputSize=N`（GitLab
 "Maximum push size" 设置），门对照 spool 尺寸强制——活体：设 1MB、推
 2MB 随机包被拒 `pack exceeds maximum allowed size (1048576 bytes)`、

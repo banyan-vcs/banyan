@@ -83,7 +83,7 @@ password {current, next}` 走 CredentialInvalidator 链**立即**清缓存，
 admin/alice/bob 三账号（密码 `demo`——演示的凭据不该是秘密，终端与引导
 文档都写明）、platform 组与继承成员、demo 演示仓（README 即引导）、两
 条目录时间线子树、三个合并请求（可合/冲突/已合并）、release 的
-mr-only 规则、alice 个人分支。种子全部走服务层 API（CreateCommit/ref
+merge-request-only 规则、alice 个人分支。种子全部走服务层 API（CreateCommit/ref
 CAS/OpenMR/EnsureTimeline——锚定首推同款），幂等重跑为无操作。
 
 **管理员重置与必须改密栅栏**（2026-11-21）：`POST /api/v1/auth/

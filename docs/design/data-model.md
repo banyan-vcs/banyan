@@ -351,7 +351,7 @@ v2 的全部协议修复（协商终态 ACK、delete-refs、ng 行格式、竞�
 
 层级链接（§14）把项目挂进项目树；**组**补上另一维：不占名字的纯容器。组只是仓库列表的文件夹——不持代码、不带任何权限语义、不改仓库物理名与 `/api/v1/repos/<name>` 寻址（与 §14 同一条纪律：组织元数据永不进名字空间）。
 
-- **数据**：meta 面两张表——`repo_groups(name, description, created_by, created_at)` 与 `repo_group_labels(repo, group_name)`（一仓至多一个标签；表名列名全部拼全——`GROUPS` 是 MySQL 8+ 保留字、`GROUP` 历来如此）。自然键、无自增，三方言同构；GroupStore 走 MRStore 先例（不在 MetaStore 复合接口里，消费方 type-assert，remote-meta 网关零改动编译）。
+- **数据**：meta 面两张表——`repo_groups(name, description, created_by, created_at)` 与 `repo_group_labels(repo, group_name)`（一仓至多一个标签；表名列名全部拼全——`GROUPS` 是 MySQL 8+ 保留字、`GROUP` 历来如此）。自然键、无自增，三方言同构；GroupStore 走 MergeRequestStore 先例（不在 MetaStore 复合接口里，消费方 type-assert，remote-meta 网关零改动编译）。
 - **API**：`GET/POST /api/v1/groups`（列表连带 assignments 表；创建记 created_by）；`DELETE /api/v1/groups/<name>`（删除同刻清空其 assignments——仓库永不指向消失的组）；`GET/PUT /api/v1/repos/<repo>/group`（PUT body `{group}`，空串摘标签）。创建/移动走 **write-rank**（与建仓同门）：标签是纯组织行为，不 join parent 所在的 admin 管理行——改挂重塑策略引擎行走的层级，贴标签永不触及。`POST /api/v1/repos` 带可选 `group`，link 失败同样回滚建仓（全有或全无）。重复建组答 409 CONFLICT_GROUP；坏名/未知组按 INVALID_ARG/NOT_FOUND。
 - **防御性读取**：客户端把指向已删组的陈旧标签按未分组渲染（服务端已清，陈旧缓存未必知道——partitionByGroup 纯函数钉死，vitest）。
 - **表面**：web 仓库列表组先渲染为文件夹（可折叠、计数、描述），组内各自渲染 §14 层级树；建仓表单（/new 页）带组选择；仓库设置页带组标签区。`groups` 档位进 /api/mode（standalone 有、gitlab 档无）。
@@ -364,7 +364,7 @@ v2 的全部协议修复（协商终态 ACK、delete-refs、ng 行格式、竞�
 组（§15）自此携带权限语义：**成员账本**。两级三档——组员表（组内所有打标签仓库**继承**的授权）与仓库直接成员表（只能**高于**继承的追加授权）。
 
 - **rank 三档**：`viewer`（读，fetch 面）< `developer`（读写，push 面）< `owner`。部署管理员（策略层 admin）凌驾一切——他们拥有编辑这些表的管理面，把自己锁在外面会瘫掉管理面。
-- **数据**：meta 面两张表——`repo_group_members(group_name, username, rank, added_by, added_at)` 与 `repo_members(repo, username, ...)`（0010 迁移；列名 username——`USER` 在 PostgreSQL 是保留字，tokens 表的 owner 列同一次规避）。复合主键即查询路径，无额外索引（小表惯例）。MemberStore 照 GroupStore/MRStore 先例：独立接口、消费方 type-assert。
+- **数据**：meta 面两张表——`repo_group_members(group_name, username, rank, added_by, added_at)` 与 `repo_members(repo, username, ...)`（0010 迁移；列名 username——`USER` 在 PostgreSQL 是保留字，tokens 表的 owner 列同一次规避）。复合主键即查询路径，无额外索引（小表惯例）。MemberStore 照 GroupStore/MergeRequestStore 先例：独立接口、消费方 type-assert。
 - **继承解析**：仓库有效成员 = 直接表 ∪ 组员表（继承行带 `viaGroup` 标记，UI 显示"继承自 <组>"）；有效 rank = max(直接, 继承)。**守卫**：仓库直接授权必须**严格高于**该用户自组继承的 rank——等于冗余、低于是静默收窄，双双 400（ErrMemberRank→INVALID_ARG）；无继承时任意档可加。移除直接成员即回落继承 rank；删组同刻清组员与继承授权（assignments 先例），直接授权存活。
 - **受管判定**：仓库有任一直接成员行、或其组的组员表非空 = **受管**；受管仓库只放行成员（viewer 起可 fetch、developer 起可 push）与部署 admin。未受管仓库行为与从前完全一致（SubtreeRulePolicy 哲学：从不管理成员的部署零变化）。账本查询出错 fail-closed。
 - **执行链**：`auth.MemberPolicy`（SubtreeRulePolicy 同缝装饰器）包住策略栈最外层——先过成员门，再走内层规则（scope 上限、保护分支、个人分支空间全部照常叠加）。banyand 的 static 与 SSO 分支装配；console-fronted（upstream 快照）分支不包——该拓扑的策略由 console 快照同步。
@@ -388,4 +388,4 @@ demo 策略 `auth.keys` 的配置钥匙共存（docs/gateway/authorization.md §
 
 - **数据**：`users(username, password_hash, is_admin, must_change_password, created_at)`（0012 迁移 + 0013 加列）。is_admin 与 must_change_password 走 INTEGER+int 行字段（PG 布尔坑，tokens 表 revoked 同款）；password_hash 存 bcrypt（x/crypto，加密归 auth 包，store 只见 opaque 串）。UserStore 照 MemberStore 先例：独立接口 type-assert、无删除路径——写者只有引导、自助改密与管理员重置，不做用户管理面。upsert by name：改密是原地重写，admin 旗标随行；must_change_password 由管理员重置起立（随机密码须在下一次登录换成自选的，PAT/SSH-key 铸造面在此之前 403），自助改密付清。
 - **识别次序**：表先答、配置表兜底；表内名字配错密码即匿名（不落到同名配置条目）；已验凭证对 60s TTL 缓存（bcrypt ~100ms，web 层每代理调用重发 Basic 头），改密经 CredentialInvalidator 链立即清缓存。
-- **首启**：生产（无配置用户）建 admin + 随机密码只在终端打印一次；`demo: true` 由 internal/demoseed 种 admin/alice/bob（密码 demo）与整套演示世界（§16 组成员、§13 目录时间线两条、MR 三态、mr-only 规则），README 即引导文档，幂等。
+- **首启**：生产（无配置用户）建 admin + 随机密码只在终端打印一次；`demo: true` 由 internal/demoseed 种 admin/alice/bob（密码 demo）与整套演示世界（§16 组成员、§13 目录时间线两条、merge request 三态、merge-request-only 规则），README 即引导文档，幂等。

@@ -4,7 +4,7 @@
 
 banyan 是**通用代码存储层**（code storage layer）：对上提供轻量级代码托管能力
 （git 协议接入、对象存储、视图派生），对下不假设任何平台形态。它**不是**
-DevOps 平台——MR/issue/CI/权限体系/审计报表不在边界内。
+DevOps 平台——merge request/issue/CI/权限体系/审计报表不在边界内。
 
 | 能力 | 归属 | 说明 |
 |---|---|---|
@@ -12,7 +12,7 @@ DevOps 平台——MR/issue/CI/权限体系/审计报表不在边界内。
 | git 协议接入（clone/push/pull） | **banyan** | smart HTTP v1，客户端零改动 |
 | 视图派生（子树 clone/读时装配） | **banyan** | `/tree/<path>` 虚拟仓库，O(子目录) 传输 |
 | 读侧服务（log/blame/diff RPC） | **banyan** | 服务端集中计算 |
-| 协作流程（MR/review/issue） | 已有平台 | GitLab/Gitea/自建，**不做** |
+| 协作流程（merge request/review/issue） | 已有平台 | GitLab/Gitea/自建，**不做** |
 | CI/CD 流水线 | 已有平台 | Runner 按协议取 banyan 或平台代码 |
 | 组织/权限/合规 | 已有平台 | banyan 只做存储层凭证（见 §3.3） |
 
@@ -87,7 +87,7 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
   dev ──push──▶ GitLab(workhorse) ──gitaly gRPC──▶ banyan   ← 唯一真相源
   子树：refs/banyan/tree/<dir> 投影 ref（一条 GitLab URL 取推子树，
         推送向上装配回根视图，T84）或 /tree/<dir> 面直连
-  语义：@hashed 寻址零翻译；GitLab 平台面（权限/MR/UI）原样
+  语义：@hashed 寻址零翻译；GitLab 平台面（权限/merge request/UI）原样
 
 拓扑 A：GitLab 为主（镜像迁移过渡）
   dev ──push──▶ GitLab ──push mirror──▶ banyan
@@ -96,7 +96,7 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
 
 拓扑 B：banyan 为主存储（monorepo 重目录场景）
   dev ──push──▶ banyan（/tree/<dir> 直推）  ← 零跨目录锁迭代
-  GitLab ◀──pull mirror── banyan            ← MR/review/CI 界面照常
+  GitLab ◀──pull mirror── banyan            ← merge request/review/CI 界面照常
   CI Runner ──fetch──▶ GitLab（或直连 banyan）
   语义：GitLab 拉的是根视图（线性织入产物），fsck 干净的合法 git 历史
 ```
@@ -122,7 +122,7 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
 | RPC 分级 | 管理端点走 AdminChecker 可选缝；内容写与 wire 同一条 CanPush；建仓收紧 | ✅ docs/gateway/authorization.md §8b |
 | 命名空间映射 | gitaly 模式下 `@hashed/<h2>/<h2>/<sha256(id)>.git` ↔ banyan 仓名 `<hex64>` 零翻译 | ✅（docs/integration/gitaly-compat.md §2） |
 | 子树可达 | 投影 ref `refs/banyan/tree/<dir>`（GitLab URL 直取直推+装配）；`/tree/` 面（banyan 自有 URL） | ✅（T84；docs/integration/gitlab-integration.md §7） |
-| post-receive→平台回调 | push 事件/pipeline/MR-from-push/缓存失效：向 gitlab-shell 协议 `/api/v4/internal/post_receive` 的适配器 | **待建**（登记 docs/project/roadmap.md M5；gitaly 模式下的最后一块功能缝） |
+| post-receive→平台回调 | push 事件/pipeline/merge request-from-push/缓存失效：向 gitlab-shell 协议 `/api/v4/internal/post_receive` 的适配器 | **待建**（登记 docs/project/roadmap.md M5；gitaly 模式下的最后一块功能缝） |
 | webhook | receive-pack 成功后派发 push event（根视图 OID + ref）→ 平台 trigger API | 待建（与上条同链路） |
 | CI 取码 | Runner 走 GitLab（直连模式下自然）或直连 banyan（`--depth` 减量） | 协议侧就绪 |
 
@@ -130,7 +130,7 @@ config, derived}`——图中每一格都有对应包；**平台适配格当前�
 
 - praefect 复制/事务协议不承诺（直连单节点 Gitaly 模式先行，多副本走 docs/storage/storage.md 自身路线）；
   Gitaly 兼容为前端之一（已落地），私有契约随 GitLab 版本的漂移在适配层吸收（docs/integration/gitaly-compat.md §0）；
-- 不做平台 UI、MR 流水线、组织权限树；
+- 不做平台 UI、merge request 流水线、组织权限树；
 - 不做双向强一致多主存储（真相源唯一原则）。
 
 ## 4. 演进视角（与 docs/project/roadmap.md 对应）

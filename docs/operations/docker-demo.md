@@ -30,7 +30,7 @@ demo 与生产的差别就在这一个旗标上，不是隐式放行。
 admin/alice/bob 三账号（密码 `demo`，终端与引导文档都写明）、platform
 组与继承成员、demo 演示仓（**README 即引导文档**：账号表与五站导览，
 另落 `<root>/demo-guide.md`）、`/src` `/docs` 两条目录时间线子树、三个
-合并请求（可合带审批 / 真冲突 / 已合并双亲提交）、release 的 mr-only
+合并请求（可合带审批 / 真冲突 / 已合并双亲提交）、release 的 merge-request-only
 规则、alice 个人分支。种子全走服务层写路径（CreateCommit / ref CAS /
 OpenMR / EnsureTimeline——锚定首推同款），幂等重跑无操作；T125 钉住
 全貌。生产不设 demo：无 auth.users 的首启由后端建 `admin`——**随机密
